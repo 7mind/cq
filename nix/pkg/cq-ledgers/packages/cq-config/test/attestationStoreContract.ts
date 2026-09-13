@@ -2,7 +2,7 @@
  * THE shared {@link AttestationStore} adapter contract (T720, goal G94).
  *
  * ONE abstract suite, executed against every attestation backend — the
- * bun:sqlite/XDG store, the cross-process-safe filesystem store, PostgreSQL,
+ * bun:sqlite/XDG store, the private PostgreSQL store,
  * AND T685's strict in-memory dummy — so the dummy and the production adapters
  * are held to IDENTICAL assertions. T685 deliberately did not build this
  * (it judged an abstract store suite speculative at contract level); the
@@ -131,8 +131,7 @@ export interface AttestationContractFixture {
    * digest predicate can ever be reached.
    *
    * Present only where a backend can be written to synchronously AND its lock
-   * does not exclude the writer: the filesystem store qualifies (a plain
-   * `writeFileSync` ignores the lockfile) and so does the in-memory reference.
+   * does not exclude the writer: only the in-memory reference provides this hook.
    * bun:sqlite's `BEGIN IMMEDIATE` excludes every other writer for the whole
    * unit of work, and PostgreSQL cannot be written to without awaiting, so the
    * hook is absent for both and their digest predicate is defence-in-depth that

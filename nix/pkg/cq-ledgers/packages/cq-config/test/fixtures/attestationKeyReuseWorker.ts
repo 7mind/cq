@@ -3,29 +3,26 @@
  *
  * Spawned N-up by `attestationStore-crossProcess.test.ts` so that concurrent
  * reuse of ONE idempotency key is decided by the backend's REAL cross-process
- * lock — `BEGIN IMMEDIATE` on a WAL connection, or an `O_EXCL` lockfile — and
+ * lock — `BEGIN IMMEDIATE` on a WAL connection — and
  * not by an in-process mutex, which is all a same-process race can exercise.
  * This is T685's deferred `cross-process-concurrent-key-reuse-under-a-real-lock`.
  *
- * Usage: bun <this> <sqlite|fs> <location> <projectKey> <idempotencyKey>
+ * Usage: bun <this> <dbPath> <projectKey> <idempotencyKey>
  * Prints ONE line of JSON on stdout: {"ok":true,"attestationId":…} or
  * {"ok":false,"error":…}.
  */
 
 import {
   DISPATCH_OVERLAY_REGISTRY,
-  FsAttestationBackend,
   SqliteAttestationBackend,
   defaultDispatchRandomBytes,
   prepareDispatchOn,
   type AttestationBackend,
-  type AttestationNamespace,
   type PrepareDispatchRequest,
 } from "@cq/config";
 
-const [kind, location, projectKey, idempotencyKey] = process.argv.slice(2);
+const [location, projectKey, idempotencyKey] = process.argv.slice(2);
 if (
-  kind === undefined ||
   location === undefined ||
   projectKey === undefined ||
   idempotencyKey === undefined
@@ -34,20 +31,8 @@ if (
   process.exit(2);
 }
 
-function openBackend(): AttestationBackend {
-  if (kind === "sqlite") {
-    const namespace: AttestationNamespace = { backend: "xdg", projectKey: projectKey! };
-    return new SqliteAttestationBackend({ namespace, dbPath: location! });
-  }
-  if (kind === "fs") {
-    const namespace: AttestationNamespace = { backend: "fs", projectKey: projectKey! };
-    return new FsAttestationBackend({ namespace, root: location!, lockTimeoutMs: 20_000 });
-  }
-  throw new Error(`unknown backend kind "${String(kind)}"`);
-}
-
 const request: PrepareDispatchRequest = {
-  namespace: { backend: kind === "sqlite" ? "xdg" : "fs", projectKey: projectKey! },
+  namespace: { backend: "xdg", projectKey },
   roleId: "implement-worker",
   surface: "claude",
   input: {
@@ -61,7 +46,7 @@ const request: PrepareDispatchRequest = {
     round: 0,
     startingCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
   },
-  idempotencyKey: idempotencyKey!,
+  idempotencyKey,
   timeoutMs: 600_000,
   registry: DISPATCH_OVERLAY_REGISTRY,
   promptDigest: "a".repeat(64),
@@ -76,7 +61,10 @@ const request: PrepareDispatchRequest = {
 // (a missing busy_timeout during WAL conversion) behind a test-harness message.
 let backend: AttestationBackend | undefined;
 try {
-  backend = openBackend();
+  backend = new SqliteAttestationBackend({
+    namespace: { backend: "xdg", projectKey },
+    dbPath: location,
+  });
   const outcome = await prepareDispatchOn(backend, request, {
     mode: "backend",
     now: () => new Date().toISOString(),

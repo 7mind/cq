@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsAttestationBackend,
+  SqliteAttestationBackend,
+  xdgAttestationDbPath,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
 } from "@cq/config";
 import {
   createLedgerStore,
-  fsAttestationProductionRoot,
   MILESTONES_AMBIENT_ID,
   prepareManagedWorktree,
   resolveSingleProjectAttestationNamespace,
@@ -25,6 +25,10 @@ import {
   GUARDED_REBASE_PROBE_REJECTION,
   type CredentialRuntime,
 } from "../scripts/guardedRebaseProbeRuntime.js";
+
+import { useIsolatedXdgSuite } from "../../cq-config/test/xdgSuiteFixture.js";
+
+useIsolatedXdgSuite(async () => {});
 
 function status(overrides: Partial<{ mode: number; uid: number; dev: number; ino: number }> = {}) {
   return {
@@ -131,11 +135,13 @@ async function guardedRebaseSource(root: string, candidate: string): Promise<{
     if (managed.status !== "prepared") throw new Error("T6411 worktree was not prepared");
     const namespace: AttestationNamespace = await resolveSingleProjectAttestationNamespace({
       construction: "stdio",
-      backend: "fs",
+      backend: "xdg",
       repoRoot: root,
       projectId: null,
     });
-    const backend = new FsAttestationBackend({ namespace, root: fsAttestationProductionRoot(root) });
+    const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+    await mkdir(path.dirname(attestationDbPath), { recursive: true });
+    const backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     const capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore(),
@@ -308,7 +314,7 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
       await git(root, ["config", "user.email", "t6411@example.invalid"]);
       await writeFile(path.join(root, "seed.txt"), "seed\n");
       await writeFile(path.join(root, ".gitignore"), ".cq/\n.claude/\n");
-      await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
       await git(root, ["add", "seed.txt"]);
       await git(root, ["add", ".gitignore", "cq.toml"]);
       await git(root, ["commit", "-q", "-m", "seed"]);

@@ -603,8 +603,6 @@ export type {
   RunGuardedRebaseOptions,
 } from "./guardedRebaseContinuation.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
-export { GitObjectAttestationBackend } from "./store/git/GitObjectAttestationBackend.js";
-export type { GitObjectAttestationBackendOptions } from "./store/git/GitObjectAttestationBackend.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
@@ -746,7 +744,6 @@ export {
   supportedConstructionCells,
   resolveSingleProjectAttestationNamespace,
   attestationNamespaceForTrustedHubProject,
-  fsAttestationProductionRoot,
   createAttestationStoreForConstruction,
 } from "./store/attestationConstruction.js";
 export type {
@@ -755,8 +752,6 @@ export type {
   AttestationConstructionVerdict,
   SingleProjectNamespaceInput,
   XdgAttestationConstructionInput,
-  FsAttestationConstructionInput,
-  GitObjectAttestationConstructionInput,
   PostgresAttestationConstructionInput,
   AttestationConstructionStoreInput,
 } from "./store/attestationConstruction.js";

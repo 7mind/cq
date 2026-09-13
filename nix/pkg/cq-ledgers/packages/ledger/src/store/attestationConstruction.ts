@@ -2,7 +2,7 @@
  * The production dispatch-attestation CONSTRUCTION MATRIX (T686, goal G94).
  *
  * T720 built the initial namespaced production {@link AttestationBackend} adapters
- * (`@cq/config`'s xdg/sqlite, filesystem and PostgreSQL backends) plus
+ * (`@cq/config`'s xdg/sqlite and private PostgreSQL backends) plus
  * `assertAttestationStoreBackend`, the LEDGER-BACKEND-level registration guard:
  * `remote` is excluded with a declared reason, and the in-memory
  * test double is excluded as not a backend at all. That guard lives in
@@ -34,7 +34,7 @@
  * per-project xdg runtimes in one process routed by URL path) is named here
  * ONLY to be excluded: the attestation adapters take ONE cross-process lock
  * per namespace per backend handle, keyed for a SINGLE tenant; nothing in this
- * package gives a local xdg/fs backend Postgres's trusted per-request tenant
+ * package gives a local xdg backend Postgres's trusted per-request tenant
  * routing, so a local multi-project hub construction must fail before any
  * ref-first tool is registered, exactly like `remote`/in-memory.
  *
@@ -56,7 +56,6 @@ import {
   ATTESTATION_STORE_BACKENDS,
   ATTESTATION_IN_MEMORY_BACKEND,
   AttestationBackendUnsupportedError,
-  FsAttestationBackend,
   LEDGER_BACKENDS,
   PostgresAttestationBackend,
   SqliteAttestationBackend,
@@ -67,9 +66,7 @@ import {
   type AttestationStoreBackend,
   type LedgerBackend,
 } from "@cq/config";
-import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { resolveProjectKey, type ResolveProjectKeyOpts } from "../projectKey.js";
-import { GitObjectAttestationBackend } from "./git/GitObjectAttestationBackend.js";
 
 // ---------------------------------------------------------------------------
 // The construction kinds
@@ -254,8 +251,8 @@ export const ATTESTATION_CONSTRUCTION_COVERAGE: readonly AttestationConstruction
   buildAttestationConstructionCoverage();
 
 /**
- * The supported cells: xdg/fs/git-object support the four single-project
- * constructions; postgres additionally supports the hub.
+ * The supported cells: xdg supports the four single-project constructions;
+ * postgres supports only the private hub.
  * A test asserting against THIS constant (rather than re-deriving it) fails
  * the moment {@link assertAttestationConstructionSupported}'s decisions drift
  * from the declared contract, in either direction.
@@ -330,30 +327,10 @@ export function attestationNamespaceForTrustedHubProject(
 // The factory: namespace + construction-specific wiring -> a live backend
 // ---------------------------------------------------------------------------
 
-/** Where the filesystem attestation store lives for the `fs` ledger backend. */
-export function fsAttestationProductionRoot(ledgerRoot: string): string {
-  return `${ledgerRoot}/${LEDGER_STORAGE_DIRNAME}/attestations`;
-}
-
 export interface XdgAttestationConstructionInput {
   readonly backend: "xdg";
   readonly namespace: AttestationNamespace;
   readonly env?: Readonly<Record<string, string | undefined>>;
-}
-
-export interface FsAttestationConstructionInput {
-  readonly backend: "fs";
-  readonly namespace: AttestationNamespace;
-  /** The ledger's own root — the attestation store is rooted alongside it. */
-  readonly ledgerRoot: string;
-}
-
-export interface GitObjectAttestationConstructionInput {
-  readonly backend: "git-object";
-  readonly namespace: AttestationNamespace;
-  readonly repoRoot: string;
-  /** The ledger orphan branch. Defaults to `cq-ledger`. */
-  readonly ref?: string;
 }
 
 export interface PostgresAttestationConstructionInput {
@@ -366,16 +343,13 @@ export interface PostgresAttestationConstructionInput {
 
 export type AttestationConstructionStoreInput =
   | XdgAttestationConstructionInput
-  | FsAttestationConstructionInput
-  | GitObjectAttestationConstructionInput
   | PostgresAttestationConstructionInput;
 
 /**
  * Build the concrete {@link AttestationBackend} for an ALREADY-RESOLVED
  * namespace (from one of the two functions above). Does NOT re-validate the
  * namespace's backend itself — each concrete adapter's own constructor already
- * does (`SqliteAttestationBackend`/`FsAttestationBackend`/
- * `GitObjectAttestationBackend`/`PostgresAttestationBackend` each call their
+ * does (`SqliteAttestationBackend`/`PostgresAttestationBackend` each call their
  * own `assert*Namespace`), so a
  * namespace for an excluded backend still refuses here, at the adapter
  * boundary, rather than being silently accepted. A prior revision duplicated
@@ -395,17 +369,6 @@ export async function createAttestationStoreForConstruction(
       // nested well below the XDG state base.
       mkdirSync(dirname(dbPath), { recursive: true });
       return new SqliteAttestationBackend({ namespace: input.namespace, dbPath });
-    }
-    case "fs": {
-      const root = fsAttestationProductionRoot(input.ledgerRoot);
-      return new FsAttestationBackend({ namespace: input.namespace, root });
-    }
-    case "git-object": {
-      return new GitObjectAttestationBackend({
-        namespace: input.namespace,
-        repoRoot: input.repoRoot,
-        ...(input.ref === undefined ? {} : { ref: input.ref }),
-      });
     }
     case "postgres": {
       return PostgresAttestationBackend.open({

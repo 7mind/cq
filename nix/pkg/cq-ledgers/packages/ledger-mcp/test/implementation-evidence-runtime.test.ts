@@ -499,7 +499,7 @@ describe("versioned production evidence bootstrap [Behavioral-Active Effectual-G
       baselineSourceSelectedOnlyEvidence: true,
       baselineManagementProfileUsed: true,
       ledgerBackend: "xdg",
-      attestationBackend: "fs",
+      attestationBackend: "xdg",
       workerDispatches: 2,
       workerTaskIdsMatchFreshMapping: true,
       workerGenerations: [1, 2],

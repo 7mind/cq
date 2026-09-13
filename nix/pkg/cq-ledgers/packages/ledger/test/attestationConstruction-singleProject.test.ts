@@ -3,8 +3,7 @@
  * end-to-end through the PRODUCTION construction matrix: `resolveProjectKey`
  * derives the namespace exactly as the real ledger-store factory does, and
  * {@link createAttestationStoreForConstruction} builds the SAME concrete
- * adapter (`@cq/config`'s xdg/sqlite and filesystem backends, plus the
- * ledger-owned Git-object backend) a server would.
+ * adapter (`@cq/config`'s xdg/sqlite backend) a server would.
  *
  * Reuses the shared T720 40-case contract UNCHANGED — see
  * `packages/cq-config/test/attestationStoreContract.ts` — against a store
@@ -21,7 +20,6 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +32,6 @@ import {
   AttestationConstructionUnsupportedError,
   SINGLE_PROJECT_CONSTRUCTIONS,
   createAttestationStoreForConstruction,
-  fsAttestationProductionRoot,
   resolveSingleProjectAttestationNamespace,
   type SingleProjectConstruction,
 } from "../src/index.js";
@@ -125,101 +122,6 @@ for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
 }
 
 // ---------------------------------------------------------------------------
-// Filesystem, through each single-project construction
-// ---------------------------------------------------------------------------
-
-for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-  runAttestationStoreContract({
-    name: `fs via construction "${construction}"`,
-    namespaceBackend: "fs",
-    build: async (): Promise<AttestationContractFixture> => {
-      const ledgerRoot = freshRoot(`cq-t686-fs-${construction}-`);
-      const projectId = uniqueProjectId(construction);
-      const open = async (pid: string): Promise<AttestationBackend> => {
-        const namespace = await resolveSingleProjectAttestationNamespace({
-          construction,
-          backend: "fs",
-          repoRoot: ledgerRoot,
-          projectId: pid,
-        });
-        return createAttestationStoreForConstruction({ backend: "fs", namespace, ledgerRoot });
-      };
-      const extra: AttestationBackend[] = [];
-      let live = await open(projectId);
-      return {
-        get backend() {
-          return live;
-        },
-        peer: async () => {
-          const backend = await open(projectId);
-          extra.push(backend);
-          return backend;
-        },
-        restart: async () => {
-          await live.close();
-          live = await open(projectId);
-          return live;
-        },
-        sibling: async (key: string) => {
-          const backend = await open(key);
-          extra.push(backend);
-          return backend;
-        },
-        rows: async () =>
-          (await live.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
-        dump: async () =>
-          JSON.stringify(await live.transact({ kind: "namespace" }, (store) => store.rows())),
-        artifacts: () => Promise.resolve([`fs:${fsAttestationProductionRoot(ledgerRoot)}`]),
-        breakBackend: async () => {
-          await live.close();
-        },
-        dispose: async () => {
-          await live.close();
-          for (const backend of extra) await backend.close();
-        },
-      };
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// The FS production root convention itself
-// ---------------------------------------------------------------------------
-
-describe("fsAttestationProductionRoot", () => {
-  test("lives at <ledgerRoot>/.cq/attestations, alongside the legacy fs ledger's own .cq dir", () => {
-    expect(fsAttestationProductionRoot("/some/repo")).toBe("/some/repo/.cq/attestations");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Git-object, through each single-project construction
-// ---------------------------------------------------------------------------
-
-for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-  test(`git-object constructs through "${construction}"`, async () => {
-    const repoRoot = freshRoot(`cq-t686-git-object-${construction}-`);
-    execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
-    const namespace = await resolveSingleProjectAttestationNamespace({
-      construction,
-      backend: "git-object",
-      repoRoot,
-      projectId: uniqueProjectId(construction),
-    });
-    const backend = await createAttestationStoreForConstruction({
-      backend: "git-object",
-      namespace,
-      repoRoot,
-    });
-    try {
-      expect(await backend.transact({ kind: "namespace" }, (store) => store.rows())).toEqual([]);
-    } finally {
-      await backend.close();
-    }
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Excluded single-project constructions never reach the factory
 // ---------------------------------------------------------------------------
 
@@ -263,7 +165,7 @@ describe("excluded backends refuse before createAttestationStoreForConstruction 
     await expect(
       createAttestationStoreForConstruction({
         backend: "xdg",
-        namespace: { backend: "git-object", projectKey: "whatever-686" },
+        namespace: { backend: "postgres", projectKey: "whatever-686" },
         env: { XDG_STATE_HOME: stateHome },
       }),
     ).rejects.toThrow(/serves the "xdg" backend/);

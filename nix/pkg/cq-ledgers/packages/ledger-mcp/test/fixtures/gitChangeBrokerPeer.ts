@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { FsAttestationBackend, type AttestationNamespace } from "@cq/config";
+import { SqliteAttestationBackend, type AttestationNamespace } from "@cq/config";
 import { releaseManagedWorktree, type ManagedWorktreeHandle } from "@cq/ledger";
 import { createDispatchCapability } from "../../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../../src/promptArtifactStore.js";
@@ -9,7 +9,7 @@ interface PeerRequest {
   readonly operation: "git-commit" | "store-result" | "abort" | "release";
   readonly repositoryRoot: string;
   readonly stateDir: string;
-  readonly attestationRoot?: string;
+  readonly attestationDbPath?: string;
   readonly namespace?: AttestationNamespace;
   readonly input: Record<string, unknown>;
   readonly startedFile?: string;
@@ -72,12 +72,12 @@ async function main(): Promise<void> {
       { stateDir: request.stateDir },
     );
   } else {
-    if (request.attestationRoot === undefined || request.namespace === undefined) {
-      throw new Error("dispatch peer requires attestationRoot and namespace");
+    if (request.attestationDbPath === undefined || request.namespace === undefined) {
+      throw new Error("dispatch peer requires attestationDbPath and namespace");
     }
-    const backend = new FsAttestationBackend({
+    const backend = new SqliteAttestationBackend({
       namespace: request.namespace,
-      root: request.attestationRoot,
+      dbPath: request.attestationDbPath,
     });
     try {
       const capability = createDispatchCapability({

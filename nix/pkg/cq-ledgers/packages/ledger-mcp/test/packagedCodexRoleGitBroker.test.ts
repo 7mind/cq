@@ -1,5 +1,5 @@
 /** T2042 — packaged cq-codex-role broker/confinement acceptance probe. */
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  FsAttestationBackend,
+  SqliteAttestationBackend,
+  xdgAttestationDbPath,
   CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
   buildPositiveOnlyDispatchRegistry,
@@ -30,7 +31,6 @@ import {
 import {
   createLedgerStore,
   createInMemoryWorksetStore,
-  fsAttestationProductionRoot,
   ImplementationEvidenceService,
   observeManagedRebaseConflict,
   prepareManagedWorktree,
@@ -46,6 +46,7 @@ import {
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
+import { useIsolatedXdgSuite } from "../../cq-config/test/xdgSuiteFixture.js";
 
 const roots: string[] = [];
 const INSTALLED_ROLE = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
@@ -189,7 +190,7 @@ async function runPackagedReviewer(input: {
   readonly repositoryRoot: string;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly baseCommit: string;
-  readonly backend: FsAttestationBackend;
+  readonly backend: SqliteAttestationBackend;
   readonly randomBytes: (count: number) => Uint8Array;
   readonly workerRoute: PackagedWorkerRoute;
   readonly reviewerMode: PackagedReviewerMode;
@@ -272,7 +273,7 @@ async function runPackagedReviewer(input: {
   const sandboxProfile =
     `permissions.t2081={description="T2081 installed reviewer fixture",filesystem={` +
     `":minimal"="read","/tmp"="write",${JSON.stringify(repositoryRoot)}="read",` +
-    `${JSON.stringify(path.join(repositoryRoot, ".cq", "attestations"))}="write",` +
+    `${JSON.stringify(path.dirname(xdgAttestationDbPath(backend.namespace.projectKey)))}="write",` +
     `${JSON.stringify(fixtureRoot)}="write"}}`;
   await writeFile(
     fakeCodex,
@@ -465,7 +466,7 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
   readonly repositoryRoot: string;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly baseCommit: string;
-  readonly backend: FsAttestationBackend;
+  readonly backend: SqliteAttestationBackend;
   readonly randomBytes: (count: number) => Uint8Array;
   readonly route: R;
 }): Promise<PackagedResolverGateRun<R>> {
@@ -660,7 +661,7 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
   } as PackagedResolverGateRun<R>;
 }
 
-afterAll(async () => {
+useIsolatedXdgSuite(async () => {
   for (const root of roots) await rm(root, { recursive: true, force: true });
 });
 
@@ -786,7 +787,7 @@ describe("packaged cq-codex-role Git broker", () => {
       await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock", "nix"]);
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
       const ledgerStore = await createLedgerStore(repositoryRoot);
       await ledgerStore.store.dispose();
       const baseTree = await git(repositoryRoot, ["rev-parse", `${baseCommit}^{tree}`]);
@@ -826,13 +827,15 @@ describe("packaged cq-codex-role Git broker", () => {
 
       const namespace = await resolveSingleProjectAttestationNamespace({
         construction: "direct",
-        backend: "fs",
+        backend: "xdg",
         repoRoot: repositoryRoot,
         projectId: null,
       });
-      let backend = new FsAttestationBackend({
+      const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+      await mkdir(path.dirname(attestationDbPath), { recursive: true });
+      let backend = new SqliteAttestationBackend({
         namespace,
-        root: fsAttestationProductionRoot(repositoryRoot),
+        dbPath: attestationDbPath,
       });
       const dispatchNow = new Date().toISOString();
       let serviceNow = dispatchNow;
@@ -1093,9 +1096,9 @@ describe("packaged cq-codex-role Git broker", () => {
       }
 
       await backend.close();
-      backend = new FsAttestationBackend({
+      backend = new SqliteAttestationBackend({
         namespace,
-        root: fsAttestationProductionRoot(repositoryRoot),
+        dbPath: attestationDbPath,
       });
       capability = createDispatchCapability({
         backend,
@@ -1662,7 +1665,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
       await writeFile(path.join(repositoryRoot, "other.txt"), "other base\n");
       await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
       await writeFile(path.join(repositoryRoot, ".gitignore"), ".cq/\n.claude/\n");
       const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
       await mkdir(workspaceRoot, { recursive: true });
@@ -1711,13 +1714,15 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
 
       const namespace = await resolveSingleProjectAttestationNamespace({
         construction: "direct",
-        backend: "fs",
+        backend: "xdg",
         repoRoot: repositoryRoot,
         projectId: null,
       });
-      let backend = new FsAttestationBackend({
+      const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+      await mkdir(path.dirname(attestationDbPath), { recursive: true });
+      let backend = new SqliteAttestationBackend({
         namespace,
-        root: fsAttestationProductionRoot(repositoryRoot),
+        dbPath: attestationDbPath,
       });
       const dispatchRandomBytes = sequentialDispatchRandomBytes(4_096);
       const serviceNow = (): string => new Date().toISOString();
@@ -1930,9 +1935,9 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         // 3. Broker and parent-runner restart: the journal and the persisted
         // binding survive; the reference resolves against the durable state.
         await backend.close();
-        backend = new FsAttestationBackend({
+        backend = new SqliteAttestationBackend({
           namespace,
-          root: fsAttestationProductionRoot(repositoryRoot),
+          dbPath: attestationDbPath,
         });
         capability = createDispatchCapability({
           backend,

@@ -85,4 +85,6 @@ export CQ_TEST_PG_URL="postgresql://cq@127.0.0.1:$postgres_port/postgres?sslmode
 export CQ_TEST_REQUIRE_PG=1
 
 cd "$ledger_root"
-bun test packages/cq-config/test/attestationStore-postgres.test.ts
+bun test \
+  packages/cq-config/test/attestationStore-postgres.test.ts \
+  packages/ledger/test/attestationConstruction-postgresHub.test.ts

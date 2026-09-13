@@ -2,13 +2,13 @@ import { writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
-  FsAttestationBackend,
+  SqliteAttestationBackend,
+  xdgAttestationDbPath,
   exposedLedgerToolsForRole,
   fetchDispatchInputOn,
   storeDispatchResultOn,
 } from "@cq/config";
 import {
-  fsAttestationProductionRoot,
   resolveSingleProjectAttestationNamespace,
 } from "@cq/ledger";
 
@@ -76,18 +76,18 @@ if (
 }
 
 let client: Client | undefined;
-let directBackend: FsAttestationBackend | undefined;
+let directBackend: SqliteAttestationBackend | undefined;
 const listedTools = [...exposedLedgerToolsForRole("implement-reviewer")].sort();
 if (expectedMode === "sandboxed") {
   const namespace = await resolveSingleProjectAttestationNamespace({
     construction: "direct",
-    backend: "fs",
+    backend: "xdg",
     repoRoot: expectedLedgerRoot,
     projectId: null,
   });
-  directBackend = new FsAttestationBackend({
+  directBackend = new SqliteAttestationBackend({
     namespace,
-    root: fsAttestationProductionRoot(expectedLedgerRoot),
+    dbPath: xdgAttestationDbPath(namespace.projectKey),
   });
 } else {
   const transport = new StdioClientTransport({

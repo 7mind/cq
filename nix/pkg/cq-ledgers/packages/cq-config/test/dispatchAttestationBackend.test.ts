@@ -136,6 +136,12 @@ function buffered(
 // ---------------------------------------------------------------------------
 
 describe("attestation backend registration", () => {
+  test("SQLite is the only public attestation adapter; PostgreSQL remains private [Blackbox-Atomic]", () => {
+    expect(ATTESTATION_STORE_BACKENDS).toEqual(["xdg"]);
+    expect(ATTESTATION_EXCLUDED_BACKENDS).toContain("remote");
+    expect(assertAttestationStoreBackend("postgres")).toBe("postgres");
+  });
+
   test("every ledger backend is either adapted or excluded WITH a reason", () => {
     expect([...ATTESTATION_BACKEND_COVERAGE]).toEqual([...LEDGER_BACKENDS].sort());
     expect([...ATTESTATION_STORE_BACKENDS, ...ATTESTATION_EXCLUDED_BACKENDS].sort()).toEqual(
@@ -156,11 +162,11 @@ describe("attestation backend registration", () => {
     // A backend claimed as BOTH adapted and excluded. (The declared list has to
     // match the decided one first, or the earlier branch fires instead.)
     expect(() =>
-      assertAttestationBackendCoverage(["fs", "fs"], ["fs"], ["fs"], new Map([["fs", "r"]])),
+      assertAttestationBackendCoverage(["xdg", "xdg"], ["xdg"], ["xdg"], new Map([["xdg", "r"]])),
     ).toThrow(/both adapted and excluded/);
     // An exclusion with no reason.
     expect(() =>
-      assertAttestationBackendCoverage(["fs", "remote"], ["fs"], ["remote"], new Map()),
+      assertAttestationBackendCoverage(["xdg", "remote"], ["xdg"], ["remote"], new Map()),
     ).toThrow(/declares no reason/);
   });
 
@@ -241,8 +247,8 @@ describe("attestation backend registration", () => {
 
   test("namespace validation runs before the backend check and both must pass", () => {
     expect(assertAttestationStoreNamespace(NAMESPACE)).toEqual(NAMESPACE);
-    expect(assertAttestationStoreNamespace({ backend: "git-object", projectKey: "p" })).toEqual({
-      backend: "git-object",
+    expect(assertAttestationStoreNamespace({ backend: "postgres", projectKey: "p" })).toEqual({
+      backend: "postgres",
       projectKey: "p",
     });
     for (const name of PROTOTYPE_NAMES) {
@@ -255,14 +261,14 @@ describe("attestation backend registration", () => {
     // ordinary PROJECT key and must round-trip as one …
     for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"] as const) {
       expect(
-        assertAttestationStoreNamespace({ backend: "fs", projectKey: name }).projectKey,
+        assertAttestationStoreNamespace({ backend: "xdg", projectKey: name }).projectKey,
         name,
       ).toBe(name);
     }
     // … while `__proto__` is refused for an unrelated reason that happens to
     // help: the grammar requires an alphanumeric first character.
     expect(() =>
-      assertAttestationStoreNamespace({ backend: "fs", projectKey: "__proto__" }),
+      assertAttestationStoreNamespace({ backend: "xdg", projectKey: "__proto__" }),
     ).toThrow(/expected a project key/);
   });
 });
@@ -929,10 +935,10 @@ describe("the namespace advisory-lock key", () => {
     expect(formatAttestationNamespaceLockKey({ backend: "postgres", projectKey: "proj" })).toBe(
       key,
     );
-    expect(formatAttestationNamespaceLockKey({ backend: "fs", projectKey: "a-b" })).not.toBe(
-      formatAttestationNamespaceLockKey({ backend: "fs", projectKey: "a" }),
+    expect(formatAttestationNamespaceLockKey({ backend: "xdg", projectKey: "a-b" })).not.toBe(
+      formatAttestationNamespaceLockKey({ backend: "xdg", projectKey: "a" }),
     );
-    expect(formatAttestationNamespaceLockKey({ backend: "fs", projectKey: "p" })).not.toBe(
+    expect(formatAttestationNamespaceLockKey({ backend: "postgres", projectKey: "p" })).not.toBe(
       formatAttestationNamespaceLockKey({ backend: "xdg", projectKey: "p" }),
     );
   });

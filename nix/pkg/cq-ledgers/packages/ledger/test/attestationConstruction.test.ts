@@ -43,7 +43,7 @@ const ALL_BACKEND_NAMES: readonly string[] = [
 
 /**
  * The exact expected verdict for every `{construction, backend}` cell, hand
- * derived from the task's own prose: "XDG/SQLite and filesystem support the
+ * derived from the task's own prose: "XDG/SQLite supports the
  * approved single-project constructions using resolveProjectKey; PostgreSQL
  * additionally supports trusted projects.project_key multi-project routing.
  * Remote, user-facing in-memory, and unsupported local multi-project
@@ -54,7 +54,7 @@ const ALL_BACKEND_NAMES: readonly string[] = [
 function expectedSupported(construction: string, backend: string): boolean {
   if (construction === ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION) return false;
   if (construction === ATTESTATION_HUB_CONSTRUCTION) return backend === "postgres";
-  return backend === "xdg" || backend === "fs" || backend === "git-object";
+  return backend === "xdg";
 }
 
 describe("the two-dimensional construction x backend coverage matrix", () => {
@@ -78,11 +78,11 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
     }
   });
 
-  test("exactly 13 supported cells: 4 single-project constructions x 3 backends, plus the hub", () => {
+  test("exactly 5 supported cells: 4 single-project SQLite constructions, plus the private hub", () => {
     const cells = supportedConstructionCells();
-    expect(cells.size).toBe(13);
+    expect(cells.size).toBe(5);
     for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-      for (const backend of ["xdg", "fs", "git-object"]) {
+      for (const backend of ["xdg"]) {
         expect(cells.has(`${construction}:${backend}`)).toBe(true);
       }
       expect(cells.has(`${construction}:postgres`)).toBe(false);
@@ -91,7 +91,7 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
       }
     }
     expect(cells.has("postgres-hub:postgres")).toBe(true);
-    for (const backend of ["xdg", "fs", "git-object", "remote", ATTESTATION_IN_MEMORY_BACKEND]) {
+    for (const backend of [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND]) {
       expect(cells.has(`postgres-hub:${backend}`)).toBe(false);
     }
   });
@@ -114,7 +114,6 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
 describe("assertAttestationConstructionSupported", () => {
   test("returns the narrowed backend for a supported cell", () => {
     expect(assertAttestationConstructionSupported("direct", "xdg")).toBe("xdg");
-    expect(assertAttestationConstructionSupported("direct", "git-object")).toBe("git-object");
     expect(assertAttestationConstructionSupported("postgres-hub", "postgres")).toBe("postgres");
   });
 
@@ -134,7 +133,7 @@ describe("assertAttestationConstructionSupported", () => {
   });
 
   test("refuses postgres-hub for every non-postgres backend, by name", () => {
-    for (const backend of ["xdg", "fs", "git-object", "remote", ATTESTATION_IN_MEMORY_BACKEND]) {
+    for (const backend of [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND]) {
       expect(() => assertAttestationConstructionSupported("postgres-hub", backend)).toThrow(
         AttestationConstructionUnsupportedError,
       );
@@ -150,9 +149,8 @@ describe("assertAttestationConstructionSupported", () => {
     ).toThrow(AttestationConstructionUnsupportedError);
   });
 
-  test("supports Git-object and delegates remote to the bare-backend guard", () => {
+  test("delegates remote and the test double to the bare-backend guard", () => {
     for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-      expect(assertAttestationConstructionSupported(construction, "git-object")).toBe("git-object");
       expect(() => assertAttestationConstructionSupported(construction, "remote")).toThrow(
         /ledger-service client/,
       );
@@ -228,11 +226,11 @@ describe("resolveSingleProjectAttestationNamespace", () => {
     const opts = { repoRoot: "/irrelevant", projectId: "same-project-686" };
     const namespaces = await Promise.all(
       SINGLE_PROJECT_CONSTRUCTIONS.map((construction) =>
-        resolveSingleProjectAttestationNamespace({ construction, backend: "fs", ...opts }),
+        resolveSingleProjectAttestationNamespace({ construction, backend: "xdg", ...opts }),
       ),
     );
     for (const namespace of namespaces) {
-      expect(namespace).toEqual({ backend: "fs", projectKey: "same-project-686" });
+      expect(namespace).toEqual({ backend: "xdg", projectKey: "same-project-686" });
     }
   });
 });

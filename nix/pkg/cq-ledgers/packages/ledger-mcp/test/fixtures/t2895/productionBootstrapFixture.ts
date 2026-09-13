@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-  FsAttestationBackend,
+  SqliteAttestationBackend,
+  xdgAttestationDbPath,
   implementReviewerSidecar,
   implementWorkerSidecar,
   sequentialDispatchRandomBytes,
@@ -24,7 +25,6 @@ import {
   createLedgerStore,
   createWorktreeManageCapability,
   derivePredicates,
-  fsAttestationProductionRoot,
   listManagedLiveWorktrees,
   resolveImplementationEvidenceActivationTaskMappings,
   type DispatchCapability,
@@ -472,7 +472,7 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
   const previousStateHome = process.env["XDG_STATE_HOME"];
   const previousHarness = process.env["CQ_HARNESS"];
   let resolved: Awaited<ReturnType<typeof createLedgerStore>> | undefined;
-  let backend: FsAttestationBackend | undefined;
+  let backend: SqliteAttestationBackend | undefined;
   let firstConnection: Awaited<ReturnType<typeof connect>> | undefined;
   let deployedConnection: Awaited<ReturnType<typeof connect>> | undefined;
   try {
@@ -667,13 +667,18 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       "worktree existed before selection",
     );
 
+    invariant(resolved.projectKey !== undefined, "XDG bootstrap project key is missing");
     const namespace: AttestationNamespace = {
-      backend: "fs",
-      projectKey: resolved.projectKey ?? `t2895-${crypto.randomUUID()}`,
+      backend: "xdg",
+      projectKey: resolved.projectKey,
     };
-    backend = new FsAttestationBackend({
+    const attestationDbPath = xdgAttestationDbPath(namespace.projectKey, {
+      XDG_STATE_HOME: stateHome,
+    });
+    await mkdir(path.dirname(attestationDbPath), { recursive: true });
+    backend = new SqliteAttestationBackend({
       namespace,
-      root: fsAttestationProductionRoot(repositoryRoot),
+      dbPath: attestationDbPath,
     });
     const gateRunner = new ObservedGreenGateRunner();
     const dispatchCapability = createDispatchCapability({
@@ -1112,7 +1117,7 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       baselineSourceSelectedOnlyEvidence,
       baselineManagementProfileUsed,
       ledgerBackend: resolved.backend,
-      attestationBackend: "fs",
+      attestationBackend: backend.namespace.backend,
       workerDispatches: workerTaskIds.length,
       workerTaskIdsMatchFreshMapping: workerTaskIds.every((id) => id === evidenceTaskId),
       workerGenerations,

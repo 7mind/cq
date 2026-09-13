@@ -6,20 +6,20 @@
  * ({@link DISPATCH_ATTESTATION_DEFERRED}): the namespaced production adapters,
  * real-backend durability and crash recovery, cross-process concurrent key reuse
  * under a REAL lock, and scheduled sweep wiring. This module is the part all
- * four adapters share; the config-owned backends themselves are
- * {@link ./dispatchAttestationSqlite}, {@link ./dispatchAttestationFs} and
+ * surviving adapters share; the config-owned backends themselves are
+ * {@link ./dispatchAttestationSqlite} and
  * {@link ./dispatchAttestationPostgres}.
  *
  * **Why a unit of work and not three hand-written stores.** {@link AttestationStore}
  * is SYNCHRONOUS by construction: the service reads a row, decides a transition
  * and compare-and-sets it in one straight-line call, and T685's whole guard set
- * depends on that. bun:sqlite and `node:fs` are natively synchronous;
+ * depends on that. bun:sqlite is natively synchronous;
  * PostgreSQL is not. Rather than fork the contract per backend — or, worse, let
  * a Postgres adapter answer a read from a stale cache and lose a write — every
  * adapter runs each service operation as ONE serialized unit of work:
  *
  *  1. take the backend's real, cross-process EXCLUSIVE lock for the namespace
- *     (`BEGIN IMMEDIATE`, an `O_EXCL` lockfile, `pg_advisory_xact_lock`);
+ *     (`BEGIN IMMEDIATE`, `pg_advisory_xact_lock`);
  *  2. load exactly the rows the operation is allowed to see
  *     ({@link AttestationLoadScope}) into a {@link BufferedAttestationStore};
  *  3. run the SYNCHRONOUS service call against that buffer, which journals the
@@ -57,7 +57,7 @@
  * resolve each other's capability hashes.
  *
  * **Not every ledger backend can hold attestations.**
- * {@link ATTESTATION_STORE_BACKENDS} names the three ledger backends that can;
+ * {@link ATTESTATION_STORE_BACKENDS} names the public ledger backend that can;
  * {@link ATTESTATION_EXCLUDED_BACKENDS} names the ones that must fail at
  * REGISTRATION, before a dispatch is ever prepared, rather than half-working.
  */
@@ -143,11 +143,10 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * The ledger backends with a production attestation adapter: the out-of-tree
- * bun:sqlite XDG primary, the cross-process-safe filesystem and Git-object
- * stores, and PostgreSQL.
+ * The public ledger backend with a production attestation adapter: the
+ * out-of-tree bun:sqlite XDG primary. PostgreSQL is a private hub adapter.
  */
-export const ATTESTATION_STORE_BACKENDS = ["xdg", "fs", "git-object"] as const;
+export const ATTESTATION_STORE_BACKENDS = ["xdg"] as const;
 
 export type AttestationStoreBackend = (typeof ATTESTATION_STORE_BACKENDS)[number] | "postgres";
 
@@ -158,14 +157,14 @@ const ATTESTATION_STORE_BACKEND_SET: ReadonlySet<string> = new Set([
 
 /**
  * The ledger backends that deliberately have NO attestation adapter, with the
- * reason each is refused. Both must fail at registration — before a dispatch is
+ * reason each is refused. Each must fail at registration — before a dispatch is
  * prepared — rather than accept a prepare they cannot serve.
  *
  *  - `remote` is a CLIENT of a ledger service, not a store. Its attestations
  *    live in the server's own namespace; a local adapter over it would mint
  *    capabilities bound to rows nobody durably holds.
  */
-export const ATTESTATION_EXCLUDED_BACKENDS = ["remote"] as const;
+export const ATTESTATION_EXCLUDED_BACKENDS = ["remote", "fs", "git-object"] as const;
 
 export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[number];
 
@@ -177,6 +176,8 @@ export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[
  * nothing. (Found by mutation M1 — see the module note on D174.)
  */
 export const ATTESTATION_EXCLUSION_REASONS: ReadonlyMap<string, string> = new Map([
+  ["fs", "retired local storage; use the SQLite/XDG primary"],
+  ["git-object", "retired local storage; use the SQLite/XDG primary"],
   [
     "remote",
     "the remote backend is a ledger-service client, not a store: its attestations belong to the " +
@@ -1695,18 +1696,18 @@ export function attestationStorageKey(handle: DispatchHandle): string {
 export const ATTESTATION_DEFERRAL_DISCHARGE: ReadonlyMap<string, string> = new Map([
   [
     "namespaced-production-attestation-store-adapters",
-    "SqliteAttestationBackend (xdg), FsAttestationBackend (fs), the ledger-owned " +
-      "GitObjectAttestationBackend and PostgresAttestationBackend, each bound to ONE " +
+    "SqliteAttestationBackend (xdg) and the private-hub PostgresAttestationBackend, " +
+      "each bound to ONE " +
       "AttestationNamespace and sharing this module's unit-of-work engine",
   ],
   [
     "real-backend-durability-and-crash-recovery",
-    "persistAttestationRow/rehydrateAttestationRow with a per-row content digest, fsync+rename on " +
-      "the filesystem, WAL on bun:sqlite, and the shared contract's restart-at-every-step cases",
+    "persistAttestationRow/rehydrateAttestationRow with a per-row content digest, " +
+      "WAL on bun:sqlite and PostgreSQL, and the shared contract's restart-at-every-step cases",
   ],
   [
     "cross-process-concurrent-key-reuse-under-a-real-lock",
-    "BEGIN IMMEDIATE on a WAL connection, an O_EXCL lockfile with pid-liveness reclaim, and " +
+    "BEGIN IMMEDIATE on a WAL connection and " +
       "pg_advisory_xact_lock — driven from spawned peer PROCESSES, not an in-process mutex",
   ],
   [

@@ -1181,17 +1181,6 @@ export {
   xdgAttestationDbPath,
   xdgAttestationStateBase,
 } from "./dispatchAttestationSqlite.js";
-export type { FsAttestationBackendOptions } from "./dispatchAttestationFs.js";
-export {
-  ATTESTATION_LOCKS_DIR,
-  ATTESTATION_LOCK_POLL_MS,
-  ATTESTATION_LOCK_TIMEOUT_MS,
-  FsAttestationBackend,
-  asFsBackendError,
-  fsAttestationNamespaceDir,
-  fsAttestationRowFileContent,
-  fsAttestationRowPath,
-} from "./dispatchAttestationFs.js";
 export type {
   ExpectedFailureInventoryEntry,
   ExpectedFailureSource,

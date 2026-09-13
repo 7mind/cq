@@ -8,12 +8,8 @@
  * lock: two `await`-interleaved calls on one handle are the same process and the
  * same lock holder. So this suite spawns real peer PROCESSES, all preparing with
  * the SAME idempotency key against ONE location at the same time, and asserts
- * that exactly one row lands — decided by `BEGIN IMMEDIATE` on a WAL connection
- * or by an `O_EXCL` lockfile, with no in-process coordination available at all.
- *
- * The `remote` and `git-object` backends have no adapter precisely because they
- * cannot offer this ({@link ATTESTATION_EXCLUDED_BACKENDS}); the assertion here
- * is what that exclusion is measured against.
+ * that exactly one row lands — decided by `BEGIN IMMEDIATE` on a WAL connection,
+ * with no in-process coordination available at all.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -22,7 +18,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   ATTESTATION_DB_FILENAME,
-  FsAttestationBackend,
   SqliteAttestationBackend,
   type AttestationBackend,
   type AttestationRow,
@@ -53,11 +48,10 @@ interface WorkerOutcome {
 }
 
 async function racePeers(
-  kind: "sqlite" | "fs",
   location: string,
 ): Promise<readonly WorkerOutcome[]> {
   const children = Array.from({ length: PEERS }, () =>
-    Bun.spawn(["bun", WORKER, kind, location, "raced-project", IDEMPOTENCY_KEY], {
+    Bun.spawn(["bun", WORKER, location, "raced-project", IDEMPOTENCY_KEY], {
       cwd: dirname(dirname(dirname(dirname(WORKER)))),
       stdout: "pipe",
       stderr: "pipe",
@@ -89,8 +83,7 @@ function assertExactlyOneWinner(
   const losers = outcomes.filter((outcome) => !outcome.ok);
 
   // THE invariant, and what a broken lock violates: one winner, one durable row.
-  // Mutating `BEGIN IMMEDIATE` to `BEGIN DEFERRED` or removing the fs lockfile
-  // both produce two winners or a lost update, and both are caught here.
+  // Mutating `BEGIN IMMEDIATE` to `BEGIN DEFERRED` exposes competing writers.
   expect(winners, all).toHaveLength(1);
   expect(losers, all).toHaveLength(PEERS - 1);
   expect(rows, all).toHaveLength(1);
@@ -135,7 +128,7 @@ async function withBackend(
 describe(`${PEERS} peer processes reusing one idempotency key`, () => {
   test("bun:sqlite serializes them with BEGIN IMMEDIATE: exactly one row lands", async () => {
     const dbPath = join(freshRoot("cq-t720-xproc-sqlite-"), ATTESTATION_DB_FILENAME);
-    const outcomes = await racePeers("sqlite", dbPath);
+    const outcomes = await racePeers(dbPath);
     // The observer opens AFTER the race, so it cannot have participated in it.
     const observer = new SqliteAttestationBackend({
       namespace: { backend: "xdg", projectKey: "raced-project" },
@@ -144,13 +137,5 @@ describe(`${PEERS} peer processes reusing one idempotency key`, () => {
     await withBackend(observer, () => Promise.resolve(outcomes));
   }, 60_000);
 
-  test("the filesystem store serializes them with an O_EXCL lockfile: exactly one row lands", async () => {
-    const root = freshRoot("cq-t720-xproc-fs-");
-    const outcomes = await racePeers("fs", root);
-    const observer = new FsAttestationBackend({
-      namespace: { backend: "fs", projectKey: "raced-project" },
-      root,
-    });
-    await withBackend(observer, () => Promise.resolve(outcomes));
-  }, 60_000);
+
 });

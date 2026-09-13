@@ -2,7 +2,7 @@
  * T2042 — Effectual Good-Communication tests for the dispatch attestation,
  * managed-worktree registry, broker, and result-store lock integration.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -12,7 +12,8 @@ import { promisify } from "node:util";
 import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
-  FsAttestationBackend,
+  SqliteAttestationBackend,
+  xdgAttestationDbPath,
   TERMINAL_ENVELOPE_RETENTION_MS,
   codexCompletionActor,
   sequentialDispatchRandomBytes,
@@ -28,7 +29,6 @@ import {
   createDispatchLineageCutoverFence,
   createInMemoryImplementationEvidenceStore,
   createLedgerStore,
-  fsAttestationProductionRoot,
   MILESTONES_AMBIENT_ID,
   prepareManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
@@ -38,6 +38,7 @@ import {
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 import { createImplementationEvidenceFixture } from "../../ledger/test/implementationEvidenceTestSupport.js";
+import { useIsolatedXdgSuite } from "../../cq-config/test/xdgSuiteFixture.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -50,7 +51,7 @@ const D334_GIT_USER_NAME = "CQ D334 fixture";
 const D334_GIT_USER_EMAIL = "d334@example.invalid";
 /** Test-glob path the guarded fixture's change touches, so mutation evidence is mandatory. */
 const GUARDED_FIXTURE_PATH = "pkg/test/guarded-fixture.test.ts";
-const openBackends = new Set<FsAttestationBackend>();
+const openBackends = new Set<SqliteAttestationBackend>();
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -213,11 +214,12 @@ async function durableDispatch(label: string) {
   );
   if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
   const namespace: AttestationNamespace = {
-    backend: "fs",
+    backend: "xdg",
     projectKey: `t2042-peer-${label}`,
   };
-  const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
-  const backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+  const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+  await fs.mkdir(path.dirname(attestationDbPath), { recursive: true });
+  const backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
   const capability = createDispatchCapability({
     backend,
     promptArtifactStore: artifactStore(),
@@ -257,7 +259,7 @@ async function durableDispatch(label: string) {
     stateDir,
     managed,
     namespace,
-    attestationRoot,
+    attestationDbPath,
     baseCommit,
     prepared: prepared.prepared,
   };
@@ -272,7 +274,7 @@ function commitPeerRequest(
     operation: "git-commit",
     repositoryRoot: fixture.repositoryRoot,
     stateDir: fixture.stateDir,
-    attestationRoot: fixture.attestationRoot,
+    attestationDbPath: fixture.attestationDbPath,
     namespace: fixture.namespace,
     input: {
       attestationId: fixture.prepared.attestationId,
@@ -308,10 +310,10 @@ interface GuardedRetryFixture {
     { status: "prepared" }
   >;
   readonly namespace: AttestationNamespace;
-  readonly attestationRoot: string;
+  readonly attestationDbPath: string;
   readonly baseCommit: string;
   readonly capability: DispatchCapabilityInstance;
-  readonly backend: FsAttestationBackend;
+  readonly backend: SqliteAttestationBackend;
   readonly first: AcceptedPrepare;
   readonly firstReceipt: Awaited<ReturnType<NonNullable<DispatchCapabilityInstance["gitCommit"]>>>;
 }
@@ -319,7 +321,7 @@ interface GuardedRetryFixture {
 function openGuardedRetryCapability(
   fixture: Pick<
     GuardedRetryFixture,
-    "repositoryRoot" | "stateDir" | "namespace" | "attestationRoot"
+    "repositoryRoot" | "stateDir" | "namespace" | "attestationDbPath"
   >,
   randomSeed: number,
   recoveryJournal?: CurrentRecoverySealJournalStore,
@@ -327,12 +329,12 @@ function openGuardedRetryCapability(
     typeof createDispatchCapability
   >[0]["materializeGuardedRebaseBridge"],
 ): {
-  readonly backend: FsAttestationBackend;
+  readonly backend: SqliteAttestationBackend;
   readonly capability: DispatchCapabilityInstance;
 } {
-  const backend = new FsAttestationBackend({
+  const backend = new SqliteAttestationBackend({
     namespace: fixture.namespace,
-    root: fixture.attestationRoot,
+    dbPath: fixture.attestationDbPath,
   });
   openBackends.add(backend);
   return {
@@ -360,7 +362,7 @@ function openGuardedRetryCapability(
   };
 }
 
-async function closeGuardedRetryBackend(backend: FsAttestationBackend): Promise<void> {
+async function closeGuardedRetryBackend(backend: SqliteAttestationBackend): Promise<void> {
   await backend.close();
   openBackends.delete(backend);
 }
@@ -420,10 +422,11 @@ async function createGuardedRetryFixture(
   );
   if (managed.status !== "prepared")
     throw new Error(`${label}: unexpected prepare ${managed.status}`);
-  const namespace: AttestationNamespace = { backend: "fs", projectKey: `t2148-${label}` };
-  const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+  const namespace: AttestationNamespace = { backend: "xdg", projectKey: `t2148-${label}` };
+  const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+  await fs.mkdir(path.dirname(attestationDbPath), { recursive: true });
   const opened = openGuardedRetryCapability(
-    { repositoryRoot, stateDir, namespace, attestationRoot },
+    { repositoryRoot, stateDir, namespace, attestationDbPath },
     randomSeed,
   );
   const partial = {
@@ -432,7 +435,7 @@ async function createGuardedRetryFixture(
     stateDir,
     managed,
     namespace,
-    attestationRoot,
+    attestationDbPath,
     baseCommit,
     capability: opened.capability,
     backend: opened.backend,
@@ -690,7 +693,7 @@ async function completeGuardedContinuation(
   return { handle: prepared.handle, resultCommit: currentReceipt.newHead, receipts };
 }
 
-afterAll(async () => {
+useIsolatedXdgSuite(async () => {
   for (const backend of openBackends) await backend.close();
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
 });
@@ -1523,10 +1526,11 @@ describe("dispatch-bound Git change capability", () => {
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     const namespace: AttestationNamespace = {
-      backend: "fs",
+      backend: "xdg",
       projectKey: "t2119-inherited-reload",
     };
-    const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+    const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+    await fs.mkdir(path.dirname(attestationDbPath), { recursive: true });
     const firstChild = { childId: "t2119-child-1", runId: "t2119-run-1" };
     const supervisedWorkerGateRunner = {
       run: async () => ({
@@ -1538,7 +1542,7 @@ describe("dispatch-bound Git change capability", () => {
         outputTail: "1 pass\n0 fail",
       }),
     };
-    let backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    let backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     let capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("codex"),
@@ -1638,7 +1642,7 @@ describe("dispatch-bound Git change capability", () => {
     expect(second.prepared.generation).toBe(first.prepared.generation + 1);
 
     await backend.close();
-    backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("codex"),
@@ -1747,10 +1751,11 @@ describe("dispatch-bound Git change capability", () => {
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     const namespace: AttestationNamespace = {
-      backend: "fs",
+      backend: "xdg",
       projectKey: "t2310-consumed-continuation",
     };
-    const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+    const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+    await fs.mkdir(path.dirname(attestationDbPath), { recursive: true });
     const gateRunner = {
       run: async () => ({
         gateExitCode: 0,
@@ -1761,7 +1766,7 @@ describe("dispatch-bound Git change capability", () => {
         outputTail: "1 pass\n0 fail",
       }),
     };
-    let backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    let backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     let capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("codex"),
@@ -1860,7 +1865,7 @@ describe("dispatch-bound Git change capability", () => {
     // The orchestrator parks the task by retaining its manager handle, while
     // the process-local capability and every cached attestation projection die.
     await backend.close();
-    backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("codex"),
@@ -1926,13 +1931,12 @@ describe("dispatch-bound Git change capability", () => {
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     const namespace: AttestationNamespace = {
-      backend: "fs",
+      backend: "xdg",
       projectKey: "t2312-continuation-replay",
     };
-    const backend = new FsAttestationBackend({
-      namespace,
-      root: fsAttestationProductionRoot(repositoryRoot),
-    });
+    const attestationDbPath = xdgAttestationDbPath(namespace.projectKey);
+    await fs.mkdir(path.dirname(attestationDbPath), { recursive: true });
+    const backend = new SqliteAttestationBackend({ namespace, dbPath: attestationDbPath });
     const capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("codex"),
@@ -2150,7 +2154,7 @@ describe("dispatch-bound Git change capability", () => {
       await fs.writeFile(path.join(fixture.repositoryRoot, ".gitignore"), ".claude/\n.cq/\n");
       await fs.writeFile(
         path.join(fixture.repositoryRoot, "cq.toml"),
-        '[ledger]\nbackend = "fs"\n',
+        `[ledger]\nbackend = "xdg"\nprojectId = "${fixture.namespace.projectKey}"\n`,
       );
       await fs.writeFile(path.join(fixture.repositoryRoot, "main.txt"), "advanced main\n");
       await git(fixture.repositoryRoot, ["add", ".gitignore", "cq.toml", "main.txt"]);
@@ -2683,9 +2687,9 @@ describe("dispatch-bound Git change capability", () => {
     });
 
     test("D446 composes consecutive guarded rebases back to one terminal worker generation [Behavioral-Active Effectual-GoodCommunication]", async () => {
-      const retentionBackend = new FsAttestationBackend({
+      const retentionBackend = new SqliteAttestationBackend({
         namespace: d446Consecutive.namespace,
-        root: d446Consecutive.attestationRoot,
+        dbPath: d446Consecutive.attestationDbPath,
       });
       openBackends.add(retentionBackend);
       expect(
@@ -2809,9 +2813,9 @@ describe("dispatch-bound Git change capability", () => {
     });
 
     test("D447 resolves a guarded rebase from collapsed consumed-worker authority [Behavioral-Active Effectual-GoodCommunication]", async () => {
-      const retentionBackend = new FsAttestationBackend({
+      const retentionBackend = new SqliteAttestationBackend({
         namespace: d447Consumed.namespace,
-        root: d447Consumed.attestationRoot,
+        dbPath: d447Consumed.attestationDbPath,
       });
       openBackends.add(retentionBackend);
       expect(
@@ -3581,7 +3585,7 @@ describe("dispatch-bound Git change capability", () => {
         operation: contender,
         repositoryRoot: fixture.repositoryRoot,
         stateDir: fixture.stateDir,
-        attestationRoot: fixture.attestationRoot,
+        attestationDbPath: fixture.attestationDbPath,
         namespace: fixture.namespace,
         input: peerInput,
         startedFile,

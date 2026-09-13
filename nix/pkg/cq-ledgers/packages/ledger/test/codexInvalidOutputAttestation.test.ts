@@ -157,7 +157,7 @@ describe("D250 invalid Codex final after result storage", () => {
 
     const root = await mkdtemp(path.join(tmpdir(), "cq-t1629-diagnostic-"));
     temporaryDirectories.push(root);
-    await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\nprojectId = "t1629-diagnostic"\n');
     const diagnosticRecord = JSON.stringify({
       lifecycleState: stored.state,
       diagnostic: boundaryError!.diagnostic,
@@ -175,7 +175,11 @@ describe("D250 invalid Codex final after result storage", () => {
         "--cwd",
         root,
       ],
-      { cwd: PACKAGE_ROOT, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+      {
+        cwd: PACKAGE_ROOT,
+        env: { ...process.env, XDG_STATE_HOME: path.join(root, "xdg-state") },
+        stdin: "pipe", stdout: "pipe", stderr: "pipe",
+      },
     );
     log.stdin.write(`${diagnosticRecord}\n`);
     log.stdin.end();
@@ -185,7 +189,7 @@ describe("D250 invalid Codex final after result storage", () => {
     ]);
     expect(logExit, logError).toBe(0);
     const persisted = await readFile(
-      path.join(root, ".cq", "logs", "raw", "t1629-invalid-output.jsonl"),
+      path.join(root, "xdg-state", "cq", "projects", "t1629-diagnostic", "logs", "raw", "t1629-invalid-output.jsonl"),
       "utf8",
     );
     expect(persisted.trim()).toBe(diagnosticRecord);

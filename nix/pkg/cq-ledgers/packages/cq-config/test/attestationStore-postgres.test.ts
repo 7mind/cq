@@ -236,7 +236,7 @@ describe("PostgreSQL attestation backend — offline (no database required)", ()
     // attempted, so these assertions need no reachable server.
     const pool = openAttestationPgPool("postgres://unused@127.0.0.1:1/unused");
     try {
-      for (const backend of ["xdg", "fs", "git-object"] as const) {
+      for (const backend of ["xdg"] as const) {
         await expect(
           PostgresAttestationBackend.open({ namespace: { backend, projectKey: "p" }, pool }),
           backend,
@@ -297,7 +297,7 @@ describe.skipIf(LIVE_SUITE_SKIPPED)(
      * That inverts the contract's central promise (an authorization or lifecycle
      * failure is never degraded into "the store could not be reached") and made a
      * parent unable to tell "retry, the store is down" from "your capability is
-     * not authorized". `SqliteAttestationBackend` and `FsAttestationBackend` never
+     * not authorized". `SqliteAttestationBackend` never
      * had it: they classify at individual query/write sites only.
      *
      * Each case below drives ONE domain error class through a real transaction.
