@@ -198,7 +198,7 @@ describe("LedgerSearchIndex.searchQuery (filter language)", () => {
    *
    * This exercises the EXACT query against a populated index through the SAME
    * path `fts_search` uses (`searchQuery`, which `InMemoryLedgerStore.ftsSearch`
-   * / `FsLedgerStore.ftsSearch` delegate to), with items in BOTH `open` and
+   * / `SqliteLedgerStore.ftsSearch` delegate to), with items in BOTH `open` and
    * `wip` status spread across two ledgers.
    *
    * Observed (2026-06-03, worktree base 5306944): the open+wip items ARE

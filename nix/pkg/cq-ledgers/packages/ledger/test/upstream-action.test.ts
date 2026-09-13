@@ -7,7 +7,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import {
   classifyUpstreamEligibility,
@@ -193,7 +192,7 @@ async function makeStore(kind: "memory" | "fs" | "sqlite"): Promise<LedgerStore>
   const root = await mkdtemp(path.join(tmpdir(), `t808-${kind}-`));
   dirs.push(root);
   if (kind === "fs") {
-    const store = new FsLedgerStore({ root });
+    const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await store.init();
     return store;
   }

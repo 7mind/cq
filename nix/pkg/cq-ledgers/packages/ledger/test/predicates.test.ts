@@ -3,7 +3,7 @@
  * fixes D50).
  *
  * ONE abstract fixture suite runs against BOTH adapters — the production
- * `FsLedgerStore` (against a freshly-created tmp `.cq/` dir per test) AND the
+ * `SqliteLedgerStore` (against a fresh temporary SQLite file per test) AND the
  * `InMemoryLedgerStore` dummy — per the repo's dual-tests pattern. Each fixture
  * seeds its store IDENTICALLY through the public `createMilestone` /
  * `createItem` / `updateItem` surface (so the two adapters are exercised
@@ -26,21 +26,19 @@
  *  (f) all-terminal ledger → all three predicates FALSE.
  */
 
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, afterAll } from "bun:test";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
-  serializeRegistry,
   derivePredicates,
   recordProtectedImplementationCompletion,
   CANONICAL_LEDGERS,
   type ImplementationCompletionRecord,
   type LedgerStore,
   type PredicateVerdict,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 /**
@@ -70,21 +68,14 @@ interface PredicatesStoreFactory {
   teardown(store: LedgerStore): Promise<void>;
 }
 
-const fsDirs: string[] = [];
+const sqliteDirs: string[] = [];
 
-const fsFactory: PredicatesStoreFactory = {
-  name: "FsLedgerStore",
+const sqliteFactory: PredicatesStoreFactory = {
+  name: "SqliteLedgerStore",
   async build(): Promise<LedgerStore> {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-predicates-"));
-    fsDirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: NO_SEED }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    sqliteDirs.push(dir);
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     return store;
   },
@@ -106,7 +97,7 @@ const inMemoryFactory: PredicatesStoreFactory = {
 };
 
 afterAll(async () => {
-  for (const d of fsDirs) {
+  for (const d of sqliteDirs) {
     await rm(d, { recursive: true, force: true }).catch(() => undefined);
   }
 });
@@ -1373,5 +1364,5 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
   });
 }
 
-runPredicatesSuite(fsFactory);
+runPredicatesSuite(sqliteFactory);
 runPredicatesSuite(inMemoryFactory);

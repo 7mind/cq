@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import {
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
-  FsLedgerStore,
+  SqliteLedgerStore,
   GOALS_LEDGER,
   HYPOTHESIS_LEDGER,
   IDEAS_LEDGER,
@@ -46,11 +46,11 @@ const factories: StoreFactory[] = [
     },
   },
   {
-    name: "FsLedgerStore",
+    name: "SqliteLedgerStore",
     async build() {
       const root = await mkdtemp(join(tmpdir(), "ledger-upstream-"));
       roots.push(root);
-      const store = new FsLedgerStore({ root });
+      const store = new SqliteLedgerStore({ dbPath: join(root, "ledger.db") });
       await store.init();
       return store;
     },

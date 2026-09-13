@@ -11,19 +11,17 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   CrossPrefixIdError,
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
-  serializeRegistry,
   UPSTREAM_LEDGER,
   validateSchema,
   type LedgerSchema,
   type LedgerStore,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -42,20 +40,14 @@ const inMem: Factory = {
   },
 };
 
-const fs_: Factory = {
-  name: "FsLedgerStore",
+const sqlite: Factory = {
+  name: "SqliteLedgerStore",
   async build(seed) {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-prefix-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: seed }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
+    for (const entry of seed) await store.createLedger(entry.name, entry.schema);
     return store;
   },
 };
@@ -72,7 +64,7 @@ afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`idPrefix + prefix-uniqueness (${factory.name})`, () => {
     it("default prefix = first uppercase letter of the ledger name", async () => {
       const store = await factory.build([]);

@@ -1,5 +1,5 @@
 /**
- * SqliteLedgerStore T526 acceptance: init/bootstrap parity with FsLedgerStore,
+ * SqliteLedgerStore T526 acceptance: init/bootstrap parity with InMemoryLedgerStore,
  * read-surface deep-equality over an equivalent seeded fixture, WAL
  * cross-connection coherence with NO invalidate, and dispose() releasing the
  * handle. Mutations land in T527, so the sqlite fixture is seeded with raw
@@ -24,7 +24,7 @@ import {
   REVIEWS_SCHEMA,
   TASKS_SCHEMA,
 } from "../src/constants.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
+import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
@@ -63,18 +63,18 @@ function rawInserters(db: ReturnType<typeof openLedgerDb>) {
 }
 
 /**
- * Mirror the fs store's ACTIVE state into the sqlite db as normalized rows —
+ * Mirror the in-memory store's ACTIVE state into the sqlite db as normalized rows —
  * the same rows T527's mutations will produce. Raw group rows carry the
  * empty title/description for non-milestones ledgers (the resolved view in
  * FetchedLedger comes from the milestones ledger at read time).
  */
-function seedDbFromFsStore(dbPath: string, fsStore: FsLedgerStore): void {
+function seedDbFromMemoryStore(dbPath: string, memoryStore: InMemoryLedgerStore): void {
   const db = openLedgerDb(dbPath);
   ensureSchema(db);
   const ins = rawInserters(db);
   db.transaction(() => {
-    for (const name of fsStore.enumerate()) {
-      const view = fsStore.fetch(name);
+    for (const name of memoryStore.enumerate()) {
+      const view = memoryStore.fetch(name);
       ins.ledger.run(name, JSON.stringify(view.schema), view.counters.milestone, view.counters.item);
       const isMilestones = name === MILESTONES_LEDGER;
       for (const group of view.milestones) {
@@ -103,39 +103,39 @@ function seedDbFromFsStore(dbPath: string, fsStore: FsLedgerStore): void {
   db.close();
 }
 
-async function freshFsStore(): Promise<FsLedgerStore> {
-  const store = new FsLedgerStore({ root: await freshDir("ledger-fs-parity-"), now });
+async function freshMemoryStore(): Promise<InMemoryLedgerStore> {
+  const store = new InMemoryLedgerStore({ now });
   await store.init();
   return store;
 }
 
 describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
-  test("fresh init yields exactly the canonical ledgers, bootstrap group, M-AMBIENT — parity with FsLedgerStore", async () => {
-    const fsStore = await freshFsStore();
+  test("fresh init yields exactly the canonical ledgers, bootstrap group, M-AMBIENT — parity with InMemoryLedgerStore", async () => {
+    const memoryStore = await freshMemoryStore();
     const sq = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
     await sq.init();
     try {
       const canonicalNames = CANONICAL_LEDGERS.map((c) => c.name).sort();
       expect(sq.enumerate()).toEqual(canonicalNames);
-      expect(sq.enumerate()).toEqual(fsStore.enumerate());
+      expect(sq.enumerate()).toEqual(memoryStore.enumerate());
 
       for (const name of canonicalNames) {
-        expect(sq.fetch(name)).toEqual(fsStore.fetch(name));
+        expect(sq.fetch(name)).toEqual(memoryStore.fetch(name));
       }
 
       // Bootstrap active group + immortal M-AMBIENT.
       const milestones = sq.fetch(MILESTONES_LEDGER);
       expect(milestones.milestones.map((g) => g.id)).toEqual(["active"]);
       expect(sq.fetchItem(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID)).toEqual(
-        fsStore.fetchItem(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID),
+        memoryStore.fetchItem(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID),
       );
       expect(sq.fetchMilestone(MILESTONES_AMBIENT_ID)).toEqual(
-        fsStore.fetchMilestone(MILESTONES_AMBIENT_ID),
+        memoryStore.fetchMilestone(MILESTONES_AMBIENT_ID),
       );
-      expect(sq.snapshot()).toEqual(fsStore.snapshot());
+      expect(sq.snapshot()).toEqual(memoryStore.snapshot());
     } finally {
       await sq.dispose();
-      await fsStore.dispose();
+      await memoryStore.dispose();
     }
   });
 
@@ -252,46 +252,46 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
 });
 
 describe("SqliteLedgerStore read parity over an equivalent seeded fixture (acceptance b)", () => {
-  async function buildFixture(): Promise<{ fsStore: FsLedgerStore; sq: SqliteLedgerStore }> {
-    const fsStore = await freshFsStore();
-    await fsStore.createMilestone({
+  async function buildFixture(): Promise<{ memoryStore: InMemoryLedgerStore; sq: SqliteLedgerStore }> {
+    const memoryStore = await freshMemoryStore();
+    await memoryStore.createMilestone({
       title: "read-parity fixture",
       description: "seeded via fs mutations, mirrored to sqlite rows",
       dependsOn: ["M-AMBIENT"],
     });
-    await fsStore.createItem("tasks", "M1", {
+    await memoryStore.createItem("tasks", "M1", {
       status: "planned",
       fields: { headline: "task one", tags: ["alpha", "beta"] },
       author: "fable",
       session: "s-fixture",
     });
-    await fsStore.createItem("tasks", "M1", {
+    await memoryStore.createItem("tasks", "M1", {
       status: "planned",
       fields: { headline: "task two", description: "second task" },
     });
-    await fsStore.createItem("defects", "M1", {
+    await memoryStore.createItem("defects", "M1", {
       status: "open",
       fields: { headline: "defect one", severity: "low" },
     });
-    await fsStore.updateItem("tasks", "T1", { status: "wip", author: "fable" });
-    await fsStore.createItem("questions", MILESTONES_AMBIENT_ID, {
+    await memoryStore.updateItem("tasks", "T1", { status: "wip", author: "fable" });
+    await memoryStore.createItem("questions", MILESTONES_AMBIENT_ID, {
       status: "open",
       fields: { question: "ambient question?" },
     });
 
     const dbPath = await freshDbPath();
-    seedDbFromFsStore(dbPath, fsStore);
+    seedDbFromMemoryStore(dbPath, memoryStore);
     const sq = new SqliteLedgerStore({ dbPath, now });
     await sq.init();
-    return { fsStore, sq };
+    return { memoryStore, sq };
   }
 
-  test("fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/search are deep-equal to FsLedgerStore", async () => {
-    const { fsStore, sq } = await buildFixture();
+  test("fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/search are deep-equal to InMemoryLedgerStore", async () => {
+    const { memoryStore, sq } = await buildFixture();
     try {
-      expect(sq.enumerate()).toEqual(fsStore.enumerate());
-      for (const name of fsStore.enumerate()) {
-        expect(sq.fetch(name)).toEqual(fsStore.fetch(name));
+      expect(sq.enumerate()).toEqual(memoryStore.enumerate());
+      for (const name of memoryStore.enumerate()) {
+        expect(sq.fetch(name)).toEqual(memoryStore.fetch(name));
       }
       for (const [ledger, id] of [
         ["tasks", "T1"],
@@ -301,27 +301,27 @@ describe("SqliteLedgerStore read parity over an equivalent seeded fixture (accep
         [MILESTONES_LEDGER, "M1"],
         [MILESTONES_LEDGER, MILESTONES_AMBIENT_ID],
       ] as Array<[string, string]>) {
-        expect(sq.fetchItem(ledger, id)).toEqual(fsStore.fetchItem(ledger, id));
+        expect(sq.fetchItem(ledger, id)).toEqual(memoryStore.fetchItem(ledger, id));
       }
-      expect(sq.fetchMilestone("M1")).toEqual(fsStore.fetchMilestone("M1"));
+      expect(sq.fetchMilestone("M1")).toEqual(memoryStore.fetchMilestone("M1"));
       expect(sq.fetchMilestone(MILESTONES_AMBIENT_ID)).toEqual(
-        fsStore.fetchMilestone(MILESTONES_AMBIENT_ID),
+        memoryStore.fetchMilestone(MILESTONES_AMBIENT_ID),
       );
-      expect(sq.listMilestoneItems("M1")).toEqual(fsStore.listMilestoneItems("M1"));
+      expect(sq.listMilestoneItems("M1")).toEqual(memoryStore.listMilestoneItems("M1"));
       expect(sq.listMilestoneItems(MILESTONES_AMBIENT_ID)).toEqual(
-        fsStore.listMilestoneItems(MILESTONES_AMBIENT_ID),
+        memoryStore.listMilestoneItems(MILESTONES_AMBIENT_ID),
       );
-      expect(sq.snapshot()).toEqual(fsStore.snapshot());
-      expect(sq.search("tasks", "task")).toEqual(fsStore.search("tasks", "task"));
-      expect(sq.search("tasks", "wip")).toEqual(fsStore.search("tasks", "wip"));
+      expect(sq.snapshot()).toEqual(memoryStore.snapshot());
+      expect(sq.search("tasks", "task")).toEqual(memoryStore.search("tasks", "task"));
+      expect(sq.search("tasks", "wip")).toEqual(memoryStore.search("tasks", "wip"));
     } finally {
       await sq.dispose();
-      await fsStore.dispose();
+      await memoryStore.dispose();
     }
   });
 
   test("not-found errors match the fs semantics", async () => {
-    const { fsStore, sq } = await buildFixture();
+    const { memoryStore, sq } = await buildFixture();
     try {
       expect(() => sq.fetchItem("tasks", "T999")).toThrow(ItemNotFoundError);
       expect(() => sq.fetchItem("nope", "T1")).toThrow(LedgerNotFoundError);
@@ -329,7 +329,7 @@ describe("SqliteLedgerStore read parity over an equivalent seeded fixture (accep
       expect(() => sq.fetchMilestone("M999")).toThrow("milestone M999 not found");
     } finally {
       await sq.dispose();
-      await fsStore.dispose();
+      await memoryStore.dispose();
     }
   });
 });

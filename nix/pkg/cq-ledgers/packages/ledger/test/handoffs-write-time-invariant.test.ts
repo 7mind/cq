@@ -10,7 +10,7 @@
  * every assertion against BOTH adapters per the package's DUAL-TESTS pattern:
  *
  *   - InMemoryLedgerStore (the in-memory dummy), and
- *   - FsLedgerStore over a TEMP dir (mkdtemp) — never the repo's live .cq/.
+ *   - SqliteLedgerStore over a TEMP dir (mkdtemp) — never the repo's live .cq/.
  *
  * The handoffs ledger is bootstrapped canonically on init() for both adapters;
  * each fixture seeds one active milestone and then writes handoffs items under
@@ -28,7 +28,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
   HANDOFFS_LEDGER,
   SchemaValidationError,
@@ -36,7 +36,7 @@ import {
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
-// Cleanup of Fs temp roots
+// Cleanup of SQLite temp roots
 // ---------------------------------------------------------------------------
 
 const dirs: string[] = [];
@@ -63,10 +63,10 @@ async function buildInMemory(): Promise<Fixture> {
   return { store, milestoneId: milestone.id };
 }
 
-async function buildFs(): Promise<Fixture> {
+async function buildSqlite(): Promise<Fixture> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-ho-write-time-"));
   dirs.push(root);
-  const store = new FsLedgerStore({ root });
+  const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
   await store.init();
   const milestone = await store.createMilestone({ title: "handoffs write-time invariant" });
   return { store, milestoneId: milestone.id };
@@ -74,7 +74,7 @@ async function buildFs(): Promise<Fixture> {
 
 const ADAPTERS: ReadonlyArray<{ name: string; build: () => Promise<Fixture> }> = [
   { name: "InMemoryLedgerStore", build: buildInMemory },
-  { name: "FsLedgerStore (temp dir)", build: buildFs },
+  { name: "SqliteLedgerStore (temp dir)", build: buildSqlite },
 ];
 
 // ---------------------------------------------------------------------------

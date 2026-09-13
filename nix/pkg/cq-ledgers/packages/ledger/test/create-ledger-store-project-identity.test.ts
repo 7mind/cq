@@ -15,8 +15,6 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
-  FsLedgerStore,
-  GitObjectLedgerBackend,
   PostgresLedgerStore,
   RemoteLedgerClientNotWiredError,
   resolveDisplayName,
@@ -256,7 +254,7 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
     }
   });
 
-  it("never writes XDG identity metadata for fs, git-object, remote, or offline Postgres", async () => {
+  it("never writes XDG identity metadata for remote or offline Postgres", async () => {
     const upsertSpy = spyOn(
       SqliteXdgProjectIdentityAccess.prototype,
       "upsertProjectIdentity",
@@ -264,18 +262,6 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
     const savedPgEnv = new Map(PG_ENV_VARS.map((name) => [name, process.env[name]]));
     try {
-      const fsRepo = await gitRepo();
-      await writeCqToml(fsRepo, '[ledger]\nbackend = "fs"\n');
-      const fsResolved = await createLedgerStore(fsRepo);
-      expect(fsResolved.store).toBeInstanceOf(FsLedgerStore);
-      await fsResolved.store.dispose();
-
-      const gitObjectRepo = await gitRepo();
-      await writeCqToml(gitObjectRepo, '[ledger]\nbackend = "git-object"\n');
-      const gitResolved = await createLedgerStore(gitObjectRepo);
-      expect(gitResolved.store).toBeInstanceOf(GitObjectLedgerBackend);
-      await gitResolved.store.dispose();
-
       const remoteRoot = await plainDir("cls-identity-remote-");
       await writeCqToml(
         remoteRoot,

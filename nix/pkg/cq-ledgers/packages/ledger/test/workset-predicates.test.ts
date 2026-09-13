@@ -6,16 +6,15 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   DEFECTS_LEDGER,
-  FsLedgerStore,
+  SqliteLedgerStore,
   GOALS_LEDGER,
   IDEAS_LEDGER,
   InMemoryLedgerStore,
-  LEDGER_STORAGE_DIRNAME,
   MILESTONES_AMBIENT_ID,
   PLAN_REVIEW_DRAFT_FIELD,
   QUESTIONS_LEDGER,
@@ -27,7 +26,6 @@ import {
   derivePredicates,
   deriveWorksetPredicates,
   requireWorksetStore,
-  serializeRegistry,
   type LedgerStore,
   type PlanClaimAcknowledgement,
   type PlanPublishedManifest,
@@ -133,20 +131,13 @@ const inMemoryFactory: FixtureFactory = {
   },
 };
 
-const fsFactory: FixtureFactory = {
-  name: "FsLedgerStore",
+const sqliteFactory: FixtureFactory = {
+  name: "SqliteLedgerStore",
   classification: "Blackbox-GoodCommunication",
   async build() {
     const root = await mkdtemp(path.join(tmpdir(), "workset-predicates-"));
     roots.push(root);
-    const ledgerDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(ledgerDir, { recursive: true });
-    await writeFile(
-      path.join(ledgerDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: [] }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root });
+    const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await store.init();
     return { store, guarded: bindGuarded(store) };
   },
@@ -410,4 +401,4 @@ function runContract(factory: FixtureFactory): void {
 }
 
 runContract(inMemoryFactory);
-runContract(fsFactory);
+runContract(sqliteFactory);

@@ -15,7 +15,7 @@
  * break none of the real flow write orders (plan-flow persists dependency
  * targets before dependents; investigate/seed writes advisory back-links).
  *
- * Dual-adapter: every store-level scenario runs against the fs, sqlite, AND
+ * Dual-adapter: every store-level scenario runs against the sqlite AND
  * in-memory backends (the shared core.ts guards must behave identically). The
  * tolerance-policy edge (a pre-existing UNRESOLVABLE ref surviving verbatim)
  * is additionally pinned at the pure-core layer, where such state can be
@@ -35,11 +35,13 @@ import {
 } from "../src/types.js";
 import { MILESTONES_AMBIENT_ID, TASKS_SCHEMA } from "../src/constants.js";
 import type { LedgerStore } from "../src/store/LedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { applyUpdateItem, type RefValidationContext } from "../src/store/core.js";
 import { buildPrefixRegistry } from "../src/refs.js";
+import { createDirectSearchProjection } from "../src/search/DirectSearchProjection.js";
+
+const PROJECTION_DEADLINE_MS = 1_000;
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 const now = (): string => FIXED_NOW;
@@ -62,14 +64,6 @@ interface Adapter {
 }
 
 const ADAPTERS: Adapter[] = [
-  {
-    name: "fs",
-    make: async () => {
-      const store = new FsLedgerStore({ root: await freshDir("t551-fs-"), now });
-      await store.init();
-      return { store, dispose: () => store.dispose() };
-    },
-  },
   {
     name: "sqlite",
     make: async () => {
@@ -198,15 +192,14 @@ describe("T551 canonicalization of resolvable refs", () => {
   );
 
   /**
-   * D99 — fs/git write gate must not depend on the fail-soft archived FTS
+   * D99 — the write gate must not depend on the fail-soft archived FTS
    * bucket alone. Under-report the index after a successful archive; a ref to
-   * the still-on-disk archived target must succeed (or surface a non-dangling
+   * the persisted archived target must succeed (or surface a non-dangling
    * refresh fault), never a false DanglingRefError.
    */
   test("under-reported archived FTS still accepts a legitimate archived target (D99)", async () => {
-    // fs-only: AbstractLedgerStore is the backend that consulted FTS for
-    // archived existence. sqlite/in-memory keep their own archive maps.
-    const store = new FsLedgerStore({ root: await freshDir("t2003-d99-"), now });
+    const projection = createDirectSearchProjection(PROJECTION_DEADLINE_MS);
+    const store = new SqliteLedgerStore({ dbPath: path.join(await freshDir("t2003-d99-"), "ledger.db"), now, searchProjectionFactory: () => projection });
     await store.init();
     try {
       const m = await store.createMilestone({ title: "m" });
@@ -217,12 +210,11 @@ describe("T551 canonicalization of resolvable refs", () => {
       await store.updateItem("tasks", t.id, { status: "done" });
       await store.updateMilestone(m.id, { status: "done" });
       await store.archiveMilestone(m.id, "done");
-      // Under-report: wipe the archived FTS bucket while the archive file remains.
-      const internals = store as unknown as {
-        searchIndex: { setLedgerArchived: (ledgerId: string, items: Item[]) => void };
-      };
-      internals.searchIndex.setLedgerArchived("tasks", []);
-      internals.searchIndex.setLedgerArchived("milestones", []);
+      await projection.execute({ kind: "delta", changes: [
+        { kind: "remove", ledgerId: "tasks", itemId: t.id, archived: true },
+        { kind: "remove", ledgerId: "milestones", itemId: m.id, archived: true },
+      ] });
+      expect(await store.ftsSearch("target", { includeArchived: true })).toEqual([]);
       const dep = await makeTask(store, { dependsOn: [`tasks:${t.id}`] });
       expect(dep.fields["dependsOn"]).toEqual([`tasks:${t.id}`]);
     } finally {

@@ -1,16 +1,13 @@
 /**
  * T497/T531 — multi-writer concurrency contract, LIVE against SqliteLedgerStore.
  *
- * The contract lives on the seam types (src/store/LedgerPersistence.ts,
- * "Multi-writer concurrency contract"; src/store/LedgerStore.ts,
- * "Cross-process concurrency"). The store-factory-parameterized stress
+ * The contract lives on src/store/LedgerStore.ts ("Cross-process concurrency"). The store-factory-parameterized stress
  * harness lives in multiWriterStressHarness.ts.
  *
  * T531 flips this from `test.todo` to a live run: `SqliteLedgerStore` (K102
  * bun:sqlite, WAL + busy_timeout, T525-T528) is the first store conforming to
  * the T497 multi-writer contract, wired here via `sqliteWriterStore.ts`
- * ({@link WriterStoreModule}). `FsLedgerStore` still gives no cross-process
- * no-lost-update guarantee, so it stays unwired.
+ * ({@link WriterStoreModule}).
  */
 
 import { describe, test } from "bun:test";

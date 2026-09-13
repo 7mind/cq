@@ -7,23 +7,21 @@
  * StatusChangePrecondition hook, mirroring assertGoalPhasePreconditions) so NO
  * client can bypass it.
  *
- * Runs the same assertions against BOTH adapters (FsLedgerStore over a tmp dir,
+ * Runs the same assertions against BOTH adapters (SqliteLedgerStore over a tmp dir,
  * InMemoryLedgerStore dummy) via a per-test factory mirroring
  * goal-preconditions.test.ts (dual-tests).
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
-  serializeRegistry,
   QUESTIONS_LEDGER,
   SchemaValidationError,
   type LedgerStore,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 interface StoreFactory {
@@ -34,19 +32,12 @@ interface StoreFactory {
 
 const dirs: string[] = [];
 
-const fsFactory: StoreFactory = {
-  name: "FsLedgerStore",
+const sqliteFactory: StoreFactory = {
+  name: "SqliteLedgerStore",
   async build() {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-q-answer-precond-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: [] }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     return store;
   },
@@ -79,7 +70,7 @@ async function seedOpenQuestion(
   return q.id;
 }
 
-for (const factory of [fsFactory, inMemFactory]) {
+for (const factory of [sqliteFactory, inMemFactory]) {
   describe(`question answer precondition (${factory.name})`, () => {
     it("1. rejects answered with an empty-string answer in the patch", async () => {
       const store = await factory.build();

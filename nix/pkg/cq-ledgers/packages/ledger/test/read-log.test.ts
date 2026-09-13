@@ -1,15 +1,15 @@
 /**
  * read_log tests (T147 / Q87 / D26).
  *
- * Exercises the FS-store-backed `read_log` capability via the SDK tool factory:
- *  - happy path: reads a file under <root>/.cq/logs/
+ * Exercises the SQLite-backed `read_log` capability via the SDK tool factory:
+ *  - happy path: reads a file under <root>/logs/
  *  - rejects `..` traversal escaping .cq/logs/
  *  - rejects absolute paths resolving outside .cq/logs/
  *  - truncates an oversized file and sets `truncated: true`
  *  - rejects a symlink inside .cq/logs/ whose target escapes the root (D26)
  *  - surfaces ENOENT for a genuinely missing file (not masked as escape) (D26)
  *
- * The confinement root is the EXPLICIT FsLedgerStore root, not the generic
+ * The confinement root is the EXPLICIT SqliteLedgerStore logsDir, not the generic
  * LedgerStore interface (R137 #6); the in-memory not-implemented behaviour is
  * asserted in mcp-tools.test.ts.
  */
@@ -20,25 +20,26 @@ import { promises as fsPromises } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   createLedgerMcpTools,
   MAX_READ_LOG_BYTES,
   type ReadLogResult,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
+const stores: SqliteLedgerStore[] = [];
 
 afterAll(async () => {
+  await Promise.all(stores.map((store) => store.dispose()));
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-async function buildFsStore(): Promise<{ store: FsLedgerStore; root: string }> {
+async function buildSqliteStore(): Promise<{ store: SqliteLedgerStore; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-readlog-"));
   dirs.push(root);
-  await mkdir(path.join(root, LEDGER_STORAGE_DIRNAME), { recursive: true });
-  const store = new FsLedgerStore({ root });
+  const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), logsDir: path.join(root, "logs") });
   await store.init();
+    stores.push(store);
   return { store, root };
 }
 
@@ -62,10 +63,10 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
   return JSON.parse(first.text) as T;
 }
 
-describe("read_log (FS-backed)", () => {
-  it("returns the content of a file under <root>/.cq/logs/", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+describe("read_log (SQLite-backed)", () => {
+  it("returns the content of a file under <root>/logs/", async () => {
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     await writeFile(path.join(logsDir, "session.md"), "hello log\n", "utf8");
 
@@ -79,15 +80,15 @@ describe("read_log (FS-backed)", () => {
   });
 
   it("accepts a repo-relative .cq/logs/ path without doubling the prefix", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     await writeFile(path.join(logsDir, "session.md"), "hello log\n", "utf8");
 
     const tools = createLedgerMcpTools(store, (p) => store.readLog(p));
     // sessionLogs stores REPO-relative paths (".cq/logs/<file>"). read_log
     // resolves against logsDir, so it must strip a leading .cq/logs/ instead of
-    // doubling it into <root>/.cq/logs/.cq/logs/<file> (ENOENT).
+    // doubling it into <root>/logs/.cq/logs/<file> (ENOENT).
     const res = decode<ReadLogResult>(
       await callTool(tools, "read_log", { path: ".cq/logs/session.md" }),
     );
@@ -95,10 +96,10 @@ describe("read_log (FS-backed)", () => {
   });
 
   it("rejects `..` traversal escaping .cq/logs/", async () => {
-    const { store, root } = await buildFsStore();
-    // A secret file directly under .cq/ (one level above .cq/logs/).
-    await writeFile(path.join(root, LEDGER_STORAGE_DIRNAME, "secret.md"), "TOP SECRET", "utf8");
-    await mkdir(path.join(root, LEDGER_STORAGE_DIRNAME, "logs"), { recursive: true });
+    const { store, root } = await buildSqliteStore();
+    // A secret file directly under the fixture root, outside logs/.
+    await writeFile(path.join(root, "secret.md"), "TOP SECRET", "utf8");
+    await mkdir(path.join(root, "logs"), { recursive: true });
 
     const tools = createLedgerMcpTools(store, (p) => store.readLog(p));
     await expect(
@@ -107,7 +108,7 @@ describe("read_log (FS-backed)", () => {
   });
 
   it("rejects an absolute path resolving outside .cq/logs/", async () => {
-    const { store } = await buildFsStore();
+    const { store } = await buildSqliteStore();
     const tools = createLedgerMcpTools(store, (p) => store.readLog(p));
     await expect(
       callTool(tools, "read_log", { path: "/etc/passwd" }),
@@ -115,8 +116,8 @@ describe("read_log (FS-backed)", () => {
   });
 
   it("truncates an oversized file and sets truncated:true", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     const big = "x".repeat(MAX_READ_LOG_BYTES + 1024);
     await writeFile(path.join(logsDir, "big.log"), big, "utf8");
@@ -131,8 +132,8 @@ describe("read_log (FS-backed)", () => {
 
   // D26 regression: symlink escape via realpath
   it("rejects a symlink inside .cq/logs/ whose target escapes the root (D26)", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     // Write a "secret" file outside the confinement root (one level above root).
     const outsideFile = path.join(root, "..", "outside-secret.txt");
@@ -147,8 +148,8 @@ describe("read_log (FS-backed)", () => {
 
   // D26 regression: a genuinely missing file must NOT be masked as an escape
   it("surfaces ENOENT for a genuinely missing file (not masked as escape)", async () => {
-    const { store, root } = await buildFsStore();
-    await mkdir(path.join(root, LEDGER_STORAGE_DIRNAME, "logs"), { recursive: true });
+    const { store, root } = await buildSqliteStore();
+    await mkdir(path.join(root, "logs"), { recursive: true });
 
     let threw = false;
     try {
@@ -181,8 +182,8 @@ describe("read_log (FS-backed)", () => {
   // The spy only triggers on the first realpath call (the `resolved` path) so
   // that the second call (`this.logsDir`) is not affected.
   it("reads the canonical (realpath'd) target of an in-root symlink under a post-check swap (D28 TOCTOU)", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
 
     // Two distinct target files with different content.
@@ -242,11 +243,12 @@ describe("read_log (FS-backed)", () => {
     dirs.push(symlinkRoot);
 
     // Build the store rooted through the SYMLINK path, not the real path.
-    const store = new FsLedgerStore({ root: symlinkRoot });
+    const store = new SqliteLedgerStore({ dbPath: path.join(symlinkRoot, "ledger.db"), logsDir: path.join(symlinkRoot, "logs") });
     await store.init();
+    stores.push(store);
 
     // Write a legitimate log file under .cq/logs/ (inside the real root).
-    const logsDir = path.join(realRoot, LEDGER_STORAGE_DIRNAME, "logs");
+    const logsDir = path.join(realRoot, "logs");
     await mkdir(logsDir, { recursive: true });
     await writeFile(path.join(logsDir, "legit.log"), "legitimate content", "utf8");
 
@@ -263,10 +265,10 @@ describe("read_log (FS-backed)", () => {
 // `.cq/logs/`; a legacy `docs/logs/<file>` request must NO LONGER be silently
 // stripped/accepted — its `docs/logs/` segment is now a literal path component
 // under the logs root, so the file does not exist there.
-describe("read_log (FS-backed) — .cq/logs prefix (T444/G58)", () => {
-  it("resolves a sessionLogs-style .cq/logs/<file> path to the file under <root>/.cq/logs/", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+describe("read_log (SQLite-backed) — .cq/logs prefix (T444/G58)", () => {
+  it("resolves a sessionLogs-style .cq/logs/<file> path to the file under <root>/logs/", async () => {
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     await writeFile(path.join(logsDir, "20260101-1200-session.md"), "session body\n", "utf8");
 
@@ -276,12 +278,12 @@ describe("read_log (FS-backed) — .cq/logs prefix (T444/G58)", () => {
   });
 
   it("does NOT silently strip/accept a legacy docs/logs/<file> path", async () => {
-    const { store, root } = await buildFsStore();
-    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    const { store, root } = await buildSqliteStore();
+    const logsDir = path.join(root, "logs");
     await mkdir(logsDir, { recursive: true });
     // File lives under .cq/logs/. A `docs/logs/<file>` request must NOT resolve
     // it: `docs/logs/` is no longer a strippable prefix, so the path resolves to
-    // <root>/.cq/logs/docs/logs/session.md, which does not exist (ENOENT).
+    // <root>/logs/docs/logs/session.md, which does not exist (ENOENT).
     await writeFile(path.join(logsDir, "session.md"), "body\n", "utf8");
 
     await expect(store.readLog("docs/logs/session.md")).rejects.toThrow();

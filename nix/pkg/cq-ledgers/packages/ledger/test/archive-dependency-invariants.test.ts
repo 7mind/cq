@@ -8,7 +8,7 @@
  * `satisfiesDependencyStatuses` (e.g. an `upstream` item in `wontfix`) must
  * keep gating — the dependency must never become "satisfied" merely because
  * the target left the active store. Today the gate is lost along THREE
- * unguarded orderings (reproduced below on fs, sqlite, AND in-memory):
+ * unguarded orderings (reproduced below on sqlite AND in-memory):
  *
  *  A. archive-before-dependent-still-active: `archiveMilestone` only checks
  *     that the milestone's OWN items are terminal (applyDetachMilestoneGroup/
@@ -76,7 +76,6 @@ import {
   UPSTREAM_LEDGER,
 } from "../src/constants.js";
 import type { LedgerStore } from "../src/store/LedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { taskDependenciesSatisfied } from "../src/store/predicates.js";
@@ -99,14 +98,6 @@ interface Adapter {
 }
 
 const ADAPTERS: Adapter[] = [
-  {
-    name: "fs",
-    make: async () => {
-      const store = new FsLedgerStore({ root: await freshDir("t825-fs-") });
-      await store.init();
-      return { store, dispose: () => store.dispose() };
-    },
-  },
   {
     name: "sqlite",
     make: async () => {

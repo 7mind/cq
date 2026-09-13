@@ -1,9 +1,9 @@
 /**
  * F1 — declarative status-transition guard.
  *
- * Runs the same assertions against BOTH adapters (FsLedgerStore over a tmp
+ * Runs the same assertions against BOTH adapters (SqliteLedgerStore over a tmp
  * dir, InMemoryLedgerStore dummy) via a small per-test factory mirroring the
- * pattern in store-fs.test.ts / store-inmemory.test.ts.
+ * pattern in the shared durable/in-memory contracts.
  *
  * The `goals` ledger is a canonical, bootstrapped ledger; its schema carries
  * a `transitions` map (clarifying → planning → planned → building → done,
@@ -13,13 +13,12 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
-  serializeRegistry,
   validateSchema,
   GOALS_LEDGER,
   DEFECTS_LEDGER,
@@ -33,7 +32,6 @@ import {
   REVIEWS_SCHEMA,
   type LedgerSchema,
   type LedgerStore,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 interface StoreFactory {
@@ -44,20 +42,14 @@ interface StoreFactory {
 
 const dirs: string[] = [];
 
-const fsFactory: StoreFactory = {
-  name: "FsLedgerStore",
+const sqliteFactory: StoreFactory = {
+  name: "SqliteLedgerStore",
   async build(seed) {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-transitions-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: seed }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
+    for (const entry of seed) await store.createLedger(entry.name, entry.schema);
     return store;
   },
   async teardown(store) {
@@ -105,7 +97,7 @@ async function seedGoal(store: LedgerStore): Promise<string> {
   return goal.id;
 }
 
-for (const factory of [fsFactory, inMemFactory]) {
+for (const factory of [sqliteFactory, inMemFactory]) {
   describe(`status-transition guard (${factory.name})`, () => {
     it("1. illegal transition throws a typed transition error", async () => {
       const store = await factory.build([]);
@@ -273,30 +265,23 @@ for (const factory of [fsFactory, inMemFactory]) {
 }
 
 // Round-trip persistence: the canonical `transitions` map must survive a
-// serialize → parse cycle, so a RESTARTED FsLedgerStore (a) does not detect
+// serialize → parse cycle, so a RESTARTED SqliteLedgerStore (a) does not detect
 // false schema divergence against its bootstrap schema, and (b) still
 // enforces the guard read back from disk.
-describe("transitions survive a ledgers.yaml round-trip (FsLedgerStore restart)", () => {
+describe("transitions survive a SQLite schema round-trip (SqliteLedgerStore restart)", () => {
   it("restart neither diverges nor drops the guard", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-transitions-rt-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: [] }),
-      "utf8",
-    );
 
     // First boot writes the canonical schemas (with transitions) to disk.
-    const first = new FsLedgerStore({ root: dir });
+    const first = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await first.init();
     const id = await seedGoal(first);
     await first.dispose();
 
     // Restart: must read the persisted transitions back without a
     // BootstrapViolationError (proves serialize+parse preserved the map).
-    const second = new FsLedgerStore({ root: dir });
+    const second = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await second.init();
     try {
       // Guard still enforced from the round-tripped schema.

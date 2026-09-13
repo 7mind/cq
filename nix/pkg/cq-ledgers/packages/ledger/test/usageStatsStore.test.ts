@@ -1,7 +1,7 @@
 /**
  * T1509 conformance: per-project MCP usage counters on LedgerStore across all
- * four implementers — SQLite durability across reopen, in-memory parity,
- * AbstractLedgerStore/FsLedgerStore process-local accumulation, PostgreSQL
+ * surviving implementers — SQLite durability across reopen, in-memory parity,
+ * PostgreSQL
  * tenant isolation (live), and the v2→v3 schema bump staying openable.
  */
 
@@ -10,21 +10,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
   InMemoryLedgerStore,
   SqliteLedgerStore,
   type LedgerStore,
 } from "../src/index.js";
-import type { AbstractLedgerStore } from "../src/store/AbstractLedgerStore.js";
-import type { LedgerPersistence } from "../src/store/LedgerPersistence.js";
-
-// T1509 type-level assignability: all four implementer classes remain
-// assignable to LedgerStore after the new methods.
-type _AssertAbstractImplements =
-  AbstractLedgerStore<LedgerPersistence> extends LedgerStore ? true : false;
-const _abstractImplements: _AssertAbstractImplements = true;
-void _abstractImplements;
+type AssertSqliteImplements = SqliteLedgerStore extends LedgerStore ? true : false;
+const sqliteImplements: AssertSqliteImplements = true;
+void sqliteImplements;
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { SCHEMA_VERSION } from "../src/store/sqlite/schema.js";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -76,14 +70,6 @@ describe("MCP usage counters on LedgerStore (T1509)", () => {
     await store.dispose();
   });
 
-  it("AbstractLedgerStore/FsLedgerStore accumulate process-locally with the same shape", async () => {
-    const dir = await freshDir();
-    const store = new FsLedgerStore({ root: dir });
-    await store.init();
-    await recordTwoCalls(store);
-    expect(await store.fetchMcpUsageStats()).toEqual(EXPECTED_AFTER_TWO_CALLS);
-    await store.dispose();
-  });
 
   it("an existing store stays openable through the v2→v3 schema bump (DDL only)", async () => {
     const dir = await freshDir();
@@ -112,7 +98,7 @@ describe("MCP usage counters on LedgerStore (T1509)", () => {
       const row = meta.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
         value: number;
       };
-      expect(Number(row.value)).toBe(5);
+      expect(Number(row.value)).toBe(SCHEMA_VERSION);
     } finally {
       meta.close();
     }

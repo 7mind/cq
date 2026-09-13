@@ -4,10 +4,8 @@
  * Acceptance coverage:
  *   1. LEDGER_LOGS_RELATIVE_PREFIX === `${LEDGER_STORAGE_DIRNAME}/logs`.
  *   2. LEDGER_LOGS_STRIP_RE matches ".cq/logs/x" and does NOT match "docs/logs/x".
- *   3. new FsLedgerStore({root}) + init() writes ledger artifacts under
- *      "<root>/.cq/" (ledgers.yaml at <root>/.cq/ledgers.yaml), not <root>/docs/.
- *   4. GitObjectLedgerBackend({repoRoot}) + init() does NOT create a docs/ dir
- *      in the working tree; ledger data lives in the orphan ref only.
+ *   3. Explicit backups retain the .cq layout without writing project docs/.
+ *   4. SQLite primary initialization leaves the working tree untouched.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
@@ -21,8 +19,9 @@ import {
   LEDGER_LOGS_DIRNAME,
   LEDGER_LOGS_RELATIVE_PREFIX,
   LEDGER_LOGS_STRIP_RE,
-  FsLedgerStore,
-  GitObjectLedgerBackend,
+  SqliteLedgerStore,
+  buildBackupDump,
+  exportBackupInTree,
 } from "../src/index.js";
 
 const exec = promisify(execFile);
@@ -35,6 +34,12 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 // (1) Derived-value assertion: LEDGER_LOGS_RELATIVE_PREFIX
 // ---------------------------------------------------------------------------
+
+async function primaryStore(): Promise<SqliteLedgerStore> {
+  const stateDir = await mkdtemp(path.join(tmpdir(), "ledger-primary-"));
+  dirs.push(stateDir);
+  return new SqliteLedgerStore({ dbPath: path.join(stateDir, "ledger.db") });
+}
 
 describe("LEDGER_LOGS_RELATIVE_PREFIX derivation", () => {
   it("equals `${LEDGER_STORAGE_DIRNAME}/${LEDGER_LOGS_DIRNAME}`", () => {
@@ -75,16 +80,17 @@ describe("LEDGER_LOGS_STRIP_RE matches/rejects", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (3) FsLedgerStore writes artifacts under <root>/.cq/ after init()
+// (3) SQLite backup export writes artifacts under <root>/.cq/ after init()
 // ---------------------------------------------------------------------------
 
-describe("FsLedgerStore writes under <root>/.cq/", () => {
+describe("SQLite backup export writes under <root>/.cq/", () => {
   it("ledgers.yaml lives at <root>/.cq/ledgers.yaml, not <root>/docs/ledgers.yaml", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ledger-storage-cq-"));
     dirs.push(root);
 
-    const store = new FsLedgerStore({ root });
+    const store = await primaryStore();
     await store.init();
+    await exportBackupInTree(root, await buildBackupDump(store, null));
     await store.dispose();
 
     // The canonical registry must exist under .cq/, not docs/.
@@ -119,8 +125,9 @@ describe("FsLedgerStore writes under <root>/.cq/", () => {
     const root = await mkdtemp(path.join(tmpdir(), "ledger-storage-cq-ms-"));
     dirs.push(root);
 
-    const store = new FsLedgerStore({ root });
+    const store = await primaryStore();
     await store.init();
+    await exportBackupInTree(root, await buildBackupDump(store, null));
     await store.dispose();
 
     const milestonesMd = path.join(root, LEDGER_STORAGE_DIRNAME, "milestones.md");
@@ -130,10 +137,10 @@ describe("FsLedgerStore writes under <root>/.cq/", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (4) T449 — GitObjectLedgerBackend fresh-init does NOT create docs/ on disk
+// (4) SQLite primary initialization does not create repository docs/
 // ---------------------------------------------------------------------------
 
-describe("GitObjectLedgerBackend fresh-init places artifacts in orphan ref, not docs/", () => {
+describe("SQLite fresh-init keeps artifacts outside the repository", () => {
   /** Create a throwaway git repo with one real commit. */
   async function seedGitRepo(): Promise<string> {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-git-init-cq-"));
@@ -152,11 +159,11 @@ describe("GitObjectLedgerBackend fresh-init places artifacts in orphan ref, not 
   it("does NOT create a docs/ directory in the working tree after init()", async () => {
     const root = await seedGitRepo();
 
-    const store = new GitObjectLedgerBackend({ repoRoot: root });
+    const store = await primaryStore();
     await store.init();
     await store.dispose();
 
-    // docs/ must never be created — ledger data lives in the orphan ref only.
+    // docs/ must never be created — ledger data lives in its separate primary directory.
     let docsDirExists = false;
     try {
       await stat(path.join(root, "docs"));
@@ -170,11 +177,11 @@ describe("GitObjectLedgerBackend fresh-init places artifacts in orphan ref, not 
   it("does NOT create a docs/ledgers.yaml in the working tree after init()", async () => {
     const root = await seedGitRepo();
 
-    const store = new GitObjectLedgerBackend({ repoRoot: root });
+    const store = await primaryStore();
     await store.init();
     await store.dispose();
 
-    // The canonical registry is stored in the orphan ref as a blob — never
+    // The canonical registry is stored in SQLite rows — never
     // written to docs/ledgers.yaml on the working tree.
     let docsRegistryExists = false;
     try {
