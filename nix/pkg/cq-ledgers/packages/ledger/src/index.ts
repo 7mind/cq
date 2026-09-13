@@ -257,6 +257,18 @@ export type {
   ArchiveTerminalItemsResult,
 } from "./store/genericMutationTransaction.js";
 export {
+  createInMemoryGenericMutationDataSource,
+  resolveGenericMutationClosure,
+} from "./store/genericMutationDataSource.js";
+export type {
+  GenericMutationArchivedTarget,
+  GenericMutationDataSource,
+  GenericMutationLedgerMetadata,
+  GenericMutationResolvedClosure,
+  InMemoryGenericMutationDataSourceInput,
+  ResolveGenericMutationClosureOptions,
+} from "./store/genericMutationDataSource.js";
+export {
   createFsWorksetGuardedLedger,
   createFsWorksetManagementLedger,
 } from "./store/fsWorksetGuardedLedger.js";
@@ -271,6 +283,7 @@ export {
   createSqliteWorksetManagementLedger,
 } from "./store/sqlite/worksetGuardedLedger.js";
 export type { CreateSqliteWorksetGuardedLedgerOptions } from "./store/sqlite/worksetGuardedLedger.js";
+export { createSqliteGenericMutationDataSource } from "./store/sqlite/genericMutationDataSource.js";
 export {
   WorksetOwnedLifecycleError,
   createWorksetOwnedWriteGateway,

@@ -6,16 +6,37 @@ import {
   WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES,
   WORKSET_GENERIC_MUTATION_OPERATION_KINDS,
   WorksetGenericMutationError,
+  createInMemoryGenericMutationDataSource,
   createInMemoryWorksetManagementLedger,
 } from "../src/index.js";
+import {
+  GENERIC_MUTATION_DATA_SOURCE_ACTIVE_ITEMS,
+  GENERIC_MUTATION_DATA_SOURCE_ARCHIVED_ITEMS,
+  GENERIC_MUTATION_DATA_SOURCE_LEDGERS,
+  runGenericMutationDataSourceContract,
+} from "./genericMutationDataSourceContract.js";
+
+runGenericMutationDataSourceContract({
+  name: "in-memory",
+  classification: "Behavioral-Active Blackbox-Atomic",
+  build: () => ({
+    source: createInMemoryGenericMutationDataSource({
+      ledgers: GENERIC_MUTATION_DATA_SOURCE_LEDGERS,
+      activeItems: GENERIC_MUTATION_DATA_SOURCE_ACTIVE_ITEMS,
+      archivedItems: GENERIC_MUTATION_DATA_SOURCE_ARCHIVED_ITEMS,
+    }),
+    dispose: () => {},
+  }),
+});
 
 describe("T1988 generic mutation conformance [Behavioral-Active Blackbox-Atomic]", () => {
   test("classifies every ordinary operation exactly once", () => {
-    expect(WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map(({ kind }) => kind)).toEqual(
-      [...WORKSET_GENERIC_MUTATION_OPERATION_KINDS],
-    );
-    expect(new Set(WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map(({ method }) => method)).size)
-      .toBe(WORKSET_GENERIC_MUTATION_OPERATION_KINDS.length);
+    expect(WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map(({ kind }) => kind)).toEqual([
+      ...WORKSET_GENERIC_MUTATION_OPERATION_KINDS,
+    ]);
+    expect(
+      new Set(WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map(({ method }) => method)).size,
+    ).toBe(WORKSET_GENERIC_MUTATION_OPERATION_KINDS.length);
   });
 
   test("recovers only an exact inactive root and preserves its archived sibling", async () => {

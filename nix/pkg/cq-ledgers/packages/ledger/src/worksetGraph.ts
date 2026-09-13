@@ -315,11 +315,11 @@ function compareEdge(a: WorksetEdge, b: WorksetEdge): number {
   return a.to < b.to ? -1 : a.to > b.to ? 1 : 0;
 }
 
-function isLiveExplicitMilestoneTask(item: Item): boolean {
+export function isLiveExplicitMilestoneTask(item: Item): boolean {
   return LIVE_TASK_STATUSES.has(item.status);
 }
 
-function isLiveMilestone(item: Item): boolean {
+export function isLiveMilestone(item: Item): boolean {
   return LIVE_MILESTONE_STATUSES.has(item.status);
 }
 
@@ -582,7 +582,10 @@ export function closeWorkset(
  * Refs admitted by the goal's current phase manifest/draft, or null when
  * the owner is not a phased goal or the document is unparseable.
  */
-function phaseAllowedManifestRefs(ledger: string, item: Item): ReadonlySet<string> | null {
+export function phaseAllowedManifestRefs(
+  ledger: string,
+  item: Item,
+): ReadonlySet<string> | null {
   if (ledger !== GOALS_LEDGER) return null;
   if (GOAL_DRAFT_PHASES.has(item.status)) {
     const draft = parseGoalCurrentDraftManifest(item);

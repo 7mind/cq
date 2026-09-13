@@ -63,12 +63,24 @@ describe("sqlite connection + schema (T525)", () => {
       for (const t of NORMALIZED_TABLES) {
         expect(tableNames.has(t)).toBe(true);
       }
+      const indexes = db
+        .query("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const indexNames = new Set(indexes.map(({ name }) => name));
+      for (const name of [
+        "item_references_target",
+        "items_milestone_membership",
+        "items_ledger_status",
+        "archived_items_target",
+      ]) {
+        expect(indexNames.has(name)).toBe(true);
+      }
       // R-note: no persisted FTS5 virtual table (search is derived, later task).
       expect(tableNames.has("items_fts")).toBe(false);
 
-      const meta = db
-        .query("SELECT value FROM meta WHERE key = 'schema_version'")
-        .get() as { value: number };
+      const meta = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
+        value: number;
+      };
       expect(meta.value).toBe(6);
       expect(meta.value).toBe(SCHEMA_VERSION);
     } finally {

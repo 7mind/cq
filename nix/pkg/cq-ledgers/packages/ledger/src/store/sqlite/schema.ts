@@ -84,6 +84,12 @@ export function ensureSchema(db: Database): void {
       PRIMARY KEY (ledger, id)
     );
 
+    CREATE INDEX IF NOT EXISTS items_milestone_membership
+      ON items (milestone_id, ledger, id);
+
+    CREATE INDEX IF NOT EXISTS items_ledger_status
+      ON items (ledger, status, id);
+
     CREATE TABLE IF NOT EXISTS archive_pointers (
       ledger      TEXT NOT NULL REFERENCES ledgers(name),
       id          TEXT NOT NULL,
@@ -108,6 +114,9 @@ export function ensureSchema(db: Database): void {
       PRIMARY KEY (ledger, pointer_id, id),
       FOREIGN KEY (ledger, pointer_id) REFERENCES archive_pointers(ledger, id)
     );
+
+    CREATE INDEX IF NOT EXISTS archived_items_target
+      ON archived_items (ledger, id, pointer_id);
 
     CREATE TABLE IF NOT EXISTS item_references (
       source_ledger TEXT NOT NULL,
@@ -251,6 +260,27 @@ export function ensureSchema(db: Database): void {
         AND instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') > 1;
     END;
 
+  `);
+  for (const table of COHERENCE_TABLES) {
+    for (const operation of COHERENCE_OPERATIONS) {
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS coherence_${table}_${operation.toLowerCase()}
+        AFTER ${operation} ON ${table} BEGIN
+          UPDATE coherence_state SET version = version + 1 WHERE id = 1;
+        END
+      `);
+    }
+  }
+  db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(
+    SCHEMA_VERSION,
+  );
+  db.query(
+    "INSERT OR IGNORE INTO workset_state (id, epoch, roots_json, admit_generation) VALUES (1, 0, '[]', 0)",
+  ).run();
+}
+
+export function backfillActiveItemReferences(db: Database): void {
+  db.exec(`
     INSERT OR IGNORE INTO item_references (
       source_ledger, source_id, field_name, target_ledger, target_id
     )
@@ -277,20 +307,4 @@ export function ensureSchema(db: Database): void {
     WHERE json_type(items.fields_json, '$.worksetOwnerRef') = 'text'
       AND instr(json_extract(items.fields_json, '$.worksetOwnerRef'), ':') > 1;
   `);
-  for (const table of COHERENCE_TABLES) {
-    for (const operation of COHERENCE_OPERATIONS) {
-      db.exec(`
-        CREATE TRIGGER IF NOT EXISTS coherence_${table}_${operation.toLowerCase()}
-        AFTER ${operation} ON ${table} BEGIN
-          UPDATE coherence_state SET version = version + 1 WHERE id = 1;
-        END
-      `);
-    }
-  }
-  db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(
-    SCHEMA_VERSION,
-  );
-  db.query(
-    "INSERT OR IGNORE INTO workset_state (id, epoch, roots_json, admit_generation) VALUES (1, 0, '[]', 0)",
-  ).run();
 }
