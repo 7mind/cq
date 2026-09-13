@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   WorksetInvocationAuthorityError,
   WorksetAdmissionError,
   createInMemoryWorksetGuardedLedger,
@@ -13,6 +13,7 @@ import {
   InMemoryLedgerStore,
   invokeWorksetSet,
 } from "../src/index.js";
+import { injectSqliteSchemaDivergence } from "./sqliteSchemaFixture.js";
 
 describe("direct workset management authority", () => {
   test("the ordinary direct constructor remains observe-only", async () => {
@@ -56,9 +57,9 @@ describe("direct workset management authority", () => {
     await store.dispose();
   });
 
-  test("ordinary store construction denies reset without changing persisted items", async () => {
+  test("ordinary store construction denies destructive reinitialization without changing persisted items", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "workset-authority-reset-"));
-    const store = new FsLedgerStore({ root });
+    const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await store.init();
     try {
       const milestone = await store.createMilestone({ title: "reset denial" });
@@ -67,7 +68,13 @@ describe("direct workset management authority", () => {
         fields: { headline: "must survive denied reset" },
       });
 
-      await expect(store.reset()).rejects.toMatchObject({
+      injectSqliteSchemaDivergence(path.join(root, "ledger.db"));
+      const unauthorized = new SqliteLedgerStore({
+        dbPath: path.join(root, "ledger.db"),
+        onSchemaDivergence: "backup-reinit",
+        allowDestructiveReinitOfPopulatedStore: true,
+      });
+      await expect(unauthorized.init()).rejects.toMatchObject({
         code: "management-authority-required",
       } satisfies Partial<WorksetAdmissionError>);
       expect(store.fetchItem("tasks", task.id).fields["headline"]).toBe(

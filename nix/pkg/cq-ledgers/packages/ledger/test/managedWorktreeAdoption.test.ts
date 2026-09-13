@@ -2,7 +2,7 @@
  * T2051 — prepare-only adoption orchestration.
  *
  * The same behavioral contract runs with the hand-written in-memory ledger
- * authority and the real filesystem ledger adapter. Git, filesystem overlay,
+ * authority and the real SQLite ledger adapter. Git, filesystem overlay,
  * frozen-install planning, and managed-registry publication remain real in
  * both arms.
  */
@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 import {
   createWorktreeManageCapability,
   createGitLegacyWorktreeActivityFence,
-  FsLedgerStore,
+  SqliteLedgerStore,
   InMemoryLedgerStore,
   isUuidV7,
   listManagedLiveWorktrees,
@@ -282,10 +282,11 @@ const factories: readonly AuthorityFactory[] = [
     },
   },
   {
-    name: "real filesystem authority",
+    name: "real SQLite authority",
     classification: "Behavioral-Active Blackbox-GoodCommunication",
     async open(root) {
-      return new FsLedgerStore({ root: join(root, "ledger-authority") });
+      await fs.mkdir(join(root, "ledger-authority"));
+      return new SqliteLedgerStore({ dbPath: join(root, "ledger-authority", "ledger.db") });
     },
   },
 ];
@@ -375,8 +376,9 @@ describe("prepare-only adoption crash recovery (Effectual-GoodCommunication)", (
     it(`fresh process after ${boundary} converges to one authoritative v2 handle`, async () => {
       const fixture = await seedT1207Shape();
       const ledgerRoot = join(fixture.root, "ledger-authority");
+      await fs.mkdir(ledgerRoot);
       const stateDir = join(fixture.root, "managed-registry");
-      const store = new FsLedgerStore({ root: ledgerRoot });
+      const store = new SqliteLedgerStore({ dbPath: join(ledgerRoot, "ledger.db") });
       await seedEligibleTask(store, fixture);
       await store.dispose();
       const payloadPath = join(fixture.root, `adoption-crash-${boundary}.json`);
@@ -410,7 +412,7 @@ describe("prepare-only adoption crash recovery (Effectual-GoodCommunication)", (
         await listManagedLiveWorktrees(fixture.repositoryRoot, "T1207", stateDir),
       ).toHaveLength(liveAfterCrash ? 1 : 0);
 
-      const restarted = new FsLedgerStore({ root: ledgerRoot });
+      const restarted = new SqliteLedgerStore({ dbPath: join(ledgerRoot, "ledger.db") });
       await restarted.init();
       try {
         const recovered = await invokeAdoption(restarted, fixture);

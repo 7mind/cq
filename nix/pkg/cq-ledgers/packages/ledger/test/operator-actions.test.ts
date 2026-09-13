@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  FsLedgerStore,
+  createInMemoryWorksetStore,
+  createWorksetGenericMutationGateway,
   InMemoryLedgerStore,
   LedgerError,
   MILESTONES_AMBIENT_ID,
@@ -26,11 +28,47 @@ import {
   type PlanDraftManifest,
   type WorksetOwnedWriteTx,
 } from "../src/index.js";
-import { atomicWrite as productionAtomicWrite } from "../src/store/fsAtomic.js";
 
 const NOW = "2026-08-11T06:00:00.000Z";
 const IDENTITY = "/nix/store/exact-cq";
 const dirs: string[] = [];
+
+function armSqliteRowFailure(dbPath: string, failAt: number, message: string): () => void {
+  const db = new Database(dbPath, { readwrite: true, create: false });
+  const boundaries = [
+    { table: "ledgers", operation: "UPDATE" },
+    { table: "items", operation: "INSERT" },
+    { table: "items", operation: "UPDATE" },
+    { table: "items", operation: "DELETE" },
+  ] as const;
+  try {
+    db.exec("CREATE TABLE test_write_fault (writes INTEGER NOT NULL, fail_at INTEGER NOT NULL)");
+    db.query("INSERT INTO test_write_fault VALUES (0, ?)").run(failAt);
+    for (const { table, operation } of boundaries) {
+      db.exec(`
+        CREATE TRIGGER test_fault_${table}_${operation} BEFORE ${operation} ON ${table}
+        BEGIN
+          UPDATE test_write_fault SET writes = writes + 1;
+          SELECT CASE WHEN (SELECT writes >= fail_at FROM test_write_fault)
+            THEN RAISE(ABORT, '${message.replaceAll("'", "''")}') END;
+        END
+      `);
+    }
+  } finally {
+    db.close();
+  }
+  return () => {
+    const cleanup = new Database(dbPath, { readwrite: true, create: false });
+    try {
+      for (const { table, operation } of boundaries) {
+        cleanup.exec(`DROP TRIGGER test_fault_${table}_${operation}`);
+      }
+      cleanup.exec("DROP TABLE test_write_fault");
+    } finally {
+      cleanup.close();
+    }
+  };
+}
 
 interface OperatorActionTriple {
   readonly action: Item;
@@ -158,16 +196,6 @@ const factories: StoreFactory[] = [
     name: "in-memory",
     async build() {
       const store = new InMemoryLedgerStore({ now: () => NOW });
-      await store.init();
-      return store;
-    },
-  },
-  {
-    name: "filesystem",
-    async build() {
-      const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-fs-"));
-      dirs.push(root);
-      const store = new FsLedgerStore({ root, now: () => NOW });
       await store.init();
       return store;
     },
@@ -316,24 +344,11 @@ test("operator-action materialization rejects a mismatched pre-existing handoff 
 });
 
 for (const failAt of [1, 2, 3]) {
-  test(`filesystem materialization restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+  test(`SQLite materialization restart is old-or-new after transaction row boundary ${String(failAt)}`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-operator-materialization-fault-"));
     dirs.push(root);
-    let armed = false;
-    let writes = 0;
-    let store = new FsLedgerStore({
-      root,
-      now: () => NOW,
-      atomicWrite: async (filePath, text) => {
-        if (armed) {
-          writes += 1;
-          if (writes === failAt) {
-            throw new Error(`injected materialization boundary ${String(failAt)}`);
-          }
-        }
-        await productionAtomicWrite(filePath, text);
-      },
-    });
+    const dbPath = path.join(root, "ledger.db");
+    let store = new SqliteLedgerStore({ dbPath, now: () => NOW });
     await store.init();
     const milestone = await store.createMilestone({ title: "fault materialization" });
     const goal = await store.createItem("goals", milestone.id, {
@@ -355,13 +370,18 @@ for (const failAt of [1, 2, 3]) {
       expectedEvidence: ["cq ledger implementation-evidence status --json"],
       author: "parent",
     } as const;
-    armed = true;
+    const disarm = armSqliteRowFailure(
+      dbPath,
+      failAt,
+      "injected materialization transaction row boundary",
+    );
     await expect(materializeOperatorAction(store, input)).rejects.toThrow(
-      `injected materialization boundary ${String(failAt)}`,
+      `injected materialization transaction row boundary`,
     );
     await store.dispose();
+    disarm();
 
-    store = new FsLedgerStore({ root, now: () => NOW });
+    store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
     await store.init();
     try {
       const oldState = { actions: [], handoffs: [] };
@@ -518,16 +538,6 @@ for (const factory of factories) {
         });
         const atomic = store as LedgerStore & {
           runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
-          runAtomicGenericMutation<T>(
-            mutate: (tx: {
-              archiveTerminalItems(
-                ledgerIds: readonly string[],
-                summary: string,
-                gatePolicy: "retain-active-gates",
-              ): T;
-            }) => T,
-            readRoots: () => Promise<{ roots: string[]; epoch: number }>,
-          ): Promise<T>;
         };
         await atomic.runAtomicOwnedMutation((tx) =>
           tx.createItemWithSealedOwnership(
@@ -538,14 +548,14 @@ for (const factory of factories) {
           ),
         );
 
-        const result = await atomic.runAtomicGenericMutation(
-          (tx) =>
-            tx.archiveTerminalItems(
-              ["goals"],
-              "terminal cleanup",
-              "retain-active-gates",
-            ),
-          async () => ({ roots: [], epoch: 0 }),
+        const mutations = createWorksetGenericMutationGateway({
+          rawStore: store,
+          worksetStore: createInMemoryWorksetStore(),
+        });
+        const result = await mutations.archiveTerminalItems(
+          ["goals"],
+          "terminal cleanup",
+          "retain-active-gates",
         );
         expect(result).toMatchObject({
           archivedItems: 0,
@@ -987,22 +997,11 @@ test("shared SQLite serializes revise versus evidence without mixed triple state
 });
 
 for (const failAt of [1, 2, 3, 4, 5]) {
-  test(`filesystem revision restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+  test(`SQLite revision restart is old-or-new after transaction row boundary ${String(failAt)}`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-operator-revision-fault-"));
     dirs.push(root);
-    let armed = false;
-    let writes = 0;
-    let store = new FsLedgerStore({
-      root,
-      now: () => NOW,
-      atomicWrite: async (filePath, text) => {
-        if (armed) {
-          writes += 1;
-          if (writes === failAt) throw new Error(`injected revision boundary ${String(failAt)}`);
-        }
-        await productionAtomicWrite(filePath, text);
-      },
-    });
+    const dbPath = path.join(root, "ledger.db");
+    let store = new SqliteLedgerStore({ dbPath, now: () => NOW });
     await store.init();
     const milestone = await store.createMilestone({ title: "fault revision" });
     const goal = await store.createItem("goals", milestone.id, {
@@ -1049,7 +1048,11 @@ for (const failAt of [1, 2, 3, 4, 5]) {
       created.handoff.id,
     );
     const newTriple = revisedTriple(oldTriple);
-    armed = true;
+    const disarm = armSqliteRowFailure(
+      dbPath,
+      failAt,
+      "injected revision transaction row boundary",
+    );
     await expect(
       reviseOperatorAction(store, {
         actionId: created.action.id,
@@ -1059,10 +1062,11 @@ for (const failAt of [1, 2, 3, 4, 5]) {
         revisedAt: NOW,
         author: "parent",
       }),
-    ).rejects.toThrow(`injected revision boundary ${String(failAt)}`);
+    ).rejects.toThrow(`injected revision transaction row boundary`);
     await store.dispose();
+    disarm();
 
-    store = new FsLedgerStore({ root, now: () => NOW });
+    store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
     await store.init();
     try {
       const recovered = fetchOperatorActionTriple(
@@ -1109,22 +1113,11 @@ for (const failAt of [1, 2, 3, 4, 5]) {
 }
 
 for (const failAt of [1, 2, 3, 4]) {
-  test(`filesystem completion restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+  test(`SQLite completion restart is old-or-new after transaction row boundary ${String(failAt)}`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-operator-completion-fault-"));
     dirs.push(root);
-    let armed = false;
-    let writes = 0;
-    let store = new FsLedgerStore({
-      root,
-      now: () => NOW,
-      atomicWrite: async (filePath, text) => {
-        if (armed) {
-          writes += 1;
-          if (writes === failAt) throw new Error(`injected completion boundary ${String(failAt)}`);
-        }
-        await productionAtomicWrite(filePath, text);
-      },
-    });
+    const dbPath = path.join(root, "ledger.db");
+    let store = new SqliteLedgerStore({ dbPath, now: () => NOW });
     await store.init();
     const milestone = await store.createMilestone({ title: "fault completion" });
     const goal = await store.createItem("goals", milestone.id, {
@@ -1171,15 +1164,20 @@ for (const failAt of [1, 2, 3, 4]) {
       created.handoff.id,
     );
     const newTriple = completedTriple(oldTriple);
-    armed = true;
+    const disarm = armSqliteRowFailure(
+      dbPath,
+      failAt,
+      "injected completion transaction row boundary",
+    );
     await expect(
       completeOperatorActionTask(store, created.action.id, 1, "verified completion", {
         author: "parent",
       }),
-    ).rejects.toThrow(`injected completion boundary ${String(failAt)}`);
+    ).rejects.toThrow(`injected completion transaction row boundary`);
     await store.dispose();
+    disarm();
 
-    store = new FsLedgerStore({ root, now: () => NOW });
+    store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
     await store.init();
     try {
       const recovered = fetchOperatorActionTriple(
@@ -1219,10 +1217,10 @@ for (const failAt of [1, 2, 3, 4]) {
   });
 }
 
-test("filesystem restart reuses the durable action and handoff", async () => {
+test("SQLite restart reuses the durable action and handoff", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-restart-"));
   dirs.push(root);
-  let store = new FsLedgerStore({ root, now: () => NOW });
+  let store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
   await store.init();
   const milestone = await store.createMilestone({ title: "restart" });
   const goal = await store.createItem("goals", milestone.id, {
@@ -1244,7 +1242,7 @@ test("filesystem restart reuses the durable action and handoff", async () => {
   });
   await store.dispose();
 
-  store = new FsLedgerStore({ root, now: () => NOW });
+  store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
   await store.init();
   try {
     const resumed = await materializeOperatorAction(store, {
@@ -1659,10 +1657,10 @@ test("legacy operator actions without a revision field read as revision 1", () =
   ).toBe(1);
 });
 
-test("filesystem restart materializes and revises a persisted legacy action", async () => {
+test("SQLite restart materializes and revises a persisted legacy action", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-legacy-revision-"));
   dirs.push(root);
-  let store = new FsLedgerStore({ root, now: () => NOW });
+  let store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
   await store.init();
   const milestone = await store.createMilestone({ title: "legacy revision" });
   const goal = await store.createItem("goals", milestone.id, {
@@ -1684,13 +1682,18 @@ test("filesystem restart materializes and revises a persisted legacy action", as
   });
   await store.dispose();
 
-  const actionPath = path.join(root, ".cq", "operatorActions.md");
-  const currentSource = await readFile(actionPath, "utf8");
-  const legacySource = currentSource.replace('- revision: "1"\n', "");
-  expect(legacySource).not.toBe(currentSource);
-  await writeFile(actionPath, legacySource);
+  const db = new Database(path.join(root, "ledger.db"), { readwrite: true, create: false });
+  try {
+    const changed = db.query(
+      "UPDATE items SET fields_json = json_remove(fields_json, '$.revision') " +
+      "WHERE ledger = 'operatorActions' AND id = ? AND json_extract(fields_json, '$.revision') = '1' RETURNING id",
+    ).all(created.action.id);
+    expect(changed).toEqual([{ id: created.action.id }]);
+  } finally {
+    db.close();
+  }
 
-  store = new FsLedgerStore({ root, now: () => NOW });
+  store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db"), now: () => NOW });
   await store.init();
   try {
     const resumed = await materializeOperatorAction(store, {

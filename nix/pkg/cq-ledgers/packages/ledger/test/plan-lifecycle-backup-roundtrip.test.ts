@@ -2,38 +2,36 @@
  * D139 — plan-lifecycle is a first-class BackupDump artifact across backends.
  *
  * REAL exporter→importer round-trip: claim → buildBackupDump → restore →
- * exact-retry claim → replayed:true with the same claimId. Covers fs (dump
- * emit + file restore) and xdg/sqlite (restoreDumpToXdg).
+ * exact-retry claim → replayed:true with the same claimId through
+ * xdg/sqlite (restoreDumpToXdg).
  *
  * D141 — raw managed-task fence is authority-only: updateItem(tasks→wip) does
  * not reject unsatisfied dependencies (readiness is orchestrator-side).
  *
- * D142 — FsPersistence.backupCanonicalState copies plan-lifecycle.json (and
- * pending when present) into the divergence snapshot.
+ * D142 — SQLite divergence snapshots preserve committed plan lifecycle records.
  */
 
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-
   buildBackupDump,
   CANONICAL_LEDGERS,
-  FsLedgerStore,
   GOALS_LEDGER,
   MILESTONES_AMBIENT_ID,
   PLAN_REVIEW_DRAFT_FIELD,
   restoreDumpToXdg,
   REVIEWS_LEDGER,
-  serializeRegistry,
   SqliteLedgerStore,
   TASKS_LEDGER,
+  type LedgerStore,
   type PlanClaimInput,
   type PlanLifecycleStore,
   createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
-import { FsPersistence } from "../src/store/FsPersistence.js";
+import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 import {
   PLAN_LIFECYCLE_DUMP_PATH,
   parsePlanLifecycleDump,
@@ -44,8 +42,6 @@ import { LedgerError } from "../src/types.js";
 
 const OWNER = "B".repeat(22);
 const PROVENANCE = { author: "d139", session: "d139-session" } as const;
-const PLAN_LIFECYCLE_JSON = "plan-lifecycle.json";
-const PLAN_LIFECYCLE_PENDING = "plan-lifecycle.pending.json";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -71,7 +67,7 @@ function claimInput(requestId: string): PlanClaimInput {
   };
 }
 
-async function seedGoal(store: { createItem: FsLedgerStore["createItem"] }): Promise<void> {
+async function seedGoal(store: Pick<LedgerStore, "createItem">): Promise<void> {
   await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
     id: "G1",
     status: "clarifying",
@@ -81,46 +77,6 @@ async function seedGoal(store: { createItem: FsLedgerStore["createItem"] }): Pro
 }
 
 describe("D139 plan-lifecycle BackupDump round-trip", () => {
-  test("fs: buildBackupDump emits plan-lifecycle.json and file restore replays claim", async () => {
-    const sourceRoot = await tmpRoot("d139-fs-src-");
-    const restoredRoot = await tmpRoot("d139-fs-dst-");
-    const source = new FsLedgerStore({ root: sourceRoot });
-    await source.init();
-    await seedGoal(source);
-    const input = claimInput("fs-roundtrip");
-    const first = await source.claimPlan(input);
-    expect(first.ok).toBe(true);
-    if (!first.ok) throw new Error("claim failed");
-
-    const dump = await buildBackupDump(source, null);
-    await source.dispose();
-
-    const lifecycleEntry = dump.find((f) => f.path === PLAN_LIFECYCLE_DUMP_PATH);
-    expect(lifecycleEntry).toBeDefined();
-    expect(lifecycleEntry!.content).not.toContain(OWNER);
-    const parsed = parsePlanLifecycleDump(lifecycleEntry!.content);
-    expect(parsed.claims.size).toBe(1);
-
-    const restoredDocs = path.join(restoredRoot, ".cq");
-    await fs.mkdir(restoredDocs, { recursive: true });
-    for (const file of dump) {
-      const dest = path.join(restoredDocs, file.path);
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.writeFile(dest, file.content, "utf8");
-    }
-
-    const restored = new FsLedgerStore({ root: restoredRoot });
-    await restored.init();
-    try {
-      const replay = await restored.claimPlan(input);
-      expect(replay).toEqual({ ...first, replayed: true });
-      if (!replay.ok) throw new Error("replay failed");
-      expect(replay.acknowledgement.claimId).toBe(first.acknowledgement.claimId);
-    } finally {
-      await restored.dispose();
-    }
-  });
-
   test("xdg/sqlite: exporter→restoreDumpToXdg→exact-retry claim replays", async () => {
     const root = await tmpRoot("d139-xdg-");
     const dbPath = path.join(root, "ledger.db");
@@ -135,7 +91,11 @@ describe("D139 plan-lifecycle BackupDump round-trip", () => {
     const dump = await buildBackupDump(source, null);
     await source.dispose();
 
-    expect(dump.some((f) => f.path === PLAN_LIFECYCLE_DUMP_PATH)).toBe(true);
+    const lifecycleEntry = dump.find((file) => file.path === PLAN_LIFECYCLE_DUMP_PATH);
+    expect(lifecycleEntry).toBeDefined();
+    if (lifecycleEntry === undefined) throw new Error("lifecycle dump missing");
+    expect(lifecycleEntry.content).not.toContain(OWNER);
+    expect(parsePlanLifecycleDump(lifecycleEntry.content).claims.size).toBe(1);
 
     const targetDb = path.join(root, "restored.db");
     await restoreDumpToXdg({
@@ -226,7 +186,7 @@ describe("D141 raw managed-task fence is authority-only", () => {
   });
 
   test("raw updateItem(tasks→wip) succeeds for a managed dependent task", async () => {
-    const store = new FsLedgerStore({ root: await tmpRoot("d141-auth-") });
+    const store = new SqliteLedgerStore({ dbPath: path.join(await tmpRoot("d141-auth-"), "ledger.db") });
     await store.init();
     try {
       await seedGoal(store);
@@ -301,46 +261,58 @@ describe("D141 raw managed-task fence is authority-only", () => {
 });
 
 describe("D142 divergence backup includes plan-lifecycle artifacts", () => {
-  test("backupCanonicalState copies plan-lifecycle.json and pending when present", async () => {
+  test("SQLite snapshot preserves committed claims and operations before reinitialization", async () => {
     const root = await tmpRoot("d142-div-");
-    const docs = path.join(root, ".cq");
-    await fs.mkdir(docs, { recursive: true });
-
-    const registry = serializeRegistry({
-      version: 1,
-      ledgers: CANONICAL_LEDGERS.map((c) => ({ name: c.name, schema: c.schema })),
-    });
-    await fs.writeFile(path.join(docs, "ledgers.yaml"), registry, "utf8");
-    const lifecycleBody = JSON.stringify({
-      version: 1,
-      claims: [{ goalId: "G1", claimRequestId: "c1", claimId: "pc1" }],
-      operations: [],
-    });
-    await fs.writeFile(path.join(docs, PLAN_LIFECYCLE_JSON), lifecycleBody, "utf8");
-    const pendingBody = JSON.stringify({ state: lifecycleBody, ledgers: {} });
-    await fs.writeFile(path.join(docs, PLAN_LIFECYCLE_PENDING), pendingBody, "utf8");
-
-    const FIXED_TS = "2026-08-06T12:00:00.000Z";
-    const persistence = new FsPersistence({
-      layout: {
-        root,
-        docsDir: docs,
-        archiveDir: path.join(docs, "archive"),
-        registryPath: path.join(docs, "ledgers.yaml"),
+    const dbPath = path.join(root, "ledger.db");
+    const timestamp = "2026-08-06T12:00:00.000Z";
+    const source = new SqliteLedgerStore({ dbPath });
+    await source.init();
+    await seedGoal(source);
+    const claimed = await source.claimPlan(claimInput("snapshot-claim"));
+    if (!claimed.ok) throw new Error("snapshot claim failed");
+    const published = await source.publishPlanDraft({
+      goalId: "G1",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "snapshot-publish",
+      ownerFenceToken: OWNER,
+      manifest: {
+        milestones: [{ key: "m", title: "M" }],
+        tasks: [{ key: "task", milestoneKey: "m", headline: "Snapshot task" }],
       },
-      now: () => FIXED_TS,
+      ...PROVENANCE,
     });
-    persistence.bindRegistrySnapshot(() => ({
-      version: 1,
-      ledgers: CANONICAL_LEDGERS.map((c) => ({ name: c.name, schema: c.schema })),
-    }));
+    expect(published.ok).toBe(true);
+    await source.dispose();
 
-    const backupDir = await persistence.backupCanonicalState();
-    expect(await fs.readFile(path.join(backupDir, PLAN_LIFECYCLE_JSON), "utf8")).toBe(
-      lifecycleBody,
-    );
-    expect(await fs.readFile(path.join(backupDir, PLAN_LIFECYCLE_PENDING), "utf8")).toBe(
-      pendingBody,
-    );
+    const records = (databasePath: string) => {
+      const db = new Database(databasePath, { readonly: true });
+      try {
+        return {
+          claims: db.query("SELECT scope, record_json FROM plan_claims ORDER BY scope").all(),
+          operations: db.query("SELECT scope, record_json FROM plan_operations ORDER BY scope").all(),
+        };
+      } finally {
+        db.close();
+      }
+    };
+    const before = records(dbPath);
+    expect(before.claims).toHaveLength(1);
+    expect(before.operations.length).toBeGreaterThan(0);
+    injectSqliteSchemaDivergence(dbPath);
+    const reinitialized = new SqliteLedgerStore({
+      dbPath,
+      now: () => timestamp,
+      onSchemaDivergence: "backup-reinit",
+      allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
+    try {
+      await reinitialized.init();
+      expect(records(sqliteDivergenceBackupPath(dbPath, timestamp))).toEqual(before);
+      expect(reinitialized.exportPlanLifecycleState()).toBeNull();
+    } finally {
+      await reinitialized.dispose();
+    }
   });
 });

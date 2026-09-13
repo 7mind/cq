@@ -1,114 +1,88 @@
 /**
- * Unit tests for FsLedgerStore.reset() (T123).
- *
- * reset() is the public, operator-facing wipe-and-reinit: it snapshots the
- * current on-disk ledgers to .cq/.backup/<ts>/ and rewrites the canonical
- * empty set, returning a summary of what was backed up. It reuses the private
- * backupAndReinit verbatim for the snapshot/reinit and adds only the pre-wipe
- * per-ledger item count + the returned summary.
+ * T123 — destructive SQLite reinitialization preserves a complete prior snapshot
+ * and restores canonical empty state. The retired provider's reset command is
+ * not part of the SQLite API.
  */
-
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, readdir, stat } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   CANONICAL_LEDGERS,
   DEFECTS_LEDGER,
   TASKS_LEDGER,
-  LEDGER_STORAGE_DIRNAME,
   createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
+import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 
 const dirs: string[] = [];
+const stores: SqliteLedgerStore[] = [];
 afterAll(async () => {
-  for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
+  for (const store of stores) await store.dispose();
+  for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
 
-async function makeStore(now?: () => string): Promise<{ store: FsLedgerStore; root: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-"));
-  dirs.push(root);
-  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = {
-    root,
-    worksetAuthority: createTrustedWorksetManagementAuthority(),
-  };
-  if (now !== undefined) storeOpts.now = now;
-  const store = new FsLedgerStore(storeOpts);
-  await store.init();
-  return { store, root };
-}
-
-describe("FsLedgerStore.reset", () => {
-  it("backs up prior state, reinitialises the canonical empty set, and returns matching counts", async () => {
-    const fixedTs = "2026-06-01T12:34:56.000Z";
-    const { store, root } = await makeStore(() => fixedTs);
-
-    const m = await store.createMilestone({ title: "reset target" });
-    await store.createItem(DEFECTS_LEDGER, m.id, {
-      status: "open",
-      fields: { headline: "d1", severity: "minor" },
-    });
-    await store.createItem(DEFECTS_LEDGER, m.id, {
-      status: "open",
-      fields: { headline: "d2", severity: "major" },
-    });
-    await store.createItem(TASKS_LEDGER, m.id, {
-      status: "planned",
-      fields: { headline: "t1" },
-    });
-
-    // Count seeded active items per ledger directly from the live store, so the
-    // assertion does not hard-code the milestones-ledger seed (bootstrap +
-    // M-AMBIENT + the new milestone).
-    const beforeCounts = new Map<string, number>();
-    for (const name of store.enumerate()) {
-      const items = store.fetch(name).milestones.flatMap((g) => g.items);
-      beforeCounts.set(name, items.length);
+describe("SQLite destructive reinitialization", () => {
+  it("backs up prior state and item counts, then reinitializes the canonical empty set", async () => {
+    const timestamp = "2026-06-01T12:34:56.000Z";
+    const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "ledger.db");
+    let store = new SqliteLedgerStore({ dbPath });
+    stores.push(store);
+    await store.init();
+    const milestone = await store.createMilestone({ title: "reset target" });
+    for (const [headline, severity] of [["d1", "minor"], ["d2", "major"]] as const) {
+      await store.createItem(DEFECTS_LEDGER, milestone.id, {
+        status: "open", fields: { headline, severity },
+      });
     }
-
-    const summary = await store.reset();
-
-    // (a) .cq/.backup/<ts>/ exists and contains the prior registry + ledger files.
-    const expectedDirName = fixedTs.replace(/:/g, "-");
-    const expectedBackupDir = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup", expectedDirName);
-    expect(summary.backupDir).toBe(expectedBackupDir);
-    expect((await stat(expectedBackupDir)).isDirectory()).toBe(true);
-    const backedUp = await readdir(expectedBackupDir);
-    expect(backedUp).toContain("ledgers.yaml");
-    expect(backedUp).toContain(`${DEFECTS_LEDGER}.md`);
-    expect(backedUp).toContain(`${TASKS_LEDGER}.md`);
-
-    // (c) summary counts match what the live store held before the wipe.
-    expect(summary.ledgers.map((l) => l.name).sort()).toEqual(
-      CANONICAL_LEDGERS.map((c) => c.name).sort(),
-    );
-    for (const { name, itemCount } of summary.ledgers) {
-      expect(beforeCounts.has(name)).toBe(true);
-      expect(itemCount).toBe(beforeCounts.get(name)!);
-    }
-    // Concretely: the two defects and the one task we seeded.
-    const byName = new Map(summary.ledgers.map((l) => [l.name, l.itemCount]));
-    expect(byName.get(DEFECTS_LEDGER)).toBe(2);
-    expect(byName.get(TASKS_LEDGER)).toBe(1);
-
-    // (b) live ledgers are back to the canonical empty set: no defects/tasks
-    // items, and the milestones ledger holds only the bootstrap + M-AMBIENT.
-    expect(store.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map((c) => c.name).sort());
-    expect(store.fetch(DEFECTS_LEDGER).milestones.flatMap((g) => g.items)).toHaveLength(0);
-    expect(store.fetch(TASKS_LEDGER).milestones.flatMap((g) => g.items)).toHaveLength(0);
-
-    // (d) the post-reset defects ledger carries the canonical (T116) status set,
-    // proving the reinit reused CANONICAL_LEDGERS rather than a stale schema.
-    expect(store.fetch(DEFECTS_LEDGER).schema.statusValues).toEqual([
-      "open",
-      "wip",
-      "root-caused",
-      "inconclusive",
-      "resolved",
-      "wontfix",
-    ]);
-
+    await store.createItem(TASKS_LEDGER, milestone.id, {
+      status: "planned", fields: { headline: "t1" },
+    });
+    const beforeCounts = new Map(store.enumerate().map((name) => [
+      name, store.fetch(name).milestones.flatMap((group) => group.items).length,
+    ]));
     await store.dispose();
+    injectSqliteSchemaDivergence(dbPath);
+    store = new SqliteLedgerStore({
+      dbPath,
+      now: () => timestamp,
+      onSchemaDivergence: "backup-reinit",
+      allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
+    stores.push(store);
+    await store.init();
+
+    const backupPath = sqliteDivergenceBackupPath(dbPath, timestamp);
+    expect((await stat(backupPath)).isFile()).toBe(true);
+    expect(path.basename(backupPath)).toBe("ledger.backup-2026-06-01T12-34-56.000Z.db");
+    const backup = new Database(backupPath, { readonly: true });
+    try {
+      const counts = backup.query<{ name: string; itemCount: number }, []>(
+        "SELECT ledgers.name, count(items.id) AS itemCount FROM ledgers " +
+        "LEFT JOIN items ON items.ledger = ledgers.name GROUP BY ledgers.name ORDER BY ledgers.name",
+      ).all();
+      expect(counts.map(({ name }) => name)).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
+      for (const { name, itemCount } of counts) {
+        const expectedCount = beforeCounts.get(name);
+        if (expectedCount === undefined) throw new Error(`unexpected backed-up ledger ${name}`);
+        expect(itemCount).toBe(expectedCount);
+      }
+      const byName = new Map(counts.map(({ name, itemCount }) => [name, itemCount]));
+      expect(byName.get(DEFECTS_LEDGER)).toBe(2);
+      expect(byName.get(TASKS_LEDGER)).toBe(1);
+    } finally {
+      backup.close();
+    }
+    expect(store.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
+    expect(store.fetch(DEFECTS_LEDGER).milestones.flatMap((group) => group.items)).toHaveLength(0);
+    expect(store.fetch(TASKS_LEDGER).milestones.flatMap((group) => group.items)).toHaveLength(0);
+    expect(store.fetch(DEFECTS_LEDGER).schema.statusValues).toEqual([
+      "open", "wip", "root-caused", "inconclusive", "resolved", "wontfix",
+    ]);
   });
 });

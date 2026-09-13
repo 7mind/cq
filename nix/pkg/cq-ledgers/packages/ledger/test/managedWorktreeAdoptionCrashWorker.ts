@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { join } from "node:path";
 import {
   createWorktreeManageCapability,
-  FsLedgerStore,
+  SqliteLedgerStore,
   WORKTREE_MANAGE_TOOL_SPEC,
   type ManagedWorktreeFaultBoundary,
 } from "../src/index.js";
@@ -22,7 +23,7 @@ interface AdoptionCrashPayload {
 const payloadPath = process.argv[2];
 if (payloadPath === undefined) throw new Error("managed-worktree adoption payload path is required");
 const payload = JSON.parse(await fs.readFile(payloadPath, "utf8")) as AdoptionCrashPayload;
-const store = new FsLedgerStore({ root: payload.ledgerRoot });
+const store = new SqliteLedgerStore({ dbPath: join(payload.ledgerRoot, "ledger.db") });
 await store.init();
 
 const result = await WORKTREE_MANAGE_TOOL_SPEC.run(

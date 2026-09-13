@@ -1,22 +1,20 @@
 /**
  * T1530 — relocate legacy active ideas onto the immortal ambient milestone.
  *
- * Constructive taxonomy: Behavioral / Active / Blackbox. The filesystem leg
+ * Constructive taxonomy: Behavioral / Active / Blackbox. The SQLite leg
  * crosses the durable adapter boundary; the dump leg crosses the pure import
  * boundary shared by SQLite and PostgreSQL restore.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
   IDEAS_LEDGER,
   IDEAS_SCHEMA,
   InMemoryLedgerStore,
-  LEDGER_STORAGE_DIRNAME,
   MILESTONES_AMBIENT_ID,
   buildBackupDump,
   parseBackupDump,
@@ -79,7 +77,7 @@ function addLegacyIdea(ledger: Ledger): Ledger {
   return ledger;
 }
 
-function assertAmbientOnly(ledger: Ledger): void {
+function assertAmbientOnly(ledger: { readonly milestones: readonly { readonly id: string; readonly items: readonly Item[] }[] }): void {
   const items = ledger.milestones.flatMap((group) => group.items);
   expect(items).toHaveLength(2);
   expect(items.find((item) => item.id === LEGACY_IDEA)).toEqual({
@@ -113,47 +111,19 @@ afterAll(async () => {
 });
 
 describe("legacy idea ambient migration", () => {
-  it("[BA/BG] relocates filesystem ideas on open and is byte-idempotent", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "cq-ideas-ambient-migration-"));
-    dirs.push(root);
-    const ideasPath = path.join(root, LEDGER_STORAGE_DIRNAME, `${IDEAS_LEDGER}.md`);
-
-    const bootstrap = new FsLedgerStore({ root });
-    await bootstrap.init();
-    await bootstrap.dispose();
-
-    const legacy = addLegacyIdea(
-      parseLedger(await readFile(ideasPath, "utf8"), { schema: IDEAS_SCHEMA }),
-    );
-    await writeFile(ideasPath, serializeLedger(legacy), "utf8");
-
-    const first = new FsLedgerStore({ root });
-    await first.init();
-    try {
-      const fetched = first.fetchItem(IDEAS_LEDGER, LEGACY_IDEA);
-      expect(fetched.milestoneId).toBe(MILESTONES_AMBIENT_ID);
-      expect(fetched.fields).toEqual(legacyIdea().fields);
-      assertAmbientOnly(
-        parseLedger(await readFile(ideasPath, "utf8"), { schema: IDEAS_SCHEMA }),
-      );
-    } finally {
-      await first.dispose();
-    }
-
-    const once = await readFile(ideasPath, "utf8");
-    const second = new FsLedgerStore({ root });
-    await second.init();
-    await second.dispose();
-    expect(await readFile(ideasPath, "utf8")).toBe(once);
-  });
-
-  it("[BA/BG] relocates SQLite ideas in one initialization transaction", async () => {
+  it("[BA/BG] relocates SQLite ideas in one initialization transaction and is row-idempotent", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-ideas-ambient-sqlite-"));
     dirs.push(root);
     const dbPath = path.join(root, "ledger.db");
 
-    const bootstrap = new SqliteLedgerStore({ dbPath });
+    const bootstrap = new SqliteLedgerStore({ dbPath, now: () => NOW });
     await bootstrap.init();
+    const ambient = existingAmbientIdea();
+    await bootstrap.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: ambient.id,
+      status: ambient.status,
+      fields: ambient.fields,
+    });
     await bootstrap.dispose();
 
     const seed = openLedgerDb(dbPath);
@@ -179,7 +149,7 @@ describe("legacy idea ambient migration", () => {
           "legacy-session",
         );
       seed
-        .query("UPDATE ledgers SET item_counter = 16 WHERE name = ?")
+        .query("UPDATE ledgers SET item_counter = 29 WHERE name = ?")
         .run(IDEAS_LEDGER);
     } finally {
       seed.close();
@@ -188,6 +158,7 @@ describe("legacy idea ambient migration", () => {
     const first = new SqliteLedgerStore({ dbPath });
     await first.init();
     try {
+      assertAmbientOnly(first.fetch(IDEAS_LEDGER));
       expect(first.fetchItem(IDEAS_LEDGER, LEGACY_IDEA)).toEqual({
         ...legacyIdea(),
         milestoneId: MILESTONES_AMBIENT_ID,

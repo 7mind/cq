@@ -50,8 +50,9 @@ describe("T1988 command and launcher conformance inventory [Contract-Active Whit
     expect(source).toContain("RemoteLedgerClient management");
     expect(source).toContain("new InMemoryLedgerStore()");
     expect(source).not.toContain("PostgresLedgerStore");
-    expect(source).not.toContain("FsLedgerStore");
-    expect(source).not.toContain("GitObjectLedgerBackend");
+    const constructors = [...source.matchAll(/new\s+([A-Za-z]+Ledger(?:Store|Backend))\s*\(/g)]
+      .map((match) => match[1]);
+    expect(new Set(constructors)).toEqual(new Set(["InMemoryLedgerStore"]));
     expect(source).not.toContain("SqliteLedgerStore");
   });
 });

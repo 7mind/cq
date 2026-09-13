@@ -1,44 +1,24 @@
-/**
- * Tests for FsLedgerStore.reset() with non-canonical ledgers (D21 / T131).
- *
- * A ledger created via createLedger() is non-canonical. Prior to T131 fix,
- * reset() would leave:
- *   (a) an orphan .cq/<name>.md file on disk,
- *   (b) a stale registry entry (name still returned by enumerate()),
- *   (c) stale FTS docs (ftsSearch returned hits from the wiped ledger).
- *
- * After the fix all three are eliminated.
- */
-
+/** D21 / T131 — destructive reinitialization removes custom rows, registry entries, and search hits. */
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   CANONICAL_LEDGERS,
-  LEDGER_STORAGE_DIRNAME,
   createTrustedWorksetManagementAuthority,
+  type LedgerSchema,
 } from "../src/index.js";
-import type { LedgerSchema } from "../src/index.js";
+import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 
 const dirs: string[] = [];
+const stores: SqliteLedgerStore[] = [];
+const TIMESTAMP = "2026-06-03T10:00:00.000Z";
 afterAll(async () => {
-  for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
+  for (const store of stores) await store.dispose();
+  for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
-
-async function makeStore(now?: () => string): Promise<{ store: FsLedgerStore; root: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-nc-"));
-  dirs.push(root);
-  const opts: ConstructorParameters<typeof FsLedgerStore>[0] = {
-    root,
-    worksetAuthority: createTrustedWorksetManagementAuthority(),
-  };
-  if (now !== undefined) opts.now = now;
-  const store = new FsLedgerStore(opts);
-  await store.init();
-  return { store, root };
-}
 
 const OPS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "closed"],
@@ -46,70 +26,68 @@ const OPS_SCHEMA: LedgerSchema = {
   fields: { headline: { type: "string", required: true } },
 };
 
-describe("FsLedgerStore.reset with non-canonical ledger", () => {
-  it("(a) no orphan .cq/ops.md, (b) no ops registry entry, (c) no FTS hits after reset", async () => {
-    const { store, root } = await makeStore();
+async function fixture(headline: string) {
+  const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-nc-"));
+  dirs.push(root);
+  const dbPath = path.join(root, "ledger.db");
+  const store = new SqliteLedgerStore({ dbPath });
+  stores.push(store);
+  await store.init();
+  await store.createLedger("ops", OPS_SCHEMA);
+  const milestone = await store.createMilestone({ title: "ops milestone" });
+  await store.createItem("ops", milestone.id, { status: "open", fields: { headline } });
+  return { store, dbPath };
+}
 
-    await store.createLedger("ops", OPS_SCHEMA);
+async function reinitialize(store: SqliteLedgerStore, dbPath: string) {
+  await store.dispose();
+  injectSqliteSchemaDivergence(dbPath);
+  const restarted = new SqliteLedgerStore({
+    dbPath,
+    now: () => TIMESTAMP,
+    onSchemaDivergence: "backup-reinit",
+    allowDestructiveReinitOfPopulatedStore: true,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  });
+  stores.push(restarted);
+  await restarted.init();
+  return restarted;
+}
 
-    const milestone = await store.createMilestone({ title: "ops milestone" });
-    await store.createItem("ops", milestone.id, {
-      status: "open",
-      fields: { headline: "ops-item-one" },
-    });
+function customRows(dbPath: string) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return {
+      ledgers: db.query("SELECT name, schema_json FROM ledgers WHERE name = 'ops'").all(),
+      groups: db.query("SELECT id FROM groups WHERE ledger = 'ops'").all(),
+      items: db.query("SELECT id, fields_json FROM items WHERE ledger = 'ops'").all(),
+    };
+  } finally {
+    db.close();
+  }
+}
 
-    const beforeHits = await store.ftsSearch("ops-item-one");
-    expect(beforeHits.length).toBeGreaterThan(0);
-
-    const opsFilePath = path.join(root, LEDGER_STORAGE_DIRNAME, "ops.md");
-    expect((await stat(opsFilePath)).isFile()).toBe(true);
-
+describe("SQLite reinitialization with non-canonical ledger", () => {
+  it("leaves no orphan custom rows, registry entry, or FTS hits", async () => {
+    const { store, dbPath } = await fixture("ops-item-one");
+    expect((await store.ftsSearch("ops-item-one")).length).toBeGreaterThan(0);
+    expect(customRows(dbPath).items).toHaveLength(1);
     expect(store.enumerate()).toContain("ops");
 
-    await store.reset();
-
-    // (a) No orphan .cq/ops.md file on disk.
-    let fileExists = false;
-    try {
-      await stat(opsFilePath);
-      fileExists = true;
-    } catch (e) {
-      expect((e as NodeJS.ErrnoException).code).toBe("ENOENT");
-    }
-    expect(fileExists).toBe(false);
-
-    // (b) 'ops' must not appear in the registry / enumerate() after reset.
-    expect(store.enumerate()).not.toContain("ops");
-    expect(store.enumerate().sort()).toEqual(
-      CANONICAL_LEDGERS.map((c) => c.name).sort(),
-    );
-
-    // (c) ftsSearch must return NO hits for the wiped non-canonical ledger.
-    const afterHits = await store.ftsSearch("ops-item-one");
-    expect(afterHits).toHaveLength(0);
-
-    await store.dispose();
+    const restarted = await reinitialize(store, dbPath);
+    expect(customRows(dbPath)).toEqual({ ledgers: [], groups: [], items: [] });
+    expect(restarted.enumerate()).not.toContain("ops");
+    expect(restarted.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
+    expect(await restarted.ftsSearch("ops-item-one")).toHaveLength(0);
   });
 
-  it("backed-up ops.md appears in the backup directory", async () => {
-    const fixedTs = "2026-06-03T10:00:00.000Z";
-    const { store } = await makeStore(() => fixedTs);
-
-    await store.createLedger("ops", OPS_SCHEMA);
-
-    const milestone = await store.createMilestone({ title: "ops milestone" });
-    await store.createItem("ops", milestone.id, {
-      status: "open",
-      fields: { headline: "ops-backup-check" },
-    });
-
-    const summary = await store.reset();
-
-    const { readdir } = await import("node:fs/promises");
-    const backedUp = await readdir(summary.backupDir);
-    expect(backedUp).toContain("ops.md");
-    expect(backedUp).toContain("ledgers.yaml");
-
-    await store.dispose();
+  it("preserves the custom schema, group, and item in the backup", async () => {
+    const { store, dbPath } = await fixture("ops-backup-check");
+    const before = customRows(dbPath);
+    expect(before.ledgers).toHaveLength(1);
+    expect(before.groups).toHaveLength(1);
+    expect(before.items).toHaveLength(1);
+    await reinitialize(store, dbPath);
+    expect(customRows(sqliteDivergenceBackupPath(dbPath, TIMESTAMP))).toEqual(before);
   });
 });
