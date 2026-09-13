@@ -1,30 +1,13 @@
 /**
- * Concurrency test for FsLedgerStore (msunify shape).
- *
- * Fires N parallel updateItem calls against the same item; asserts:
- *   - All complete without error.
- *   - The final on-disk file parses back cleanly.
- *   - Every distinct mutation is visible somewhere in the field history.
- *
- * Because the underlying per-ledger mutex serialises writers, the final
- * value will reflect *some* serialisation order; what we care about is
- * (a) no lost writes, (b) no corruption (file parses), (c) counter
- * monotonicity (creates also race).
- *
- * Tests use a deterministic ISO-string `now` injection: a monotonic
- * tick fed through `new Date(tick).toISOString()` keeps lexicographic
- * ordering aligned with numeric ordering (so timestamp comparisons can
- * be done via plain `<`).
+ * Concurrent SQLite mutations retain valid persisted state, monotonic IDs and
+ * timestamps, and terminal-parent invariants across independent connections.
  */
-
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
-  parseLedger,
-  serializeRegistry,
+  SqliteLedgerStore,
   derivePredicates,
   type Item,
   type LedgerSchema,
@@ -32,12 +15,12 @@ import {
   GOALS_LEDGER,
   TASKS_LEDGER,
   MILESTONES_LEDGER,
-  MILESTONES_SCHEMA,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
+const stores: SqliteLedgerStore[] = [];
 afterAll(async () => {
+  for (const store of stores) await store.dispose();
   for (const d of dirs) {
     await rm(d, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -58,20 +41,16 @@ function isoTick(tick: number): string {
   return new Date(1_780_000_000_000 + tick).toISOString();
 }
 
-async function setup(opts: { now?: () => string } = {}): Promise<FsLedgerStore> {
+async function setup(opts: { now?: () => string } = {}): Promise<SqliteLedgerStore> {
   const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-"));
   dirs.push(dir);
-  const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-  await mkdir(docsDir, { recursive: true });
-  await writeFile(
-    path.join(docsDir, "ledgers.yaml"),
-    serializeRegistry({ version: 1, ledgers: [{ name: "xenos", schema }] }),
-    "utf8",
-  );
-  const fsOpts: { root: string; now?: () => string } = { root: dir };
-  if (opts.now !== undefined) fsOpts.now = opts.now;
-  const store = new FsLedgerStore(fsOpts);
+  const store = new SqliteLedgerStore({
+    dbPath: path.join(dir, "ledger.db"),
+    ...(opts.now === undefined ? {} : { now: opts.now }),
+  });
+  stores.push(store);
   await store.init();
+  await store.createLedger("xenos", schema);
   return store;
 }
 
@@ -90,14 +69,14 @@ function gate(): Gate {
   return { promise, open };
 }
 
-describe("FsLedgerStore concurrency", () => {
+describe("SqliteLedgerStore concurrency", () => {
   it("close-versus-create, close-versus-reopen, close-versus-unarchive races never produce terminal-parent/nonterminal-child (D267/T1856)", async () => {
     // This block builds dozens of stores; remove its own directories eagerly
     // so later tests scanning the shared `dirs` array never pick them up.
     const raceDirsBefore = dirs.length;
     const raceDirs = (): string[] => dirs.slice(raceDirsBefore);
     try {
-    const xenosItem = async (store: FsLedgerStore, milestoneId: string) =>
+    const xenosItem = async (store: SqliteLedgerStore, milestoneId: string) =>
       store.createItem("xenos", milestoneId, {
         status: "open",
         fields: { severity: "minor", location: "x.ts", description: "init" },
@@ -187,7 +166,7 @@ describe("FsLedgerStore concurrency", () => {
     }
   });
 
-  it("50 parallel updateItem calls leave a parseable, complete file", async () => {
+  it("50 parallel updateItem calls leave complete persisted state", async () => {
     const store = await setup();
     const m = await store.createMilestone({ title: "M-one" });
     const item = await store.createItem("xenos", m.id, {
@@ -203,17 +182,7 @@ describe("FsLedgerStore concurrency", () => {
     );
     const results = await Promise.all(updates);
     expect(results.length).toBe(N);
-    const text = await (async () => {
-      for (const d of dirs) {
-        try {
-          return await readFile(path.join(d, LEDGER_STORAGE_DIRNAME, "xenos.md"), "utf8");
-        } catch {
-          /* try next */
-        }
-      }
-      throw new Error("could not locate ledger file");
-    })();
-    const parsed = parseLedger(text, { schema });
+    const parsed = store.fetch("xenos");
     expect(parsed.milestones[0]?.items[0]?.id).toBe(item.id);
     // At least one of the writes' counter values survives as the final.
     const finalCounter = parsed.milestones[0]?.items[0]?.fields["counter"];
@@ -263,11 +232,7 @@ describe("FsLedgerStore concurrency", () => {
     }
 
     // The final on-disk state corresponds to the last serialised write.
-    const text = await readFile(
-      path.join(dirs[dirs.length - 1] ?? "", LEDGER_STORAGE_DIRNAME, "xenos.md"),
-      "utf8",
-    );
-    const parsed = parseLedger(text, { schema });
+    const parsed = store.fetch("xenos");
     const final = parsed.milestones[0]?.items[0];
     if (final === undefined) throw new Error("missing parsed item");
     const winner = sorted[N - 1];
@@ -328,77 +293,21 @@ describe("FsLedgerStore concurrency", () => {
     await updatesAll;
   });
 
-  // LOCK-D01: two FsLedgerStore instances on the SAME cwd simulate the cq
-  // server's in-process store and the long-lived cq-mcp child. They share NO
-  // in-process AsyncMutex (each store has its own), so only the cross-process
-  // advisory file lock serialises their writes. Before the wait-with-timeout
-  // fix the second writer hit a live-pid EEXIST and threw LedgerBusyError; now
-  // it waits out the short critical section. Both stores run in THIS process,
-  // so both pids are alive — the WAIT path (not the dead-reclaim path) is
-  // exercised, exactly the production scenario.
-  //
-  // No-lost-write across processes is a TWO-layer guarantee: (1) the file lock
-  // serialises writes so no torn/corrupt file (LOCK-D01's job), and (2) the
-  // D-COHERENCE channel (onMutation → peer.invalidate, relayed over InternalWs
-  // in production) makes each store re-read the peer's committed state before
-  // its next write, so neither overwrites the other's snapshot. This test wires
-  // that channel exactly as production does and serialises each writer's next
-  // op behind the peer's invalidate — proving the lock waits AND the merge
-  // holds. Without the LOCK-D01 fix this test would throw LedgerBusyError
-  // instead of reaching the assertions.
-  it("two FsLedgerStore instances on one cwd both complete concurrent writes with no lost write (LOCK-D01)", async () => {
+  // Independent database connections must see each other's commits without a relay.
+  it("two SQLite connections complete writes with no lost state (LOCK-D01)", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-xproc-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({
-        version: 1,
-        ledgers: [
-          { name: MILESTONES_LEDGER, schema: MILESTONES_SCHEMA },
-          { name: "xenos", schema },
-        ],
-      }),
-      "utf8",
-    );
-
-    // A short real poll interval keeps the test fast while genuinely exercising
-    // the cross-instance file-lock waiting against a real (short) critical
-    // section. acquireTimeoutMs stays at the default so it never spuriously
-    // times out under load.
-    const lockfileOpts = { pollIntervalMs: 5 };
-
-    // The coherence relay: each store's onMutation invalidates the SAME ledger
-    // on its peer, mirroring the InternalWs `ledger.changed` notification. The
-    // relay promise is collected so the test can await convergence. (onMutation
-    // is synchronous and fires after lock release; it schedules the async
-    // invalidate, exactly like the WS send → remote handler hop.)
-    const relayed: Array<Promise<void>> = [];
-    // The relay closures read `storeA`/`storeB` lazily (only when fired by a
-    // write, after both are constructed), so capturing the const bindings
-    // before the second is initialised is safe — onMutation never fires during
-    // construction.
-    const relayToB = (ledgerId: string): void => {
-      relayed.push(storeB.invalidate(ledgerId).catch(() => undefined));
-    };
-    const relayToA = (ledgerId: string): void => {
-      relayed.push(storeA.invalidate(ledgerId).catch(() => undefined));
-    };
-    const storeA = new FsLedgerStore({ root: dir, lockfile: lockfileOpts, onMutation: relayToB });
-    const storeB = new FsLedgerStore({ root: dir, lockfile: lockfileOpts, onMutation: relayToA });
+    const dbPath = path.join(dir, "ledger.db");
+    const storeA = new SqliteLedgerStore({ dbPath });
+    const storeB = new SqliteLedgerStore({ dbPath });
+    stores.push(storeA, storeB);
     await storeA.init();
+    await storeA.createLedger("xenos", schema);
     await storeB.init();
 
     // storeA owns milestone creation; both stores create items into it.
     const m = await storeA.createMilestone({ title: "M-shared" });
-    await storeB.invalidate(MILESTONES_LEDGER); // B learns the new milestone.
 
-    // Alternate a write on A then a write on B, draining the coherence relay
-    // between writes so each store re-reads the peer's committed state before
-    // its own next write. The file lock + relay together guarantee no lost
-    // write. Each individual createItem still exercises the cross-instance file
-    // lock (both stores' locks live in the same .locks dir on one cwd).
     const N = 15;
     let aSeq = 0;
     let bSeq = 0;
@@ -411,25 +320,16 @@ describe("FsLedgerStore concurrency", () => {
         status: "open",
         fields: { severity: "minor", location: "b.ts", description: `B${bSeq++}` },
       });
-      // Drain relayed invalidations so the next iteration's writes start from
-      // the freshest committed state.
-      await Promise.all(relayed.splice(0));
     }
-    // Final drain.
-    await Promise.all(relayed.splice(0));
-
-    // Final on-disk file parses cleanly and reflects writes from BOTH stores
-    // with no lost write. Read from disk (the authority of record).
-    const text = await readFile(path.join(docsDir, "xenos.md"), "utf8");
-    const parsed = parseLedger(text, { schema });
+    const parsed = storeB.fetch("xenos");
     const group = parsed.milestones.find((g) => g.id === m.id);
-    if (group === undefined) throw new Error("milestone group missing on disk");
+    if (group === undefined) throw new Error("persisted milestone group missing");
     expect(group.items.length).toBe(2 * N);
     const fromA = group.items.filter((it) => it.fields["location"] === "a.ts").length;
     const fromB = group.items.filter((it) => it.fields["location"] === "b.ts").length;
     expect(fromA).toBe(N);
     expect(fromB).toBe(N);
-    // Ids are unique (counter monotonicity held across the cross-process lock).
+    // Ids are unique (counter monotonicity held across database connections).
     const ids = new Set(group.items.map((it) => it.id));
     expect(ids.size).toBe(2 * N);
 
@@ -437,36 +337,17 @@ describe("FsLedgerStore concurrency", () => {
     await storeB.dispose();
   });
 
-  // LOCK-D01 — the file lock's OWN guarantee in isolation: two stores writing
-  // to DIFFERENT ledgers on the same cwd contend on nothing data-wise but DO
-  // share the .locks dir; concurrent fire from both must all succeed with no
-  // LedgerBusyError and both files parse. This isolates "the second writer
-  // waits" from the coherence-merge layer (no shared ledger → no merge needed).
-  it("two FsLedgerStore instances writing different ledgers on one cwd never throw LedgerBusyError (LOCK-D01)", async () => {
+  it("two SQLite connections complete concurrent writes to different ledgers (LOCK-D01)", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-xproc2-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({
-        version: 1,
-        ledgers: [
-          { name: MILESTONES_LEDGER, schema: MILESTONES_SCHEMA },
-          { name: "alpha", schema },
-          { name: "beta", schema },
-        ],
-      }),
-      "utf8",
-    );
-    const lockfileOpts = { pollIntervalMs: 5 };
-    const storeA = new FsLedgerStore({ root: dir, lockfile: lockfileOpts });
-    const storeB = new FsLedgerStore({ root: dir, lockfile: lockfileOpts });
+    const dbPath = path.join(dir, "ledger.db");
+    const storeA = new SqliteLedgerStore({ dbPath });
+    const storeB = new SqliteLedgerStore({ dbPath });
+    stores.push(storeA, storeB);
     await storeA.init();
+    await storeA.createLedger("alpha", schema);
+    await storeA.createLedger("beta", schema);
     await storeB.init();
-    // Both stores share the SAME milestones lockfile (__milestones__.lock) on
-    // createItem, so they genuinely contend on the cross-process lock even
-    // though their data ledgers differ.
     const m = await storeA.createMilestone({ title: "M-x" });
     await storeB.invalidate(MILESTONES_LEDGER);
 
@@ -486,11 +367,10 @@ describe("FsLedgerStore concurrency", () => {
         }),
       );
     }
-    // No LedgerBusyError despite both contending on __milestones__.lock.
     await Promise.all(ops);
 
-    const alpha = parseLedger(await readFile(path.join(docsDir, "alpha.md"), "utf8"), { schema });
-    const beta = parseLedger(await readFile(path.join(docsDir, "beta.md"), "utf8"), { schema });
+    const alpha = storeB.fetch("alpha");
+    const beta = storeA.fetch("beta");
     expect(alpha.milestones.find((g) => g.id === m.id)?.items.length).toBe(N);
     expect(beta.milestones.find((g) => g.id === m.id)?.items.length).toBe(N);
 
@@ -498,26 +378,15 @@ describe("FsLedgerStore concurrency", () => {
     await storeB.dispose();
   });
 
-  it("concurrent updates to different ledgers run without cross-blocking", async () => {
+  it("concurrent updates to different ledgers all complete", async () => {
     // Build a store with two ledgers (plus the bootstrapped milestones).
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-multi-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({
-        version: 1,
-        ledgers: [
-          { name: MILESTONES_LEDGER, schema: MILESTONES_SCHEMA },
-          { name: "a", schema },
-          { name: "b", schema },
-        ],
-      }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
+    stores.push(store);
     await store.init();
+    await store.createLedger("a", schema);
+    await store.createLedger("b", schema);
     // Single shared milestone (createItem in two different ledgers).
     const m = await store.createMilestone({ title: "Mx" });
     const N = 20;
@@ -544,17 +413,10 @@ describe("FsLedgerStore concurrency", () => {
   it("T845: concurrent planning sessions leave only the selected DAG actionable", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-plan-conc-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: [] }),
-      "utf8",
-    );
-
-    const lockfile = { pollIntervalMs: 5 };
-    const plannerA = new FsLedgerStore({ root: dir, lockfile });
-    const plannerB = new FsLedgerStore({ root: dir, lockfile });
+    const dbPath = path.join(dir, "ledger.db");
+    const plannerA = new SqliteLedgerStore({ dbPath });
+    const plannerB = new SqliteLedgerStore({ dbPath });
+    stores.push(plannerA, plannerB);
     await plannerA.init();
     await plannerB.init();
 
@@ -592,7 +454,7 @@ describe("FsLedgerStore concurrency", () => {
       const aFinalized = gate();
 
       async function createPlanTasks(
-        store: FsLedgerStore,
+        store: SqliteLedgerStore,
         session: string,
         milestone: Item,
       ): Promise<Item[]> {

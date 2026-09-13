@@ -411,6 +411,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly coherenceOrigin = randomUUID();
   private readonly searchProjectionFactory: () => SearchProjection;
   private projectionRecovery: SearchProjectionRecovery | null = null;
+  private readonly committedAcknowledgements = new Set<Promise<void>>();
   private readonly projectionListeners = new Set<(ledgerId: string) => void>();
   private readonly pendingNotifications = new Map<
     number,
@@ -930,6 +931,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * rely on this releasing the file). A fresh store can reopen the same path.
    */
   async dispose(): Promise<void> {
+    while (this.committedAcknowledgements.size > 0) {
+      await Promise.all(this.committedAcknowledgements);
+    }
     const recovery = this.projectionRecovery;
     this.projectionRecovery = null;
     this.searchProjection = null;
@@ -2594,7 +2598,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return this.projectionRecovery;
   }
 
-  private async projectCommitted(
+  private projectCommitted(
     notifications: ReadonlyArray<{ ledgerId: string; op: LedgerMutationOp }>,
     measurement?: SqliteOperationMeasurement,
   ): Promise<void> {
@@ -2602,13 +2606,19 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const pending = this.pendingNotifications.get(version) ?? [];
     if (notifications.length > 0)
       this.pendingNotifications.set(version, [...pending, ...notifications]);
-    try {
-      await this.recovery().reconcile(measurement);
-    } catch (error) {
-      process.stderr.write(
-        `LedgerStore: committed write awaits projection recovery: ${String(error)}\n`,
-      );
-    }
+    const acknowledgement = (async () => {
+      try {
+        await this.recovery().reconcile(measurement);
+      } catch (error) {
+        process.stderr.write(
+          `LedgerStore: committed write awaits projection recovery: ${String(error)}\n`,
+        );
+      }
+    })().finally(() => {
+      this.committedAcknowledgements.delete(acknowledgement);
+    });
+    this.committedAcknowledgements.add(acknowledgement);
+    return acknowledgement;
   }
 
   private loadProjectionFrame(afterVersion: number, rebuild: boolean): ProjectionChangeFrame {
