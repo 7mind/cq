@@ -113,7 +113,7 @@ describe("SqliteLedgerStore — xdg domain-state coherence watcher", () => {
       while (Date.now() < deadline && changes.length === 0) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      expect(changes).toEqual([null]);
+      expect(changes).toEqual(["milestones"]);
     } finally {
       watcher.close();
       await peer.dispose();
@@ -121,7 +121,7 @@ describe("SqliteLedgerStore — xdg domain-state coherence watcher", () => {
     }
   }, 10_000);
 
-  it("a peer commit is invisible until the watcher's poll fires, then invalidate() makes it searchable", async () => {
+  it("search drains peer commits through the shared coherence consumer", async () => {
     const dbPath = path.join(await freshDbDir(), "ledger.db");
     const peer = new SqliteLedgerStore({ dbPath });
     const watched = new SqliteLedgerStore({ dbPath });
@@ -156,12 +156,7 @@ describe("SqliteLedgerStore — xdg domain-state coherence watcher", () => {
     }
   }, 10_000);
 
-  // D89: the watcher bulk-invalidates off a single content-version bump with no
-  // per-ledger scope, so `onChange` fires once per invalidate pass with `null`
-  // (matching the bulk-invalidate granularity) rather than once per ledger —
-  // this is the signal startLedgerCoherenceWatcher's xdg branch (ledger-mcp)
-  // forwards to drive the WS "changed" push.
-  it("invokes onChange(null) after each domain-state-triggered invalidate pass", async () => {
+  it("notifies only changed ledgers after their projection acknowledgement", async () => {
     const dbPath = path.join(await freshDbDir(), "ledger.db");
     const peer = new SqliteLedgerStore({ dbPath });
     const watched = new SqliteLedgerStore({ dbPath });
@@ -180,10 +175,10 @@ describe("SqliteLedgerStore — xdg domain-state coherence watcher", () => {
       });
 
       const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline && changes.length === 0) {
+      while (Date.now() < deadline && !changes.includes("defects")) {
         await new Promise((r) => setTimeout(r, 20));
       }
-      expect(changes).toEqual([null]);
+      expect(changes.sort()).toEqual(["defects", "milestones"]);
     } finally {
       watcher.close();
       await peer.dispose();

@@ -45,7 +45,7 @@ import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
-import { coherenceVersion, openLedgerDb } from "./sqlite/connection.js";
+import { openLedgerDb } from "./sqlite/connection.js";
 import { SqliteXdgProjectIdentityAccess } from "./sqlite/projectIdentity.js";
 import { resolveDisplayName } from "./postgres/displayName.js";
 import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
@@ -464,49 +464,34 @@ export interface XdgCoherenceWatcher {
  * for the other backends, keyed here off the persisted domain-state version
  * instead of a filesystem event or a ref sha.
  *
- * Opens its OWN probe connection to `dbPath` (never touches `store`'s
- * internals) and polls {@link coherenceVersion} every `pollMs`. SQLite
- * triggers bump that counter for persisted domain state while MCP usage
- * telemetry does not invalidate the derived search index or notify frontend
- * clients. The counter carries no per-ledger scope, so a bump invalidates
- * every ledger `store` currently knows (`store.enumerate()`).
- *
- * `onChange`, when given, fires ONCE per invalidate pass with `null` (never a
- * ledger id) — the counter carries no per-ledger scope to report, matching
- * the bulk-invalidate granularity above. Same callback shape as
- * startLedgerWatcher / startLedgerRefWatcher's `onChange`, so the construction
- * site (startLedgerCoherenceWatcher, ledger-mcp/main.ts) can forward it
- * uniformly across all three backends (D89).
- *
- * A `close()`d watcher stops polling and releases its probe connection; the
- * store itself is untouched (the caller still owns its lifecycle).
+ * Uses the store's serialized consumer and acknowledged cursor. Search, local
+ * writes and polling share that consumer; exact self versions are not replayed.
+ * Changed notifications name only foreign ledgers whose projection is current.
+ * Closing detaches this subscriber and timer, not the caller-owned store.
  */
 export function startXdgCoherenceWatcher(
   store: LedgerStore,
-  dbPath: string,
+  _dbPath: string,
   pollMs: number = XDG_WATCHER_DEFAULT_POLL_MS,
   onChange?: (ledgerId: string | null) => void,
 ): XdgCoherenceWatcher {
-  const probe = openLedgerDb(dbPath);
-  let lastVersion = coherenceVersion(probe);
-  let invalidating = false;
+  if (!(store instanceof SqliteLedgerStore))
+    throw new Error("XDG coherence requires the SQLite projection consumer");
+  const unsubscribe =
+    onChange === undefined ? () => undefined : store.subscribeProjectionChanges(onChange);
+  let reconciling = false;
 
   const timer = setInterval(() => {
-    if (invalidating) return;
-    const current = coherenceVersion(probe);
-    if (current === lastVersion) return;
-    lastVersion = current;
-    invalidating = true;
-    void (async () => {
-      try {
-        for (const ledgerId of store.enumerate()) {
-          await store.invalidate(ledgerId);
-        }
-        onChange?.(null);
-      } finally {
-        invalidating = false;
-      }
-    })();
+    if (reconciling) return;
+    reconciling = true;
+    void store
+      .reconcileProjection()
+      .catch((error: unknown) => {
+        process.stderr.write(`LedgerStore: XDG coherence awaits recovery: ${String(error)}\n`);
+      })
+      .finally(() => {
+        reconciling = false;
+      });
   }, pollMs);
   // Never keep an otherwise-idle process alive on its own.
   timer.unref?.();
@@ -514,7 +499,7 @@ export function startXdgCoherenceWatcher(
   return {
     close(): void {
       clearInterval(timer);
-      probe.close();
+      unsubscribe();
     },
   };
 }

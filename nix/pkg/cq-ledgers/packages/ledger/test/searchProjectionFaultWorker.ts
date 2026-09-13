@@ -12,8 +12,7 @@ function serve(): void {
         case "crash":
           throw new Error("injected search worker crash");
         case "exit":
-          self.close();
-          return;
+          return process.exit(0);
         case "timeout":
           held = true;
           return;

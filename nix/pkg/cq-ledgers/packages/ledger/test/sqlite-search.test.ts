@@ -431,7 +431,7 @@ describe("T528: sqlite derived-index coherence", () => {
     }
   });
 
-  test("cross-process coherence: a peer's committed create + invalidate(ledgerId) surfaces in ftsSearch", async () => {
+  test("cross-process coherence: search drains every peer ledger before ranking", async () => {
     const dbPath = await freshDbPath();
     const a = new SqliteLedgerStore({ dbPath, now });
     await a.init();
@@ -451,16 +451,15 @@ describe("T528: sqlite derived-index coherence", () => {
           ledgerId: WIDGETS,
           itemId: "W1",
           status: "open",
-          score: 1.8210493974474302,
+          score: 2.400450540265541,
           matchedFields: ["body"],
         },
       ]);
-      // …but A's derived index is in-memory and does NOT auto-observe the
-      // peer commit (the row IS visible to A's row reads).
-      expect(projectHits(await a.ftsSearch("xylophone"))).toEqual([]);
+      expect(projectHits(await a.ftsSearch("xylophone"))).toEqual(
+        projectHits(await b.ftsSearch("xylophone")),
+      );
       expect(a.search(WIDGETS, "xylophone").length).toBe(1);
-      // invalidate — the T530 coherence watcher's trigger — rebuilds the
-      // bucket from the committed rows.
+      // Explicit invalidation preserves the already-current search view.
       await a.invalidate(WIDGETS);
       const hits = await a.ftsSearch("xylophone");
       expect(projectHits(hits)).toEqual([
@@ -478,7 +477,7 @@ describe("T528: sqlite derived-index coherence", () => {
     }
   });
 
-  test("invalidate also surfaces a peer-created LEDGER's items; unknown ids are a no-op", async () => {
+  test("search discovers peer-created ledgers; explicit invalidation remains idempotent", async () => {
     const dbPath = await freshDbPath();
     const a = new SqliteLedgerStore({ dbPath, now });
     await a.init();
@@ -488,15 +487,16 @@ describe("T528: sqlite derived-index coherence", () => {
       const m = await b.createMilestone({ title: "x" });
       await b.createLedger(NOTES, notesSchema);
       await b.createItem(NOTES, m.id, { status: "open", fields: { notes: "quokka" } });
-      // A has never seen the notes ledger; its index is stale until invalidated.
-      expect(projectHits(await a.ftsSearch("quokka"))).toEqual([]);
+      expect(projectHits(await a.ftsSearch("quokka"))).toEqual(
+        projectHits(await b.ftsSearch("quokka")),
+      );
       await a.invalidate(NOTES);
       expect(projectHits(await a.ftsSearch("quokka"))).toEqual([
         {
           ledgerId: NOTES,
           itemId: "N1",
           status: "open",
-          score: 2.0794415416798357,
+          score: 2.942487759035179,
           matchedFields: ["body"],
         },
       ]);

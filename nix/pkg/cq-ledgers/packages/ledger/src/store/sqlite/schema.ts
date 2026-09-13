@@ -32,8 +32,9 @@ import type { Database } from "bun:sqlite";
  *   without a long-lived write transaction.
  * - v5: a coherence counter whose triggers exclude MCP usage telemetry.
  * - v6: normalized active-item reference edges for keyed closure/incident reads.
+ * - v7: one domain-transaction version and a cursor-safe latest-version vector.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const COHERENCE_TABLES = [
   "ledgers",
@@ -153,6 +154,19 @@ export function ensureSchema(db: Database): void {
 
     INSERT OR IGNORE INTO coherence_state (id, version) VALUES (1, 0);
 
+    CREATE TABLE IF NOT EXISTS coherence_vector (
+      ledger       TEXT NOT NULL,
+      document_id  TEXT NOT NULL,
+      scope        TEXT NOT NULL CHECK (scope IN ('active', 'archived', 'registry', 'control')),
+      change_kind  TEXT NOT NULL CHECK (change_kind IN ('upsert', 'delete', 'refresh')),
+      version      INTEGER NOT NULL,
+      origin       TEXT NOT NULL,
+      PRIMARY KEY (ledger, document_id, scope)
+    );
+
+    CREATE INDEX IF NOT EXISTS coherence_vector_version
+      ON coherence_vector (version, ledger, document_id, scope);
+
     CREATE TABLE IF NOT EXISTS mcp_usage_stats (
       endpoint    TEXT PRIMARY KEY,
       call_count  INTEGER NOT NULL,
@@ -263,12 +277,7 @@ export function ensureSchema(db: Database): void {
   `);
   for (const table of COHERENCE_TABLES) {
     for (const operation of COHERENCE_OPERATIONS) {
-      db.exec(`
-        CREATE TRIGGER IF NOT EXISTS coherence_${table}_${operation.toLowerCase()}
-        AFTER ${operation} ON ${table} BEGIN
-          UPDATE coherence_state SET version = version + 1 WHERE id = 1;
-        END
-      `);
+      db.exec(`DROP TRIGGER IF EXISTS coherence_${table}_${operation.toLowerCase()}`);
     }
   }
   db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(

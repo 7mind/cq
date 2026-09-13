@@ -26,7 +26,7 @@
  *    affected rows, with the domain guards REUSED from core.ts.
  *  - T528: the derived search index (ftsSearch) + the
  *    index-refresh half of invalidate() + the post-commit index update in
- *    fireMutation. The index is the SAME in-memory `LedgerSearchIndex` the
+ *    coherence consumer. The worker uses the SAME `LedgerSearchIndex` the
  *    fs/in-memory stores use — a derived READ-side projection of the
  *    committed rows (cold-built on init(), one ledger bucket refreshed per
  *    mutation) — so every query semantic (parseQuery qualifiers, fuzzy,
@@ -48,6 +48,7 @@
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import type {
   ArchivePointer,
   FetchedLedger,
@@ -146,7 +147,24 @@ import {
   DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
 import { relocateActiveIdeasToAmbient } from "../../ideasAmbientMigration.js";
-import { immediateWriteTransaction, openLedgerDb, WRITE_TXN_MAX_ATTEMPTS } from "./connection.js";
+import {
+  coherenceVersion,
+  immediateWriteTransaction,
+  openLedgerDb,
+  WRITE_TXN_MAX_ATTEMPTS,
+} from "./connection.js";
+import {
+  captureSqliteCoherenceSnapshot,
+  ledgerControlChanges,
+  recordSqliteCoherence,
+  readSqliteCoherence,
+} from "./coherenceVector.js";
+import type { SqliteCoherenceChange, SqliteCoherenceEntry } from "./coherenceVector.js";
+import {
+  ProjectionUnavailableError,
+  SearchProjectionRecovery,
+} from "../../search/SearchProjectionRecovery.js";
+import type { ProjectionChangeFrame } from "../../search/SearchProjectionRecovery.js";
 import {
   createSqliteOperationMeasurement,
   type SqliteAccessObserver,
@@ -242,6 +260,8 @@ export interface SqliteLedgerStoreOpts {
    * the write transaction COMMITs. Guarded: a throw is logged, never unwinds.
    */
   onMutation?: OnMutation;
+  /** Projection boundary injection; production uses its dedicated Bun worker. */
+  searchProjectionFactory?: () => SearchProjection;
   /** Test-only synchronous hook reached immediately after `BEGIN IMMEDIATE`. */
   planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
   /**
@@ -371,7 +391,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly monotonicNow: SqliteMonotonicNow | null;
   private readonly operationObserver: SqliteOperationObserver | null;
   private readonly accessObserver: SqliteAccessObserver | null;
-  /** Fired post-COMMIT by {@link fireMutation}; guarded. */
+  /** Enqueued after projection acknowledgement; failures preserve committed writes. */
   protected readonly onMutation: OnMutation | null;
   private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
@@ -388,6 +408,14 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * MiniSearch indexing and whole-index reclamation never run on this thread.
    */
   private searchProjection: SearchProjection | null = null;
+  private readonly coherenceOrigin = randomUUID();
+  private readonly searchProjectionFactory: () => SearchProjection;
+  private projectionRecovery: SearchProjectionRecovery | null = null;
+  private readonly projectionListeners = new Set<(ledgerId: string) => void>();
+  private readonly pendingNotifications = new Map<
+    number,
+    ReadonlyArray<{ ledgerId: string; op: LedgerMutationOp }>
+  >();
   private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
 
   constructor(opts: SqliteLedgerStoreOpts) {
@@ -406,6 +434,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       );
     }
     this.onMutation = opts.onMutation ?? null;
+    this.searchProjectionFactory =
+      opts.searchProjectionFactory ??
+      (() => createWorkerSearchProjection(SEARCH_PROJECTION_COMMAND_DEADLINE_MS));
     this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.allowDestructiveReinitOfPopulatedStore =
@@ -502,6 +533,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
               `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
             );
             db.transaction(() => {
+              const removed = db.query("SELECT name FROM ledgers").all() as Array<{ name: string }>;
               db.exec("DELETE FROM workset_admissions");
               db.exec("DELETE FROM plan_operations");
               db.exec("DELETE FROM plan_claims");
@@ -511,6 +543,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
               db.exec("DELETE FROM groups");
               db.exec("DELETE FROM ledgers");
               db.query("UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1").run("[]");
+              recordSqliteCoherence(
+                db,
+                this.coherenceOrigin,
+                removed.map(({ name }): SqliteCoherenceChange => ({
+                  ledger: name,
+                  documentId: "",
+                  scope: "registry",
+                  kind: "delete",
+                })),
+              );
             })();
             this.bootstrapCanonicalRows(
               db,
@@ -533,7 +575,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
     immediateWriteTransaction(db, () => {
       const ideas = this.loadLedgerFrom(db, IDEAS_LEDGER);
-      if (relocateActiveIdeasToAmbient(ideas)) this.replaceActiveLedgerIn(db, ideas);
+      if (relocateActiveIdeasToAmbient(ideas)) {
+        this.replaceActiveLedgerIn(db, ideas);
+        recordSqliteCoherence(db, this.coherenceOrigin, ledgerControlChanges([IDEAS_LEDGER]));
+      }
     });
 
     this.handle = db;
@@ -547,15 +592,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       ...this.worksetOptions,
     });
 
-    this.searchProjection = createWorkerSearchProjection(SEARCH_PROJECTION_COMMAND_DEADLINE_MS);
+    this.searchProjection = this.searchProjectionFactory();
+    this.projectionRecovery = new SearchProjectionRecovery(
+      this.searchProjection,
+      {
+        load: (afterVersion, rebuild) => this.loadProjectionFrame(afterVersion, rebuild),
+        notify: (frame, signal) => this.notifyProjectionFrame(frame, signal),
+      },
+      SEARCH_PROJECTION_COMMAND_DEADLINE_MS,
+    );
     try {
-      const buckets = this.read(() =>
-        this.enumerate().flatMap((name) => [
-          this.searchBucket(name, false),
-          this.searchBucket(name, true),
-        ]),
-      );
-      await this.searchProjection.execute({ kind: "snapshot", buckets });
+      await this.projectionRecovery.initialize();
     } catch (error) {
       await this.dispose();
       throw error;
@@ -629,6 +676,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    */
   private bootstrapCanonicalRows(db: Database, missing: string[], widened: string[]): void {
     db.transaction(() => {
+      const changes: SqliteCoherenceChange[] = [...missing, ...widened].map((ledger) => ({
+        ledger,
+        documentId: "",
+        scope: "registry",
+        kind: "refresh",
+      }));
       const insertLedger = db.query(
         "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
       );
@@ -647,6 +700,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         .query("SELECT id FROM items WHERE ledger = ? AND id = ?")
         .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
       if (ambient === null) {
+        changes.push({
+          ledger: MILESTONES_LEDGER,
+          documentId: MILESTONES_AMBIENT_ID,
+          scope: "active",
+          kind: "upsert",
+        });
         const now = this.now();
         db.query(
           `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
@@ -660,6 +719,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           now,
         );
       }
+      recordSqliteCoherence(db, this.coherenceOrigin, changes);
     })();
   }
 
@@ -794,11 +854,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const version = versionRow === null ? 1 : Number(versionRow.value);
     if (version >= SCHEMA_VERSION) return;
 
-    // v2→v5 changes are additive. v5→v6 backfills the active reference index
-    // once after ensureSchema has installed its maintenance triggers.
+    // v2→v5 and v6→v7 are additive. Only v5→v6 needs a reference backfill.
     if (version >= 2) {
       immediateWriteTransaction(db, () => {
-        backfillActiveItemReferences(db);
+        if (version < 6) backfillActiveItemReferences(db);
         db.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(SCHEMA_VERSION);
       });
       return;
@@ -871,11 +930,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * rely on this releasing the file). A fresh store can reopen the same path.
    */
   async dispose(): Promise<void> {
-    const projection = this.searchProjection;
+    const recovery = this.projectionRecovery;
+    this.projectionRecovery = null;
     this.searchProjection = null;
-    if (projection !== null) {
-      await projection.execute({ kind: "close" });
-    }
+    if (recovery !== null) await recovery.close();
+    this.projectionListeners.clear();
+    this.pendingNotifications.clear();
     this.worksetHandle = null;
     if (this.handle !== null) {
       this.handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -1077,14 +1137,54 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    */
   async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
     this.assertInit();
-    const ack = await this.projection().execute({ kind: "search", query, options: opts });
+    await this.reconcileProjection();
+    const ack = await this.projection()
+      .execute({ kind: "search", query, options: opts })
+      .catch((error: unknown) => {
+        void this.reconcileProjection().catch(() => undefined);
+        throw new ProjectionUnavailableError(`Search projection unavailable: ${String(error)}`);
+      });
     if (ack.result.kind !== "search")
       throw new LedgerError("Search projection returned a non-search acknowledgement");
     return ack.result.hits;
   }
 
   searchProjectionHealth(): SearchProjectionHealth {
-    return this.projection().health();
+    return this.recovery().health();
+  }
+
+  reconcileProjection(): Promise<void> {
+    return this.recovery().reconcile();
+  }
+
+  subscribeProjectionChanges(listener: (ledgerId: string) => void): () => void {
+    this.projectionListeners.add(listener);
+    return () => {
+      this.projectionListeners.delete(listener);
+    };
+  }
+
+  captureSearchSnapshot(): {
+    readonly version: number;
+    readonly buckets: SearchProjectionBucket[];
+  } {
+    const snapshot = captureSqliteCoherenceSnapshot(this.db(), () =>
+      this.enumerate().flatMap((ledgerId) => [
+        this.searchBucket(ledgerId, false),
+        this.searchBucket(ledgerId, true),
+      ]),
+    );
+    return { version: snapshot.version, buckets: snapshot.documents };
+  }
+
+  readCoherenceChanges(afterVersion: number): {
+    readonly version: number;
+    readonly entries: SqliteCoherenceEntry[];
+  } {
+    return this.read(() => {
+      const version = coherenceVersion(this.db());
+      return { version, entries: readSqliteCoherence(this.db(), afterVersion, version) };
+    });
   }
 
   /**
@@ -1169,11 +1269,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         this.nonTerminalChildren(milestoneId),
       );
       this.persistItemRow(MILESTONES_LEDGER, x);
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: MILESTONES_LEDGER, documentId: x.id, scope: "active", kind: "upsert" },
+      ]);
       return x;
     });
     // Hook fires AFTER commit per the D-COHERENCE contract.
-    await this.indexUpsertActive(MILESTONES_LEDGER, item);
-    this.fireMutation(MILESTONES_LEDGER, "update");
+    await this.projectCommitted([{ ledgerId: MILESTONES_LEDGER, op: "update" }]);
     return item;
   }
 
@@ -1221,10 +1323,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         this.buildRefValidationContext(),
       );
       this.persistItemRow(ledgerId, x);
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" },
+      ]);
       return x;
     });
-    await this.indexUpsertActive(ledgerId, item);
-    this.fireMutation(ledgerId, "update");
+    await this.projectCommitted([{ ledgerId, op: "update" }]);
     return item;
   }
 
@@ -1244,12 +1348,15 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // queries) instead of materialising all N rows via loadLedger.
       const shim = this.createItemShim(ledgerId, milestoneId, init.id);
       const refCtx = this.buildRefValidationContext();
-      return this.insertItemViaCore(shim, init.id, (l) =>
+      const created = this.insertItemViaCore(shim, init.id, (l) =>
         applyCreateItem(l, milestoneId, init, this.now(), refCtx),
       );
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: ledgerId, documentId: created.id, scope: "active", kind: "upsert" },
+      ]);
+      return created;
     });
-    await this.indexUpsertActive(ledgerId, item);
-    this.fireMutation(ledgerId, "create");
+    await this.projectCommitted([{ ledgerId, op: "create" }]);
     return item;
   }
 
@@ -1257,12 +1364,15 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = immediateWriteTransaction(this.db(), () => {
       const ledger = this.loadLedger(MILESTONES_LEDGER);
       const refCtx = this.buildRefValidationContext();
-      return this.insertItemViaCore(ledger, init.id, (l) =>
+      const created = this.insertItemViaCore(ledger, init.id, (l) =>
         applyCreateMilestoneItem(l, init, this.now(), refCtx),
       );
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: MILESTONES_LEDGER, documentId: created.id, scope: "active", kind: "upsert" },
+      ]);
+      return created;
     });
-    await this.indexUpsertActive(MILESTONES_LEDGER, item);
-    this.fireMutation(MILESTONES_LEDGER, "create");
+    await this.projectCommitted([{ ledgerId: MILESTONES_LEDGER, op: "create" }]);
     return item;
   }
 
@@ -1295,9 +1405,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
         )
         .run(name, JSON.stringify(schema));
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: name, documentId: "", scope: "registry", kind: "refresh" },
+      ]);
       return this.fetchView(name);
     });
-    this.fireMutation(name, "create");
+    await this.projectCommitted([{ ledgerId: name, op: "create" }]);
     return view;
   }
 
@@ -1321,10 +1434,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // D267/T1856: resurrection respects parent liveness.
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), source.milestoneId);
       this.persistItemRow(ledgerId, x);
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, [
+        { ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" },
+      ]);
       return x;
     });
-    await this.indexUpsertActive(ledgerId, item);
-    this.fireMutation(ledgerId, "update");
+    await this.projectCommitted([{ ledgerId, op: "update" }]);
     return item;
   }
 
@@ -1404,16 +1519,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           milestoneId,
         );
       }
+      recordSqliteCoherence(db, this.coherenceOrigin, [
+        { ledger: ledgerId, documentId: reattached.id, scope: "active", kind: "upsert" },
+        { ledger: ledgerId, documentId: reattached.id, scope: "archived", kind: "delete" },
+      ]);
       return reattached;
     });
-    // T538 (D87): move the ONE reattached doc archived → active incrementally
-    // (D88 scope-aware doc ids) instead
-    // of rebuilding both buckets.
-    await this.applySearchDelta([
-      { kind: "remove", ledgerId, archived: true, itemId: item.id },
-      { kind: "upsert", ledgerId, archived: false, item },
-    ]);
-    this.fireMutation(ledgerId, "update");
+    await this.projectCommitted([{ ledgerId, op: "update" }]);
     return item;
   }
 
@@ -1445,7 +1557,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     // Hoisted for the post-commit incremental index moves (T538/D87); reset
     // inside the transaction body, which the busy-retry may re-run.
     let detached = new Map<string, { items: Item[] }>();
-    let detachedMsItem: Item | undefined;
     immediateWriteTransaction(this.db(), () => {
       const db = this.db();
       participating = [];
@@ -1485,7 +1596,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         "",
         "",
       );
-      detachedMsItem = msItem;
       const msTitle = typeof msItem.fields["title"] === "string" ? msItem.fields["title"] : "";
       const msStatus = msItem.status;
       const nowTs = this.now();
@@ -1542,30 +1652,23 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         title: msTitle,
         status: msStatus,
       };
-    });
-    // T538 (D87): move each detached doc active → archived incrementally —
-    // O(group-size), never O(ledger-size) — BEFORE the hooks fire, so a hook
-    // observes ftsSearch already reflecting the archive.
-    const searchChanges: SearchProjectionChange[] = [];
-    for (const name of participating) {
-      for (const it of detached.get(name)?.items ?? []) {
-        searchChanges.push(
-          { kind: "remove", ledgerId: name, archived: false, itemId: it.id },
-          { kind: "upsert", ledgerId: name, archived: true, item: it },
-        );
+      const changes: SqliteCoherenceChange[] = [];
+      for (const [ledger, group] of detached) {
+        for (const item of group.items)
+          changes.push(
+            { ledger, documentId: item.id, scope: "active", kind: "delete" },
+            { ledger, documentId: item.id, scope: "archived", kind: "upsert" },
+          );
       }
-    }
-    if (detachedMsItem !== undefined) {
-      searchChanges.push(
-        { kind: "remove", ledgerId: MILESTONES_LEDGER, archived: false, itemId: detachedMsItem.id },
-        { kind: "upsert", ledgerId: MILESTONES_LEDGER, archived: true, item: detachedMsItem },
+      changes.push(
+        { ledger: MILESTONES_LEDGER, documentId: msItem.id, scope: "active", kind: "delete" },
+        { ledger: MILESTONES_LEDGER, documentId: msItem.id, scope: "archived", kind: "upsert" },
       );
-    }
-    await this.applySearchDelta(searchChanges);
-    // Fire per-participant hooks AFTER commit (D-COHERENCE order: alphabetic
-    // participants, then the milestones ledger).
-    for (const id of participating) this.fireMutation(id, "archive");
-    this.fireMutation(MILESTONES_LEDGER, "archive");
+      recordSqliteCoherence(db, this.coherenceOrigin, changes);
+    });
+    await this.projectCommitted(
+      [...participating, MILESTONES_LEDGER].map((ledgerId) => ({ ledgerId, op: "archive" })),
+    );
     if (pointer === undefined) {
       throw new LedgerError(
         `SqliteLedgerStore: archiveMilestone(${milestoneId}) produced no pointer`,
@@ -1639,29 +1742,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
-   * Post-commit mutation hook (parity with AbstractLedgerStore.fireMutation):
-   * the user hook is GUARDED — a throw is logged to stderr and cannot unwind
-   * the already-committed write. Fired strictly AFTER the transaction COMMITs.
-   *
-   * T538 (D87): the index refresh no longer lives here — each mutation site
-   * awaits its incremental per-document projection acknowledgement BEFORE
-   * calling this, so when the hook observes the mutation ftsSearch already reflects it (same
-   * ordering as the fs store) without an O(ledger-size) bucket rebuild.
-   */
-  private fireMutation(ledgerId: string, op: LedgerMutationOp): void {
-    if (this.onMutation !== null) {
-      try {
-        this.onMutation(ledgerId, op);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `LedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
-        );
-      }
-    }
-  }
-
-  /**
    * Duck-typed BackupDump source (D139): emit plan-lifecycle.json from the
    * durable plan_claims/plan_operations rows.
    */
@@ -1689,12 +1769,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       }
       this.persistPlanRecords("plan_claims", state.claims);
       this.persistPlanRecords("plan_operations", state.operations);
+      recordSqliteCoherence(
+        this.db(),
+        this.coherenceOrigin,
+        ledgerControlChanges(result.dirtyLedgers),
+      );
       return result;
     });
-    await this.rebuildSearchActive(this.enumerate());
-    for (const ledgerId of new Set(mutation.dirtyLedgers)) {
-      this.fireMutation(ledgerId, "update");
-    }
+    await this.projectCommitted(
+      [...new Set(mutation.dirtyLedgers)].map((ledgerId) => ({ ledgerId, op: "update" })),
+    );
     return mutation.result;
   }
 
@@ -1716,12 +1800,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
         this.replaceActiveLedger(ledger);
       }
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, ledgerControlChanges(dirtyLedgers));
       return { result, dirtyLedgers };
     });
-    await this.rebuildSearchActive(outcome.dirtyLedgers);
-    for (const ledgerId of outcome.dirtyLedgers) {
-      this.fireMutation(ledgerId, "update");
-    }
+    await this.projectCommitted(
+      outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })),
+    );
     return outcome.result;
   }
 
@@ -1745,12 +1829,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         this.persistPlanRecords("plan_claims", state.claims);
         this.persistPlanRecords("plan_operations", state.operations);
       }
+      recordSqliteCoherence(this.db(), this.coherenceOrigin, ledgerControlChanges(dirtyLedgers));
       return { result, dirtyLedgers };
     });
-    await this.rebuildSearchActive(this.enumerate());
-    for (const ledgerId of outcome.dirtyLedgers) {
-      this.fireMutation(ledgerId, "update");
-    }
+    await this.projectCommitted(
+      outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })),
+    );
     return outcome.result;
   }
 
@@ -2323,6 +2407,20 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         });
         const result = mutate(transaction.tx, roots);
         const projectionDelta = this.persistGenericMutationState(state, transaction, measurement);
+        const changes = this.coherenceChangesForDelta(projectionDelta);
+        for (const ledgerId of transaction.dirtyLedgers) {
+          const before = state.beforeLedgers.get(ledgerId);
+          const after = state.ledgers.get(ledgerId);
+          if (after === undefined)
+            throw new LedgerError(`Dirty ledger ${ledgerId} is absent from its transaction`);
+          if (
+            before === undefined ||
+            JSON.stringify(before.schema) !== JSON.stringify(after.schema)
+          ) {
+            changes.push({ ledger: ledgerId, documentId: "", scope: "registry", kind: "refresh" });
+          }
+        }
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
         return {
           result,
           dirtyLedgers: [...transaction.dirtyLedgers],
@@ -2332,44 +2430,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       };
       const retryLimit = WRITE_TXN_MAX_ATTEMPTS;
       const outcome = immediateWriteTransaction(this.db(), write, retryLimit, measurement);
-      const maintainProjection = async (): Promise<void> => {
-        const delta = outcome.projectionDelta;
-        await this.applySearchDelta([
-          ...delta.activeDeletes.map(({ ledgerId, itemId }): SearchProjectionChange => ({
-            kind: "remove",
-            ledgerId,
-            itemId,
-            archived: false,
-          })),
-          ...delta.activeUpserts.map(({ ledgerId, item }): SearchProjectionChange => ({
-            kind: "upsert",
-            ledgerId,
-            item,
-            archived: false,
-          })),
-          ...delta.archivedDeletes.map(({ ledgerId, itemId }): SearchProjectionChange => ({
-            kind: "remove",
-            ledgerId,
-            itemId,
-            archived: true,
-          })),
-          ...delta.archivedUpserts.map(({ ledgerId, item }): SearchProjectionChange => ({
-            kind: "upsert",
-            ledgerId,
-            item,
-            archived: true,
-          })),
-        ]);
-      };
-      if (measurement === undefined) await maintainProjection();
-      else await measurement.measureAsync("projectionMs", maintainProjection);
-      const notify = (): void => {
-        for (const ledgerId of outcome.dirtyLedgers) {
-          this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
-        }
-      };
-      if (measurement === undefined) notify();
-      else measurement.measure("notificationMs", notify);
+      await this.projectCommitted(
+        outcome.dirtyLedgers.map((ledgerId) => ({
+          ledgerId,
+          op: outcome.archivedChanged ? "archive" : "update",
+        })),
+        measurement,
+      );
       if (ownsMeasurement) measurement.finish("success");
       return outcome.result;
     } catch (error) {
@@ -2479,6 +2546,35 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return this.searchProjection;
   }
 
+  private coherenceChangesForDelta(delta: GenericProjectionDelta): SqliteCoherenceChange[] {
+    return [
+      ...delta.activeDeletes.map(({ ledgerId, itemId }): SqliteCoherenceChange => ({
+        ledger: ledgerId,
+        documentId: itemId,
+        scope: "active",
+        kind: "delete",
+      })),
+      ...delta.activeUpserts.map(({ ledgerId, item }): SqliteCoherenceChange => ({
+        ledger: ledgerId,
+        documentId: item.id,
+        scope: "active",
+        kind: "upsert",
+      })),
+      ...delta.archivedDeletes.map(({ ledgerId, itemId }): SqliteCoherenceChange => ({
+        ledger: ledgerId,
+        documentId: itemId,
+        scope: "archived",
+        kind: "delete",
+      })),
+      ...delta.archivedUpserts.map(({ ledgerId, item }): SqliteCoherenceChange => ({
+        ledger: ledgerId,
+        documentId: item.id,
+        scope: "archived",
+        kind: "upsert",
+      })),
+    ];
+  }
+
   /** A projection failure cannot roll back COMMIT; health and search expose it. */
   private async applySearchDelta(changes: readonly SearchProjectionChange[]): Promise<void> {
     if (changes.length === 0) return;
@@ -2492,17 +2588,109 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
-  private async indexUpsertActive(ledgerId: string, item: Item): Promise<void> {
-    await this.applySearchDelta([{ kind: "upsert", ledgerId, item, archived: false }]);
+  private recovery(): SearchProjectionRecovery {
+    if (this.projectionRecovery === null)
+      throw new ProjectionUnavailableError("SQLite projection recovery is not mounted");
+    return this.projectionRecovery;
   }
 
-  private async rebuildSearchActive(ledgerIds: readonly string[]): Promise<void> {
-    await this.applySearchDelta(
-      ledgerIds.map((ledgerId) => ({
-        kind: "replace-bucket",
-        bucket: this.searchBucket(ledgerId, false),
-      })),
-    );
+  private async projectCommitted(
+    notifications: ReadonlyArray<{ ledgerId: string; op: LedgerMutationOp }>,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<void> {
+    const version = coherenceVersion(this.db());
+    const pending = this.pendingNotifications.get(version) ?? [];
+    if (notifications.length > 0)
+      this.pendingNotifications.set(version, [...pending, ...notifications]);
+    try {
+      await this.recovery().reconcile(measurement);
+    } catch (error) {
+      process.stderr.write(
+        `LedgerStore: committed write awaits projection recovery: ${String(error)}\n`,
+      );
+    }
+  }
+
+  private loadProjectionFrame(afterVersion: number, rebuild: boolean): ProjectionChangeFrame {
+    return this.read(() => {
+      const db = this.db();
+      const version = coherenceVersion(db);
+      const entries = readSqliteCoherence(db, afterVersion, version);
+      const foreignLedgers = [
+        ...new Set(
+          entries
+            .filter((entry) => entry.origin !== this.coherenceOrigin)
+            .map((entry) => entry.ledger),
+        ),
+      ].sort();
+      if (rebuild)
+        return {
+          version,
+          foreignLedgers,
+          changes: [],
+          snapshot: this.enumerate().flatMap((ledgerId) => [
+            this.searchBucket(ledgerId, false),
+            this.searchBucket(ledgerId, true),
+          ]),
+        };
+      const changes: SearchProjectionChange[] = [];
+      const refresh = new Set(
+        entries
+          .filter((entry) => entry.scope === "registry" || entry.scope === "control")
+          .map((entry) => entry.ledger),
+      );
+      for (const ledgerId of refresh) {
+        if (db.query("SELECT name FROM ledgers WHERE name = ?").get(ledgerId) === null)
+          changes.push({ kind: "remove-ledger", ledgerId });
+        else
+          changes.push(
+            { kind: "replace-bucket", bucket: this.searchBucket(ledgerId, false) },
+            { kind: "replace-bucket", bucket: this.searchBucket(ledgerId, true) },
+          );
+      }
+      for (const entry of entries) {
+        if (refresh.has(entry.ledger)) continue;
+        const archived = entry.scope === "archived";
+        const table = archived ? "archived_items" : "items";
+        const row = db
+          .query(
+            `SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM ${table} WHERE ledger = ? AND id = ? ORDER BY rowid LIMIT 1`,
+          )
+          .get(entry.ledger, entry.documentId) as ItemRow | null;
+        if (row === null)
+          changes.push({
+            kind: "remove",
+            ledgerId: entry.ledger,
+            itemId: entry.documentId,
+            archived,
+          });
+        else
+          changes.push({ kind: "upsert", ledgerId: entry.ledger, item: rowToItem(row), archived });
+      }
+      return { version, foreignLedgers, changes, snapshot: null };
+    });
+  }
+
+  private async notifyProjectionFrame(
+    frame: ProjectionChangeFrame,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const delivered: number[] = [];
+    for (const [version, notifications] of this.pendingNotifications) {
+      if (version > frame.version) continue;
+      for (const notification of notifications) {
+        signal.throwIfAborted();
+        if (this.onMutation !== null) this.onMutation(notification.ledgerId, notification.op);
+      }
+      delivered.push(version);
+    }
+    for (const ledgerId of frame.foreignLedgers) {
+      for (const listener of this.projectionListeners) {
+        signal.throwIfAborted();
+        listener(ledgerId);
+      }
+    }
+    for (const version of delivered) this.pendingNotifications.delete(version);
   }
 
   private searchBucket(ledgerId: string, archived: boolean): SearchProjectionBucket {

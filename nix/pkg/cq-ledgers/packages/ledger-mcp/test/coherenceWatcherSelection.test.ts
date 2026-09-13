@@ -202,9 +202,9 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
       expect(hits.length).toBe(1);
       expect(hits[0]?.item.fields["headline"]).toBe("selection sees this");
 
-      const changed = await waitUntil(() => changes.length > 0);
+      const changed = await waitUntil(() => changes.includes("defects"));
       expect(changed).toBe(true);
-      expect(changes[0]).toBe(null);
+      expect(changes.sort()).toEqual(["defects", "milestones"]);
     } finally {
       watcher.close();
       await peer.dispose();
