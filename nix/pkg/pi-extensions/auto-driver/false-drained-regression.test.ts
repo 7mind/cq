@@ -60,11 +60,8 @@
 //
 // ## Backend (D95 / T547 — post-G67 update)
 //
-// T505/G67 deleted the legacy in-tree backends as runtime primaries: `cq
-// predicates` / `cq advance-gate` now FAIL FAST with LegacyBackendError before
-// any predicate logic runs if the seeded root's cq.toml names `backend = "fs"`
-// (or has no cq.toml at all — the old default). The fixture therefore seeds an
-// XDG-BACKED ledger — a cq.toml with `[ledger] backend = "xdg"` + an explicit
+// The public local runtime uses SQLite/XDG. The fixture seeds an
+// XDG ledger — a cq.toml with `[ledger] backend = "xdg"` + an explicit
 // `projectId` (a plain temp dir has no git identity), mirroring
 // cq-cli/test/advance-gate.test.ts's `xdgRoot()` / `seedStore()` helpers — and
 // points `XDG_STATE_HOME` at an isolated temp dir for the whole suite so the

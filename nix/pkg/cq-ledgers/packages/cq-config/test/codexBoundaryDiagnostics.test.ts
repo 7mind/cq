@@ -208,7 +208,7 @@ describe("T1628 Codex boundary diagnostics", () => {
       const fakeCodex = join(root, "fake-codex");
       const ledgerCommand = join(root, "cq");
       await mkdir(worktree);
-      await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\nprojectId = "t6419-diagnostic"\n');
       await mkdir(join(promptRoot, "roles"), { recursive: true });
       const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
       if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
@@ -227,6 +227,7 @@ describe("T1628 Codex boundary diagnostics", () => {
         cwd: worktree,
         env: {
           ...process.env,
+          XDG_STATE_HOME: join(root, "xdg-state"),
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: fakeCodex,
           CQ_CODEX_LEDGER_COMMAND: ledgerCommand,

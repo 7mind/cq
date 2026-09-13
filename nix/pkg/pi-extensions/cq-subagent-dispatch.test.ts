@@ -41,6 +41,7 @@ describe("Pi process dispatch workset mediation [Behavioral-Active Blackbox Good
     const previousHarness = process.env.CQ_HARNESS;
     const previousForceShellout = process.env.CQ_DISPATCH_FORCE_SHELLOUT;
     const previousPath = process.env.PATH;
+    const previousStateHome = process.env.XDG_STATE_HOME;
     const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
     const observed: Array<{
       readonly argv: readonly string[];
@@ -59,7 +60,8 @@ describe("Pi process dispatch workset mediation [Behavioral-Active Blackbox Good
         `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(cqCliSource)} "$@"\n`,
       );
       chmodSync(cqCommand, 0o700);
-      writeFileSync(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      writeFileSync(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\nprojectId = "t6419-pi-dispatch"\n');
+      process.env.XDG_STATE_HOME = path.join(root, "xdg-state");
       writeFileSync(
         path.join(agentsDir, "implement-worker.md"),
         ["---", "name: implement-worker", "---", "Implement the assigned task."].join("\n"),
@@ -184,6 +186,8 @@ describe("Pi process dispatch workset mediation [Behavioral-Active Blackbox Good
       else process.env.CQ_DISPATCH_FORCE_SHELLOUT = previousForceShellout;
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
       rmSync(root, { recursive: true, force: true });
     }
   });

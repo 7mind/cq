@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  LEDGER_BACKENDS,
   loadConfig,
   resolveReviewers,
   resolvePlanners,
@@ -1136,50 +1137,41 @@ opus   = "claude:opus-4.8[1m]"
   });
 });
 
-// ── T349: [ledger] backend config key (git-object | fs, default fs) ──────────
+// ── T349: [ledger] backend config (SQLite/XDG or remote client) ──────────
 
 describe("parseConfig with [ledger] (T349)", () => {
+  it("T6419 exposes only SQLite and the remote client [Blackbox-Atomic]", () => {
+    expect(LEDGER_BACKENDS).toEqual(["xdg", "remote"]);
+  });
+
+  it("T6419 removes the Git remote configuration field [Blackbox-Atomic]", () => {
+    expect(parseConfig('[ledger]\nbackend = "xdg"\n').ledger).not.toHaveProperty("remote");
+    expect(() => parseConfig('[ledger]\nremote = "origin"\n')).toThrow(/unexpected key "remote"/);
+  });
+
+  for (const backend of ["fs", "git-object"]) {
+    it(`T6419 rejects retired backend ${backend} [Blackbox-Atomic]`, () => {
+      expect(() => parseConfig(`[ledger]\nbackend = "${backend}"\n`)).toThrow(/not a valid backend/);
+    });
+  }
+
   it("defaults ledger to null when [ledger] is absent", () => {
     const config = parseConfig(VALID_TOML);
     expect(config.ledger).toBeNull();
   });
 
-  it("[ledger] backend='git-object' resolves to git-object with default branch/remote", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "git-object"
-`);
-    expect(config.ledger).not.toBeNull();
-    expect(config.ledger!.backend).toBe("git-object");
-    expect(config.ledger!.branch).toBe("cq-ledger");
-    expect(config.ledger!.remote).toBe("origin");
+  it("SQLite defaults the orphan-backup branch", () => {
+    const ledger = parseConfig('[ledger]\nbackend = "xdg"\n').ledger;
+    expect(ledger).toMatchObject({ backend: "xdg", branch: "cq-ledger" });
   });
 
-  it("[ledger] backend='fs' resolves to fs with default branch/remote", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "fs"
-`);
-    expect(config.ledger).not.toBeNull();
-    expect(config.ledger!.backend).toBe("fs");
-    expect(config.ledger!.branch).toBe("cq-ledger");
-    expect(config.ledger!.remote).toBe("origin");
+  it("SQLite accepts an explicit orphan-backup branch", () => {
+    const ledger = parseConfig('[ledger]\nbackend = "xdg"\nbranch = "my-backup"\n').ledger;
+    expect(ledger).toMatchObject({ backend: "xdg", branch: "my-backup" });
   });
 
-  it("[ledger] backend='git-object' with explicit branch/remote applies overrides", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "git-object"
-branch  = "my-branch"
-remote  = "upstream"
-`);
-    expect(config.ledger!.backend).toBe("git-object");
-    expect(config.ledger!.branch).toBe("my-branch");
-    expect(config.ledger!.remote).toBe("upstream");
-  });
-
-  it("omitting [ledger] entirely means backend defaults to fs (null ledger)", () => {
-    // Absence of [ledger] => ledger is null; callers treat null as backend='fs'.
+  it("omitting [ledger] entirely means backend defaults to xdg (null ledger)", () => {
+    // Absence of [ledger] => ledger is null; callers treat null as backend='xdg'.
     const config = parseConfig(VALID_TOML);
     expect(config.ledger).toBeNull();
   });
@@ -1218,13 +1210,13 @@ backend = 42
     expect(() =>
       parseConfig(`
 [ledger]
-backend = "fs"
+backend = "xdg"
 bogus = "x"
 `),
     ).toThrow(/unexpected key "bogus" in \[ledger\]/);
   });
 
-  it("a commented-out [ledger] block is inert — ledger resolves to null (backend 'fs')", () => {
+  it("a commented-out [ledger] block is inert — ledger resolves to null (backend 'xdg')", () => {
     // Verifies that TOML comments strip the [ledger] block, leaving ledger=null.
     // CQ_TOML_TEMPLATE carries this commented block; cq-cli/test/cqTomlTemplate.test.ts
     // tests the template end-to-end. This test confirms the parse behaviour in isolation.
@@ -1235,9 +1227,8 @@ reviewers = ["opus"]
 opus = "claude:opus-4.8[1m]"
 
 # [ledger]
-#   backend = "git-object"
+#   backend = "xdg"
 #   branch  = "cq-ledger"
-#   remote  = "origin"
 `;
     const config = parseConfig(tomlWithCommentedLedger);
     expect(config.ledger).toBeNull();
@@ -1259,14 +1250,14 @@ backend = "xdg"
   it("backup defaults to 'none' when [ledger] is present but backup is absent (Q244 — OFF by default)", () => {
     const config = parseConfig(`
 [ledger]
-backend = "fs"
+backend = "xdg"
 `);
     expect(config.ledger!.backup).toBe("none");
   });
 
   it("backup defaults to 'none' when [ledger] is absent entirely", () => {
     // [ledger] itself is null when absent, but this documents that the DEFAULT
-    // a caller should assume for backup (mirroring the backend='fs' default)
+    // a caller should assume for backup (mirroring the backend='xdg' default)
     // is 'none', consistent with the Q244 OFF-by-default requirement.
     const config = parseConfig(VALID_TOML);
     expect(config.ledger).toBeNull();
@@ -1337,22 +1328,6 @@ projectId = 42
     ).toThrow(/\[ledger\] projectId must be a string/);
   });
 
-  it("legacy backend 'fs' still parses (PARSEABLE for cq migrate)", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "fs"
-`);
-    expect(config.ledger!.backend).toBe("fs");
-  });
-
-  it("legacy backend 'git-object' still parses (PARSEABLE for cq migrate)", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "git-object"
-`);
-    expect(config.ledger!.backend).toBe("git-object");
-  });
-
   it("all new keys together: backend='xdg', backup='in-tree', projectId set", () => {
     const config = parseConfig(`
 [ledger]
@@ -1364,7 +1339,6 @@ projectId = "acme-widgets"
       backend: "xdg",
       backendExplicit: true,
       branch: "cq-ledger",
-      remote: "origin",
       backup: "in-tree",
       projectId: "acme-widgets",
       url: null,

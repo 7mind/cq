@@ -50,6 +50,17 @@ async function sealedJournal(store: InMemoryCurrentRecoverySealJournalStore) {
 }
 
 describe("dispatch lineage cutover fence", () => {
+  for (const backend of ["fs", "git-object"]) {
+    test(`T6419 refuses lineage fence namespace ${backend} [Blackbox-Atomic]`, async () => {
+      const { fence } = await sealedJournal(new InMemoryCurrentRecoverySealJournalStore());
+      expect(() => createDispatchLineageCutoverFence({
+        ...fence,
+        namespace: { ...fence.namespace, backend: backend as never },
+        fenceCapability: { scope: "dispatch-lineage-fence", token: RECOVERY_BINDING.handleToken },
+      })).toThrow(/namespace/);
+    });
+  }
+
   test("commits journal-only authority with independent source and maximum generations", async () => {
     const { journal } = await sealedJournal(new InMemoryCurrentRecoverySealJournalStore());
     const fence = dispatchLineageFenceFromRecoveryJournal(journal);

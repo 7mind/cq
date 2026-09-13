@@ -58,10 +58,10 @@ function expectedSupported(construction: string, backend: string): boolean {
 }
 
 describe("the two-dimensional construction x backend coverage matrix", () => {
-  test("decides EVERY cell — 6 constructions x 6 backends = 36", () => {
+  test("decides EVERY cell — 6 constructions x 4 backends = 24", () => {
     expect(LEDGER_SERVER_CONSTRUCTIONS.length).toBe(6);
-    expect(ALL_BACKEND_NAMES.length).toBe(6);
-    expect(ATTESTATION_CONSTRUCTION_COVERAGE.length).toBe(36);
+    expect(ALL_BACKEND_NAMES.length).toBe(4);
+    expect(ATTESTATION_CONSTRUCTION_COVERAGE.length).toBe(24);
   });
 
   test("matches the hand-built expectation table for every cell", () => {

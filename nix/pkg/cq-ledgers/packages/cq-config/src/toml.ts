@@ -50,7 +50,6 @@ export interface RawWebui {
 export interface RawLedger {
   readonly backend: unknown;
   readonly branch: unknown;
-  readonly remote: unknown;
   readonly backup: unknown;
   readonly projectId: unknown;
   readonly url: unknown;
@@ -236,7 +235,6 @@ function parseWebui(value: unknown): RawWebui {
 const ALLOWED_LEDGER_KEYS = new Set([
   "backend",
   "branch",
-  "remote",
   "backup",
   "projectId",
   "url",
@@ -245,7 +243,7 @@ const ALLOWED_LEDGER_KEYS = new Set([
 
 /**
  * Structurally validate the `[ledger]` table: it must be a table whose only
- * keys are `backend`, `branch`, `remote`, `backup`, `projectId`, `url`, and
+ * keys are `backend`, `branch`, `backup`, `projectId`, `url`, and
  * `serverUrl`.
  * The values are passed through untouched — `parseConfig` type-checks and
  * validates them and raises a `CqConfigError` at the boundary.
@@ -262,7 +260,6 @@ function parseLedgerRaw(value: unknown): RawLedger {
   return {
     backend: value.backend,
     branch: value.branch,
-    remote: value.remote,
     backup: value.backup,
     projectId: value.projectId,
     url: value.url,

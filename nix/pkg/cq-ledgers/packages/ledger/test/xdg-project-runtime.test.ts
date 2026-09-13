@@ -310,7 +310,7 @@ class RealRuntimeFixture implements RuntimeFixture {
     const configPath = path.join(this.repositoryRoot, "cq.toml");
     await writeFile(
       configPath,
-      `[ledger]\nbackend = "fs"\nprojectId = "${redirectKey}"\n`,
+      `[ledger]\nbackend = "xdg"\nprojectId = "${redirectKey}"\n`,
     );
     return configPath;
   }

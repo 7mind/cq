@@ -711,11 +711,7 @@ export { restoreDumpToPostgres, isPostgresTenantEmpty } from "./store/postgres/r
 export {
   createLedgerStore,
   createManagementLedgerStore,
-  openLegacyLedgerStore,
   resolveLedgerBackend,
-  assertGitWorkTree,
-  hasLegacyFsLedger,
-  GitEnvironmentError,
   RemoteLedgerClientNotWiredError,
   PublicPostgresBackendRetiredError,
   startXdgCoherenceWatcher,

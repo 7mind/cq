@@ -299,11 +299,8 @@ function legalEfforts(harness: ReviewerToken["harness"]): string {
   return efforts.join(" | ");
 }
 
-/** The default git branch for the git-object ledger backend. */
+/** The default orphan-backup target branch. */
 const DEFAULT_LEDGER_BRANCH = "cq-ledger";
-
-/** The default git remote for the git-object ledger backend. */
-const DEFAULT_LEDGER_REMOTE = "origin";
 
 /** The default ledger backup mode (Q244 — OFF by default). */
 const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
@@ -312,19 +309,18 @@ const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
  * Type-check the raw `[ledger]` table at the boundary.
  *
  * `backend` (if present) must be a string equal to a known {@link LedgerBackend}
- * ('fs', 'git-object', 'xdg', 'postgres', or 'remote'); any other value is rejected as a
- * `CqConfigError`. `branch` and `remote` (if present) must be non-empty
- * strings. `backup` (if present) must be a known backup mode
+ * ('xdg' or 'remote'); any other value is rejected as a
+ * `CqConfigError`. `branch` (if present) must be a string.
+ * `backup` (if present) must be a known backup mode
  * ('none' | 'in-tree' | 'orphan-branch'); `projectId` (if present) must be a
  * string. `url` (if present) must be a string (G81, Q272/Q278 hybrid — a
  * committed credential-less DSN; the env-wins resolver is T571). `serverUrl`
  * has no default and is required for `backend='remote'`; it must be an
  * absolute HTTP(S) URL without credentials, query, or fragment. Absent
- * `backend` defaults to 'xdg' (K117 — the out-of-tree runtime primary; the
- * old 'fs' default had not been a selectable primary since T505), with
+ * `backend` defaults to 'xdg' (K117 — the out-of-tree SQLite primary), with
  * `backendExplicit` recording whether the key was present so callers can
  * distinguish a deliberate choice from the default. Absent `branch` defaults
- * to 'cq-ledger'; absent `remote` defaults to 'origin'; absent `backup`
+ * to 'cq-ledger'; absent `backup`
  * defaults to 'none' (Q244); absent `projectId` is `null`; absent `url` is
  * `null`; absent `serverUrl` is `null` for non-remote backends.
  */
@@ -337,7 +333,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     }
     if (!isLedgerBackend(raw.backend)) {
       throw new CqConfigError(
-        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, or remote)`,
+        `[ledger] backend "${raw.backend}" is not a valid backend (expected xdg or remote)`,
       );
     }
     backend = raw.backend;
@@ -349,14 +345,6 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
       throw new CqConfigError("[ledger] branch must be a string");
     }
     branch = raw.branch;
-  }
-
-  let remote = DEFAULT_LEDGER_REMOTE;
-  if (raw.remote !== undefined) {
-    if (typeof raw.remote !== "string") {
-      throw new CqConfigError("[ledger] remote must be a string");
-    }
-    remote = raw.remote;
   }
 
   let backup = DEFAULT_LEDGER_BACKUP;
@@ -395,7 +383,6 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
   const common = {
     backendExplicit,
     branch,
-    remote,
     backup,
     projectId,
     url,

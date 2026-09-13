@@ -244,25 +244,13 @@ export interface TiersConfig {
 /**
  * The supported ledger storage backends (T349, T494, T570, T723).
  *
- * - `fs` / `git-object`: the LEGACY in-tree backends, DEPRECATED but still
- *   SELECTABLE (K117 relaxed T505's hard refusal): an explicit selection
- *   still opens the live legacy in-tree store with a deprecation warning
- *   (createLedgerStore's warnLegacyBackendDeprecated), and they remain
- *   PARSEABLE (never removed from this union) so `cq migrate` can read a
- *   `cq.toml` that still names one to locate the source data. Neither is
- *   ever the DEFAULT — the no-cq.toml fallback resolves to `xdg`.
  * - `xdg`: the out-of-tree bun:sqlite primary at the XDG location (K102) —
  *   the DEFAULT runtime primary.
  * - `remote`: the repository-backed remote-service client. Its required,
  *   non-secret endpoint is carried by `serverUrl`; the bearer token never
  *   enters this model and resolves only from `CQ_LEDGER_REMOTE_TOKEN`.
  */
-export const LEDGER_BACKENDS = [
-  "fs",
-  "git-object",
-  "xdg",
-  "remote",
-] as const;
+export const LEDGER_BACKENDS = ["xdg", "remote"] as const;
 
 /** A ledger backend identifier. */
 export type LedgerBackend = (typeof LEDGER_BACKENDS)[number];
@@ -306,16 +294,12 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  * The `[ledger]` table: storage backend configuration (T349, T494).
  *
  * - `backend`: the storage backend to use; 'xdg' — the out-of-tree bun:sqlite
- *   primary (K102) — is the default (K117). 'fs' and 'git-object' are the
- *   LEGACY in-repo backends: still selectable explicitly, but construction
- *   emits a deprecation warning pointing at `cq migrate`. 'remote' selects
+ *   primary (K102) — is the default (K117). 'remote' selects
  *   the repository-backed remote service. PostgreSQL is private cq serve state.
  * - `backendExplicit`: whether cq.toml carried an explicit `backend` key
  *   (K117) — lets callers distinguish a deliberate backend choice from the
- *   'xdg' default (the legacy-shadow warning and `cq migrate`'s source
- *   detection key off this).
- * - `branch`: the git branch for the git-object backend (default 'cq-ledger').
- * - `remote`: the git remote for the git-object backend (default 'origin').
+ *   'xdg' default.
+ * - `branch`: the orphan-backup target branch (default 'cq-ledger').
  * - `backup`: the mandatory human-readable markdown export/backup mode;
  *   defaults to 'none' (OFF by default, Q244).
  * - `projectId`: an optional committed project-identity string, used for
@@ -328,14 +312,12 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  *   Ordinary bearer authentication resolves only from
  *   `CQ_LEDGER_REMOTE_TOKEN`, never from cq.toml.
  *
- * `branch` and `remote` are consumed by the git-object backend (W5/T355);
- * they are parsed and stored for any backend, but only meaningful for
- * 'git-object'. `serverUrl` is only meaningful for 'remote'.
+ * `branch` selects the orphan-backup target. `serverUrl` is only meaningful
+ * for 'remote'.
  */
 interface LedgerConfigCommon {
   readonly backendExplicit: boolean;
   readonly branch: string;
-  readonly remote: string;
   readonly backup: LedgerBackupMode;
   readonly projectId: string | null;
   readonly url: string | null;
@@ -413,7 +395,7 @@ export interface UpstreamConfig {
  *   effort). Values are validated at parse time against the union of all
  *   harness effort vocabularies; harness-specific validity (`isEffort`) is
  *   checked at resolution time, once the agent's harness is known.
- * - `ledger`: the `[ledger]` table (backend + branch + remote + backup +
+ * - `ledger`: the `[ledger]` table (backend + branch + backup +
  *   projectId + url + serverUrl), or null if absent. When null, `backend`
  *   defaults to 'xdg' (K117) and `backup` defaults to 'none'.
  * - `project`: the `[project]` table (name), or null if absent (T570).
@@ -436,7 +418,7 @@ export interface CqConfig {
   readonly agentTiers: Record<string, Tier> | null;
   /** The `[agent_efforts]` table (agent-name -> effort override); `{}` when absent. */
   readonly agentEfforts: Record<string, Effort>;
-  /** The `[ledger]` table (backend + branch + remote), or null if absent. */
+  /** The `[ledger]` table (backend + branch), or null if absent. */
   readonly ledger: LedgerConfig | null;
   /** The `[project]` table (name), or null if absent. */
   readonly project: ProjectConfig | null;

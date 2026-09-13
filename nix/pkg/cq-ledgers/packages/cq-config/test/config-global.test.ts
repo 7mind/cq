@@ -249,7 +249,6 @@ name = "Local project"
       backend: "xdg",
       backendExplicit: true,
       branch: "cq-ledger",
-      remote: "origin",
       backup: "in-tree",
       projectId: "local-project",
       url: null,

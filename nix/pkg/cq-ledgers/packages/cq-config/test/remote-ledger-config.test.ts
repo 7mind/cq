@@ -32,7 +32,7 @@ describe("remote ledger config contract (T723)", () => {
     expect(config.ledger?.backend).toBe("remote");
     expect(config.ledger?.backendExplicit).toBe(true);
     expect(config.ledger?.branch).toBe("cq-ledger");
-    expect(config.ledger?.remote).toBe("origin");
+    expect(config.ledger).not.toHaveProperty("remote");
     expect(config.ledger?.backup).toBe("none");
     expect(config.ledger?.projectId).toBe("acme-widgets");
     expect(config.ledger?.url).toBeNull();

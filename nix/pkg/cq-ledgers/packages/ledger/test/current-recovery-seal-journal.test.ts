@@ -30,6 +30,16 @@ import {
 
 const roots: string[] = [];
 
+for (const backend of ["fs", "git-object"]) {
+  test(`T6419 refuses recovery seal namespace ${backend} [Blackbox-Atomic]`, () => {
+    const seed = recoverySeal().seed;
+    expect(() => createCurrentRecoverySeal({
+      ...seed,
+      namespace: { ...seed.namespace, backend: backend as never },
+    })).toThrow(/namespace/);
+  });
+}
+
 function taskIdentityMigrationJournals() {
   const current = committedJournal();
   const next = {

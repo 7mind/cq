@@ -94,7 +94,7 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
   const fakeCodex = join(root, "fake-codex");
   const ledgerCommand = join(root, "cq");
   await mkdir(worktree);
-  await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+  await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\nprojectId = "t6419-gate"\n');
   const git = spawnSync(GIT_EXECUTABLE, ["init", "--quiet", worktree], {
     encoding: "utf8",
   });
@@ -165,6 +165,7 @@ function launchDispatch(
     cwd: fixture.worktree,
     env: {
       ...process.env,
+      XDG_STATE_HOME: join(fixture.root, "xdg-state"),
       CQ_PROMPT_ROOT: fixture.promptRoot,
       CQ_CODEX_EXECUTABLE: fixture.fakeCodex,
       CQ_CODEX_LEDGER_COMMAND: fixture.ledgerCommand,

@@ -31,7 +31,7 @@
 //   pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, goalDrift } }` to stdout, where `predicates`
 //   shares the SAME `derivePredicates` single source of truth as the ledger MCP
 //   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
-//   derives from the fs store, uses NO session, requires NO marker, and ALWAYS
+//   derives from the selected runtime store, uses NO session, requires NO marker, and ALWAYS
 //   exits 0. Chosen over the prior Claude-Stop-hook-specific, session-dependent
 //   subcommand and over a child `pi -p` turn (the
 //   cq-subagent-dispatch.ts spawn pattern) because it is the lower-dependency,

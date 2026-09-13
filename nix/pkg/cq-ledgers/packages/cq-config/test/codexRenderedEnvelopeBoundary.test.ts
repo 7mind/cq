@@ -54,7 +54,7 @@ test(
       await mkdir(worktree);
       const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
       if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
-      await writeFile(path.join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(path.join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\nprojectId = "t6419-rendered"\n');
       await mkdir(path.join(promptRoot, "roles"), { recursive: true });
       await writeFile(path.join(promptRoot, "roles", "implement-worker.md"), "Store one result.\n");
       await writeExecutable(
@@ -95,6 +95,7 @@ if (process.argv.includes("__workset-effect-provider")) {
       } as const;
       const environment = {
         ...process.env,
+        XDG_STATE_HOME: path.join(root, "xdg-state"),
         CQ_PROMPT_ROOT: promptRoot,
         CQ_CODEX_EXECUTABLE: codex,
         CQ_CODEX_LEDGER_COMMAND: cq,

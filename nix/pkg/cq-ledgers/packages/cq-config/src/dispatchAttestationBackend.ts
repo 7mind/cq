@@ -164,7 +164,7 @@ const ATTESTATION_STORE_BACKEND_SET: ReadonlySet<string> = new Set([
  *    live in the server's own namespace; a local adapter over it would mint
  *    capabilities bound to rows nobody durably holds.
  */
-export const ATTESTATION_EXCLUDED_BACKENDS = ["remote", "fs", "git-object"] as const;
+export const ATTESTATION_EXCLUDED_BACKENDS = ["remote"] as const;
 
 export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[number];
 
@@ -176,8 +176,6 @@ export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[
  * nothing. (Found by mutation M1 — see the module note on D174.)
  */
 export const ATTESTATION_EXCLUSION_REASONS: ReadonlyMap<string, string> = new Map([
-  ["fs", "retired local storage; use the SQLite/XDG primary"],
-  ["git-object", "retired local storage; use the SQLite/XDG primary"],
   [
     "remote",
     "the remote backend is a ledger-service client, not a store: its attestations belong to the " +

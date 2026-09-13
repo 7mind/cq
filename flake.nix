@@ -646,7 +646,7 @@ EOF
         substitutedCodexRole = pkgs.writeShellScriptBin "cq-codex-role" "exit 0";
 
         # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
-        # bin (NOT embedded — it constructs an FsLedgerStore directly), modelled
+        # bin (its factory constructs the SQLite/XDG primary), modelled
         # on ledgerMcp; see the numbered installPhase below for the staging steps.
         cqCli = pkgs.stdenv.mkDerivation {
           pname = "cq";
@@ -688,8 +688,8 @@ EOF
             ${webClosure}
 
             # ── 3. cq-cli node_modules ──────────────────────────────────── #
-            # The dispatcher resolves @cq/ledger (init/reset/erase build an
-            # FsLedgerStore directly) plus the dynamically-imported
+            # The dispatcher resolves @cq/ledger (init/reset/erase use the
+            # SQLite/XDG store factory) plus the dynamically-imported
             # @cq/ledger-{mcp,tui,web,live} subcommand entrypoints.
             mkdir -p "$WORKSPACE/packages/cq-cli/node_modules/@cq"
             if [ -e "${bunNodeModules}/packages/cq-cli/node_modules/bun-types" ]; then
@@ -798,11 +798,12 @@ EOF
             roleCwd=$TMPDIR/role-cwd
             ledgerCwd=$TMPDIR/ledger-cwd
             mkdir -p "$roleCwd" "$ledgerCwd"
-            printf '%s\n' '[ledger]' 'backend = "fs"' > "$ledgerCwd/cq.toml"
+            printf '%s\n' '[ledger]' 'backend = "xdg"' 'projectId = "cq-installed-role"' > "$ledgerCwd/cq.toml"
             ${pkgs.git}/bin/git init -q "$roleCwd"
             roleStdout=$TMPDIR/cq-codex-role.stdout
             if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"parentGateCapability":{"scope":"parent-gate","token":"cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
               HOME=$TMPDIR \
+              XDG_STATE_HOME="$TMPDIR/role-state" \
               CQ_CODEX_EXECUTABLE="$fakeCodex" \
               CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
               $out/bin/cq-codex-role > "$roleStdout"; then

@@ -32,7 +32,7 @@ export interface DispatchLineageFenceAuthority {
 
 const namespaceSchema = z
   .object({
-    backend: z.enum(["fs", "xdg", "git-object", "remote", "postgres"]),
+    backend: z.enum(["xdg", "remote", "postgres"]),
     projectKey: z.string().min(1),
   })
   .strict();

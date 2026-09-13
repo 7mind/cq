@@ -31,7 +31,7 @@ opus = "claude:opus-4.8[1m]"
 grok = "pi:grok-build/grok-build"
 
 [ledger]
-backend = "git-object"
+backend = "xdg"
 branch  = "cq-ledger"
 
 [webui]
@@ -47,6 +47,15 @@ standard = "grok"
 `;
 
 describe("[ledger] and [webui] are harness-invariant (T483)", () => {
+  for (const backend of ["fs", "git-object"]) {
+    it(`T6419 rejects retired backend ${backend} under every harness [Blackbox-Atomic]`, () => {
+      for (const harness of ["pi", "claude", "codex"] as const) {
+        expect(() => parseConfig(`[ledger]\nbackend = "${backend}"\n`, harness)).toThrow(/not a valid backend/);
+      }
+      expect(() => parseConfig(`[ledger]\nbackend = "${backend}"\n`)).toThrow(/not a valid backend/);
+    });
+  }
+
   it("[ledger] is identical under harness=pi, harness=claude, and the default", () => {
     const underPi     = parseConfig(TOML_WITH_HARNESS_PI, "pi");
     const underClaude = parseConfig(TOML_WITH_HARNESS_PI, "claude");
@@ -54,10 +63,9 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
     const underDefault = parseConfig(TOML_WITH_HARNESS_PI);
 
     expect(underPi.ledger).toEqual({
-      backend: "git-object",
+      backend: "xdg",
       backendExplicit: true,
       branch: "cq-ledger",
-      remote: "origin",
       backup: "none",
       projectId: null,
       url: null,
@@ -101,7 +109,7 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
   it("a flat cq.toml (no [harness.*]) yields equal [ledger]/[webui] under any harness", () => {
     const flat = `
 [ledger]
-backend = "fs"
+backend = "xdg"
 
 [webui]
 port = 5180
