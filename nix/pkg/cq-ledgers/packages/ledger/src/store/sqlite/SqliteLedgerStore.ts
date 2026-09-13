@@ -2013,6 +2013,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       const before = state.beforeLedgers.get(ledgerId);
       const after = state.ledgers.get(ledgerId);
       if (after === undefined) throw new LedgerNotFoundError(ledgerId);
+      let ledgerChanged = false;
       if (before === undefined) {
         db.query(
           "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, ?, ?)",
@@ -2022,7 +2023,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           after.counters.milestone,
           after.counters.item,
         );
-      } else {
+        ledgerChanged = true;
+      } else if (
+        JSON.stringify(before.schema) !== JSON.stringify(after.schema) ||
+        before.counters.milestone !== after.counters.milestone ||
+        before.counters.item !== after.counters.item
+      ) {
         db.query(
           "UPDATE ledgers SET schema_json = ?, milestone_counter = ?, item_counter = ? WHERE name = ?",
         ).run(
@@ -2031,14 +2037,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           after.counters.item,
           ledgerId,
         );
+        ledgerChanged = true;
       }
-      this.recordGenericAccess(
-        measurement,
-        "ledgers",
-        "write",
-        { kind: "primary-key", keys: [ledgerId] },
-        [ledgerId],
-      );
+      if (ledgerChanged) {
+        this.recordGenericAccess(
+          measurement,
+          "ledgers",
+          "write",
+          { kind: "primary-key", keys: [ledgerId] },
+          [ledgerId],
+        );
+      }
 
       const beforeGroups = groupsOf(before);
       const afterGroups = groupsOf(after);
@@ -2146,18 +2155,24 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       const pointerId = key.slice(slash + 1);
       const before = state.beforeArchives.get(key);
       const current = state.archives.get(key);
-      db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ?").run(
-        ledgerId,
-        pointerId,
-      );
-      this.recordGenericAccess(
-        measurement,
-        "archived_items",
-        "write",
-        { kind: "keys", keys: [key] },
-        (before?.items ?? []).map((item) => `${ledgerId}:${pointerId}:${item.id}`),
-      );
-      for (const item of before?.items ?? []) archivedDeletes.push({ ledgerId, itemId: item.id });
+      const beforeItems = new Map((before?.items ?? []).map((item) => [item.id, item]));
+      const currentItems = new Map((current?.items ?? []).map((item) => [item.id, item]));
+      for (const [itemId] of beforeItems) {
+        if (currentItems.has(itemId)) continue;
+        db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?").run(
+          ledgerId,
+          pointerId,
+          itemId,
+        );
+        archivedDeletes.push({ ledgerId, itemId });
+        this.recordGenericAccess(
+          measurement,
+          "archived_items",
+          "write",
+          { kind: "primary-key", keys: [`${ledgerId}:${pointerId}:${itemId}`] },
+          [`${ledgerId}:${pointerId}:${itemId}`],
+        );
+      }
       if (current === undefined) {
         db.query("DELETE FROM archive_pointers WHERE ledger = ? AND id = ?").run(
           ledgerId,
@@ -2176,27 +2191,47 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         .get(ledgerId)
         ?.archivePointers.find(({ id }) => id === pointerId);
       if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
-      db.query(
-        `INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ledger, id) DO UPDATE SET
-           summary = excluded.summary, title = excluded.title, status = excluded.status`,
-      ).run(ledgerId, pointerId, pointer.summary, pointer.title, pointer.status, this.now());
-      this.recordGenericAccess(
-        measurement,
-        "archive_pointers",
-        "write",
-        { kind: "primary-key", keys: [key] },
-        [key],
-      );
-      const insert = db.query(
+      const priorPointer = state.beforeLedgers
+        .get(ledgerId)
+        ?.archivePointers.find(({ id }) => id === pointerId);
+      if (
+        priorPointer === undefined ||
+        priorPointer.summary !== pointer.summary ||
+        priorPointer.title !== pointer.title ||
+        priorPointer.status !== pointer.status
+      ) {
+        db.query(
+          `INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ledger, id) DO UPDATE SET
+             summary = excluded.summary, title = excluded.title, status = excluded.status`,
+        ).run(ledgerId, pointerId, pointer.summary, pointer.title, pointer.status, this.now());
+        this.recordGenericAccess(
+          measurement,
+          "archive_pointers",
+          "write",
+          { kind: "primary-key", keys: [key] },
+          [key],
+        );
+      }
+      const upsert = db.query(
         `INSERT INTO archived_items (
            ledger, pointer_id, id, milestone_id, status, fields_json,
            created_at, updated_at, author, session
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ledger, pointer_id, id) DO UPDATE SET
+           milestone_id = excluded.milestone_id,
+           status = excluded.status,
+           fields_json = excluded.fields_json,
+           created_at = excluded.created_at,
+           updated_at = excluded.updated_at,
+           author = excluded.author,
+           session = excluded.session`,
       );
-      for (const item of current.items) {
-        insert.run(
+      for (const [itemId, item] of currentItems) {
+        const prior = beforeItems.get(itemId);
+        if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(item)) continue;
+        upsert.run(
           ledgerId,
           pointerId,
           item.id,
@@ -2209,14 +2244,14 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           item.session ?? null,
         );
         archivedUpserts.push({ ledgerId, item: cloneItem(item) });
+        this.recordGenericAccess(
+          measurement,
+          "archived_items",
+          "write",
+          { kind: "primary-key", keys: [`${ledgerId}:${pointerId}:${itemId}`] },
+          [`${ledgerId}:${pointerId}:${itemId}`],
+        );
       }
-      this.recordGenericAccess(
-        measurement,
-        "archived_items",
-        "write",
-        { kind: "keys", keys: [key] },
-        current.items.map((item) => `${ledgerId}:${pointerId}:${item.id}`),
-      );
     }
 
     return { activeUpserts, activeDeletes, archivedUpserts, archivedDeletes };
