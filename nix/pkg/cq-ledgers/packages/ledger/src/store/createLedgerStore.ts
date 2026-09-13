@@ -466,7 +466,7 @@ export interface XdgCoherenceWatcher {
  *
  * Uses the store's serialized consumer and acknowledged cursor. Search, local
  * writes and polling share that consumer; exact self versions are not replayed.
- * Changed notifications name only foreign ledgers whose projection is current.
+ * Changed notifications cover local and foreign ledgers after projection acknowledgement.
  * Closing detaches this subscriber and timer, not the caller-owned store.
  */
 export function startXdgCoherenceWatcher(

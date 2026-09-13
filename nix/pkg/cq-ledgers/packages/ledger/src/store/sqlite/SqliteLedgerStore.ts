@@ -2676,15 +2676,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     signal: AbortSignal,
   ): Promise<void> {
     const delivered: number[] = [];
+    const changedLedgers = new Set(frame.foreignLedgers);
     for (const [version, notifications] of this.pendingNotifications) {
       if (version > frame.version) continue;
       for (const notification of notifications) {
         signal.throwIfAborted();
         if (this.onMutation !== null) this.onMutation(notification.ledgerId, notification.op);
+        changedLedgers.add(notification.ledgerId);
       }
       delivered.push(version);
     }
-    for (const ledgerId of frame.foreignLedgers) {
+    for (const ledgerId of changedLedgers) {
       for (const listener of this.projectionListeners) {
         signal.throwIfAborted();
         listener(ledgerId);

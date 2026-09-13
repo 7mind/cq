@@ -212,6 +212,40 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     }
   }, 10_000);
 
+  it("publishes a local XDG mutation after searchable convergence without replaying it [Blackbox-GoodCommunication]", async () => {
+    const root = await tmpDir("coherence-select-local-");
+    const dbPath = path.join(root, "ledger.db");
+    const store = new SqliteLedgerStore({ dbPath });
+    await store.init();
+    const milestone = await store.createMilestone({ title: "local publication" });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: { headline: "before" },
+    });
+    const changes: Array<string | null> = [];
+    const searchable: Array<Promise<string[]>> = [];
+    const watcher = startLedgerCoherenceWatcher(
+      { store, configRoot: root, backend: "xdg", branch: "cq-ledger", dbPath },
+      root,
+      (ledgerId) => {
+        changes.push(ledgerId);
+        searchable.push(
+          store.ftsSearch("localvisible").then((hits) => hits.map((hit) => hit.item.id)),
+        );
+      },
+    );
+    try {
+      await store.updateItem("tasks", task.id, { fields: { headline: "localvisible" } });
+      expect(changes).toEqual(["tasks"]);
+      expect(await Promise.all(searchable)).toEqual([[task.id]]);
+      await store.reconcileProjection();
+      expect(changes).toEqual(["tasks"]);
+    } finally {
+      watcher.close();
+      await store.dispose();
+    }
+  });
+
   it("throws if backend 'xdg' resolves without a dbPath (defensive fail-fast)", async () => {
     const root = await tmpDir("coherence-select-xdg-missing-dbpath-");
     const dbPath = path.join(root, "ledger.db");
