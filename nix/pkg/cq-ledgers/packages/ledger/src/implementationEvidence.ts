@@ -24,6 +24,10 @@ import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
 import { DEFECTS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
+import type {
+  SqliteOperationAccessScope,
+  SqliteOperationMeasurement,
+} from "./store/sqlite/operationObservability.js";
 import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import { ItemNotFoundError, LedgerError } from "./types.js";
@@ -496,6 +500,8 @@ type AtomicGenericLedgerStore = LedgerStore & {
   runAtomicGenericMutation<T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
     readRoots?: () => Promise<WorksetRootsEpoch>,
+    measurement?: SqliteOperationMeasurement,
+    accessScope?: SqliteOperationAccessScope,
   ): Promise<T>;
 };
 
@@ -573,6 +579,8 @@ export function protectLedgerStoreWithImplementationEvidence(
         return async <T>(
           mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
           readRoots?: () => Promise<WorksetRootsEpoch>,
+          measurement?: SqliteOperationMeasurement,
+          accessScope?: SqliteOperationAccessScope,
         ): Promise<T> => {
           const snapshot = await evidenceStore.snapshot();
           return (await rawAtomicGenericMutation.call(
@@ -595,6 +603,8 @@ export function protectLedgerStoreWithImplementationEvidence(
                 roots,
               ),
             readRoots,
+            measurement,
+            accessScope,
           )) as T;
         };
       }
