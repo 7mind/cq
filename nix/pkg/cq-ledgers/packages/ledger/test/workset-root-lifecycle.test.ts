@@ -4,8 +4,8 @@
  * Proves:
  *  - backup dump exact roots/epoch preservation (sqlite)
  *  - older dumps without a workset section restore as unrestricted empty
- *  - FS reset backup-before-clear + explicit empty live roots
- *  - FS divergence artifact retains roots; live starts empty
+ *  - SQLite backup-before-clear + explicit empty live roots
+ *  - SQLite divergence artifact retains roots; live starts empty
  *  - restore waits for in-flight brokered effects (sqlite)
  *  - reset waits for / races set under exclusive admission (sqlite)
  *  - guarded-context denial with zero store access
@@ -14,13 +14,12 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, mkdir } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
-  FsLedgerStore,
   SqliteLedgerStore,
   WorksetAdmissionError,
   WORKSET_ROOTS_FILENAME,
@@ -34,10 +33,9 @@ import {
   serializeWorksetRootsDocument,
   CANONICAL_LEDGERS,
   GOALS_LEDGER,
-  LEDGER_STORAGE_DIRNAME,
   type BackupDumpFile,
 } from "../src/index.js";
-import { FsPersistence } from "../src/store/FsPersistence.js";
+import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 
 const dirs: string[] = [];
 const exec = promisify(execFile);
@@ -59,18 +57,6 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = res;
   });
   return { promise, resolve };
-}
-
-/** Minimal divergent registry used by FS divergence fixtures. */
-function divergentRegistryYaml(): string {
-  const ledgers = CANONICAL_LEDGERS.map((c) => {
-    if (c.name !== GOALS_LEDGER) return { name: c.name, schema: c.schema };
-    return {
-      name: c.name,
-      schema: { ...c.schema, statusValues: [...c.schema.statusValues, "extra-status"] },
-    };
-  });
-  return serializeRegistry({ version: 1, ledgers });
 }
 
 describe("workset root lifecycle [T1959]", () => {
@@ -355,106 +341,69 @@ describe("workset root lifecycle [T1959]", () => {
     expect(await c.snapshot()).toEqual({ roots: ["goals:G1"], epoch: 1 });
   });
 
-  it("FS reset: backup retains roots; live roots become unrestricted empty", async () => {
-    const root = await tmp("wrl-fs-reset-");
-    const store = new FsLedgerStore({
-      root,
-      now: () => "2026-08-10T12:00:00.000Z",
-      worksetAuthority: createTrustedWorksetManagementAuthority(),
+  for (const epoch of [1, 3]) {
+    it(`SQLite reinitialization retains ordered backup roots at epoch ${epoch} and clears live roots`, async () => {
+      const root = await tmp("wrl-sqlite-reinit-");
+      const dbPath = path.join(root, "ledger.db");
+      const timestamp = "2026-08-10T12:00:00.000Z";
+      const roots = ["goals:G-prior", "tasks:T-prior"];
+      const source = new SqliteLedgerStore({ dbPath });
+      await source.init();
+      try {
+        for (let index = 0; index < epoch; index += 1) await source.worksetStore().setRoots(roots);
+        expect(await source.worksetStore().snapshot()).toEqual({ roots, epoch });
+      } finally {
+        await source.dispose();
+      }
+      injectSqliteSchemaDivergence(dbPath);
+      const store = new SqliteLedgerStore({
+        dbPath,
+        now: () => timestamp,
+        onSchemaDivergence: "backup-reinit",
+        allowDestructiveReinitOfPopulatedStore: true,
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
+      });
+      try {
+        await store.init();
+        const backup = new Database(sqliteDivergenceBackupPath(dbPath, timestamp), { readonly: true });
+        try {
+          const row = backup.query<{ roots_json: string; epoch: number }, []>(
+            "SELECT roots_json, epoch FROM workset_state WHERE id = 1",
+          ).get();
+          if (row === null) throw new Error("backed-up root state missing");
+          expect({ roots: JSON.parse(row.roots_json), epoch: row.epoch }).toEqual({ roots, epoch });
+        } finally {
+          backup.close();
+        }
+        expect(await store.worksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
+      } finally {
+        await store.dispose();
+      }
     });
+  }
+
+  it("SQLite backup export rejects malformed roots instead of silently dropping members", async () => {
+    const root = await tmp("wrl-sqlite-invalid-backup-");
+    const dbPath = path.join(root, "ledger.db");
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
+    const malformed = JSON.stringify(["goals:G-valid", 42]);
     try {
-      const roots = ["goals:G-fs", "tasks:T-fs"];
-      await store.createWorksetStore().setRoots(roots);
-      expect(await store.createWorksetStore().snapshot()).toEqual({ roots, epoch: 1 });
-
-      const summary = await store.reset();
-      const backupRootsPath = path.join(summary.backupDir, WORKSET_ROOTS_FILENAME);
-      const backed = parseWorksetRootsDocument(await readFile(backupRootsPath, "utf8"));
-      expect(backed).toEqual({ roots, epoch: 1 });
-
-      expect(await store.createWorksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
-    } finally {
-      await store.dispose();
-    }
-  });
-
-  it("FS backup rejects malformed roots instead of silently dropping members", async () => {
-    const root = await tmp("wrl-fs-invalid-backup-");
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    const worksetDir = path.join(docsDir, "workset");
-    await mkdir(worksetDir, { recursive: true });
-    await writeFile(
-      path.join(worksetDir, "roots.json"),
-      JSON.stringify({
-        version: 1,
-        roots: ["goals:G-valid", 42],
-        epoch: 1,
-        admitGeneration: 1,
-      }),
-      "utf8",
-    );
-    const persistence = new FsPersistence({
-      layout: {
-        root,
-        docsDir,
-        archiveDir: path.join(docsDir, "archive"),
-        registryPath: path.join(docsDir, "ledgers.yaml"),
-      },
-      now: () => "2026-08-10T12:30:00.000Z",
-    });
-
-    await expect(persistence.backupCanonicalState()).rejects.toThrow(
-      /roots members must be non-empty strings/,
-    );
-    await expect(
-      stat(
-        path.join(
-          docsDir,
-          ".backup",
-          "2026-08-10T12-30-00.000Z",
-          WORKSET_ROOTS_FILENAME,
-        ),
-      ),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("FS divergence backup retains roots; authorized reinit starts empty", async () => {
-    const root = await tmp("wrl-fs-div-");
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(), "utf8");
-    // Seed a minimal goals.md so the store can load past parse.
-    await writeFile(
-      path.join(docsDir, `${GOALS_LEDGER}.md`),
-      `---\nledger: goals\ncounters:\n  milestone: 0\n  item: 0\narchives: []\n---\n\n# goals\n`,
-      "utf8",
-    );
-
-    // Write live workset roots before init sees divergence.
-    const worksetDir = path.join(docsDir, "workset");
-    await mkdir(worksetDir, { recursive: true });
-    await writeFile(
-      path.join(worksetDir, "roots.json"),
-      `${JSON.stringify({ version: 1, roots: ["goals:G-div"], epoch: 3, admitGeneration: 3 }, null, 2)}\n`,
-      "utf8",
-    );
-
-    const FIXED_TS = "2026-08-10T13:00:00.000Z";
-    const store = new FsLedgerStore({
-      root,
-      now: () => FIXED_TS,
-      onSchemaDivergence: "backup-reinit",
-      worksetAuthority: createTrustedWorksetManagementAuthority(),
-    });
-    await store.init();
-    try {
-      const backupDir = path.join(docsDir, ".backup", FIXED_TS.replace(/:/g, "-"));
-      const backed = parseWorksetRootsDocument(
-        await readFile(path.join(backupDir, WORKSET_ROOTS_FILENAME), "utf8"),
-      );
-      expect(backed).toEqual({ roots: ["goals:G-div"], epoch: 3 });
-      expect(await store.createWorksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
+      const fixture = new Database(dbPath, { readwrite: true, create: false });
+      try {
+        fixture.query("UPDATE workset_state SET roots_json = ?, epoch = 1 WHERE id = 1").run(malformed);
+      } finally {
+        fixture.close();
+      }
+      await expect(buildBackupDump(store, null)).rejects.toThrow("workset_state.roots_json must be a JSON string array");
+      const unchanged = new Database(dbPath, { readonly: true });
+      try {
+        expect(unchanged.query("SELECT roots_json, epoch FROM workset_state WHERE id = 1").get()).toEqual({
+          roots_json: malformed, epoch: 1,
+        });
+      } finally {
+        unchanged.close();
+      }
     } finally {
       await store.dispose();
     }

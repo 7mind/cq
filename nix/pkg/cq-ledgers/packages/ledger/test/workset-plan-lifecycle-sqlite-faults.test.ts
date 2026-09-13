@@ -109,7 +109,7 @@ function publishInput(
 }
 
 describe("workset plan lifecycle SQLite faults [T1970]", () => {
-  it("an exact replay refreshes a stale peer's active search index", async () => {
+  it("an exact replay preserves the published result and coherent peer search", async () => {
     const dbPath = await freshDbPath();
     const writer = await open(dbPath);
     const stalePeer = await open(dbPath);
@@ -119,12 +119,21 @@ describe("workset plan lifecycle SQLite faults [T1970]", () => {
       "sqlite-replay-refresh-publish",
       "sqlite-replay-refresh",
     );
+    expect(
+      (await stalePeer.store.ftsSearch("sqlite-replay-refresh")).filter(
+        ({ ledgerId }) => ledgerId === TASKS_LEDGER,
+      ),
+    ).toEqual([]);
     const published = await writer.store.publishPlanDraft(input);
     expect(published).toMatchObject({ ok: true, replayed: false });
-    expect(await stalePeer.store.ftsSearch("sqlite-replay-refresh")).toEqual([]);
+    if (!published.ok) throw new Error("publish failed");
+    const publishedCounter = writer.store.fetch(TASKS_LEDGER).counters.item;
 
     const replay = await stalePeer.store.publishPlanDraft(input);
     expect(replay).toMatchObject({ ok: true, replayed: true });
+    if (!replay.ok) throw new Error("replay failed");
+    expect(replay.acknowledgement).toEqual(published.acknowledgement);
+    expect(stalePeer.store.fetch(TASKS_LEDGER).counters.item).toBe(publishedCounter);
     expect(
       (await stalePeer.store.ftsSearch("sqlite-replay-refresh")).map(
         ({ item }) => item.fields.headline,

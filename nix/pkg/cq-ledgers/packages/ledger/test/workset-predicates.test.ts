@@ -2,7 +2,7 @@
  * T1985 — shared workset-filtered predicate dual-adapter contract.
  *
  * Constructive taxonomy: Behavioral / Active / Blackbox. The in-memory leg is
- * Atomic; the filesystem leg is Good-Communication over durable project files.
+ * Atomic; the SQLite leg is Good-Communication over durable database rows.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";

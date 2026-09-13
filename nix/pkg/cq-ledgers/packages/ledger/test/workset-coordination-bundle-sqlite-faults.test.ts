@@ -55,10 +55,11 @@ async function open(
 }
 
 describe("workset coordination-bundle SQLite faults [T1965]", () => {
-  it("peer commit remains complete and enters the derived index after invalidation", async () => {
+  it("peer commit enters the derived index on read and explicit invalidation stays idempotent", async () => {
     const dbPath = await freshDbPath();
     const writer = await open(dbPath);
     const reader = await open(dbPath);
+    expect(await reader.raw.ftsSearch("sqlite-peer-visible")).toEqual([]);
     const idea = await writer.ledger.owned.createOwnerless({
       ledgerId: IDEAS_LEDGER,
       status: "open",
@@ -67,7 +68,9 @@ describe("workset coordination-bundle SQLite faults [T1965]", () => {
     expect(reader.raw.fetchItem(IDEAS_LEDGER, idea.id).fields.title).toBe(
       "sqlite-peer-visible",
     );
-    expect(await reader.raw.ftsSearch("sqlite-peer-visible")).toEqual([]);
+    expect((await reader.raw.ftsSearch("sqlite-peer-visible")).map((hit) => hit.item.id)).toEqual([
+      idea.id,
+    ]);
     await reader.raw.invalidate(IDEAS_LEDGER);
     expect((await reader.raw.ftsSearch("sqlite-peer-visible")).map((hit) => hit.item.id)).toEqual([
       idea.id,

@@ -183,7 +183,7 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function makeStore(kind: "memory" | "fs" | "sqlite"): Promise<LedgerStore> {
+async function makeStore(kind: "memory" | "sqlite"): Promise<LedgerStore> {
   if (kind === "memory") {
     const store = new InMemoryLedgerStore({});
     await store.init();
@@ -191,11 +191,6 @@ async function makeStore(kind: "memory" | "fs" | "sqlite"): Promise<LedgerStore>
   }
   const root = await mkdtemp(path.join(tmpdir(), `t808-${kind}-`));
   dirs.push(root);
-  if (kind === "fs") {
-    const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
-    await store.init();
-    return store;
-  }
   const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
   await store.init();
   return store;
@@ -208,7 +203,7 @@ describe("T808 finalize and store-family claims", () => {
     expect(source).not.toContain("fetch(");
   });
 
-  for (const kind of ["memory", "fs", "sqlite"] as const) {
+  for (const kind of ["memory", "sqlite"] as const) {
     test(`${kind}: wrong finalize token is refused; matching token is idempotent [BA]`, async () => {
       const store = await makeStore(kind);
       const milestone = await store.createMilestone({ title: "fin" });

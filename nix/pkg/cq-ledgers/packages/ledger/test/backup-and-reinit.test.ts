@@ -1,165 +1,117 @@
-/**
- * Unit tests for FsLedgerStore.backupAndReinit (T94).
- *
- * The helper is private; we access it via `(store as any)` — a standard
- * pattern for testing private methods without widening the public API.
- */
-
-import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, readdir, stat, readFile, mkdir, writeFile } from "node:fs/promises";
+/** T94 — public SQLite reinitialization snapshots prior rows before reseeding canon. */
+import { afterAll, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
-  CANONICAL_LEDGERS,
-  MILESTONES_LEDGER,
-  createTrustedWorksetManagementAuthority,
-  serializeRegistry,
-  LEDGER_STORAGE_DIRNAME,
+  SqliteLedgerStore, CANONICAL_LEDGERS, MILESTONES_LEDGER,
+  MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
+import {
+  injectSqliteSchemaDivergence, readSqliteCanonicalRows, sqliteDivergenceBackupPath,
+} from "./sqliteSchemaFixture.js";
 
 const dirs: string[] = [];
+const stores: SqliteLedgerStore[] = [];
+const TIMESTAMP = "2026-06-01T12:34:56.000Z";
 afterAll(async () => {
-  for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
+  for (const store of stores) await store.dispose();
+  for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
 
-async function makeStore(
-  opts: { seedRegistry?: boolean; now?: () => string } = {},
-): Promise<{ store: FsLedgerStore; root: string }> {
+async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-backup-"));
   dirs.push(root);
-  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-  await mkdir(docsDir, { recursive: true });
-  if (opts.seedRegistry) {
-    // Write a minimal registry so the store can init().
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: CANONICAL_LEDGERS.map((c) => ({ name: c.name, schema: c.schema })) }),
-      "utf8",
-    );
-  }
-  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = {
-    root,
+  const dbPath = path.join(root, "ledger.db");
+  const seed = new SqliteLedgerStore({ dbPath });
+  await seed.init();
+  await seed.dispose();
+  injectSqliteSchemaDivergence(dbPath);
+  const store = new SqliteLedgerStore({
+    dbPath, now: () => TIMESTAMP, onSchemaDivergence: "backup-reinit",
     worksetAuthority: createTrustedWorksetManagementAuthority(),
-  };
-  if (opts.now !== undefined) storeOpts.now = opts.now;
-  const store = new FsLedgerStore(storeOpts);
-  return { store, root };
+  });
+  stores.push(store);
+  return { store, dbPath, backupPath: sqliteDivergenceBackupPath(dbPath, TIMESTAMP) };
 }
 
-async function callBackupAndReinit(store: FsLedgerStore): Promise<string> {
-  // Access private method via `any` cast — test-only pattern.
-  return (store as unknown as Record<string, () => Promise<string>>)["backupAndReinit"]!();
-}
-
-describe("FsLedgerStore.backupAndReinit", () => {
-  it("creates .cq/.backup/<sanitized-ts>/ directory", async () => {
-    const fixedTs = "2026-06-01T12:34:56.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-
-    await callBackupAndReinit(store);
-
-    const expectedDirName = fixedTs.replace(/:/g, "-");
-    const backupDir = path.join(docsDir, ".backup", expectedDirName);
-    const s = await stat(backupDir);
-    expect(s.isDirectory()).toBe(true);
+describe("SQLite backup and reinitialization [Effectual-GoodCommunication]", () => {
+  it("creates a sibling snapshot with a sanitized timestamp", async () => {
+    const { store, backupPath } = await fixture();
+    await store.init();
+    expect((await stat(backupPath)).isFile()).toBe(true);
+    expect(path.basename(backupPath)).toBe("ledger.backup-2026-06-01T12-34-56.000Z.db");
   });
 
-  it("copies ledgers.yaml into backup dir if it exists, tolerates ENOENT", async () => {
-    const fixedTs = "2026-06-01T00:00:00.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs, seedRegistry: true });
-
-    await callBackupAndReinit(store);
-
-    const expectedDirName = fixedTs.replace(/:/g, "-");
-    const backupDir = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup", expectedDirName);
-    const files = await readdir(backupDir);
-    expect(files).toContain("ledgers.yaml");
+  it("preserves the prior registry, groups, and items byte-for-byte as SQL rows", async () => {
+    const { store, dbPath, backupPath } = await fixture();
+    const before = readSqliteCanonicalRows(dbPath);
+    await store.init();
+    expect(readSqliteCanonicalRows(backupPath)).toBe(before);
   });
 
-  it("tolerates ENOENT for ledger files that do not yet exist", async () => {
-    const fixedTs = "2026-06-01T01:00:00.000Z";
-    // No seedRegistry=true — .cq/ has no files at all; all ENOENT.
-    const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-
-    // Must not throw despite no files to copy; returns the backup dir path.
-    const expectedDirName = fixedTs.replace(/:/g, "-");
-    const backupDir = path.join(docsDir, ".backup", expectedDirName);
-    await expect(callBackupAndReinit(store)).resolves.toBe(backupDir);
-
-    const s = await stat(backupDir);
-    expect(s.isDirectory()).toBe(true);
+  it("reinitializes when a canonical ledger has not yet been provisioned", async () => {
+    const { store, dbPath, backupPath } = await fixture();
+    const db = new Database(dbPath, { readwrite: true, create: false });
+    try {
+      db.exec("DELETE FROM ledgers WHERE name = 'upstream'");
+    } finally {
+      db.close();
+    }
+    const before = readSqliteCanonicalRows(dbPath);
+    await expect(store.init()).resolves.toBeUndefined();
+    expect(readSqliteCanonicalRows(backupPath)).toBe(before);
+    expect(store.enumerate()).toContain("upstream");
   });
 
-  it("writes fresh canonical registry to .cq/ledgers.yaml after backup", async () => {
-    const fixedTs = "2026-06-01T02:00:00.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs, seedRegistry: true });
-
-    await callBackupAndReinit(store);
-
-    const registryText = await readFile(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"), "utf8");
-    for (const c of CANONICAL_LEDGERS) {
-      expect(registryText).toContain(c.name);
+  it("writes fresh canonical registry metadata after backup", async () => {
+    const { store } = await fixture();
+    await store.init();
+    expect(store.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
+    for (const canonical of CANONICAL_LEDGERS) {
+      expect(store.fetch(canonical.name).schema).toEqual(canonical.schema);
     }
   });
 
-  it("writes fresh milestones.md with bootstrap group and M-AMBIENT", async () => {
-    const fixedTs = "2026-06-01T03:00:00.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-
-    await callBackupAndReinit(store);
-
-    const milestonesPath = path.join(docsDir, `${MILESTONES_LEDGER}.md`);
-    const text = await readFile(milestonesPath, "utf8");
-    expect(text).toContain("## active");
-    expect(text).toContain("M-AMBIENT");
+  it("seeds the active milestone group and immortal ambient milestone", async () => {
+    const { store } = await fixture();
+    await store.init();
+    const active = store.fetch(MILESTONES_LEDGER).milestones.find(({ id }) => id === MILESTONES_ACTIVE_GROUP_ID);
+    expect(active).toBeDefined();
+    if (active === undefined) throw new Error("active milestone group missing");
+    expect(active.items.map(({ id }) => id)).toContain(MILESTONES_AMBIENT_ID);
   });
 
-  it("writes fresh canonical ledger files for all CANONICAL_LEDGERS entries", async () => {
-    const fixedTs = "2026-06-01T04:00:00.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-
-    await callBackupAndReinit(store);
-
-    for (const c of CANONICAL_LEDGERS) {
-      const filePath = path.join(docsDir, `${c.name}.md`);
-      const text = await readFile(filePath, "utf8");
-      expect(text).toContain(c.name);
+  it("makes every canonical ledger readable after reinitialization", async () => {
+    const { store } = await fixture();
+    await store.init();
+    for (const canonical of CANONICAL_LEDGERS) {
+      expect(store.fetch(canonical.name).schema).toEqual(canonical.schema);
     }
   });
 
-  it("emits a WARNING to stderr naming the backup path", async () => {
-    const fixedTs = "2026-06-01T05:00:00.000Z";
-    const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-
-    const stderrChunks: string[] = [];
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stderr as any).write = (chunk: string | Uint8Array): boolean => {
-      stderrChunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-      return originalWrite(chunk);
+  it("emits a WARNING to stderr naming the snapshot path", async () => {
+    const { store, backupPath } = await fixture();
+    const chunks: string[] = [];
+    const original = process.stderr.write;
+    const write = original.bind(process.stderr);
+    process.stderr.write = (
+      chunk: string | Uint8Array,
+      encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+      callback?: (error?: Error | null) => void,
+    ): boolean => {
+      chunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return typeof encodingOrCallback === "function"
+        ? write(chunk, encodingOrCallback)
+        : write(chunk, encodingOrCallback, callback);
     };
     try {
-      await callBackupAndReinit(store);
+      await store.init();
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = originalWrite;
+      process.stderr.write = original;
     }
-
-    const combined = stderrChunks.join("");
-    expect(combined).toContain("WARNING");
-    const expectedDirName = fixedTs.replace(/:/g, "-");
-    const backupDir = path.join(docsDir, ".backup", expectedDirName);
-    expect(combined).toContain(backupDir);
+    expect(chunks.join("")).toContain("WARNING");
+    expect(chunks.join("")).toContain(backupPath);
   });
 });

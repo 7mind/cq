@@ -256,7 +256,7 @@ describe("SqliteLedgerStore read parity over an equivalent seeded fixture (accep
     const memoryStore = await freshMemoryStore();
     await memoryStore.createMilestone({
       title: "read-parity fixture",
-      description: "seeded via fs mutations, mirrored to sqlite rows",
+      description: "seeded via in-memory mutations, mirrored to sqlite rows",
       dependsOn: ["M-AMBIENT"],
     });
     await memoryStore.createItem("tasks", "M1", {
@@ -320,7 +320,7 @@ describe("SqliteLedgerStore read parity over an equivalent seeded fixture (accep
     }
   });
 
-  test("not-found errors match the fs semantics", async () => {
+  test("not-found errors match the in-memory semantics", async () => {
     const { memoryStore, sq } = await buildFixture();
     try {
       expect(() => sq.fetchItem("tasks", "T999")).toThrow(ItemNotFoundError);

@@ -24,7 +24,7 @@ import {
   isTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 
-const OWNED_WRITE_ADAPTERS = ["fs", "git", "sqlite", "postgres"] as const;
+const OWNED_WRITE_ADAPTERS = ["sqlite", "postgres"] as const;
 
 const ADMINISTRATIVE_CONFORMANCE_PATHS = [
   join(import.meta.dir, "workset-admin-admission.test.ts"),

@@ -1,1 +1,0 @@
-export const GIT_OBJECT_CONTRACT_TIMEOUT_MS = 10_000;

@@ -11,18 +11,14 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import type { SQL } from "bun";
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import {
   buildBackupDump,
+  exportBackupInTree,
   CANONICAL_LEDGERS,
-  FsLedgerStore,
-  GitObjectLedgerBackend,
-  GitPlumbing,
   GOALS_LEDGER,
   HYPOTHESIS_LEDGER,
   IDEAS_LEDGER,
@@ -52,20 +48,17 @@ import {
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema as ensurePostgresSchema } from "../src/store/postgres/schema.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 
-const exec = promisify(execFile);
 const FIXTURE_REVISION = "9ad31c918fac51ef20fa48e4a9eaaeca28f9dbb3";
 const FIXTURE_DIR = path.join(import.meta.dir, "fixtures", "pre-upstream-9ad31c9");
-const FS_FIXTURE_ROOT = path.join(FIXTURE_DIR, "fs-root");
 const SQLITE_FIXTURE_DB = path.join(FIXTURE_DIR, "xdg", "ledger.db");
 const SQLITE_FIXTURE_LOGS = path.join(FIXTURE_DIR, "xdg", "logs");
-const GIT_FIXTURE_BUNDLE = path.join(FIXTURE_DIR, "git-object.bundle");
 const MEMORY_FIXTURE = path.join(FIXTURE_DIR, "in-memory.json");
 const POSTGRES_FIXTURE = path.join(FIXTURE_DIR, "postgres.sql");
 const EXPECTED_PUBLIC_FIXTURE = path.join(FIXTURE_DIR, "expected-public.json");
 const FIXED_NOW = "2026-07-25T06:00:00.000Z";
 const now = (): string => FIXED_NOW;
-const GIT_REF = "refs/heads/cq-ledger";
 const PG_URL = process.env.CQ_TEST_PG_URL;
 const SESSION_LOG_REF = ".cq/logs/20260724-legacy-session.md";
 const RAW_LOG_REF = ".cq/logs/raw/20260724-legacy-worker.jsonl";
@@ -272,18 +265,6 @@ async function freshRoot(prefix: string): Promise<string> {
   return root;
 }
 
-async function relativeFiles(root: string, prefix: string): Promise<string[]> {
-  const directory = path.join(root, prefix);
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    const relative = path.join(prefix, entry.name);
-    if (entry.isDirectory()) files.push(...(await relativeFiles(root, relative)));
-    else if (entry.isFile()) files.push(relative);
-  }
-  return files.sort();
-}
-
 async function captureFiles(root: string, paths: readonly string[]): Promise<string> {
   const contents = await Promise.all(
     paths.map(async (file) => [file, (await readFile(path.join(root, file))).toString("base64")]),
@@ -293,133 +274,6 @@ async function captureFiles(root: string, paths: readonly string[]): Promise<str
 
 async function captureLogFiles(logsDir: string): Promise<string> {
   return captureFiles(logsDir, LOG_PATHS);
-}
-
-async function frozenFsPaths(): Promise<string[]> {
-  return relativeFiles(path.join(FS_FIXTURE_ROOT, LEDGER_STORAGE_DIRNAME), "");
-}
-
-async function captureFsPriorState(storageDir: string): Promise<string> {
-  const paths = (await frozenFsPaths()).filter((file) => file !== "ledgers.yaml");
-  const registry = parseRegistry(await readFile(path.join(storageDir, "ledgers.yaml"), "utf8"));
-  return JSON.stringify({
-    registry: registry.ledgers
-      .filter(({ name }) => !POST_FIXTURE_LEDGER_NAMES.has(name))
-      .map((entry) => ({
-        ...entry,
-        schema: withoutPlanLifecycleFields(entry.name, entry.schema),
-      })),
-    files: JSON.parse(await captureFiles(storageDir, paths)) as unknown,
-  });
-}
-
-async function captureCompleteFsState(storageDir: string): Promise<string> {
-  const paths = (await relativeFiles(storageDir, "")).filter(
-    (file) => !file.startsWith(".backup/") && !file.startsWith(".locks/"),
-  );
-  return captureFiles(storageDir, paths);
-}
-
-async function prepareFsFixture(): Promise<PersistentFixture & { root: string }> {
-  const expected = await expectedPublicFixture;
-  const parent = await freshRoot("t796-fs-");
-  const root = path.join(parent, "store");
-  await cp(FS_FIXTURE_ROOT, root, { recursive: true });
-  const storageDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-
-  expect(
-    parseRegistry(await readFile(path.join(storageDir, "ledgers.yaml"), "utf8"))
-      .ledgers.map(({ name }) => name)
-      .sort(),
-  ).toEqual(PRE_UPSTREAM_NAMES);
-
-  return {
-    root,
-    expected,
-    open: () => new FsLedgerStore({ root, now }),
-    capturePriorRawState: () => captureFsPriorState(storageDir),
-    captureCompleteRawState: () => captureCompleteFsState(storageDir),
-    async assertNoDivergenceBackup() {
-      await expect(stat(path.join(storageDir, ".backup"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  };
-}
-
-async function initGitRepository(): Promise<string> {
-  const root = await freshRoot("t796-git-");
-  await exec("git", ["init", "-q", root], { encoding: "utf8" });
-  await exec("git", ["config", "user.email", "test@example.com"], { cwd: root });
-  await exec("git", ["config", "user.name", "test"], { cwd: root });
-  await writeFile(path.join(root, "host.txt"), "host checkout\n", "utf8");
-  await exec("git", ["add", "host.txt"], { cwd: root });
-  await exec("git", ["commit", "-q", "-m", "host: initial"], { cwd: root });
-  await exec("git", ["fetch", GIT_FIXTURE_BUNDLE, `${GIT_REF}:${GIT_REF}`], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  return root;
-}
-
-async function divergenceBackupTags(root: string): Promise<string[]> {
-  const { stdout } = await exec("git", ["for-each-ref", "--format=%(refname)", "refs/tags"], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  return stdout
-    .split("\n")
-    .filter((ref) => ref.startsWith("refs/tags/cq-ledger-backup-"))
-    .sort();
-}
-
-async function captureGitState(
-  git: GitPlumbing,
-  legacyPaths: readonly string[],
-  complete: boolean,
-): Promise<string> {
-  const paths = complete ? (await git.lsTree(GIT_REF)).sort() : [...legacyPaths].sort();
-  const registry = parseRegistry(await git.catFile(GIT_REF, "ledgers.yaml"));
-  const contents = await Promise.all(
-    paths
-      .filter((entry) => entry !== "ledgers.yaml")
-      .map(async (entry) => [entry, await git.catFile(GIT_REF, entry)]),
-  );
-  return JSON.stringify({
-    registry: complete
-      ? registry.ledgers
-      : registry.ledgers
-          .filter(({ name }) => !POST_FIXTURE_LEDGER_NAMES.has(name))
-          .map((entry) => ({
-            ...entry,
-            schema: withoutPlanLifecycleFields(entry.name, entry.schema),
-          })),
-    contents,
-    ref: complete ? await git.readRef(GIT_REF) : null,
-  });
-}
-
-async function prepareGitFixture(): Promise<PersistentFixture> {
-  const expected = await expectedPublicFixture;
-  const root = await initGitRepository();
-  const git = GitPlumbing.withCwd(root, path.join(root, ".git"));
-  const legacyPaths = await git.lsTree(GIT_REF);
-
-  expect(
-    parseRegistry(await git.catFile(GIT_REF, "ledgers.yaml"))
-      .ledgers.map(({ name }) => name)
-      .sort(),
-  ).toEqual(PRE_UPSTREAM_NAMES);
-
-  return {
-    expected,
-    open: () => new GitObjectLedgerBackend({ repoRoot: root, now }),
-    capturePriorRawState: () => captureGitState(git, legacyPaths, false),
-    captureCompleteRawState: () => captureGitState(git, legacyPaths, true),
-    async assertNoDivergenceBackup() {
-      expect(await divergenceBackupTags(root)).toEqual([]);
-    },
-  };
 }
 
 const SQLITE_TABLES = ["groups", "items", "archive_pointers", "archived_items", "meta"] as const;
@@ -464,7 +318,11 @@ async function captureSqliteState(
   }
 }
 
-async function prepareSqliteFixture(): Promise<PersistentFixture> {
+async function prepareSqliteFixture(): Promise<PersistentFixture & {
+  root: string;
+  dbPath: string;
+  logsDir: string;
+}> {
   const expected = await expectedPublicFixture;
   const root = await freshRoot("t796-sqlite-");
   const dbPath = path.join(root, "ledger.db");
@@ -483,6 +341,9 @@ async function prepareSqliteFixture(): Promise<PersistentFixture> {
   }
 
   return {
+    root,
+    dbPath,
+    logsDir,
     expected,
     open: () => new SqliteLedgerStore({ dbPath, logsDir, now }),
     capturePriorRawState: () => captureSqliteState(dbPath, logsDir, false),
@@ -629,34 +490,18 @@ describe("pre-upstream immutable fixture provenance", () => {
     expect(memory.logs.map(({ path: logPath }) => logPath).sort()).toEqual(
       [RAW_LOG_REF, SESSION_LOG_REF].sort(),
     );
-    expect(await captureLogFiles(path.join(FS_FIXTURE_ROOT, ".cq", "logs"))).toBe(
-      await expectedLogState,
-    );
+    const memoryLogState = LOG_PATHS.map((relativePath) => {
+      const log = memory.logs.find(({ path: logPath }) => logPath === `.cq/logs/${relativePath}`);
+      if (log === undefined) throw new Error(`frozen memory log missing: ${relativePath}`);
+      return [relativePath, Buffer.from(log.content).toString("base64")];
+    });
+    expect(JSON.stringify(memoryLogState)).toBe(await expectedLogState);
   });
 
-  test("git divergence-tag oracle detects and can isolate a matching sentinel", async () => {
-    const root = await initGitRepository();
-    const sentinel = "cq-ledger-backup-sentinel";
-    const sentinelRef = `refs/tags/${sentinel}`;
-    await exec("git", ["tag", sentinel], { cwd: root });
-    try {
-      expect(await divergenceBackupTags(root)).toEqual([sentinelRef]);
-    } finally {
-      await exec("git", ["tag", "--delete", sentinel], { cwd: root });
-    }
-    expect(await divergenceBackupTags(root)).toEqual([]);
-  });
+
 });
 
 describe("pre-upstream canonical-ledger initialization", () => {
-  test("FsLedgerStore adds only an empty upstream ledger and a second init is idempotent", async () => {
-    await runPersistentContract(await prepareFsFixture());
-  });
-
-  test("GitObjectLedgerBackend adds only an empty upstream ledger without a divergence tag", async () => {
-    await runPersistentContract(await prepareGitFixture());
-  }, 30_000);
-
   test("SqliteLedgerStore adds only an empty upstream row transactionally", async () => {
     await runPersistentContract(await prepareSqliteFixture());
   });
@@ -734,12 +579,12 @@ describe.skipIf(!PG_URL)("pre-upstream PostgreSQL tenant initialization", () => 
 
 describe("pre-upstream lifecycle acceptance states", () => {
   test("portable backup and XDG restore preserve every upgraded datum and log byte", async () => {
-    const fixture = await prepareFsFixture();
+    const fixture = await prepareSqliteFixture();
     const source = fixture.open();
     await source.init();
     await assertAdditivePublicState(source, fixture.expected);
     const expected = publicSnapshot(source, CURRENT_NAMES);
-    const sourceLogs = path.join(fixture.root, ".cq", "logs");
+    const sourceLogs = fixture.logsDir;
     const dump = await buildBackupDump(source, sourceLogs);
     await source.dispose();
 
@@ -791,56 +636,68 @@ describe("pre-upstream lifecycle acceptance states", () => {
     }
   });
 
-  test("reset preserves legacy archive/log bytes, retains upstream canon, and erase removes it", async () => {
-    const fixture = await prepareFsFixture();
-    const store = new FsLedgerStore({
-      root: fixture.root,
-      now,
-      worksetAuthority: createTrustedWorksetManagementAuthority(),
-    });
+  test("reinitialization preserves archive/log bytes and portable erase removes exported artifacts", async () => {
+    const fixture = await prepareSqliteFixture();
+    const store = fixture.open();
     await store.init();
     await store.createItem(UPSTREAM_LEDGER, "M41", {
       status: "open",
-      fields: {
-        headline: "reset target",
-        package: "@cq/example",
-      },
+      fields: { headline: "reinitialization target", package: "@cq/example" },
     });
-
-    if (!(store instanceof FsLedgerStore)) {
-      throw new Error("expected FsLedgerStore fixture");
+    const priorUpstream = store.fetch(UPSTREAM_LEDGER);
+    expect(priorUpstream.milestones.flatMap(({ items }) => items)).toHaveLength(1);
+    const dump = await buildBackupDump(store, fixture.logsDir);
+    const archivedArtifacts = ["archive/tasks/M42.md", "archive/milestones/M42.md"];
+    for (const archivedPath of archivedArtifacts) {
+      expect(dump.some(({ path: file }) => file === archivedPath)).toBe(true);
     }
-    const summary = await store.reset();
-    expect(summary.ledgers).toContainEqual(
-      expect.objectContaining({ name: UPSTREAM_LEDGER, itemCount: 1 }),
-    );
-    expect(store.enumerate()).toEqual(CURRENT_NAMES);
-    expect(store.fetch(UPSTREAM_LEDGER).counters).toEqual({ milestone: 0, item: 0 });
-    expect(store.fetch(UPSTREAM_LEDGER).milestones).toEqual([]);
     await store.dispose();
 
-    const storageDir = path.join(fixture.root, LEDGER_STORAGE_DIRNAME);
-    expect(await readFile(path.join(summary.backupDir, `${UPSTREAM_LEDGER}.md`), "utf8")).toContain(
+    injectSqliteSchemaDivergence(fixture.dbPath);
+    const priorState = await fixture.captureCompleteRawState();
+    const replacement = new SqliteLedgerStore({
+      dbPath: fixture.dbPath,
+      logsDir: fixture.logsDir,
+      now,
+      onSchemaDivergence: "backup-reinit",
+      allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
+    await replacement.init();
+    try {
+      expect(replacement.enumerate()).toEqual(CURRENT_NAMES);
+      expect(replacement.fetch(UPSTREAM_LEDGER).schema).toEqual(UPSTREAM_SCHEMA);
+      expect(replacement.fetch(UPSTREAM_LEDGER).counters).toEqual({ milestone: 0, item: 0 });
+      expect(replacement.fetch(UPSTREAM_LEDGER).milestones).toEqual([]);
+      for (const name of CURRENT_NAMES) expect(replacement.fetch(name).archivePointers).toEqual([]);
+    } finally {
+      await replacement.dispose();
+    }
+    const backupPath = sqliteDivergenceBackupPath(fixture.dbPath, FIXED_NOW);
+    expect(await captureSqliteState(backupPath, fixture.logsDir, true)).toBe(priorState);
+    expect(await captureLogFiles(fixture.logsDir)).toBe(await expectedLogState);
+    const db = openLedgerDb(fixture.dbPath);
+    try {
+      expect(db.query("SELECT * FROM archived_items").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+
+    const exportRoot = await freshRoot("t796-portable-erase-");
+    await exportBackupInTree(exportRoot, dump);
+    const storageDir = path.join(exportRoot, LEDGER_STORAGE_DIRNAME);
+    expect(await readFile(path.join(storageDir, `${UPSTREAM_LEDGER}.md`), "utf8")).toContain(
       "# upstream",
     );
-    const archivedArtifacts = ["archive/tasks/M42.md", "archive/milestones/M42.md"];
-    expect(await captureFiles(summary.backupDir, archivedArtifacts)).toBe(
-      await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), archivedArtifacts),
-    );
-    await expect(stat(path.join(storageDir, "archive"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-
-    const liveLogArtifacts = [
-      "logs/20260724-legacy-session.md",
-      "logs/raw/20260724-legacy-worker.jsonl",
-    ];
-    expect(await captureFiles(storageDir, liveLogArtifacts)).toBe(
-      await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), liveLogArtifacts),
-    );
+    for (const file of dump.filter(({ path: file }) => archivedArtifacts.includes(file))) {
+      expect(await readFile(path.join(storageDir, file.path), "utf8")).toBe(file.content);
+    }
+    expect(await captureLogFiles(path.join(storageDir, "logs"))).toBe(await expectedLogState);
     const erased = await removeLedgerArtifacts(storageDir);
     expect(erased.removed.some((entry) => entry.endsWith(`${UPSTREAM_LEDGER}.md`))).toBe(true);
     await expect(stat(storageDir)).rejects.toMatchObject({ code: "ENOENT" });
-    expect((await readdir(fixture.root)).sort()).toEqual([]);
+    expect(await readdir(exportRoot)).toEqual([]);
+    expect((await stat(fixture.dbPath)).isFile()).toBe(true);
+    expect(await captureLogFiles(fixture.logsDir)).toBe(await expectedLogState);
   });
 });

@@ -80,7 +80,7 @@ describe("T1988 generic mutation conformance [Behavioral-Active Blackbox-Atomic]
 
 describe("T1988 durable generic shared-contract registration [Contract-Active Whitebox-Atomic]", () => {
   test("keeps the unchanged shared runner registered for every durable backend", async () => {
-    for (const backend of ["fs", "git", "sqlite", "postgres"] as const) {
+    for (const backend of ["sqlite", "postgres"] as const) {
       const source = await readFile(
         join(import.meta.dir, `workset-generic-mutation-${backend}.test.ts`),
         "utf8",

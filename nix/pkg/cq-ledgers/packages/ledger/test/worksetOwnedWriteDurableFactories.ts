@@ -1,19 +1,14 @@
 import { afterAll } from "bun:test";
-import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import {
   buildActiveStateFromLedgerStore,
   closeWorkset,
-  createGitObjectWorksetStore,
   createTrustedWorksetManagementAuthority,
   createWorksetOwnedGuardedLedger,
   ensureSchema,
-  FsLedgerStore,
-  GitObjectLedgerBackend,
   openPgPool,
   PostgresLedgerStore,
   SqliteLedgerStore,
@@ -24,7 +19,6 @@ import {
 } from "../src/index.js";
 import type { WorksetOwnedWriteContractFactory } from "./worksetOwnedWriteContract.js";
 
-const exec = promisify(execFile);
 const tempRoots: string[] = [];
 const openLedgers: WorksetOwnedGuardedLedger[] = [];
 
@@ -62,69 +56,6 @@ async function freshRoot(prefix: string): Promise<string> {
   return root;
 }
 
-async function seedGitRepo(): Promise<string> {
-  const root = await freshRoot("owned-write-git-");
-  await exec("git", ["init", "-q"], { cwd: root });
-  await exec("git", ["config", "user.email", "test@example.com"], { cwd: root });
-  await exec("git", ["config", "user.name", "test"], { cwd: root });
-  await exec("git", ["config", "commit.gpgsign", "false"], { cwd: root });
-  return root;
-}
-
-export const fsOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
-  name: "FsLedgerStore",
-  classification: "Behavioral-Active Blackbox-GoodCommunication",
-  async build(options) {
-    const root = await freshRoot("owned-write-fs-");
-    const rawStore = new FsLedgerStore({
-      root,
-      ...(options?.now !== undefined ? { now: options.now } : {}),
-    });
-    const worksetStore = rawStore.createWorksetStore({
-      ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
-      isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
-    });
-    return retain(
-      createWorksetOwnedGuardedLedger({
-        rawStore,
-        worksetStore,
-        invocationAuthority: createTrustedWorksetManagementAuthority(),
-        ...(options?.afterOwnedAdmit !== undefined
-          ? { afterOwnedAdmit: options.afterOwnedAdmit }
-          : {}),
-        runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
-      }),
-    );
-  },
-};
-
-export const gitOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
-  name: "GitObjectLedgerBackend",
-  classification: "Behavioral-Active Blackbox-GoodCommunication",
-  async build(options) {
-    const repoRoot = await seedGitRepo();
-    const rawStore = new GitObjectLedgerBackend({
-      repoRoot,
-      ...(options?.now !== undefined ? { now: options.now } : {}),
-    });
-    const worksetStore = await createGitObjectWorksetStore({
-      repoRoot,
-      ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
-      isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
-    });
-    return retain(
-      createWorksetOwnedGuardedLedger({
-        rawStore,
-        worksetStore,
-        invocationAuthority: createTrustedWorksetManagementAuthority(),
-        ...(options?.afterOwnedAdmit !== undefined
-          ? { afterOwnedAdmit: options.afterOwnedAdmit }
-          : {}),
-        runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
-      }),
-    );
-  },
-};
 
 export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
   name: "SqliteLedgerStore",

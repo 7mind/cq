@@ -22,3 +22,16 @@ export function sqliteDivergenceBackupPath(dbPath: string, timestamp: string): s
   const stem = extension.length === 0 ? dbPath : dbPath.slice(0, -extension.length);
   return `${stem}.backup-${timestamp.replaceAll(":", "-")}${extension}`;
 }
+
+export function readSqliteCanonicalRows(dbPath: string): string {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return db.transaction(() => JSON.stringify({
+      ledgers: db.query("SELECT * FROM ledgers ORDER BY name").all(),
+      groups: db.query("SELECT * FROM groups ORDER BY ledger, id").all(),
+      items: db.query("SELECT * FROM items ORDER BY ledger, id").all(),
+    }))();
+  } finally {
+    db.close();
+  }
+}

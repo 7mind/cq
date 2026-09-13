@@ -7,32 +7,28 @@
  * sessionLogs-bearing canonical schemas (goals/tasks/reviews/handoffs/defects/
  * hypothesis). A ledger that was written by a PRE-rawLogs build carries an
  * on-disk registry whose schemas are MISSING `rawLogs`. The schema-divergence
- * guard in `FsLedgerStore.init()` (`schemaCompatible`, formerly the strict
+ * guard in `SqliteLedgerStore.init()` (`schemaCompatible`, formerly the strict
  * `schemasEqual`) must treat that on-disk schema as COMPATIBLE — the only
  * difference is canon ADDING an OPTIONAL field — and therefore must NOT
  * back up + reinit (which would destroy live ledger history).
  *
- * The fixture is the committed pre-rawLogs `examples/sample-ledger/docs/`
- * snapshot (its registry has `sessionLogs` but NOT `rawLogs`). We copy it into
- * a TEMP store root (never mutating the committed fixture) and init from it.
+ * The fixture seeds a temporary SQLite store, then narrows only its persisted
+ * schemas to the pre-field shape before reopening it.
  *
  * If a future change makes init() treat the added-optional shape as divergent
  * (and therefore back up + empty the affected ledgers), these assertions FAIL.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, stat, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
   GOALS_LEDGER,
   REVIEWS_LEDGER,
   REVIEWS_SCHEMA,
   TASKS_LEDGER,
   CANONICAL_LEDGERS,
-  serializeRegistry,
-  parseRegistry,
   schemaCompatible,
   schemasEqual,
   GOALS_SCHEMA,
@@ -40,7 +36,6 @@ import {
   HYPOTHESIS_LEDGER,
   SqliteLedgerStore,
   type LedgerSchema,
-  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
@@ -53,6 +48,38 @@ afterAll(async () => {
   for (const d of dirs)
     await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
+
+interface PersistedSchema {
+  readonly name: string;
+  readonly schema: LedgerSchema;
+}
+
+function readRegistry(dbPath: string): { ledgers: PersistedSchema[] } {
+  const db = openLedgerDb(dbPath);
+  try {
+    const rows = db.query<{ name: string; schema_json: string }, []>(
+      "SELECT name, schema_json FROM ledgers ORDER BY name",
+    ).all();
+    return { ledgers: rows.map(({ name, schema_json }) => ({
+      name, schema: JSON.parse(schema_json) as LedgerSchema,
+    })) };
+  } finally {
+    db.close();
+  }
+}
+
+function writeSchemas(dbPath: string, entries: readonly PersistedSchema[]): void {
+  const db = openLedgerDb(dbPath);
+  try {
+    db.transaction(() => {
+      for (const { name, schema } of entries) {
+        db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?").run(JSON.stringify(schema), name);
+      }
+    })();
+  } finally {
+    db.close();
+  }
+}
 
 /** The optional field T405 added to the six sessionLogs-bearing schemas. */
 const ADDED_OPTIONAL_FIELD = "rawLogs";
@@ -90,24 +117,20 @@ function preInconclusiveHypothesisSchema(): LedgerSchema {
  * examples/sample-ledger fixture is too stale — it predates `transitions` and
  * other widenings, so it would diverge on multiple axes).
  *
- * Construction: prime a REAL FsLedgerStore (current canon, WITH rawLogs), seed
- * two live items, dispose — yielding valid on-disk .md files and a registry. We
- * then REWRITE only the on-disk ledgers.yaml to STRIP `rawLogs` from every
- * schema, producing the exact pre-rawLogs on-disk state. The .md files do NOT
- * embed the schema, so they remain valid against the pre-rawLogs registry.
+ * Construction: seed current canonical SQLite rows, then remove rawLogs only
+ * from the persisted schema metadata. Item rows remain unchanged.
  */
 async function seedPreRawLogsStore(): Promise<{
   root: string;
-  docsDir: string;
+  dbPath: string;
   goalId: string;
   taskId: string;
 }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-added-opt-"));
   dirs.push(root);
-  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-  await mkdir(docsDir, { recursive: true });
+  const dbPath = path.join(root, "ledger.db");
 
-  const seedStore = new FsLedgerStore({ root });
+  const seedStore = new SqliteLedgerStore({ dbPath });
   await seedStore.init();
   const m = await seedStore.createMilestone({ title: "pre-rawLogs seed milestone" });
   const goal = await seedStore.createItem(GOALS_LEDGER, m.id, {
@@ -120,16 +143,12 @@ async function seedPreRawLogsStore(): Promise<{
   });
   await seedStore.dispose();
 
-  // Downgrade the on-disk registry to the pre-rawLogs shape.
-  const registryPath = path.join(docsDir, "ledgers.yaml");
-  const current = parseRegistry(await readFile(registryPath, "utf8"));
-  const downgraded = serializeRegistry({
-    version: current.version,
-    ledgers: current.ledgers.map((e) => ({ name: e.name, schema: stripRawLogs(e.schema) })),
-  });
-  await writeFile(registryPath, downgraded, "utf8");
+  const current = readRegistry(dbPath);
+  writeSchemas(dbPath, current.ledgers.map((entry) => ({
+    name: entry.name, schema: stripRawLogs(entry.schema),
+  })));
 
-  return { root, docsDir, goalId: goal.id, taskId: task.id };
+  return { root, dbPath, goalId: goal.id, taskId: task.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,9 +158,8 @@ async function seedPreRawLogsStore(): Promise<{
 
 describe("added-optional-field init — fixture is pre-rawLogs only", () => {
   it("the seeded registry lacks rawLogs but each schema is canon-compatible", async () => {
-    const { docsDir } = await seedPreRawLogsStore();
-    const text = await readFile(path.join(docsDir, "ledgers.yaml"), "utf8");
-    const registry = parseRegistry(text);
+    const { dbPath } = await seedPreRawLogsStore();
+    const registry = readRegistry(dbPath);
     for (const c of CANONICAL_LEDGERS) {
       const e = registry.ledgers.find((x) => x.name === c.name);
       expect(e).toBeDefined();
@@ -258,41 +276,37 @@ describe("append-only status widening — SQLite preservation", () => {
 // ---------------------------------------------------------------------------
 
 describe("added-optional-field init — init() preserves pre-rawLogs ledger", () => {
-  it("init() does NOT create a .cq/.backup/ dir", async () => {
-    const { root, docsDir } = await seedPreRawLogsStore();
-    const store = new FsLedgerStore({ root });
+  it("init() does NOT create a divergence snapshot", async () => {
+    const { root, dbPath } = await seedPreRawLogsStore();
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     await store.dispose();
 
-    const backupParent = path.join(docsDir, ".backup");
-    let backupExists = false;
-    try {
-      await stat(backupParent);
-      backupExists = true;
-    } catch {
-      // ENOENT expected — added-optional is compatible, no backup.
-    }
-    expect(backupExists).toBe(false);
+    expect((await readdir(root)).filter((name) => name.startsWith("ledger.backup-"))).toEqual([]);
   });
 
   it("init() preserves the pre-existing goals + tasks items on disk", async () => {
-    const { root, docsDir, goalId, taskId } = await seedPreRawLogsStore();
+    const { dbPath, goalId, taskId } = await seedPreRawLogsStore();
 
-    const store = new FsLedgerStore({ root });
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     await store.dispose();
 
-    // A reinit would have rewritten these as empty fresh-canonical ledgers.
-    const goalsAfter = await readFile(path.join(docsDir, `${GOALS_LEDGER}.md`), "utf8");
-    const tasksAfter = await readFile(path.join(docsDir, `${TASKS_LEDGER}.md`), "utf8");
-    expect(goalsAfter).toContain(goalId);
-    expect(goalsAfter).toContain("must survive rawLogs widening");
-    expect(tasksAfter).toContain(taskId);
+    const db = openLedgerDb(dbPath);
+    try {
+      const rows = db.query<{ id: string; fields_json: string }, [string, string]>(
+        "SELECT id, fields_json FROM items WHERE ledger IN (?, ?) ORDER BY id",
+      ).all(GOALS_LEDGER, TASKS_LEDGER);
+      expect(rows.map(({ id }) => id)).toEqual([goalId, taskId]);
+      expect(rows.map(({ fields_json }) => fields_json).join("\n")).toContain("must survive rawLogs widening");
+    } finally {
+      db.close();
+    }
   });
 
   it("the pre-existing items are readable after init()", async () => {
-    const { root, goalId, taskId } = await seedPreRawLogsStore();
-    const store = new FsLedgerStore({ root });
+    const { dbPath, goalId, taskId } = await seedPreRawLogsStore();
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     try {
       expect(store.fetchItem(GOALS_LEDGER, goalId).id).toBe(goalId);
@@ -303,8 +317,8 @@ describe("added-optional-field init — init() preserves pre-rawLogs ledger", ()
   });
 
   it("the live in-memory goals schema is upgraded to canon (includes rawLogs)", async () => {
-    const { root } = await seedPreRawLogsStore();
-    const store = new FsLedgerStore({ root });
+    const { dbPath } = await seedPreRawLogsStore();
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     try {
       const goals = store.fetch(GOALS_LEDGER);
@@ -318,23 +332,24 @@ describe("added-optional-field init — init() preserves pre-rawLogs ledger", ()
   });
 
   it("the on-disk registry is upgraded to canon (rawLogs persisted) after load", async () => {
-    const { root, docsDir } = await seedPreRawLogsStore();
-    const store = new FsLedgerStore({ root });
+    const { dbPath } = await seedPreRawLogsStore();
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     await store.dispose();
 
-    const registry = parseRegistry(await readFile(path.join(docsDir, "ledgers.yaml"), "utf8"));
+    const registry = readRegistry(dbPath);
     const goals = registry.ledgers.find((e) => e.name === GOALS_LEDGER);
     expect(goals).toBeDefined();
     expect(goals!.schema.fields[ADDED_OPTIONAL_FIELD]).toBeDefined();
   });
 });
 
-describe("T843 reviews.defects widening — fs preservation", () => {
+describe("T843 reviews.defects widening — SQLite preservation", () => {
   it("upgrades a pre-field registry in place without backup or item loss", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ledger-pre-review-defects-"));
     dirs.push(root);
-    const seeded = new FsLedgerStore({ root });
+    const dbPath = path.join(root, "ledger.db");
+    const seeded = new SqliteLedgerStore({ dbPath });
     await seeded.init();
     const milestone = await seeded.createMilestone({ title: "pre-defects review" });
     const review = await seeded.createItem(REVIEWS_LEDGER, milestone.id, {
@@ -343,31 +358,23 @@ describe("T843 reviews.defects widening — fs preservation", () => {
     });
     await seeded.dispose();
 
-    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
-    const registryPath = path.join(docsDir, "ledgers.yaml");
-    const registry = parseRegistry(await readFile(registryPath, "utf8"));
-    const narrowed = {
-      version: registry.version,
-      ledgers: registry.ledgers.map((entry) => {
-        if (entry.name !== REVIEWS_LEDGER) return entry;
-        const schema = JSON.parse(JSON.stringify(entry.schema)) as LedgerSchema;
-        delete schema.fields["defects"];
-        return { name: entry.name, schema };
-      }),
-    };
-    await writeFile(registryPath, serializeRegistry(narrowed), "utf8");
+    const registry = readRegistry(dbPath);
+    writeSchemas(dbPath, registry.ledgers.map((entry) => {
+      if (entry.name !== REVIEWS_LEDGER) return entry;
+      const schema = structuredClone(entry.schema);
+      delete schema.fields["defects"];
+      return { name: entry.name, schema };
+    }));
 
-    const reopened = new FsLedgerStore({ root });
+    const reopened = new SqliteLedgerStore({ dbPath });
     await reopened.init();
     try {
       expect(reopened.fetchItem(REVIEWS_LEDGER, review.id).fields["summary"]).toBe(
         "must survive defects widening",
       );
       expect(reopened.fetch(REVIEWS_LEDGER).schema).toEqual(REVIEWS_SCHEMA);
-      await expect(stat(path.join(docsDir, ".backup"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      const upgraded = parseRegistry(await readFile(registryPath, "utf8"));
+      expect((await readdir(root)).filter((name) => name.startsWith("ledger.backup-"))).toEqual([]);
+      const upgraded = readRegistry(dbPath);
       expect(upgraded.ledgers.find((entry) => entry.name === REVIEWS_LEDGER)?.schema).toEqual(
         REVIEWS_SCHEMA,
       );

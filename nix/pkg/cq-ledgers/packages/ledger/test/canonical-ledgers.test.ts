@@ -12,11 +12,11 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir, readFile, copyFile, readdir } from "node:fs/promises";
+import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
+  buildBackupDump,
   InMemoryLedgerStore,
   parseLedger,
   serializeRegistry,
@@ -53,7 +53,6 @@ import {
   type LedgerSchema,
   type LedgerStore,
   type FieldValue,
-  LEDGER_STORAGE_DIRNAME,
   createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
@@ -61,7 +60,9 @@ import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 
 const dirs: string[] = [];
+const stores: LedgerStore[] = [];
 afterAll(async () => {
+  for (const store of stores) await store.dispose();
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -78,16 +79,35 @@ const inMem: Factory = {
     return store;
   },
 };
-const fs_: Factory = {
-  name: "FsLedgerStore",
+const sqlite: Factory = {
+  name: "SqliteLedgerStore",
   async build() {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-"));
     dirs.push(dir);
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
+    stores.push(store);
     await store.init();
     return store;
   },
 };
+
+function seedSqliteSchemas(
+  dbPath: string,
+  schemas: ReadonlyArray<{ name: string; schema: LedgerSchema }>,
+): void {
+  const db = openLedgerDb(dbPath);
+  try {
+    ensureSchema(db);
+    const insert = db.query(
+      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+    );
+    db.transaction(() => {
+      for (const { name, schema } of schemas) insert.run(name, JSON.stringify(schema));
+    })();
+  } finally {
+    db.close();
+  }
+}
 
 /**
  * Per-ledger lifecycle fixture: required-field create input, an optional
@@ -290,7 +310,7 @@ describe("T793: upstream canonical-ledger specification", () => {
   });
 });
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`canonical ledgers — lifecycle (${factory.name})`, () => {
     for (const c of CASES) {
       it(`${c.ledger}: create/update/fetch/search${c.milestoneId === undefined ? "/archive" : ""}`, async () => {
@@ -404,7 +424,7 @@ for (const factory of [inMem, fs_]) {
 // out-of-enum verdict throws InvalidStatusError with no review-specific code.
 // ---------------------------------------------------------------------------
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`reviews ledger — verdict-as-status (${factory.name})`, () => {
     it("creates a go-ahead review with new_questions/criticism/ledgerRefs and round-trips", async () => {
       const store = await factory.build();
@@ -481,11 +501,11 @@ describe("bootstrap idempotence + divergence guard", () => {
   it("re-init against the same dir is a no-op (idempotent)", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-idem-"));
     dirs.push(dir);
-    const a = new FsLedgerStore({ root: dir });
+    const a = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await a.init();
     const before = a.enumerate();
     await a.dispose();
-    const b = new FsLedgerStore({ root: dir });
+    const b = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await b.init();
     expect(b.enumerate()).toEqual(before);
     await b.dispose();
@@ -508,9 +528,8 @@ describe("bootstrap idempotence + divergence guard", () => {
     it(`divergence guard fires for a hand-edited ${name} schema`, async () => {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-div-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-      await mkdir(docsDir, { recursive: true });
-      // Write a registry whose `name` entry has a DIVERGENT-but-VALID
+      const dbPath = path.join(dir, "ledger.db");
+      // Seed a registry whose `name` entry has a DIVERGENT-but-VALID
       // schema (an extra status value — still a superset that passes
       // validateSchema), forcing the bootstrap guard to refuse start.
       const divergent = CANONICAL_LEDGERS.map((c) => {
@@ -520,16 +539,9 @@ describe("bootstrap idempotence + divergence guard", () => {
           schema: { ...c.schema, statusValues: [...c.schema.statusValues, "extra-status"] },
         };
       });
-      await writeFile(
-        path.join(docsDir, "ledgers.yaml"),
-        serializeRegistry({ version: 1, ledgers: divergent }),
-        "utf8",
-      );
-      // Abort opt-out coverage (T95/T96): these 6 cases exercise the
-      // `onSchemaDivergence:'abort'` policy — init() rejects loudly on
-      // divergence so the operator must handle it.  The DEFAULT policy
-      // (backup-reinit) is covered by backup-reinit-init.test.ts §1.
-      const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "abort" });
+      seedSqliteSchemas(dbPath, divergent);
+      const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "abort" });
+      stores.push(store);
       await expect(store.init()).rejects.toThrow(/different schema/);
     });
   }
@@ -622,21 +634,24 @@ describe("§11 worked-example parser round-trips", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The bootstrapped milestones file renders the §8d `## active` header on a
-// fresh cwd, and all canonical ledgers are present.
+// The portable milestones backup renders the §8d `## active` header after
+// fresh bootstrap, and all canonical ledgers are present.
 // ---------------------------------------------------------------------------
 
 describe("fresh-cwd bootstrap shape", () => {
-  it("writes `## active` in .cq/milestones.md and provisions all canonical ledgers", async () => {
+  it("exports `## active` in milestones.md and provisions all canonical ledgers", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-fresh-"));
     dirs.push(dir);
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     expect(store.enumerate()).toEqual(
       CANONICAL_LEDGERS.map((c) => c.name).sort(),
     );
+    const dump = await buildBackupDump(store, null);
     await store.dispose();
-    const milestonesMd = await readFile(path.join(dir, LEDGER_STORAGE_DIRNAME, "milestones.md"), "utf8");
+    const milestones = dump.find(({ path: file }) => file === "milestones.md");
+    if (milestones === undefined) throw new Error("portable backup omitted milestones.md");
+    const milestonesMd = milestones.content;
     expect(milestonesMd).toContain("\n## active\n");
     expect(milestonesMd).not.toContain("M0 —");
     expect(milestonesMd).toContain("### M-AMBIENT — open");
@@ -663,15 +678,14 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     const repoRegistry = path.resolve(import.meta.dir, "../../../docs/ledgers.yaml");
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-disk-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await copyFile(repoRegistry, path.join(docsDir, "ledgers.yaml"));
+    const dbPath = path.join(dir, "ledger.db");
+    seedSqliteSchemas(dbPath, parseRegistry(await readFile(repoRegistry, "utf8")).ledgers);
 
     // onSchemaDivergence:'abort' makes init() throw BootstrapViolationError on
     // any structural divergence; reaching the assertions proves the committed
     // fixture matches canon exactly. The old default 'backup-reinit' mode would
     // silently self-heal a stale fixture, masking drift.
-    const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "abort" });
+    const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "abort" });
     await store.init();
     try {
       expect(store.enumerate()).toEqual(CANONICAL_LEDGERS.map((c) => c.name).sort());
@@ -717,10 +731,10 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-stale-abort-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-      await mkdir(docsDir, { recursive: true });
-      await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
-      const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "abort" });
+      const dbPath = path.join(dir, "ledger.db");
+      seedSqliteSchemas(dbPath, parseRegistry(staleText).ledgers);
+      const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "abort" });
+      stores.push(store);
       await expect(store.init()).rejects.toBeInstanceOf(BootstrapViolationError);
     }
 
@@ -730,15 +744,14 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-stale-reinit-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-      await mkdir(docsDir, { recursive: true });
-      await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
-      const store = new FsLedgerStore({
-        root: dir,
+      const dbPath = path.join(dir, "ledger.db");
+      seedSqliteSchemas(dbPath, parseRegistry(staleText).ledgers);
+      const store = new SqliteLedgerStore({
+        dbPath,
         onSchemaDivergence: "backup-reinit",
         worksetAuthority: createTrustedWorksetManagementAuthority(),
       });
-      // Must NOT throw — it self-heals silently (the D47 defect).
+      // Explicit management reinitialization accepts the stale empty fixture.
       await store.init();
       await store.dispose();
     }
@@ -903,7 +916,7 @@ describe("HANDOFFS_SCHEMA shape", () => {
   });
 });
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`handoffs ledger — all-terminal lifecycle (${factory.name})`, () => {
     it("bootstraps a fresh handoffs ledger file and creates items with HO prefix", async () => {
       const store = await factory.build();
@@ -1056,7 +1069,7 @@ describe("T138: sessionLogs field presence on work-producing ledgers", () => {
 // T138 — create_item accepts sessionLogs on a task; rejects it on a question.
 // ---------------------------------------------------------------------------
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`T138: sessionLogs accepted on task, rejected on question (${factory.name})`, () => {
     it("accepts sessionLogs on a task create_item", async () => {
       const store = await factory.build();
@@ -1387,7 +1400,7 @@ describe("T1519: ideas ledgerRefs write path and schema widening", () => {
     expect(schemaCompatible(preLedgerRefsIdeasSchema, requiredWidening)).toBe(false);
   });
 
-  for (const factory of [inMem, fs_]) {
+  for (const factory of [inMem, sqlite]) {
     it(`${factory.name} round-trips ledgerRefs through create and update`, async () => {
       const store = await factory.build();
       try {
@@ -1432,11 +1445,11 @@ describe("T1519: ideas ledgerRefs write path and schema widening", () => {
   }
 });
 
-describe("T335: ideas ledger — fresh FsLedgerStore bootstrap + lifecycle + flat M-AMBIENT attachment", () => {
+describe("T335: ideas ledger — fresh SqliteLedgerStore bootstrap + lifecycle + flat M-AMBIENT attachment", () => {
   it("bootstraps `ideas` with the expected schema and exercises the full lifecycle", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-ideas-"));
     dirs.push(dir);
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     try {
       // (1) the ledger exists with the canonical schema after a fresh bootstrap.
@@ -1486,7 +1499,7 @@ describe("T335: ideas ledger — fresh FsLedgerStore bootstrap + lifecycle + fla
   it("ideas attach ONLY to the ambient M-AMBIENT (no user milestone) and enumerate as a FLAT list", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-ideas-flat-"));
     dirs.push(dir);
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     try {
       // A user milestone exists, but ideas must NOT attach to it.
@@ -1580,7 +1593,7 @@ describe("T556: RESEARCHES_SCHEMA shape", () => {
   });
 });
 
-for (const factory of [inMem, fs_]) {
+for (const factory of [inMem, sqlite]) {
   describe(`T556: researches ledger — lifecycle + guards (${factory.name})`, () => {
     it("bootstraps `researches`, allocates RS1, and exercises the full transition legality", async () => {
       const store = await factory.build();
@@ -1669,50 +1682,11 @@ for (const factory of [inMem, fs_]) {
 }
 
 describe("T556: bootstrap on a store that predates `researches` — provisioned with NO divergence backup", () => {
-  it("FsLedgerStore: a registry missing the `researches` entry gets it appended in place, no .cq/.backup dir", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "ledger-researches-predates-"));
-    dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    const preResearches = CANONICAL_LEDGERS.filter((c) => c.name !== RESEARCHES_LEDGER);
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: preResearches }),
-      "utf8",
-    );
-
-    const store = new FsLedgerStore({ root: dir });
-    await store.init();
-    try {
-      expect(store.enumerate()).toContain(RESEARCHES_LEDGER);
-      const created = await store.createItem(RESEARCHES_LEDGER, MILESTONES_AMBIENT_ID, {
-        status: "open",
-        fields: { question: "predates-researches bootstrap check" },
-      });
-      expect(created.id).toBe("RS1");
-
-      // No divergence backup: the `.cq/.backup/` dir must not even exist.
-      const entries = await readdir(path.join(docsDir, ".backup")).catch(() => []);
-      expect(entries).toEqual([]);
-    } finally {
-      await store.dispose();
-    }
-  });
-
   it("SqliteLedgerStore: a db missing the `researches` row gets it provisioned in place, no .backup- sibling db", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-researches-sqlite-predates-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "ledger.db");
-    const db = openLedgerDb(dbPath);
-    ensureSchema(db);
-    const insert = db.query(
-      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
-    );
-    for (const c of CANONICAL_LEDGERS) {
-      if (c.name === RESEARCHES_LEDGER) continue;
-      insert.run(c.name, JSON.stringify(c.schema));
-    }
-    db.close();
+    seedSqliteSchemas(dbPath, CANONICAL_LEDGERS.filter(({ name }) => name !== RESEARCHES_LEDGER));
 
     const store = new SqliteLedgerStore({ dbPath });
     await store.init();
