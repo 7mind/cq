@@ -16,6 +16,7 @@
     "check": "tsc -b && bun run lint && bun test --only-failures && bun run check:codex-installed-gate && bun run check:flake-enumeration",
     "check:codex-installed-gate": "cd ../../.. && nix build --no-link .#cq",
     "check:flake-enumeration": "cd ../../.. && nix flake show --all-systems --json",
+    "check:sqlite-responsiveness": "bun run packages/ledger-web/test/sqliteResponsivenessGate.ts",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
