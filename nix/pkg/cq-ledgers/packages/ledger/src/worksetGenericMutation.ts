@@ -32,13 +32,11 @@ import {
   WORKSET_OWNER_EDGE_KIND_FIELD,
   WORKSET_OWNER_REF_FIELD,
   WORKSET_OWNED_FIELD_NAMES,
+  GOALS_LEDGER,
+  MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_LEDGER,
 } from "./constants.js";
-import {
-  closeWorkset,
-  defaultWorksetPrefixRegistry,
-  type WorksetGraph,
-} from "./worksetGraph.js";
+import { closeWorkset, defaultWorksetPrefixRegistry, type WorksetGraph } from "./worksetGraph.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
   WorksetOwnershipFieldError,
@@ -76,13 +74,7 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
-import type {
-  ArchivePointer,
-  FetchedLedger,
-  FieldValue,
-  Item,
-  LedgerSchema,
-} from "./types.js";
+import type { ArchivePointer, FetchedLedger, FieldValue, Item, LedgerSchema } from "./types.js";
 import { LedgerError } from "./types.js";
 import type { LedgerSnapshot } from "./snapshot.js";
 import type { UsageStatsSnapshot } from "./usageStats.js";
@@ -92,6 +84,11 @@ import type {
   WorksetGenericMutationTx,
 } from "./store/genericMutationTransaction.js";
 import { CANONICAL_LEDGERS } from "./constants.js";
+import type {
+  SqliteOperationAccessClass,
+  SqliteOperationAccessScope,
+  SqliteOperationMeasurement,
+} from "./store/sqlite/operationObservability.js";
 
 // ---------------------------------------------------------------------------
 // Inventory — every LedgerStore mutation + closure-forming field
@@ -125,10 +122,7 @@ export type WorksetGenericMutationOperationKind =
  * - `require-sweep-in-graph` — every archive sweep member must be in the graph
  */
 export type WorksetGenericMutationRestrictivePolicy =
-  | "deny"
-  | "require-target-in-graph"
-  | "require-exact-inactive-root"
-  | "require-sweep-in-graph";
+  "deny" | "require-target-in-graph" | "require-exact-inactive-root" | "require-sweep-in-graph";
 
 export interface WorksetGenericMutationOperationClause {
   readonly kind: WorksetGenericMutationOperationKind;
@@ -196,17 +190,10 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES: readonly WorksetGeneric
 
 /** Field classification for generic create/update payloads. */
 export type WorksetGenericMutationFieldKind =
-  | "eligibility"
-  | "closure-forming"
-  | "advisory"
-  | "sealed-ownership"
-  | "ordinary";
+  "eligibility" | "closure-forming" | "advisory" | "sealed-ownership" | "ordinary";
 
 export type WorksetGenericMutationFieldRestrictivePolicy =
-  | "require-target-in-graph"
-  | "require-introduced-refs-in-graph"
-  | "allow"
-  | "reject";
+  "require-target-in-graph" | "require-introduced-refs-in-graph" | "allow" | "reject";
 
 export interface WorksetGenericMutationFieldClause {
   readonly field: string;
@@ -338,28 +325,56 @@ export interface WorksetGenericMutationGateway {
   updateMilestone(
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
+    measurement?: SqliteOperationMeasurement,
   ): Promise<Item>;
-  updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item>;
+  updateItem(
+    ledgerId: string,
+    itemId: string,
+    patch: UpdateItemPatch,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<Item>;
   createItem(
     ledgerId: string,
     milestoneId: string,
     init: CreateItemInit,
+    measurement?: SqliteOperationMeasurement,
   ): Promise<Item>;
-  createMilestone(init: CreateMilestoneItemInit): Promise<Item>;
-  createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger>;
-  reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item>;
+  createMilestone(
+    init: CreateMilestoneItemInit,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<Item>;
+  createLedger(
+    name: string,
+    schema: LedgerSchema,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<FetchedLedger>;
+  reopenItem(
+    ledgerId: string,
+    itemId: string,
+    toStatus: string,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<Item>;
   unarchiveItem(
     ledgerId: string,
     milestoneId: string,
     itemId: string,
+    measurement?: SqliteOperationMeasurement,
   ): Promise<Item>;
   archiveTerminalItems(
     ledgerIds: readonly string[],
     summary: string,
     gatePolicy: ArchiveTerminalItemsGatePolicy,
+    measurement?: SqliteOperationMeasurement,
   ): Promise<ArchiveTerminalItemsResult>;
-  executeFinalize(operations: readonly FinalizeBatchOperation[]): Promise<{ applied: number }>;
-  archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
+  executeFinalize(
+    operations: readonly FinalizeBatchOperation[],
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<{ applied: number }>;
+  archiveMilestone(
+    milestoneId: string,
+    summary: string,
+    measurement?: SqliteOperationMeasurement,
+  ): Promise<ArchivePointer>;
 }
 
 /**
@@ -438,6 +453,23 @@ function canonicalizeRefList(
     }
   }
   return out;
+}
+
+function referenceCandidates(fields: Record<string, FieldValue> | undefined): string[] {
+  if (fields === undefined) return [];
+  const refs: string[] = [];
+  for (const field of [
+    ...WORKSET_GENERIC_MUTATION_CLOSURE_FIELDS,
+    "ledgerRefs",
+    WORKSET_OWNER_REF_FIELD,
+  ]) {
+    const value = fields[field];
+    if (typeof value === "string") refs.push(value);
+    else if (Array.isArray(value)) {
+      refs.push(...value.filter((entry): entry is string => typeof entry === "string"));
+    }
+  }
+  return refs;
 }
 
 /**
@@ -532,10 +564,7 @@ function assertTargetInGraph(ctx: ValidationContext, ref: string): void {
   }
 }
 
-function assertIntroducedRefsInGraph(
-  ctx: ValidationContext,
-  introduced: readonly string[],
-): void {
+function assertIntroducedRefsInGraph(ctx: ValidationContext, introduced: readonly string[]): void {
   if (!ctx.restrictive) return;
   const excluded = introduced.filter((ref) => !ctx.members.has(ref));
   if (excluded.length === 0) return;
@@ -553,10 +582,7 @@ function assertSealedOwnershipAbsent(
     assertWorksetOwnershipFieldsAbsent(fields, existing);
   } catch (error) {
     if (error instanceof WorksetOwnershipFieldError) {
-      throw new WorksetGenericMutationError(
-        "sealed-ownership",
-        error.message,
-      );
+      throw new WorksetGenericMutationError("sealed-ownership", error.message);
     }
     throw error;
   }
@@ -575,6 +601,8 @@ export interface WorksetGenericMutationGatewayHost {
   readonly invocationAuthority?: WorksetInvocationAuthority;
   readonly runGenericTransaction?: <T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+    measurement?: SqliteOperationMeasurement,
+    accessScope?: SqliteOperationAccessScope,
   ) => Promise<T>;
   /**
    * Test/instrumentation latch: runs after admit and before validation/write,
@@ -596,15 +624,29 @@ export function createWorksetGenericMutationGateway(
     runAtomicGenericMutation<T>(
       mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
       readRoots?: () => Promise<WorksetRootsEpoch>,
+      measurement?: SqliteOperationMeasurement,
+      accessScope?: SqliteOperationAccessScope,
     ): Promise<T>;
   };
   const runGenericTransaction =
     host.runGenericTransaction ??
-    (<T>(mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T) =>
-      atomicStore.runAtomicGenericMutation(mutate, () => readWorksetRootsEpoch(worksetStore)));
+    (<T>(
+      mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+      measurement?: SqliteOperationMeasurement,
+      accessScope?: SqliteOperationAccessScope,
+    ) =>
+      atomicStore.runAtomicGenericMutation(
+        mutate,
+        () => readWorksetRootsEpoch(worksetStore),
+        measurement,
+        accessScope,
+      ));
 
   async function withGenericAdmission<T>(
     targets: readonly string[],
+    operation: string,
+    accessClass: SqliteOperationAccessClass,
+    suppliedMeasurement: SqliteOperationMeasurement | undefined,
     validateAndRun: (
       tx: WorksetGenericMutationTx,
       admission: WorksetLedgerMutationAdmission,
@@ -612,18 +654,43 @@ export function createWorksetGenericMutationGateway(
     ) => T,
     options: {
       /** Map coordinator target-excluded into a gateway-specific code. */
-      readonly onTargetExcluded?: (
-        cause: WorksetAdmissionError,
-      ) => WorksetGenericMutationError;
+      readonly onTargetExcluded?: (cause: WorksetAdmissionError) => WorksetGenericMutationError;
+      readonly accessScope?: Omit<
+        SqliteOperationAccessScope,
+        "operation" | "accessClass" | "targetRefs"
+      >;
     } = {},
   ): Promise<T> {
+    const observable = rawStore as LedgerStore & {
+      beginObservedOperation?: (endpoint: string) => SqliteOperationMeasurement | undefined;
+    };
+    const measurement =
+      suppliedMeasurement ?? observable.beginObservedOperation?.(operation.replaceAll("-", "_"));
+    const ownsMeasurement = suppliedMeasurement === undefined && measurement !== undefined;
+    measurement?.setOperation(operation);
+    measurement?.setAccessClass(accessClass);
+    const accessScope: SqliteOperationAccessScope = {
+      operation,
+      accessClass,
+      targetRefs: targets,
+      ledgerIds: options.accessScope?.ledgerIds ?? [],
+      milestoneIds: options.accessScope?.milestoneIds ?? [],
+      referenceCandidates: options.accessScope?.referenceCandidates ?? [],
+    };
+    measurement?.setAccessScope(accessScope);
     let admission: WorksetLedgerMutationAdmission;
     try {
-      admission = await worksetStore.admitLedgerMutation({
-        kind: "generic-write",
-        targets: [...targets],
-      });
+      const admit = () =>
+        worksetStore.admitLedgerMutation({
+          kind: "generic-write",
+          targets: [...targets],
+        });
+      admission =
+        measurement === undefined
+          ? await admit()
+          : await measurement.measureAsync("queueDelayMs", admit);
     } catch (error) {
+      if (ownsMeasurement) measurement.finish("error");
       if (error instanceof WorksetAdmissionError && error.code === "target-excluded") {
         if (options.onTargetExcluded !== undefined) {
           throw options.onTargetExcluded(error);
@@ -633,47 +700,67 @@ export function createWorksetGenericMutationGateway(
       throw error;
     }
     if (!isLiveWorksetAdmission(admission)) {
+      if (ownsMeasurement) measurement.finish("error");
       throw new WorksetGenericMutationError(
         "caller-minted-admission",
         "generic mutation requires a coordinator-granted live admission",
       );
     }
+    let result: T | undefined;
+    let failed = false;
+    let failure: unknown;
     try {
       if (afterGenericAdmit !== undefined) {
         await afterGenericAdmit();
       }
-      return await runGenericTransaction((tx, snap) => {
-        if (snap.epoch !== admission.epoch) {
-          throw new WorksetAdmissionError(
-            "stale-epoch",
-            "workset epoch advanced before generic mutation critical section",
-          );
-        }
-        const ctx = buildTransactionValidationContext(tx, snap);
-        if (ctx.restrictive && targets.length > 0) {
-          const excluded = targets.filter((t) => {
-            if (ctx.members.has(t)) return false;
-            if (ctx.graph.inactiveRoots.includes(t)) return false;
-            return true;
-          });
-          if (excluded.length > 0) {
-            throw new WorksetGenericMutationError(
-              "mixed-or-excluded-targets",
-              `generic mutation rejects excluded target(s): ${excluded.join(", ")}`,
+      result = await runGenericTransaction(
+        (tx, snap) => {
+          if (snap.epoch !== admission.epoch) {
+            throw new WorksetAdmissionError(
+              "stale-epoch",
+              "workset epoch advanced before generic mutation critical section",
             );
           }
-        }
-        return validateAndRun(tx, admission, ctx);
-      });
-    } finally {
-      await admission.acknowledge();
+          const ctx = buildTransactionValidationContext(tx, snap);
+          if (ctx.restrictive && targets.length > 0) {
+            const excluded = targets.filter((t) => {
+              if (ctx.members.has(t)) return false;
+              if (ctx.graph.inactiveRoots.includes(t)) return false;
+              return true;
+            });
+            if (excluded.length > 0) {
+              throw new WorksetGenericMutationError(
+                "mixed-or-excluded-targets",
+                `generic mutation rejects excluded target(s): ${excluded.join(", ")}`,
+              );
+            }
+          }
+          return validateAndRun(tx, admission, ctx);
+        },
+        measurement,
+        accessScope,
+      );
+    } catch (error) {
+      failed = true;
+      failure = error;
     }
+    try {
+      await admission.acknowledge();
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        failure = error;
+      }
+    }
+    if (ownsMeasurement) measurement.finish(failed ? "error" : "success");
+    if (failed) throw failure;
+    return result as T;
   }
 
   const gateway: WorksetGenericMutationGateway = {
     form: "workset-generic-mutation-gateway",
 
-    async updateMilestone(milestoneId, patch) {
+    async updateMilestone(milestoneId, patch, measurement) {
       const ref = itemRef(MILESTONES_LEDGER, milestoneId);
       const fieldBag: Record<string, FieldValue> = {};
       if (patch.title !== undefined) fieldBag.title = patch.title;
@@ -681,122 +768,209 @@ export function createWorksetGenericMutationGateway(
       if (patch.blockedBy !== undefined) fieldBag.blockedBy = patch.blockedBy;
       if (patch.dependsOn !== undefined) fieldBag.dependsOn = patch.dependsOn;
 
-      return withGenericAdmission([ref], (tx, _adm, ctx) => {
-        assertTargetInGraph(ctx, ref);
-        let existing: Item | undefined;
-        try {
-          existing = tx.fetchItem(MILESTONES_LEDGER, milestoneId);
-        } catch {
-          existing = undefined;
-        }
-        assertSealedOwnershipAbsent(fieldBag, existing);
-        const introduced = introducedClosureRefs(
-          existing?.fields,
-          Object.keys(fieldBag).length > 0 ? fieldBag : undefined,
-          ctx.prefixRegistry,
-        );
-        // Introduced refs become additional targets that must already be members.
-        assertIntroducedRefsInGraph(ctx, introduced);
-        if (ctx.restrictive && introduced.some((r) => !ctx.members.has(r))) {
-          throw new WorksetGenericMutationError(
-            "mixed-or-excluded-targets",
-            "update-milestone rejects mixed admitted/excluded closure refs",
+      return withGenericAdmission(
+        [ref],
+        "update-milestone",
+        "ordinary",
+        measurement,
+        (tx, _adm, ctx) => {
+          assertTargetInGraph(ctx, ref);
+          let existing: Item | undefined;
+          try {
+            existing = tx.fetchItem(MILESTONES_LEDGER, milestoneId);
+          } catch {
+            existing = undefined;
+          }
+          assertSealedOwnershipAbsent(fieldBag, existing);
+          const introduced = introducedClosureRefs(
+            existing?.fields,
+            Object.keys(fieldBag).length > 0 ? fieldBag : undefined,
+            ctx.prefixRegistry,
           );
-        }
-        return tx.updateMilestone(milestoneId, patch);
-      });
-    },
-
-    async updateItem(ledgerId, itemId, patch) {
-      const ref = itemRef(ledgerId, itemId);
-      return withGenericAdmission([ref], (tx, _adm, ctx) => {
-        assertTargetInGraph(ctx, ref);
-        let existing: Item | undefined;
-        try {
-          existing = tx.fetchItem(ledgerId, itemId);
-        } catch {
-          existing = undefined;
-        }
-        assertSealedOwnershipAbsent(patch.fields, existing);
-        const introduced = introducedClosureRefs(
-          existing?.fields,
-          patch.fields,
-          ctx.prefixRegistry,
-        );
-        assertIntroducedRefsInGraph(ctx, introduced);
-        // Include introduced refs in the atomic mixed-target check.
-        if (ctx.restrictive) {
-          const all = [ref, ...introduced];
-          const excluded = all.filter((t) => !ctx.members.has(t));
-          if (excluded.length > 0) {
+          // Introduced refs become additional targets that must already be members.
+          assertIntroducedRefsInGraph(ctx, introduced);
+          if (ctx.restrictive && introduced.some((r) => !ctx.members.has(r))) {
             throw new WorksetGenericMutationError(
               "mixed-or-excluded-targets",
-              `update-item rejects excluded target(s): ${excluded.join(", ")}`,
+              "update-milestone rejects mixed admitted/excluded closure refs",
             );
           }
-        }
-        return tx.updateItem(ledgerId, itemId, patch);
-      });
+          return tx.updateMilestone(milestoneId, patch);
+        },
+        {
+          accessScope: {
+            ledgerIds: [MILESTONES_LEDGER],
+            milestoneIds: [milestoneId],
+            referenceCandidates: referenceCandidates(fieldBag),
+          },
+        },
+      );
     },
 
-    async createItem(ledgerId, milestoneId, init) {
+    async updateItem(ledgerId, itemId, patch, measurement) {
+      const ref = itemRef(ledgerId, itemId);
+      return withGenericAdmission(
+        [ref],
+        "update-item",
+        "ordinary",
+        measurement,
+        (tx, _adm, ctx) => {
+          assertTargetInGraph(ctx, ref);
+          let existing: Item | undefined;
+          try {
+            existing = tx.fetchItem(ledgerId, itemId);
+          } catch {
+            existing = undefined;
+          }
+          assertSealedOwnershipAbsent(patch.fields, existing);
+          const introduced = introducedClosureRefs(
+            existing?.fields,
+            patch.fields,
+            ctx.prefixRegistry,
+          );
+          assertIntroducedRefsInGraph(ctx, introduced);
+          // Include introduced refs in the atomic mixed-target check.
+          if (ctx.restrictive) {
+            const all = [ref, ...introduced];
+            const excluded = all.filter((t) => !ctx.members.has(t));
+            if (excluded.length > 0) {
+              throw new WorksetGenericMutationError(
+                "mixed-or-excluded-targets",
+                `update-item rejects excluded target(s): ${excluded.join(", ")}`,
+              );
+            }
+          }
+          return tx.updateItem(ledgerId, itemId, patch);
+        },
+        {
+          accessScope: {
+            ledgerIds: [ledgerId],
+            milestoneIds: [],
+            referenceCandidates: referenceCandidates(patch.fields),
+          },
+        },
+      );
+    },
+
+    async createItem(ledgerId, milestoneId, init, measurement) {
       // Restrictive denial uses admission.roots inside the held t3 section
       // (not a pre-admit read) so concurrent setRoots cannot TOCTOU create.
       // Sealed-ownership is checked after creation-denied so the deny code is
       // stable under restrictive roots.
-      return withGenericAdmission([], (tx, adm) => {
-        if (adm.roots.length > 0) {
-          throw new WorksetGenericMutationError(
-            "creation-denied",
-            "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
-          );
-        }
-        assertSealedOwnershipAbsent(init.fields);
-        return tx.createItem(ledgerId, milestoneId, init);
-      });
+      return withGenericAdmission(
+        [],
+        "create-item",
+        "ordinary",
+        measurement,
+        (tx, adm) => {
+          if (adm.roots.length > 0) {
+            throw new WorksetGenericMutationError(
+              "creation-denied",
+              "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
+            );
+          }
+          assertSealedOwnershipAbsent(init.fields);
+          return tx.createItem(ledgerId, milestoneId, init);
+        },
+        {
+          accessScope: {
+            ledgerIds: [ledgerId, MILESTONES_LEDGER],
+            milestoneIds: [milestoneId],
+            referenceCandidates: [
+              ...referenceCandidates(init.fields),
+              ...(init.id === undefined ? [] : [`${ledgerId}:${init.id}`]),
+            ],
+          },
+        },
+      );
     },
 
-    async createMilestone(init) {
+    async createMilestone(init, measurement) {
       const fields: Record<string, FieldValue> = { title: init.title };
       if (init.description !== undefined) fields.description = init.description;
       if (init.blockedBy !== undefined) fields.blockedBy = init.blockedBy;
       if (init.dependsOn !== undefined) fields.dependsOn = init.dependsOn;
-      return withGenericAdmission([], (tx, adm) => {
-        if (adm.roots.length > 0) {
-          throw new WorksetGenericMutationError(
-            "creation-denied",
-            "generic createMilestone is denied under non-empty workset roots; use owner-scoped lifecycle writes",
-          );
-        }
-        assertSealedOwnershipAbsent(fields);
-        return tx.createMilestone(init);
-      });
+      return withGenericAdmission(
+        [],
+        "create-milestone",
+        "ordinary",
+        measurement,
+        (tx, adm) => {
+          if (adm.roots.length > 0) {
+            throw new WorksetGenericMutationError(
+              "creation-denied",
+              "generic createMilestone is denied under non-empty workset roots; use owner-scoped lifecycle writes",
+            );
+          }
+          assertSealedOwnershipAbsent(fields);
+          return tx.createMilestone(init);
+        },
+        {
+          accessScope: {
+            ledgerIds: [MILESTONES_LEDGER],
+            milestoneIds: [MILESTONES_ACTIVE_GROUP_ID],
+            referenceCandidates: [
+              ...referenceCandidates(fields),
+              ...(init.id === undefined ? [] : [`${MILESTONES_LEDGER}:${init.id}`]),
+            ],
+          },
+        },
+      );
     },
 
-    async createLedger(name, schema) {
-      return withGenericAdmission([], (tx, adm) => {
-        if (adm.roots.length > 0) {
-          throw new WorksetGenericMutationError(
-            "create-ledger-denied",
-            "createLedger is denied under non-empty workset roots",
-          );
-        }
-        return tx.createLedger(name, schema);
-      });
+    async createLedger(name, schema, measurement) {
+      return withGenericAdmission(
+        [],
+        "create-ledger",
+        "ordinary",
+        measurement,
+        (tx, adm) => {
+          if (adm.roots.length > 0) {
+            throw new WorksetGenericMutationError(
+              "create-ledger-denied",
+              "createLedger is denied under non-empty workset roots",
+            );
+          }
+          return tx.createLedger(name, schema);
+        },
+        {
+          accessScope: {
+            ledgerIds: [name],
+            milestoneIds: [],
+            referenceCandidates: [],
+          },
+        },
+      );
     },
 
-    async reopenItem(ledgerId, itemId, toStatus) {
-      const ref = itemRef(ledgerId, itemId);
-      return withGenericAdmission([ref], (tx, _adm, ctx) => {
-        assertTargetInGraph(ctx, ref);
-        return tx.reopenItem(ledgerId, itemId, toStatus);
-      });
-    },
-
-    async unarchiveItem(ledgerId, milestoneId, itemId) {
+    async reopenItem(ledgerId, itemId, toStatus, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
         [ref],
+        "reopen-item",
+        "ordinary",
+        measurement,
+        (tx, _adm, ctx) => {
+          assertTargetInGraph(ctx, ref);
+          return tx.reopenItem(ledgerId, itemId, toStatus);
+        },
+        {
+          accessScope: {
+            ledgerIds: [ledgerId, MILESTONES_LEDGER],
+            milestoneIds: [],
+            referenceCandidates: [],
+          },
+        },
+      );
+    },
+
+    async unarchiveItem(ledgerId, milestoneId, itemId, measurement) {
+      const ref = itemRef(ledgerId, itemId);
+      return withGenericAdmission(
+        [ref],
+        "unarchive-item",
+        "ordinary",
+        measurement,
         (tx, _adm, ctx) => {
           if (ctx.restrictive) {
             if (!ctx.graph.inactiveRoots.includes(ref)) {
@@ -809,6 +983,11 @@ export function createWorksetGenericMutationGateway(
           return tx.unarchiveItem(ledgerId, milestoneId, itemId);
         },
         {
+          accessScope: {
+            ledgerIds: [ledgerId, MILESTONES_LEDGER],
+            milestoneIds: [milestoneId],
+            referenceCandidates: [],
+          },
           onTargetExcluded: (cause) =>
             new WorksetGenericMutationError(
               "unarchive-not-exact-inactive-root",
@@ -818,19 +997,32 @@ export function createWorksetGenericMutationGateway(
       );
     },
 
-    async archiveTerminalItems(ledgerIds, summary, gatePolicy) {
-      return withGenericAdmission([], (tx, adm) => {
-        if (adm.roots.length > 0) {
-          throw new WorksetGenericMutationError(
-            "archive-terminal-items-denied",
-            "archiveTerminalItems is denied under non-empty workset roots",
-          );
-        }
-        return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
-      });
+    async archiveTerminalItems(ledgerIds, summary, gatePolicy, measurement) {
+      return withGenericAdmission(
+        [],
+        "archive-terminal-items",
+        "archive_terminal_items",
+        measurement,
+        (tx, adm) => {
+          if (adm.roots.length > 0) {
+            throw new WorksetGenericMutationError(
+              "archive-terminal-items-denied",
+              "archiveTerminalItems is denied under non-empty workset roots",
+            );
+          }
+          return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
+        },
+        {
+          accessScope: {
+            ledgerIds,
+            milestoneIds: [],
+            referenceCandidates: [],
+          },
+        },
+      );
     },
 
-    async executeFinalize(operations) {
+    async executeFinalize(operations, measurement) {
       const admissionTargets = operations.flatMap((operation) => {
         switch (operation.action) {
           case "close-milestone":
@@ -839,75 +1031,94 @@ export function createWorksetGenericMutationGateway(
             return [itemRef("goals", operation.targetId)];
           case "archive-milestone": {
             const sweep = collectArchiveSweepRefs(rawStore, operation.targetId);
-            return sweep.length > 0
-              ? sweep
-              : [itemRef(MILESTONES_LEDGER, operation.targetId)];
+            return sweep.length > 0 ? sweep : [itemRef(MILESTONES_LEDGER, operation.targetId)];
           }
         }
       });
-      return withGenericAdmission(admissionTargets, (tx, _adm, ctx) => {
-        const ids = new Set<string>();
-        for (const operation of operations) {
-          if (operation.id.length === 0 || operation.targetId.length === 0) {
-            throw new LedgerError("finalize operation ids must be non-empty");
-          }
-          if (ids.has(operation.id)) {
-            throw new LedgerError(`duplicate finalize operation id "${operation.id}"`);
-          }
-          ids.add(operation.id);
-          switch (operation.action) {
-            case "close-milestone":
-              assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, operation.targetId));
-              if (operation.targetStatus === undefined) {
-                throw new LedgerError(
-                  `finalize operation ${operation.id} requires targetStatus`,
-                );
-              }
-              tx.updateMilestone(operation.targetId, { status: operation.targetStatus });
-              break;
-            case "close-goal":
-              assertTargetInGraph(ctx, itemRef("goals", operation.targetId));
-              if (operation.targetStatus === undefined) {
-                throw new LedgerError(
-                  `finalize operation ${operation.id} requires targetStatus`,
-                );
-              }
-              tx.updateItem("goals", operation.targetId, { status: operation.targetStatus });
-              break;
-            case "archive-milestone": {
-              if (operation.summary === undefined) {
-                throw new LedgerError(`finalize operation ${operation.id} requires summary`);
-              }
-              if (ctx.restrictive) {
-                const missing = tx
-                  .collectArchiveSweepRefs(operation.targetId)
-                  .filter((ref) => !ctx.members.has(ref));
-                if (missing.length > 0) {
-                  throw new WorksetGenericMutationError(
-                    "archive-sweep-incomplete",
-                    `archiveMilestone requires every swept active member in the admitted graph; missing: ${missing.join(", ")}`,
-                  );
+      const accessClass = operations.some(({ action }) => action === "archive-milestone")
+        ? "archive_milestone"
+        : "ordinary";
+      return withGenericAdmission(
+        admissionTargets,
+        "execute-finalize",
+        accessClass,
+        measurement,
+        (tx, _adm, ctx) => {
+          const ids = new Set<string>();
+          for (const operation of operations) {
+            if (operation.id.length === 0 || operation.targetId.length === 0) {
+              throw new LedgerError("finalize operation ids must be non-empty");
+            }
+            if (ids.has(operation.id)) {
+              throw new LedgerError(`duplicate finalize operation id "${operation.id}"`);
+            }
+            ids.add(operation.id);
+            switch (operation.action) {
+              case "close-milestone":
+                assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, operation.targetId));
+                if (operation.targetStatus === undefined) {
+                  throw new LedgerError(`finalize operation ${operation.id} requires targetStatus`);
                 }
+                tx.updateMilestone(operation.targetId, { status: operation.targetStatus });
+                break;
+              case "close-goal":
+                assertTargetInGraph(ctx, itemRef("goals", operation.targetId));
+                if (operation.targetStatus === undefined) {
+                  throw new LedgerError(`finalize operation ${operation.id} requires targetStatus`);
+                }
+                tx.updateItem("goals", operation.targetId, { status: operation.targetStatus });
+                break;
+              case "archive-milestone": {
+                if (operation.summary === undefined) {
+                  throw new LedgerError(`finalize operation ${operation.id} requires summary`);
+                }
+                if (ctx.restrictive) {
+                  const missing = tx
+                    .collectArchiveSweepRefs(operation.targetId)
+                    .filter((ref) => !ctx.members.has(ref));
+                  if (missing.length > 0) {
+                    throw new WorksetGenericMutationError(
+                      "archive-sweep-incomplete",
+                      `archiveMilestone requires every swept active member in the admitted graph; missing: ${missing.join(", ")}`,
+                    );
+                  }
+                }
+                tx.archiveMilestone(operation.targetId, operation.summary);
+                break;
               }
-              tx.archiveMilestone(operation.targetId, operation.summary);
-              break;
             }
           }
-        }
-        return { applied: operations.length };
-      });
+          return { applied: operations.length };
+        },
+        {
+          accessScope: {
+            ledgerIds: [
+              ...new Set(
+                operations.map(({ action }) =>
+                  action === "close-goal" ? GOALS_LEDGER : MILESTONES_LEDGER,
+                ),
+              ),
+            ],
+            milestoneIds: operations
+              .filter(({ action }) => action === "archive-milestone")
+              .map(({ targetId }) => targetId),
+            referenceCandidates: [],
+          },
+        },
+      );
     },
 
-    async archiveMilestone(milestoneId, summary) {
+    async archiveMilestone(milestoneId, summary, measurement) {
       // Resolve the live sweep first so admission targets cover every member;
       // re-check inside the critical section for linearizability.
       const preSweep = collectArchiveSweepRefs(rawStore, milestoneId);
       const admitTargets =
-        preSweep.length > 0
-          ? preSweep
-          : [itemRef(MILESTONES_LEDGER, milestoneId)];
+        preSweep.length > 0 ? preSweep : [itemRef(MILESTONES_LEDGER, milestoneId)];
       return withGenericAdmission(
         admitTargets,
+        "archive-milestone",
+        "archive_milestone",
+        measurement,
         (tx, _adm, ctx) => {
           const sweep = tx.collectArchiveSweepRefs(milestoneId);
           if (ctx.restrictive) {
@@ -925,6 +1136,11 @@ export function createWorksetGenericMutationGateway(
           return tx.archiveMilestone(milestoneId, summary);
         },
         {
+          accessScope: {
+            ledgerIds: [MILESTONES_LEDGER],
+            milestoneIds: [milestoneId],
+            referenceCandidates: [],
+          },
           onTargetExcluded: (cause) =>
             new WorksetGenericMutationError(
               "archive-sweep-incomplete",
@@ -1036,10 +1252,7 @@ export function createInMemoryWorksetGuardedLedger(
     rawStore,
     worksetStore,
     runGenericTransaction: (mutate) =>
-      rawStore.runAtomicGenericMutation(
-        mutate,
-        () => readWorksetRootsEpoch(worksetStore),
-      ),
+      rawStore.runAtomicGenericMutation(mutate, () => readWorksetRootsEpoch(worksetStore)),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),

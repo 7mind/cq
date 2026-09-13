@@ -31,8 +31,9 @@ import type { Database } from "bun:sqlite";
  *   and an exclusive-claim row so broker admissions survive across processes
  *   without a long-lived write transaction.
  * - v5: a coherence counter whose triggers exclude MCP usage telemetry.
+ * - v6: normalized active-item reference edges for keyed closure/incident reads.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const COHERENCE_TABLES = [
   "ledgers",
@@ -108,6 +109,19 @@ export function ensureSchema(db: Database): void {
       FOREIGN KEY (ledger, pointer_id) REFERENCES archive_pointers(ledger, id)
     );
 
+    CREATE TABLE IF NOT EXISTS item_references (
+      source_ledger TEXT NOT NULL,
+      source_id     TEXT NOT NULL,
+      field_name    TEXT NOT NULL,
+      target_ledger TEXT NOT NULL,
+      target_id     TEXT NOT NULL,
+      PRIMARY KEY (source_ledger, source_id, field_name, target_ledger, target_id),
+      FOREIGN KEY (source_ledger, source_id) REFERENCES items(ledger, id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS item_references_target
+      ON item_references (target_ledger, target_id, field_name, source_ledger, source_id);
+
     CREATE TABLE IF NOT EXISTS plan_claims (
       scope       TEXT PRIMARY KEY,
       record_json TEXT NOT NULL
@@ -172,6 +186,96 @@ export function ensureSchema(db: Database): void {
       started_at  INTEGER NOT NULL
     );
 
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS item_references_items_delete
+    AFTER DELETE ON items BEGIN
+      DELETE FROM item_references
+      WHERE source_ledger = OLD.ledger AND source_id = OLD.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS item_references_items_insert
+    AFTER INSERT ON items BEGIN
+      INSERT OR IGNORE INTO item_references (
+        source_ledger, source_id, field_name, target_ledger, target_id
+      )
+      SELECT NEW.ledger, NEW.id, field.key,
+             substr(value.value, 1, instr(value.value, ':') - 1),
+             substr(value.value, instr(value.value, ':') + 1)
+      FROM json_each(NEW.fields_json) AS field
+      JOIN json_each(field.value) AS value
+      WHERE field.key IN ('dependsOn', 'blockedBy', 'ledgerRefs', 'sourceRefs')
+        AND field.type = 'array'
+        AND value.type = 'text'
+        AND instr(value.value, ':') > 1;
+
+      INSERT OR IGNORE INTO item_references (
+        source_ledger, source_id, field_name, target_ledger, target_id
+      )
+      SELECT NEW.ledger, NEW.id, 'worksetOwnerRef',
+             substr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), 1,
+                    instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') - 1),
+             substr(json_extract(NEW.fields_json, '$.worksetOwnerRef'),
+                    instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') + 1)
+      WHERE json_type(NEW.fields_json, '$.worksetOwnerRef') = 'text'
+        AND instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') > 1;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS item_references_items_update
+    AFTER UPDATE OF fields_json ON items BEGIN
+      DELETE FROM item_references
+      WHERE source_ledger = NEW.ledger AND source_id = NEW.id;
+
+      INSERT OR IGNORE INTO item_references (
+        source_ledger, source_id, field_name, target_ledger, target_id
+      )
+      SELECT NEW.ledger, NEW.id, field.key,
+             substr(value.value, 1, instr(value.value, ':') - 1),
+             substr(value.value, instr(value.value, ':') + 1)
+      FROM json_each(NEW.fields_json) AS field
+      JOIN json_each(field.value) AS value
+      WHERE field.key IN ('dependsOn', 'blockedBy', 'ledgerRefs', 'sourceRefs')
+        AND field.type = 'array'
+        AND value.type = 'text'
+        AND instr(value.value, ':') > 1;
+
+      INSERT OR IGNORE INTO item_references (
+        source_ledger, source_id, field_name, target_ledger, target_id
+      )
+      SELECT NEW.ledger, NEW.id, 'worksetOwnerRef',
+             substr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), 1,
+                    instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') - 1),
+             substr(json_extract(NEW.fields_json, '$.worksetOwnerRef'),
+                    instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') + 1)
+      WHERE json_type(NEW.fields_json, '$.worksetOwnerRef') = 'text'
+        AND instr(json_extract(NEW.fields_json, '$.worksetOwnerRef'), ':') > 1;
+    END;
+
+    INSERT OR IGNORE INTO item_references (
+      source_ledger, source_id, field_name, target_ledger, target_id
+    )
+    SELECT items.ledger, items.id, field.key,
+           substr(value.value, 1, instr(value.value, ':') - 1),
+           substr(value.value, instr(value.value, ':') + 1)
+    FROM items
+    JOIN json_each(items.fields_json) AS field
+    JOIN json_each(field.value) AS value
+    WHERE field.key IN ('dependsOn', 'blockedBy', 'ledgerRefs', 'sourceRefs')
+      AND field.type = 'array'
+      AND value.type = 'text'
+      AND instr(value.value, ':') > 1;
+
+    INSERT OR IGNORE INTO item_references (
+      source_ledger, source_id, field_name, target_ledger, target_id
+    )
+    SELECT items.ledger, items.id, 'worksetOwnerRef',
+           substr(json_extract(items.fields_json, '$.worksetOwnerRef'), 1,
+                  instr(json_extract(items.fields_json, '$.worksetOwnerRef'), ':') - 1),
+           substr(json_extract(items.fields_json, '$.worksetOwnerRef'),
+                  instr(json_extract(items.fields_json, '$.worksetOwnerRef'), ':') + 1)
+    FROM items
+    WHERE json_type(items.fields_json, '$.worksetOwnerRef') = 'text'
+      AND instr(json_extract(items.fields_json, '$.worksetOwnerRef'), ':') > 1;
   `);
   for (const table of COHERENCE_TABLES) {
     for (const operation of COHERENCE_OPERATIONS) {

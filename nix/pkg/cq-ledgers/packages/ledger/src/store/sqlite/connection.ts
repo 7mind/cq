@@ -14,6 +14,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import type { SqliteOperationMeasurement } from "./operationObservability.js";
 
 /** Cross-process write-lock timeout (ms) — a writer waits this long on SQLITE_BUSY (Q246). */
 export const BUSY_TIMEOUT_MS = 5_000;
@@ -135,13 +136,23 @@ export function immediateWriteTransaction<T>(
   db: Database,
   fn: () => T,
   maxAttempts: number = WRITE_TXN_MAX_ATTEMPTS,
+  measurement?: SqliteOperationMeasurement,
 ): T {
   return withBusyRetry(() => {
-    db.exec("BEGIN IMMEDIATE");
+    if (measurement === undefined) {
+      db.exec("BEGIN IMMEDIATE");
+    } else {
+      measurement.measure("lockWaitMs", () => db.exec("BEGIN IMMEDIATE"));
+    }
     try {
-      const result = fn();
-      db.exec("COMMIT");
-      return result;
+      const bodyAndCommit = (): T => {
+        const result = fn();
+        db.exec("COMMIT");
+        return result;
+      };
+      return measurement === undefined
+        ? bodyAndCommit()
+        : measurement.measure("transactionMs", bodyAndCommit);
     } catch (err) {
       try {
         db.exec("ROLLBACK");

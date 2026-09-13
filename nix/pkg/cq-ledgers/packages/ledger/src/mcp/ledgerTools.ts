@@ -137,6 +137,11 @@ import {
 import { parseRef } from "../refs.js";
 import type { WorksetStore } from "../worksetStore.js";
 import type { ImplementationEvidenceService } from "../implementationEvidence.js";
+import {
+  extraWithMeasurement,
+  measurementFromExtra,
+  type SqliteOperationMeasurement,
+} from "../store/sqlite/operationObservability.js";
 
 const CREATE_ITEM_OWNED_CREATION_KINDS = [
   "idea-to-goal",
@@ -741,7 +746,8 @@ export function createLedgerMcpToolSpecifications(
       author: authorParam,
       session: sessionParam,
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("update_item", args, [
         "ledger_id",
         "item_id",
@@ -765,7 +771,11 @@ export function createLedgerMcpToolSpecifications(
         if (dependsOn !== undefined) patch.dependsOn = dependsOn;
         if (args.author !== undefined) patch.author = args.author;
         if (args.session !== undefined) patch.session = args.session;
-        const milestone = await mutationsFor("update_item").updateMilestone(args.item_id, patch);
+        const milestone = await mutationsFor("update_item").updateMilestone(
+          args.item_id,
+          patch,
+          measurement,
+        );
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const patch: UpdateItemPatch = {};
@@ -786,6 +796,7 @@ export function createLedgerMcpToolSpecifications(
         args.ledger_id,
         args.item_id,
         patch,
+        measurement,
       );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
@@ -805,7 +816,8 @@ export function createLedgerMcpToolSpecifications(
       author: authorParam,
       session: sessionParam,
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("create_item", args, [
         "ledger_id",
         "milestone_id",
@@ -917,7 +929,7 @@ export function createLedgerMcpToolSpecifications(
         if (args.id !== undefined) init.id = args.id;
         if (args.author !== undefined) init.author = args.author;
         if (args.session !== undefined) init.session = args.session;
-        const milestone = await mutationsFor("create_item").createMilestone(init);
+        const milestone = await mutationsFor("create_item").createMilestone(init, measurement);
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const milestoneId =
@@ -932,7 +944,12 @@ export function createLedgerMcpToolSpecifications(
       if (args.id !== undefined) init.id = args.id;
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
-      const item = await mutationsFor("create_item").createItem(args.ledger_id, milestoneId, init);
+      const item = await mutationsFor("create_item").createItem(
+        args.ledger_id,
+        milestoneId,
+        init,
+        measurement,
+      );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
@@ -944,10 +961,15 @@ export function createLedgerMcpToolSpecifications(
       name: z.string(),
       schema: schemaSchema,
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("create_ledger", args, ["name", "schema"]);
       const schema = args.schema as LedgerSchema;
-      const ledger = await mutationsFor("create_ledger").createLedger(args.name, schema);
+      const ledger = await mutationsFor("create_ledger").createLedger(
+        args.name,
+        schema,
+        measurement,
+      );
       return wireResult(produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }));
     },
   );
@@ -1024,11 +1046,13 @@ export function createLedgerMcpToolSpecifications(
       milestone_id: safeIdSchema,
       summary: z.string(),
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("archive_milestone", args, ["milestone_id", "summary"]);
       const pointer = await mutationsFor("archive_milestone").archiveMilestone(
         args.milestone_id,
         args.summary,
+        measurement,
       );
       return jsonResult({ pointer });
     },
@@ -1042,7 +1066,8 @@ export function createLedgerMcpToolSpecifications(
       summary: z.string(),
       gate_policy: z.enum(["fail-on-active-gate", "retain-active-gates"]),
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("archive_terminal_items", args, [
         "ledger_ids",
         "summary",
@@ -1052,6 +1077,7 @@ export function createLedgerMcpToolSpecifications(
         args.ledger_ids,
         args.summary,
         args.gate_policy,
+        measurement,
       );
       return jsonResult({ sweep });
     },
@@ -1061,17 +1087,22 @@ export function createLedgerMcpToolSpecifications(
     "execute_finalize",
     "Atomically execute an ordered batch of milestone/goal closes and milestone archives under one workset admission.",
     {
-      operations: z.array(
-        z.object({
-          id: z.string().min(1),
-          target_id: safeIdSchema,
-          action: z.enum(["close-milestone", "close-goal", "archive-milestone"]),
-          target_status: z.string().min(1).optional(),
-          summary: z.string().optional(),
-        }).strict(),
-      ).min(1),
+      operations: z
+        .array(
+          z
+            .object({
+              id: z.string().min(1),
+              target_id: safeIdSchema,
+              action: z.enum(["close-milestone", "close-goal", "archive-milestone"]),
+              target_status: z.string().min(1).optional(),
+              summary: z.string().optional(),
+            })
+            .strict(),
+        )
+        .min(1),
     } as const,
-    async (args) => {
+    async (args, extra) => {
+      const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("execute_finalize", args, ["operations"]);
       const result = await mutationsFor("execute_finalize").executeFinalize(
         args.operations.map((operation) => ({
@@ -1083,6 +1114,7 @@ export function createLedgerMcpToolSpecifications(
             : { targetStatus: operation.target_status }),
           ...(operation.summary === undefined ? {} : { summary: operation.summary }),
         })),
+        measurement,
       );
       return jsonResult(result);
     },
@@ -2129,23 +2161,32 @@ function withUsageRecording(
   return specifications.map((specification) => ({
     ...specification,
     handler: (async (args: unknown, extra: unknown) => {
+      const observable = store as LedgerStore & {
+        beginObservedOperation?: (endpoint: string) => SqliteOperationMeasurement | undefined;
+      };
+      const measurement = observable.beginObservedOperation?.(specification.name);
+      const handlerExtra =
+        measurement === undefined ? extra : extraWithMeasurement(extra, measurement);
       const bytesIn = measureUtf8JsonBytes(args);
       let result: unknown;
       try {
         result = await (specification.handler as (a: unknown, e: unknown) => Promise<unknown>)(
           args,
-          extra,
+          handlerExtra,
         );
       } catch (error) {
-        await recordUsageBestEffort(store, specification.name, bytesIn, 0);
+        const recordFailureUsage = () =>
+          recordUsageBestEffort(store, specification.name, bytesIn, 0);
+        if (measurement === undefined) await recordFailureUsage();
+        else await measurement.measureAsync("telemetryMs", recordFailureUsage);
+        measurement?.finish("error");
         throw error;
       }
-      await recordUsageBestEffort(
-        store,
-        specification.name,
-        bytesIn,
-        measureResultBytesOut(result),
-      );
+      const recordSuccessUsage = () =>
+        recordUsageBestEffort(store, specification.name, bytesIn, measureResultBytesOut(result));
+      if (measurement === undefined) await recordSuccessUsage();
+      else await measurement.measureAsync("telemetryMs", recordSuccessUsage);
+      measurement?.finish("success");
       return result;
     }) as LedgerToolSpecification["handler"],
   }));

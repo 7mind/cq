@@ -600,6 +600,25 @@ export { createSqliteWorksetStore } from "./store/sqlite/sqliteWorksetStore.js";
 export { openExistingLedgerDb } from "./store/sqlite/connection.js";
 export type { CreateSqliteWorksetStoreOptions } from "./store/sqlite/sqliteWorksetStore.js";
 export {
+  assertSqliteAccessContract,
+  createSqliteOperationMeasurement,
+  SqliteAccessContractError,
+} from "./store/sqlite/operationObservability.js";
+export type {
+  SqliteAccessMode,
+  SqliteAccessObserver,
+  SqliteAccessRecord,
+  SqliteKeyedPredicate,
+  SqliteMonotonicNow,
+  SqliteOperationAccessClass,
+  SqliteOperationAccessScope,
+  SqliteOperationMeasurement,
+  SqliteOperationObserver,
+  SqliteOperationOutcome,
+  SqliteOperationPhase,
+  SqliteOperationRecord,
+} from "./store/sqlite/operationObservability.js";
+export {
   openXdgProjectRuntime,
   isSafeProjectKey,
   XdgProjectRuntimeLocationError,

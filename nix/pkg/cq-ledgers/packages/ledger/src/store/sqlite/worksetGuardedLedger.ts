@@ -12,10 +12,18 @@ import {
 import { closeWorkset } from "../../worksetGraph.js";
 import type { WorksetStore } from "../../worksetStore.js";
 import { SqliteLedgerStore } from "./SqliteLedgerStore.js";
+import type {
+  SqliteAccessObserver,
+  SqliteMonotonicNow,
+  SqliteOperationObserver,
+} from "./operationObservability.js";
 
 export interface CreateSqliteWorksetGuardedLedgerOptions {
   readonly dbPath: string;
   readonly now?: () => string;
+  readonly monotonicNow?: SqliteMonotonicNow;
+  readonly operationObserver?: SqliteOperationObserver;
+  readonly accessObserver?: SqliteAccessObserver;
   readonly logsDir?: string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   readonly afterGenericAdmit?: () => Promise<void> | void;
@@ -42,6 +50,11 @@ export function createSqliteWorksetGuardedLedger(
   const rawStore = new SqliteLedgerStore({
     dbPath: options.dbPath,
     ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.monotonicNow !== undefined ? { monotonicNow: options.monotonicNow } : {}),
+    ...(options.operationObserver !== undefined
+      ? { operationObserver: options.operationObserver }
+      : {}),
+    ...(options.accessObserver !== undefined ? { accessObserver: options.accessObserver } : {}),
     ...(options.logsDir !== undefined ? { logsDir: options.logsDir } : {}),
     workset: {
       ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
@@ -62,7 +75,8 @@ export function createSqliteWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore: lazySqliteWorksetStore(() => rawStore.worksetStore()),
-    runGenericTransaction: (mutate) => rawStore.runAtomicGenericMutation(mutate),
+    runGenericTransaction: (mutate, measurement, accessScope) =>
+      rawStore.runAtomicGenericMutation(mutate, undefined, measurement, accessScope),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),

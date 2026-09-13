@@ -139,7 +139,15 @@ import {
   DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
 import { relocateActiveIdeasToAmbient } from "../../ideasAmbientMigration.js";
-import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
+import { immediateWriteTransaction, openLedgerDb, WRITE_TXN_MAX_ATTEMPTS } from "./connection.js";
+import {
+  createSqliteOperationMeasurement,
+  type SqliteAccessObserver,
+  type SqliteMonotonicNow,
+  type SqliteOperationAccessScope,
+  type SqliteOperationMeasurement,
+  type SqliteOperationObserver,
+} from "./operationObservability.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import { createSqliteWorksetStore, type SqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
@@ -214,6 +222,12 @@ export interface SqliteLedgerStoreOpts {
    * `() => new Date().toISOString()`.
    */
   now?: () => string;
+  /** Explicit monotonic clock used only by operation measurements. */
+  monotonicNow?: SqliteMonotonicNow;
+  /** Best-effort sink for one completed structured operation record. */
+  operationObserver?: SqliteOperationObserver;
+  /** Best-effort sink for adapter-owned keyed row access records. */
+  accessObserver?: SqliteAccessObserver;
   /**
    * Fired AFTER every successful write (see {@link OnMutation}) — i.e. after
    * the write transaction COMMITs. Guarded: a throw is logged, never unwinds.
@@ -291,6 +305,18 @@ interface ItemRow {
   session: string | null;
 }
 
+interface ScopedItemRow extends ItemRow {
+  ledger: string;
+}
+
+interface ReferenceRow {
+  source_ledger: string;
+  source_id: string;
+  field_name: string;
+  target_ledger: string;
+  target_id: string;
+}
+
 interface PointerRow {
   id: string;
   summary: string;
@@ -301,6 +327,20 @@ interface PointerRow {
 interface PlanRecordRow {
   scope: string;
   record_json: string;
+}
+
+interface GenericMutationLoadedState {
+  readonly ledgers: Map<string, Ledger>;
+  readonly archives: Map<string, GenericArchiveEntry>;
+  readonly beforeLedgers: Map<string, Ledger>;
+  readonly beforeArchives: Map<string, GenericArchiveEntry>;
+}
+
+interface GenericProjectionDelta {
+  readonly activeUpserts: ReadonlyArray<{ ledgerId: string; item: Item }>;
+  readonly activeDeletes: ReadonlyArray<{ ledgerId: string; itemId: string }>;
+  readonly archivedUpserts: ReadonlyArray<{ ledgerId: string; item: Item }>;
+  readonly archivedDeletes: ReadonlyArray<{ ledgerId: string; itemId: string }>;
 }
 
 function rowToItem(row: ItemRow): Item {
@@ -327,6 +367,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly dbPath: string;
   private readonly logsDir: string | undefined;
   private readonly now: () => string;
+  private readonly monotonicNow: SqliteMonotonicNow | null;
+  private readonly operationObserver: SqliteOperationObserver | null;
+  private readonly accessObserver: SqliteAccessObserver | null;
   /** Fired post-COMMIT by {@link fireMutation}; guarded. */
   protected readonly onMutation: OnMutation | null;
   private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
@@ -354,14 +397,35 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.dbPath = opts.dbPath;
     this.logsDir = opts.logsDir;
     this.now = opts.now ?? (() => new Date().toISOString());
+    this.monotonicNow = opts.monotonicNow ?? null;
+    this.operationObserver = opts.operationObserver ?? null;
+    this.accessObserver = opts.accessObserver ?? null;
+    if (
+      this.monotonicNow === null &&
+      (this.operationObserver !== null || this.accessObserver !== null)
+    ) {
+      throw new LedgerError(
+        "SqliteLedgerStore observers require an explicitly injected monotonicNow clock",
+      );
+    }
     this.onMutation = opts.onMutation ?? null;
     this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.allowDestructiveReinitOfPopulatedStore =
       opts.allowDestructiveReinitOfPopulatedStore ?? false;
     this.worksetOptions = opts.workset ?? {};
-    this.worksetAuthority =
-      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
+    this.worksetAuthority = opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
+  }
+
+  /** Create one request-local measurement; no process-global context is used. */
+  beginObservedOperation(endpoint: string): SqliteOperationMeasurement | undefined {
+    if (this.monotonicNow === null) return undefined;
+    return createSqliteOperationMeasurement({
+      endpoint,
+      monotonicNow: this.monotonicNow,
+      operationObserver: this.operationObserver,
+      accessObserver: this.accessObserver,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -449,9 +513,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
               db.exec("DELETE FROM items");
               db.exec("DELETE FROM groups");
               db.exec("DELETE FROM ledgers");
-              db.query(
-                "UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1",
-              ).run("[]");
+              db.query("UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1").run("[]");
             })();
             this.bootstrapCanonicalRows(
               db,
@@ -517,24 +579,30 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     const suppliedValidation = this.worksetOptions.validateReplacement;
     let validatedLedgers: readonly string[] = [];
-    return this.worksetHandle.setValidatedRoots(roots, (canonical) => {
-      const ledgers = this.enumerate().map((ledgerId) => this.loadLedger(ledgerId));
-      validatedLedgers = ledgers.map((ledger) => ledger.id);
-      const state = buildWorksetActiveState(
-        ledgers.map((ledger) => ({
-          ledger: ledger.id,
-          items: ledger.milestones.flatMap((milestone) => milestone.items),
-        })),
-        buildPrefixRegistry(ledgers.map((ledger) => ({ name: ledger.id, schema: ledger.schema }))),
-      );
-      const closed = closeWorkset(canonical, state, { validateLiveRoots: true }).roots;
-      return suppliedValidation?.(closed) ?? closed;
-    }, () => {
-      for (const ledgerId of validatedLedgers) {
-        this.rebuildLedgerIndexActive(ledgerId);
-        this.refreshLedgerIndexArchived(ledgerId);
-      }
-    });
+    return this.worksetHandle.setValidatedRoots(
+      roots,
+      (canonical) => {
+        const ledgers = this.enumerate().map((ledgerId) => this.loadLedger(ledgerId));
+        validatedLedgers = ledgers.map((ledger) => ledger.id);
+        const state = buildWorksetActiveState(
+          ledgers.map((ledger) => ({
+            ledger: ledger.id,
+            items: ledger.milestones.flatMap((milestone) => milestone.items),
+          })),
+          buildPrefixRegistry(
+            ledgers.map((ledger) => ({ name: ledger.id, schema: ledger.schema })),
+          ),
+        );
+        const closed = closeWorkset(canonical, state, { validateLiveRoots: true }).roots;
+        return suppliedValidation?.(closed) ?? closed;
+      },
+      () => {
+        for (const ledgerId of validatedLedgers) {
+          this.rebuildLedgerIndexActive(ledgerId);
+          this.refreshLedgerIndexArchived(ledgerId);
+        }
+      },
+    );
   }
 
   /**
@@ -826,7 +894,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       .query(
         "SELECT endpoint, call_count, bytes_in, bytes_out FROM mcp_usage_stats ORDER BY endpoint",
       )
-      .all() as Array<{ endpoint: string; call_count: number; bytes_in: number; bytes_out: number }>;
+      .all() as Array<{
+      endpoint: string;
+      call_count: number;
+      bytes_in: number;
+      bytes_out: number;
+    }>;
     const endpoints = rows.map((row) => ({
       name: row.endpoint,
       callCount: row.call_count,
@@ -1088,9 +1161,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * non-terminal in their own ledger, as sorted `<ledger>:<id>` refs. */
   private nonTerminalChildren(milestoneId: string): string[] {
     const blockers: string[] = [];
-    const schemas = this.db()
-      .query("SELECT name, schema_json FROM ledgers")
-      .all() as Array<{ name: string; schema_json: string }>;
+    const schemas = this.db().query("SELECT name, schema_json FROM ledgers").all() as Array<{
+      name: string;
+      schema_json: string;
+    }>;
     const childQuery = this.db().query(
       "SELECT id, status FROM items WHERE ledger = ? AND milestone_id = ?",
     );
@@ -1116,13 +1190,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = immediateWriteTransaction(this.db(), () => {
       if (contender !== null) this.reachPlanSerializationBoundary(contender);
       const shim = this.singleItemShim(ledgerId, itemId);
-      assertRawPlanUpdateAllowed(
-        (id) => this.loadLedger(id),
-        ledgerId,
-        shim,
-        itemId,
-        patch,
-      );
+      assertRawPlanUpdateAllowed((id) => this.loadLedger(id), ledgerId, shim, itemId, patch);
       const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
       const x = applyUpdateItem(
         shim,
@@ -1221,13 +1289,15 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         assertManagedGoalTransitionAllowed(source, toStatus);
       }
       if (ledgerId === TASKS_LEDGER) {
-        assertManagedTaskTransitionAllowed(
-          (id) => this.loadLedger(id),
-          source,
-          toStatus,
-        );
+        assertManagedTaskTransitionAllowed((id) => this.loadLedger(id), source, toStatus);
       }
-      const x = applyReopenItem(shim, itemId, toStatus, this.now(), this.buildRefValidationContext());
+      const x = applyReopenItem(
+        shim,
+        itemId,
+        toStatus,
+        this.now(),
+        this.buildRefValidationContext(),
+      );
       // D267/T1856: resurrection respects parent liveness.
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), source.milestoneId);
       this.persistItemRow(ledgerId, x);
@@ -1609,8 +1679,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       const owned = createOwnedWriteTransaction({
         ledgers: state.ledgers,
         now: this.now,
-        archivedRefExists: (ledgerId, itemId) =>
-          archivedIds.get(ledgerId)?.has(itemId) ?? false,
+        archivedRefExists: (ledgerId, itemId) => archivedIds.get(ledgerId)?.has(itemId) ?? false,
       });
       const result = mutate(owned.tx);
       const dirtyLedgers = [...owned.dirtyLedgers];
@@ -1660,120 +1729,682 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /** Run one generic mutation in one BEGIN IMMEDIATE transaction. */
-  async runAtomicGenericMutation<T>(
-    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
-  ): Promise<T> {
-    this.assertInit();
-    const outcome = immediateWriteTransaction(this.db(), () => {
-      const db = this.db();
-      const ledgers = new Map(
-        this.enumerate().map((ledgerId) => [ledgerId, this.loadLedger(ledgerId)]),
-      );
-      const archives = new Map<string, GenericArchiveEntry>();
-      const archivedRows = db
-        .query(
-          "SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items ORDER BY rowid",
-        )
-        .all() as Array<ItemRow & { ledger: string; pointer_id: string }>;
-      for (const row of archivedRows) {
-        const key = genericArchiveKey(row.ledger, row.pointer_id);
-        let entry = archives.get(key);
-        if (entry === undefined) {
-          const pointer = ledgers
-            .get(row.ledger)
-            ?.archivePointers.find((candidate) => candidate.id === row.pointer_id);
-          entry = {
-            ledgerId: row.ledger,
-            pointerId: row.pointer_id,
-            title: pointer?.title ?? "",
-            description: "",
-            items: [],
-          };
-          archives.set(key, entry);
-        }
-        entry.items.push(rowToItem(row));
+  private recordGenericAccess(
+    measurement: SqliteOperationMeasurement | undefined,
+    table: string,
+    mode: "read" | "write" | "sweep",
+    predicate: {
+      kind:
+        | "singleton"
+        | "primary-key"
+        | "keys"
+        | "milestone-members"
+        | "selected-ledger-status"
+        | "reference-source"
+        | "reference-target";
+      keys: readonly string[];
+    },
+    rowKeys: readonly string[],
+  ): void {
+    measurement?.recordAccess({
+      phase: "transaction",
+      table,
+      mode,
+      keyedPredicate: predicate,
+      rowKeys: [...rowKeys],
+      count: rowKeys.length,
+    });
+  }
+
+  private loadGenericMutationState(
+    measurement: SqliteOperationMeasurement | undefined,
+    suppliedScope: SqliteOperationAccessScope | undefined,
+  ): GenericMutationLoadedState {
+    const db = this.db();
+    const scope = suppliedScope ??
+      measurement?.accessScope() ?? {
+        operation: "generic-mutation",
+        accessClass: "ordinary" as const,
+        targetRefs: [],
+        ledgerIds: [],
+        milestoneIds: [],
+        referenceCandidates: [],
+      };
+    const operation = scope.operation;
+    const ledgerRows = db
+      .query("SELECT name, schema_json, milestone_counter, item_counter FROM ledgers ORDER BY name")
+      .all() as LedgerRow[];
+    this.recordGenericAccess(
+      measurement,
+      "ledgers",
+      "read",
+      { kind: "keys", keys: ["registered-ledger-metadata"] },
+      ledgerRows.map(({ name }) => name),
+    );
+    const ledgers = new Map<string, Ledger>(
+      ledgerRows.map((row) => [
+        row.name,
+        {
+          id: row.name,
+          schema: JSON.parse(row.schema_json) as LedgerSchema,
+          counters: { milestone: row.milestone_counter, item: row.item_counter },
+          milestones: [],
+          archivePointers: [],
+        },
+      ]),
+    );
+    const archives = new Map<string, GenericArchiveEntry>();
+    const loadedRefs = new Set<string>();
+    const queuedRefs: string[] = [];
+    const queueRef = (ref: string): void => {
+      const colon = ref.indexOf(":");
+      if (colon <= 0 || colon === ref.length - 1 || loadedRefs.has(ref)) return;
+      if (!queuedRefs.includes(ref)) queuedRefs.push(ref);
+    };
+    for (const ref of scope.targetRefs) queueRef(ref);
+    for (const ref of scope.referenceCandidates) queueRef(ref);
+
+    const addGroup = (ledgerId: string, group: GroupRow): Milestone | undefined => {
+      const ledger = ledgers.get(ledgerId);
+      if (ledger === undefined) return undefined;
+      let milestone = ledger.milestones.find(({ id }) => id === group.id);
+      if (milestone === undefined) {
+        milestone = {
+          id: group.id,
+          title: group.title,
+          description: group.description,
+          items: [],
+        };
+        ledger.milestones.push(milestone);
       }
-      const rootsRow = db
-        .query("SELECT epoch, roots_json FROM workset_state WHERE id = 1")
-        .get() as { epoch: number; roots_json: string } | null;
-      const roots: WorksetRootsEpoch =
-        rootsRow === null
-          ? { roots: [], epoch: 0 }
-          : {
-              roots: JSON.parse(rootsRow.roots_json) as string[],
-              epoch: rootsRow.epoch,
-            };
-      const transaction = createGenericMutationTransaction({
-        ledgers,
-        archives,
-        now: this.now,
-      });
-      const result = mutate(transaction.tx, roots);
-      for (const ledgerId of transaction.dirtyLedgers) {
-        const ledger = ledgers.get(ledgerId);
-        if (ledger === undefined) throw new LedgerNotFoundError(ledgerId);
-        const exists = db.query("SELECT 1 FROM ledgers WHERE name = ?").get(ledgerId);
-        if (exists === null) {
-          db.query(
-            "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
-          ).run(ledgerId, JSON.stringify(ledger.schema));
-        }
-        this.replaceActiveLedger(ledger);
-      }
-      for (const key of transaction.dirtyArchives) {
-        const current = archives.get(key);
-        const slash = key.indexOf("/");
-        const ledgerId = current?.ledgerId ?? key.slice(0, slash);
-        const pointerId = current?.pointerId ?? key.slice(slash + 1);
-        db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ?").run(
-          ledgerId,
-          pointerId,
+      return milestone;
+    };
+    const addItem = (row: ScopedItemRow): void => {
+      const ledger = ledgers.get(row.ledger);
+      if (ledger === undefined) return;
+      let milestone = ledger.milestones.find(({ id }) => id === row.milestone_id);
+      if (milestone === undefined) {
+        const group = db
+          .query("SELECT id, title, description FROM groups WHERE ledger = ? AND id = ?")
+          .get(row.ledger, row.milestone_id) as GroupRow | null;
+        this.recordGenericAccess(
+          measurement,
+          "groups",
+          "read",
+          { kind: "primary-key", keys: [`${row.ledger}:${row.milestone_id}`] },
+          group === null ? [] : [`${row.ledger}:${group.id}`],
         );
+        milestone =
+          group === null
+            ? {
+                id: row.milestone_id,
+                title: "",
+                description: "",
+                items: [],
+              }
+            : addGroup(row.ledger, group);
+        if (group === null && milestone !== undefined) ledger.milestones.push(milestone);
+      }
+      if (milestone === undefined) return;
+      if (!milestone.items.some(({ id }) => id === row.id)) milestone.items.push(rowToItem(row));
+      if (row.ledger !== MILESTONES_LEDGER) {
+        queueRef(`${MILESTONES_LEDGER}:${row.milestone_id}`);
+      }
+    };
+
+    const loadReferenceEdges = (ledgerId: string, itemId: string): void => {
+      const outgoing = db
+        .query(
+          `SELECT source_ledger, source_id, field_name, target_ledger, target_id
+           FROM item_references WHERE source_ledger = ? AND source_id = ?
+           ORDER BY field_name, target_ledger, target_id`,
+        )
+        .all(ledgerId, itemId) as ReferenceRow[];
+      this.recordGenericAccess(
+        measurement,
+        "item_references",
+        "read",
+        { kind: "reference-source", keys: [`${ledgerId}:${itemId}`] },
+        outgoing.map(
+          (edge) =>
+            `${edge.source_ledger}:${edge.source_id}:${edge.field_name}:${edge.target_ledger}:${edge.target_id}`,
+        ),
+      );
+      for (const edge of outgoing) queueRef(`${edge.target_ledger}:${edge.target_id}`);
+
+      const incomingFields =
+        operation === "archive-milestone" ||
+        operation === "archive-terminal-items" ||
+        operation === "execute-finalize"
+          ? ["worksetOwnerRef", "ledgerRefs", "dependsOn", "blockedBy"]
+          : ["worksetOwnerRef", "ledgerRefs"];
+      const placeholders = incomingFields.map(() => "?").join(", ");
+      const incoming = db
+        .query(
+          `SELECT source_ledger, source_id, field_name, target_ledger, target_id
+           FROM item_references
+           WHERE target_ledger = ? AND target_id = ? AND field_name IN (${placeholders})
+           ORDER BY field_name, source_ledger, source_id`,
+        )
+        .all(ledgerId, itemId, ...incomingFields) as ReferenceRow[];
+      this.recordGenericAccess(
+        measurement,
+        "item_references",
+        "read",
+        { kind: "reference-target", keys: [`${ledgerId}:${itemId}`] },
+        incoming.map(
+          (edge) =>
+            `${edge.source_ledger}:${edge.source_id}:${edge.field_name}:${edge.target_ledger}:${edge.target_id}`,
+        ),
+      );
+      for (const edge of incoming) queueRef(`${edge.source_ledger}:${edge.source_id}`);
+    };
+
+    const loadActiveRef = (ref: string): void => {
+      if (loadedRefs.has(ref)) return;
+      loadedRefs.add(ref);
+      const colon = ref.indexOf(":");
+      const ledgerId = ref.slice(0, colon);
+      const itemId = ref.slice(colon + 1);
+      const row = db
+        .query(
+          `SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+           FROM items WHERE ledger = ? AND id = ?`,
+        )
+        .get(ledgerId, itemId) as ScopedItemRow | null;
+      this.recordGenericAccess(
+        measurement,
+        "items",
+        "read",
+        { kind: "primary-key", keys: [ref] },
+        row === null ? [] : [ref],
+      );
+      if (row === null) return;
+      addItem(row);
+      loadReferenceEdges(ledgerId, itemId);
+    };
+
+    const loadMilestoneMembers = (milestoneId: string): void => {
+      const rows = db
+        .query(
+          `SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+           FROM items WHERE milestone_id = ? ORDER BY ledger, id`,
+        )
+        .all(milestoneId) as ScopedItemRow[];
+      this.recordGenericAccess(
+        measurement,
+        "items",
+        operation === "update-milestone" ? "read" : "sweep",
+        { kind: "milestone-members", keys: [milestoneId] },
+        rows.map((row) => `${row.ledger}:${row.id}`),
+      );
+      for (const row of rows) {
+        loadedRefs.add(`${row.ledger}:${row.id}`);
+        addItem(row);
+        loadReferenceEdges(row.ledger, row.id);
+      }
+    };
+
+    if (
+      operation === "archive-milestone" ||
+      operation === "execute-finalize" ||
+      operation === "update-milestone"
+    ) {
+      for (const milestoneId of scope.milestoneIds) loadMilestoneMembers(milestoneId);
+    } else {
+      for (const milestoneId of scope.milestoneIds) {
+        for (const ledgerId of scope.ledgerIds) {
+          const group = db
+            .query("SELECT id, title, description FROM groups WHERE ledger = ? AND id = ?")
+            .get(ledgerId, milestoneId) as GroupRow | null;
+          this.recordGenericAccess(
+            measurement,
+            "groups",
+            "read",
+            { kind: "primary-key", keys: [`${ledgerId}:${milestoneId}`] },
+            group === null ? [] : [`${ledgerId}:${milestoneId}`],
+          );
+          if (group !== null) addGroup(ledgerId, group);
+        }
+        queueRef(`${MILESTONES_LEDGER}:${milestoneId}`);
+      }
+    }
+
+    if (operation === "archive-terminal-items") {
+      for (const ledgerId of scope.ledgerIds) {
+        const ledger = ledgers.get(ledgerId);
+        if (ledger === undefined) continue;
+        for (const status of ledger.schema.terminalStatuses) {
+          const rows = db
+            .query(
+              `SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+               FROM items WHERE ledger = ? AND status = ? ORDER BY id`,
+            )
+            .all(ledgerId, status) as ScopedItemRow[];
+          this.recordGenericAccess(
+            measurement,
+            "items",
+            "sweep",
+            { kind: "selected-ledger-status", keys: [`${ledgerId}:${status}`] },
+            rows.map((row) => `${row.ledger}:${row.id}`),
+          );
+          for (const row of rows) {
+            loadedRefs.add(`${row.ledger}:${row.id}`);
+            addItem(row);
+            loadReferenceEdges(row.ledger, row.id);
+          }
+        }
+      }
+    }
+
+    while (queuedRefs.length > 0) loadActiveRef(queuedRefs.shift() as string);
+
+    const archiveKeys = new Set<string>();
+    if (operation === "unarchive-item") {
+      for (const ledgerId of scope.ledgerIds) {
+        for (const milestoneId of scope.milestoneIds) {
+          archiveKeys.add(genericArchiveKey(ledgerId, milestoneId));
+        }
+      }
+    }
+    if (operation === "archive-terminal-items") {
+      for (const ledgerId of scope.ledgerIds) {
+        const ledger = ledgers.get(ledgerId);
+        if (ledger === undefined) continue;
+        for (const group of ledger.milestones)
+          archiveKeys.add(genericArchiveKey(ledgerId, group.id));
+      }
+    }
+    if (operation === "archive-milestone" || operation === "execute-finalize") {
+      for (const milestoneId of scope.milestoneIds) {
+        const pointers = db
+          .query(
+            "SELECT ledger, id, summary, title, status FROM archive_pointers WHERE id = ? ORDER BY ledger",
+          )
+          .all(milestoneId) as Array<PointerRow & { ledger: string }>;
+        this.recordGenericAccess(
+          measurement,
+          "archive_pointers",
+          "sweep",
+          { kind: "milestone-members", keys: [milestoneId] },
+          pointers.map((row) => `${row.ledger}:${row.id}`),
+        );
+        for (const row of pointers) archiveKeys.add(genericArchiveKey(row.ledger, row.id));
+        for (const ledger of ledgers.values()) {
+          if (ledger.milestones.some(({ id }) => id === milestoneId)) {
+            archiveKeys.add(genericArchiveKey(ledger.id, milestoneId));
+          }
+        }
+        archiveKeys.add(genericArchiveKey(MILESTONES_LEDGER, milestoneId));
+      }
+    }
+
+    for (const key of archiveKeys) {
+      const slash = key.indexOf("/");
+      const ledgerId = key.slice(0, slash);
+      const pointerId = key.slice(slash + 1);
+      const pointer = db
+        .query(
+          "SELECT id, summary, title, status FROM archive_pointers WHERE ledger = ? AND id = ?",
+        )
+        .get(ledgerId, pointerId) as PointerRow | null;
+      this.recordGenericAccess(
+        measurement,
+        "archive_pointers",
+        "read",
+        { kind: "primary-key", keys: [key] },
+        pointer === null ? [] : [key],
+      );
+      if (pointer === null) continue;
+      ledgers.get(ledgerId)?.archivePointers.push({
+        id: pointer.id,
+        path: `./archive/${ledgerId}/${pointer.id}.md`,
+        summary: pointer.summary,
+        title: pointer.title,
+        status: pointer.status,
+      });
+      const rows = db
+        .query(
+          `SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+           FROM archived_items WHERE ledger = ? AND pointer_id = ? ORDER BY id`,
+        )
+        .all(ledgerId, pointerId) as ScopedItemRow[];
+      this.recordGenericAccess(
+        measurement,
+        "archived_items",
+        "read",
+        { kind: "keys", keys: [key] },
+        rows.map((row) => `${ledgerId}:${pointerId}:${row.id}`),
+      );
+      archives.set(key, {
+        ledgerId,
+        pointerId,
+        title: pointer.title,
+        description: "",
+        items: rows.map(rowToItem),
+      });
+    }
+
+    return {
+      ledgers,
+      archives,
+      beforeLedgers: structuredClone(ledgers),
+      beforeArchives: structuredClone(archives),
+    };
+  }
+
+  private persistGenericMutationState(
+    state: GenericMutationLoadedState,
+    transaction: ReturnType<typeof createGenericMutationTransaction>,
+    measurement: SqliteOperationMeasurement | undefined,
+  ): GenericProjectionDelta {
+    const db = this.db();
+    const activeUpserts: Array<{ ledgerId: string; item: Item }> = [];
+    const activeDeletes: Array<{ ledgerId: string; itemId: string }> = [];
+    const archivedUpserts: Array<{ ledgerId: string; item: Item }> = [];
+    const archivedDeletes: Array<{ ledgerId: string; itemId: string }> = [];
+    const itemsOf = (ledger: Ledger | undefined): Map<string, Item> =>
+      new Map(
+        (ledger?.milestones ?? []).flatMap(({ items }) =>
+          items.map((item) => [item.id, item] as const),
+        ),
+      );
+    const groupsOf = (ledger: Ledger | undefined): Map<string, Milestone> =>
+      new Map((ledger?.milestones ?? []).map((group) => [group.id, group]));
+
+    for (const ledgerId of transaction.dirtyLedgers) {
+      const before = state.beforeLedgers.get(ledgerId);
+      const after = state.ledgers.get(ledgerId);
+      if (after === undefined) throw new LedgerNotFoundError(ledgerId);
+      if (before === undefined) {
+        db.query(
+          "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, ?, ?)",
+        ).run(
+          ledgerId,
+          JSON.stringify(after.schema),
+          after.counters.milestone,
+          after.counters.item,
+        );
+      } else {
+        db.query(
+          "UPDATE ledgers SET schema_json = ?, milestone_counter = ?, item_counter = ? WHERE name = ?",
+        ).run(
+          JSON.stringify(after.schema),
+          after.counters.milestone,
+          after.counters.item,
+          ledgerId,
+        );
+      }
+      this.recordGenericAccess(
+        measurement,
+        "ledgers",
+        "write",
+        { kind: "primary-key", keys: [ledgerId] },
+        [ledgerId],
+      );
+
+      const beforeGroups = groupsOf(before);
+      const afterGroups = groupsOf(after);
+      for (const [groupId, group] of afterGroups) {
+        const prior = beforeGroups.get(groupId);
+        if (
+          prior !== undefined &&
+          prior.title === group.title &&
+          prior.description === group.description
+        ) {
+          continue;
+        }
+        db.query(
+          `INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, ?)
+           ON CONFLICT(ledger, id) DO UPDATE SET
+             title = excluded.title, description = excluded.description`,
+        ).run(ledgerId, groupId, group.title, group.description);
+        this.recordGenericAccess(
+          measurement,
+          "groups",
+          "write",
+          { kind: "primary-key", keys: [`${ledgerId}:${groupId}`] },
+          [`${ledgerId}:${groupId}`],
+        );
+      }
+
+      const beforeItems = itemsOf(before);
+      const afterItems = itemsOf(after);
+      for (const [itemId] of beforeItems) {
+        if (afterItems.has(itemId)) continue;
+        db.query("DELETE FROM items WHERE ledger = ? AND id = ?").run(ledgerId, itemId);
+        activeDeletes.push({ ledgerId, itemId });
+        this.recordGenericAccess(
+          measurement,
+          "items",
+          "write",
+          { kind: "primary-key", keys: [`${ledgerId}:${itemId}`] },
+          [`${ledgerId}:${itemId}`],
+        );
+      }
+      for (const [itemId, item] of afterItems) {
+        const prior = beforeItems.get(itemId);
+        if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(item)) continue;
+        db.query(
+          `INSERT INTO items (
+             ledger, id, milestone_id, status, fields_json,
+             created_at, updated_at, author, session
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(ledger, id) DO UPDATE SET
+             milestone_id = excluded.milestone_id,
+             status = excluded.status,
+             fields_json = excluded.fields_json,
+             created_at = excluded.created_at,
+             updated_at = excluded.updated_at,
+             author = excluded.author,
+             session = excluded.session`,
+        ).run(
+          ledgerId,
+          item.id,
+          item.milestoneId,
+          item.status,
+          JSON.stringify(item.fields),
+          item.createdAt,
+          item.updatedAt,
+          item.author ?? null,
+          item.session ?? null,
+        );
+        activeUpserts.push({ ledgerId, item: cloneItem(item) });
+        this.recordGenericAccess(
+          measurement,
+          "items",
+          "write",
+          { kind: "primary-key", keys: [`${ledgerId}:${itemId}`] },
+          [`${ledgerId}:${itemId}`],
+        );
+      }
+      for (const [groupId] of beforeGroups) {
+        if (afterGroups.has(groupId)) continue;
+        const remaining = db
+          .query("SELECT COUNT(*) AS count FROM items WHERE ledger = ? AND milestone_id = ?")
+          .get(ledgerId, groupId) as { count: number };
+        this.recordGenericAccess(
+          measurement,
+          "items",
+          "read",
+          { kind: "milestone-members", keys: [`${ledgerId}:${groupId}`] },
+          [],
+        );
+        if (remaining.count === 0) {
+          db.query("DELETE FROM groups WHERE ledger = ? AND id = ?").run(ledgerId, groupId);
+          this.recordGenericAccess(
+            measurement,
+            "groups",
+            "write",
+            { kind: "primary-key", keys: [`${ledgerId}:${groupId}`] },
+            [`${ledgerId}:${groupId}`],
+          );
+        }
+      }
+    }
+
+    for (const key of transaction.dirtyArchives) {
+      const slash = key.indexOf("/");
+      const ledgerId = key.slice(0, slash);
+      const pointerId = key.slice(slash + 1);
+      const before = state.beforeArchives.get(key);
+      const current = state.archives.get(key);
+      db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ?").run(
+        ledgerId,
+        pointerId,
+      );
+      this.recordGenericAccess(
+        measurement,
+        "archived_items",
+        "write",
+        { kind: "keys", keys: [key] },
+        (before?.items ?? []).map((item) => `${ledgerId}:${pointerId}:${item.id}`),
+      );
+      for (const item of before?.items ?? []) archivedDeletes.push({ ledgerId, itemId: item.id });
+      if (current === undefined) {
         db.query("DELETE FROM archive_pointers WHERE ledger = ? AND id = ?").run(
           ledgerId,
           pointerId,
         );
-        if (current === undefined) continue;
-        const pointer = ledgers
-          .get(ledgerId)
-          ?.archivePointers.find((candidate) => candidate.id === pointerId);
-        if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
-        db.query(
-          "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
-        ).run(ledgerId, pointerId, pointer.summary, pointer.title, pointer.status, this.now());
-        const insert = db.query(
-          `INSERT INTO archived_items (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        this.recordGenericAccess(
+          measurement,
+          "archive_pointers",
+          "write",
+          { kind: "primary-key", keys: [key] },
+          before === undefined ? [] : [key],
         );
-        for (const item of current.items) {
-          insert.run(
-            ledgerId,
-            pointerId,
-            item.id,
-            item.milestoneId,
-            item.status,
-            JSON.stringify(item.fields),
-            item.createdAt,
-            item.updatedAt,
-            item.author ?? null,
-            item.session ?? null,
-          );
-        }
+        continue;
       }
-      return {
-        result,
-        dirtyLedgers: [...transaction.dirtyLedgers],
-        archivedChanged: transaction.dirtyArchives.size > 0,
+      const pointer = state.ledgers
+        .get(ledgerId)
+        ?.archivePointers.find(({ id }) => id === pointerId);
+      if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
+      db.query(
+        `INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ledger, id) DO UPDATE SET
+           summary = excluded.summary, title = excluded.title, status = excluded.status`,
+      ).run(ledgerId, pointerId, pointer.summary, pointer.title, pointer.status, this.now());
+      this.recordGenericAccess(
+        measurement,
+        "archive_pointers",
+        "write",
+        { kind: "primary-key", keys: [key] },
+        [key],
+      );
+      const insert = db.query(
+        `INSERT INTO archived_items (
+           ledger, pointer_id, id, milestone_id, status, fields_json,
+           created_at, updated_at, author, session
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const item of current.items) {
+        insert.run(
+          ledgerId,
+          pointerId,
+          item.id,
+          item.milestoneId,
+          item.status,
+          JSON.stringify(item.fields),
+          item.createdAt,
+          item.updatedAt,
+          item.author ?? null,
+          item.session ?? null,
+        );
+        archivedUpserts.push({ ledgerId, item: cloneItem(item) });
+      }
+      this.recordGenericAccess(
+        measurement,
+        "archived_items",
+        "write",
+        { kind: "keys", keys: [key] },
+        current.items.map((item) => `${ledgerId}:${pointerId}:${item.id}`),
+      );
+    }
+
+    return { activeUpserts, activeDeletes, archivedUpserts, archivedDeletes };
+  }
+
+  async runAtomicGenericMutation<T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+    _readRoots?: () => Promise<WorksetRootsEpoch>,
+    suppliedMeasurement?: SqliteOperationMeasurement,
+    accessScope?: SqliteOperationAccessScope,
+  ): Promise<T> {
+    this.assertInit();
+    const measurement = suppliedMeasurement ?? this.beginObservedOperation("generic_mutation");
+    const ownsMeasurement = suppliedMeasurement === undefined && measurement !== undefined;
+    if (ownsMeasurement) measurement.setOperation("generic-mutation");
+    try {
+      const write = () => {
+        const state = this.loadGenericMutationState(measurement, accessScope);
+        const rootsRow = this.db()
+          .query("SELECT epoch, roots_json FROM workset_state WHERE id = 1")
+          .get() as { epoch: number; roots_json: string } | null;
+        this.recordGenericAccess(
+          measurement,
+          "workset_state",
+          "read",
+          { kind: "singleton", keys: ["1"] },
+          rootsRow === null ? [] : ["1"],
+        );
+        const roots: WorksetRootsEpoch =
+          rootsRow === null
+            ? { roots: [], epoch: 0 }
+            : {
+                roots: JSON.parse(rootsRow.roots_json) as string[],
+                epoch: rootsRow.epoch,
+              };
+        const transaction = createGenericMutationTransaction({
+          ledgers: state.ledgers,
+          archives: state.archives,
+          now: this.now,
+        });
+        const result = mutate(transaction.tx, roots);
+        const projectionDelta = this.persistGenericMutationState(state, transaction, measurement);
+        return {
+          result,
+          dirtyLedgers: [...transaction.dirtyLedgers],
+          archivedChanged: transaction.dirtyArchives.size > 0,
+          projectionDelta,
+        };
       };
-    });
-    for (const ledgerId of this.enumerate()) {
-      this.rebuildLedgerIndexActive(ledgerId);
+      const retryLimit = WRITE_TXN_MAX_ATTEMPTS;
+      const outcome = immediateWriteTransaction(this.db(), write, retryLimit, measurement);
+      const maintainProjection = (): void => {
+        try {
+          for (const { ledgerId, itemId } of outcome.projectionDelta.activeDeletes) {
+            this.searchIndex.removeActiveDoc(ledgerId, itemId);
+          }
+          for (const { ledgerId, item } of outcome.projectionDelta.activeUpserts) {
+            this.indexUpsertActive(ledgerId, item);
+          }
+          for (const { ledgerId, itemId } of outcome.projectionDelta.archivedDeletes) {
+            this.searchIndex.removeArchivedDoc(ledgerId, itemId);
+          }
+          for (const { ledgerId, item } of outcome.projectionDelta.archivedUpserts) {
+            this.searchIndex.upsertArchivedDoc(ledgerId, cloneItem(item));
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`LedgerStore: FTS generic projection threw: ${message}\n`);
+        }
+      };
+      if (measurement === undefined) maintainProjection();
+      else measurement.measure("projectionMs", maintainProjection);
+      const notify = (): void => {
+        for (const ledgerId of outcome.dirtyLedgers) {
+          this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
+        }
+      };
+      if (measurement === undefined) notify();
+      else measurement.measure("notificationMs", notify);
+      if (ownsMeasurement) measurement.finish("success");
+      return outcome.result;
+    } catch (error) {
+      if (ownsMeasurement) measurement.finish("error");
+      throw error;
     }
-    for (const ledgerId of outcome.dirtyLedgers) {
-      if (outcome.archivedChanged) this.refreshLedgerIndexArchived(ledgerId);
-      this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
-    }
-    return outcome.result;
   }
 
   private reachPlanSerializationBoundary(contender: PlanLifecycleSerializationContender): void {
@@ -1804,9 +2435,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     // D283: archived existence for plan-publish G80 parity with applyCreateItem.
     const archivedIds = new Map<string, Set<string>>();
-    const archivedRows = this.db()
-      .query("SELECT ledger, id FROM archived_items")
-      .all() as Array<{ ledger: string; id: string }>;
+    const archivedRows = this.db().query("SELECT ledger, id FROM archived_items").all() as Array<{
+      ledger: string;
+      id: string;
+    }>;
     for (const row of archivedRows) {
       let set = archivedIds.get(row.ledger);
       if (set === undefined) {
@@ -2138,9 +2770,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const registry = buildPrefixRegistry(
       rows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
     );
-    const schemas = new Map(
-      rows.map((r) => [r.name, JSON.parse(r.schema_json) as LedgerSchema]),
-    );
+    const schemas = new Map(rows.map((r) => [r.name, JSON.parse(r.schema_json) as LedgerSchema]));
     const activeQ = db.query("SELECT 1 FROM items WHERE ledger = ? AND id = ? LIMIT 1");
     const archivedQ = db.query("SELECT 1 FROM archived_items WHERE ledger = ? AND id = ? LIMIT 1");
     const archivedStatusQ = db.query(
@@ -2352,11 +2982,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // FILES — T529 materialises ArchiveContent from archived_items rows —
       // but the ArchivePointer shape carries the fs-convention locator.
       archivePointers: pointerRows.map((p): ArchivePointer => ({
-          id: p.id,
-          path: `./archive/${name}/${p.id}.md`,
-          summary: p.summary,
-          title: p.title,
-          status: p.status,
+        id: p.id,
+        path: `./archive/${name}/${p.id}.md`,
+        summary: p.summary,
+        title: p.title,
+        status: p.status,
       })),
     };
   }
