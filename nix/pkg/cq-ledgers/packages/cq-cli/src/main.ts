@@ -45,8 +45,6 @@ import {
   createSqliteWorksetStore,
   openExistingLedgerDb,
   XDG_DB_FILENAME,
-  type LedgerStore,
-  type ResetSummary,
 } from "@cq/ledger";
 import { CQ_CONFIG_FILENAME, loadConfig, resolveGlobalConfigPath } from "@cq/config";
 import {
@@ -81,7 +79,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "config", "stats", "log", "backup", "restore", "migrate", "gate", "ledger", "dispatch-recovery"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "advance-gate", "predicates", "counts", "config", "stats", "log", "backup", "restore", "migrate", "gate", "ledger", "dispatch-recovery"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -155,15 +153,7 @@ export interface SubcommandArgs {
    * `$CLAUDE_CODE_SESSION_ID`); other subcommands ignore it.
    */
   session: string | null;
-  /**
-   * `--to <value>`: `migrate`'s target-leg selector (T731) — the RAW string
-   * value, unvalidated here (mirrors `--session`'s leniency, and matters for
-   * the RETIRED `move-ledger` subcommand, which also recognised a `--to
-   * <local|git>` flag it now ignores — see move-ledger.test.ts's "old flags
-   * ignored" contract). `runMigrateCmd` is the ONE place that validates it
-   * against `"remote"` and refuses the retired `"postgres"`. `null` when the
-   * flag is absent.
-   */
+  /** Raw destination selector; runMigrateCmd requires "remote". */
   to: string | null;
 }
 
@@ -193,10 +183,8 @@ export const USAGE = [
   "commands:",
   "  init        [--cwd <path>] [--force] [--global] initialise the canonical ledger set",
   "                                                  --global scaffolds only the XDG global cq.toml",
-  "  reset       [--cwd <path>] [--yes|-y]           backup + reinitialise the ledgers (destructive)",
+  "  reset       [--cwd <path>] [--yes|-y]           reset the remote tenant (destructive)",
   "  erase       [--cwd <path>] [--yes|-y]           remove the ledger tree (destructive)",
-  "  move-ledger                                     RETIRED (T505): the fs<->git-object transplant",
-  "                                                  is superseded by `cq migrate` (legacy -> xdg)",
   "  advance-gate [--cwd <path>] [--session <id>]    emit the neutral /cq:advance stop-gate verdict",
   "                                                  JSON (block + reason + predicates) to stdout;",
   "                                                  exit 0 = allow, non-zero = block.",
@@ -224,7 +212,7 @@ export const USAGE = [
   "                                                  primary-store-local telemetry, outside",
   "                                                  cq backup/restore.",
   "  log put <src>|--stdin --dest logs/<rel> [--cwd <path>]",
-  "                                                  write a log file into .cq/logs/<rel>;",
+  "                                                  write a log into the configured primary;",
   "                                                  source is a local file path OR --stdin;",
   "                                                  --dest must be under logs/ (no escapes).",
   "  backup      [--cwd <path>]                      export a human-readable .cq dump of the",
@@ -235,20 +223,11 @@ export const USAGE = [
   "                                                  remote tenant via project-admin import;",
   "                                                  disaster recovery, no merge; refuses a",
   "                                                  non-empty target without --yes.",
-  "  migrate     [--cwd <path>] [--yes|-y] [--to remote]",
-  "                                                  one-shot migration; default (no --to): the",
-  "                                                  LEGACY backend cq.toml names (fs .cq/ |",
-  "                                                  git-object orphan ref), state AND logs, INTO",
-  "                                                  the out-of-tree xdg primary; flips [ledger]",
-  "                                                  backend to xdg; refuses a non-empty target",
-  "                                                  without --yes. `--to remote` (requires",
-  "                                                  explicit backend='xdg'): uploads the xdg",
-  "                                                  primary through project-admin MCP",
-  "                                                  (CQ_LEDGER_SERVER_URL +",
-  "                                                  CQ_LEDGER_REMOTE_ADMIN_TOKEN) and flips",
-  "                                                  backend to remote. `--to postgres` is",
-  "                                                  retired. Either leg leaves its source",
-  "                                                  untouched.",
+  "  migrate     [--cwd <path>] --to remote",
+  "                                                  upload the explicit xdg primary through",
+  "                                                  project-admin MCP (CQ_LEDGER_SERVER_URL +",
+  "                                                  CQ_LEDGER_REMOTE_ADMIN_TOKEN), then flip",
+  "                                                  backend to remote. Source data is retained.",
   "  gate run --worktree <path> --command-cwd <path> [--deadline <ISO-8601>] -- <command...>",
   "                                                  run one bounded process group under the",
   "                                                  canonical Git-worktree exclusive gate.",
@@ -417,16 +396,11 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
     await fs.writeFile(configPath, CQ_TOML_TEMPLATE, "utf8");
   }
 
-  // Route through the backend-selecting factory (T357): for backend='git-object'
-  // this validates the git env (fail-fast) and installs the idempotent
-  // git-backend .gitignore block BEFORE seeding the orphan ref, so a fresh
-  // git-object ledger's docs/ is gitignored from the first write. backend='xdg'
-  // (T501, the new fresh-init default) resolves a git-identity-keyed store under
-  // the XDG state dir — a repo with no git identity (no commits, no git at all,
-  // or a shallow clone) FAILS FAST here with an actionable ProjectKeyResolutionError
-  // pointing at [ledger].projectId (propagated to the caller; see main()'s
-  // top-level `cq: fatal: <message>` handler). backend='fs' (still selectable via
-  // an existing/explicit cq.toml) is byte-identical to the historical FsLedgerStore.init().
+  const { backend } = resolveLedgerBackend(args.cwd);
+  if (backend !== "xdg" && backend !== "remote") {
+    io.err("cq init: unsupported ledger backend; select xdg or remote.");
+    return { exitCode: EXIT_USAGE };
+  }
   const { store } = await createManagementLedgerStore(args.cwd);
   await store.dispose();
   const ledgerNames = CANONICAL_LEDGERS.map((c) => c.name).join(", ");
@@ -445,19 +419,6 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
   return { exitCode: 0 };
 }
 
-/**
- * `cq reset` (Q109): confirm via the shared destructive-op policy, then
- * wipe-and-reinit the ledgers at `args.cwd` via the public
- * {@link FsLedgerStore.reset}, print the backup dir + per-ledger summary, and
- * return an exit code. The `reset()` method itself STAYS in @cq/ledger — this
- * wrapper only owns confirmation, IO, and the exit code (relocated from the old
- * ledger-mcp `--reset` short-circuit).
- *
- * Confirmation policy (shared with `erase`, see ./confirm.ts):
- *   - `--yes`            → proceed unattended (no prompt).
- *   - TTY, no `--yes`    → prompt; proceed only on a `y`/`Y` answer.
- *   - non-TTY, no `--yes`→ REFUSE (exit 2) — never wipe a tree silently.
- */
 async function runResetRemote(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const decision = await confirmDestructive(
     args.yes,
@@ -501,11 +462,6 @@ async function runEraseRemote(args: SubcommandArgs, io: DispatchIo): Promise<Sub
 }
 
 export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
-  // backend='postgres' (T583, Q275 context) is scoped to ONE tenant's rows in
-  // a SHARED database — routed to its own handler below rather than the
-  // generic isResettable dispatch: the confirmation message must name the
-  // tenant (display name + project_key) BEFORE createLedgerStore's init()
-  // would auto-register a not-yet-registered one as a side effect.
   const { backend: preflightBackend } = resolveLedgerBackend(args.cwd);
   if (preflightBackend === "remote") {
     return runResetRemote(args, io);
@@ -513,7 +469,7 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
 
   const decision = await confirmDestructive(
     args.yes,
-    `Reset ledgers at ${args.cwd}? Backup -> ${LEDGER_STORAGE_DIRNAME}/.backup/ [y/N] `,
+    `Reset ledgers at ${args.cwd}? [y/N] `,
     `cq reset: refusing to reset ledgers at ${args.cwd} without confirmation; ` +
       `re-run with --yes to reset non-interactively.`,
     io.confirm,
@@ -522,30 +478,9 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
     return { exitCode: decision.exitCode };
   }
 
-  // Construct via the backend-selecting factory (T357). reset()'s backup→reinit
-  // semantics (docs/.backup/) are FS-specific; a store that does not implement
-  // reset is rejected with a clear error rather than a silent no-op.
-  const { store, backend } = await createManagementLedgerStore(args.cwd);
-  try {
-    if (!isResettable(store)) {
-      io.err(
-        `cq reset: [ledger] backend='${backend}' does not support reset ` +
-          `(backup→reinit is filesystem-specific).`,
-      );
-      return { exitCode: EXIT_USAGE };
-    }
-    const summary = await store.reset();
-    io.out(`cq reset: reset ledgers at ${args.cwd}`);
-    io.out(`  backup: ${summary.backupDir}`);
-    for (const { name, itemCount } of summary.ledgers) {
-      io.out(`  ${name}: ${itemCount} item(s) backed up, reinitialised empty`);
-    }
-  } finally {
-    await store.dispose();
-  }
-  return { exitCode: 0 };
+  io.err("cq reset: local XDG storage does not support reset; no state was changed.");
+  return { exitCode: EXIT_USAGE };
 }
-
 
 /**
  * `cq erase` (Q110, the MOST destructive subcommand): DESTROY everything the
@@ -564,12 +499,10 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  *
  * It is NOT a blind wipe of `<root>/.cq/`, and NOT of `<root>`: any sibling
  * under the root (source, project docs/, etc.)
- * survives. Unlike `reset`, erase does NOT call init() afterward — the suite is
+ * survives. Erase does NOT call init() afterward — the suite is
  * left fully un-initialised.
  *
- * No FsLedgerStore is constructed (which would acquire the FS lock and recreate
- * `.cq/`): erase removes `.locks/` itself, so holding a lock while deleting it
- * would be self-defeating. The deletes go straight through `node:fs`.
+ * No store initialization runs during erase, so deleted state cannot be recreated.
  *
  * backend='xdg' (T501): the ledger's data lives OUT OF TREE under the XDG state
  * dir (`resolveStateDirBase(projectKey)`), not under `<root>/.cq/`. Erase
@@ -755,25 +688,6 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
 }
 
 /**
- * `cq move-ledger` — RETIRED (T505). The fs<->git-object transplant it
- * performed (T354) migrated between two LEGACY primaries that are no longer
- * selectable at runtime; `cq migrate` (legacy → xdg) supersedes it. The
- * subcommand token is kept recognised so an old invocation gets a pointed,
- * actionable error instead of the generic usage dump.
- */
-export async function runMoveLedgerCmd(
-  _args: SubcommandArgs,
-  io: DispatchIo,
-): Promise<SubcommandOutcome> {
-  io.err(
-    "cq move-ledger: RETIRED (T505) — the fs<->git-object transplant is superseded by " +
-      "`cq migrate`, the one-shot migration of the legacy backend cq.toml names into the " +
-      "out-of-tree xdg primary. Run `cq migrate [--cwd <path>] [--yes]` instead.",
-  );
-  return { exitCode: EXIT_USAGE };
-}
-
-/**
  * `cq advance-gate` (T362): a NATIVE subcommand emitting the harness-agnostic
  * `/cq:advance` stop-gate verdict JSON to stdout, with exit 0 = allow /
  * non-zero = block. The verdict derivation lives in ./advanceGate.ts; this thin
@@ -908,9 +822,7 @@ export async function runLogCmd(
  * logs area (Q247), or postgres's tenant rows + tenant-keyed `logs` table via
  * the store-agnostic `buildBackupDump`/T575 `listLogs` seam — into today's
  * `.cq/` layout, SCOPED to the connecting project/tenant (never the whole
- * postgres database — that remains `pg_dump`'s job). The fs / git-object
- * backends remain genuinely unsupported: they already keep their state in
- * that human-readable form in place, so there is nothing to dump.
+ * postgres database — that remains `pg_dump`'s job).
  */
 export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const { backend, branch } = resolveLedgerBackend(args.cwd);
@@ -1037,7 +949,7 @@ async function runRestoreRemote(
  * shared database.
  *
  * Refuses the SAME two ways `cq backup` does (no configured target; a
- * genuinely unsupported backend — fs / git-object), plus the destructive-op
+ * genuinely unsupported backend — not xdg or remote), plus the destructive-op
  * confirmation policy (shared with `reset`/`erase`) when the primary/tenant is
  * non-empty:
  *   - `--yes`             → proceed unattended (no prompt).
@@ -1133,20 +1045,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
 }
 
 
-/**
- * `cq migrate` (T504 / Q243, remote owner T731 / T736): the explicit one-shot
- * LEGACY (fs | git-object) → xdg migration, or (`--to remote`) the xdg →
- * cq serve tenant migration. The full logic lives in ./migrate.ts; this thin
- * wrapper bridges {@link SubcommandArgs} to its {@link MigrateArgs} and
- * threads the dispatcher IO (out/err + the shared confirmation IO).
- *
- * `args.to` is the RAW, unvalidated `--to` value (parseSubcommandArgs is
- * shared across every subcommand, so it stays lenient — see its doc). THIS
- * is the one place that validates it: `"remote"` selects the xdg -> cq serve
- * leg, absent (`null`) selects the default leg, `"postgres"` is refused as
- * retired, and any OTHER value is a usage error naming the one recognised
- * value.
- */
+/** Bridge the explicit remote migration to the dispatcher. */
 export async function runMigrateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
@@ -1157,7 +1056,11 @@ export async function runMigrateCmd(
     );
     return { exitCode: EXIT_USAGE };
   }
-  if (args.to !== null && args.to !== "remote") {
+  if (args.to === null) {
+    io.err("cq migrate: requires --to remote.");
+    return { exitCode: EXIT_USAGE };
+  }
+  if (args.to !== "remote") {
     io.err(`cq migrate: --to only recognises "remote" (got "${args.to}").`);
     return { exitCode: EXIT_USAGE };
   }
@@ -1165,16 +1068,6 @@ export async function runMigrateCmd(
     { cwd: args.cwd, yes: args.yes, to: args.to },
     { out: io.out, err: io.err, confirm: io.confirm },
   );
-}
-
-/** A store exposing the FS-specific backup→reinit `reset()` (FsLedgerStore). */
-interface ResettableStore extends LedgerStore {
-  reset(): Promise<ResetSummary>;
-}
-
-/** Duck-typed guard: does `store` expose the FS-only `reset()` method? */
-function isResettable(store: LedgerStore): store is ResettableStore {
-  return typeof (store as { reset?: unknown }).reset === "function";
 }
 
 /**
@@ -1203,7 +1096,6 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   init: runInit,
   reset: runReset,
   erase: runErase,
-  "move-ledger": runMoveLedgerCmd,
   "advance-gate": runAdvanceGateCmd,
   predicates: runPredicatesCmd,
   counts: runCountsCmd,

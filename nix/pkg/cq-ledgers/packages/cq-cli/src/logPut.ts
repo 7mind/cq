@@ -14,9 +14,7 @@
  *   - `<src>`            positional source path (required when `--stdin`
  *                        absent).
  *
- * T406 wires dispatch + parsing + validation.
- * T410 implements the fs-backend write path (redaction + JSONL validation +
- * atomic write to <root>/.cq/logs/<rel>).
+ * Redacts and validates artifacts before writing to XDG storage or the remote service.
  */
 
 import { promises as nodeFs } from "node:fs";
@@ -27,30 +25,14 @@ import {
   redactSecrets,
   validateJsonl,
   atomicWrite,
-  GitPlumbing,
-  StaleRefError,
-  LEDGER_STORAGE_DIRNAME,
   LEDGER_LOGS_DIRNAME,
   resolveProjectKey,
   resolveLogsDir,
-  type TreeEntry,
 } from "@cq/ledger";
 import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for a usage / validation error. */
 export const EXIT_USAGE = 2;
-
-/** Regular-file git mode for a log blob (mirrors GitPersistence's BLOB_MODE). */
-const BLOB_MODE = "100644";
-
-/**
- * Bounded retries for the orphan-ref CAS read-modify-write. `cq log put` runs
- * OUTSIDE the server's per-ledger lock, so a concurrent {@link GitPersistence}
- * advance (or a peer `log put`) can move the ref between our read and our CAS,
- * surfacing as a {@link StaleRefError}. We re-read (expectedOld + entries) and
- * rebuild on each stale CAS up to this many attempts before giving up.
- */
-const MAX_CAS_ATTEMPTS = 8;
 
 /** IO seam: stdout / stderr line sinks + stdin reader (threaded from the dispatcher). */
 export interface LogPutIo {
@@ -198,44 +180,16 @@ export function parseLogPutArgs(cwd: string, argv: readonly string[]): LogPutArg
   return { cwd, stdin: useStdin, src, dest: validatedDest };
 }
 
-/**
- * Run `log put`.  Validates the parsed arguments (which have already been
- * checked by {@link parseLogPutArgs}) and performs the write.
- *
- * T406 implements dispatch + parsing + validation.
- * T410 implements the fs-backend write path:
- *   1. Resolve backend via resolveLedgerBackend(cwd).
- *   2. Read source (file or stdin).
- *   3. Apply redactSecrets.
- *   4. If dest ends in .jsonl, validateJsonl — fail with line+reason on error.
- *   5. Atomically write to <cwd>/.cq/<dest>.
- *   6. Print the written absolute path.
- *
- * T413 implements the git-object backend write path: same redaction + strict-
- * JSONL validation, then a CAS-commit of the blob at tree path `<dest>` on the
- * orphan ref `refs/heads/<branch>` under a BOUNDED StaleRefError-retry loop
- * (this runs OUTSIDE the server's per-ledger lock).
- *
- * T499 implements the xdg backend write path: same redaction + strict-JSONL
- * validation, then an atomic write under the project's out-of-tree logs area
- * (`resolveLogsDir(projectKey)`, T495 layout) — the sibling of the xdg
- * primary store's `state/` sub-directory, keyed by the SAME `projectKey` (a
- * committed `[ledger].projectId` override, else the repo's first commit SHA;
- * see projectKey.ts) so every worktree/clone of one repo lands on the same
- * out-of-tree logs area.
- *
- * `gitFactory` is an injection seam for the git-object branch: tests pass a
- * factory that wraps a {@link GitPlumbing} bound to a throwaway repo (and may
- * simulate a {@link StaleRefError} on the first CAS) without a cq.toml-resolved
- * production runner. Production omits it and the real runner is built from
- * `args.cwd` + its `.git` dir.
- */
+/** Redact and validate a log before writing it to the selected supported store. */
 export async function runLogPut(
   args: LogPutArgs,
   io: LogPutIo,
-  gitFactory?: (root: string) => GitPlumbing,
 ): Promise<LogPutOutcome> {
-  const { backend, branch } = resolveLedgerBackend(args.cwd);
+  const { backend } = resolveLedgerBackend(args.cwd);
+  if (backend !== "xdg" && backend !== "remote") {
+    io.err("cq log put: unsupported ledger backend; select xdg or remote.");
+    return { exitCode: EXIT_USAGE };
+  }
 
   // --- Read source ---
   let raw: string;
@@ -276,105 +230,7 @@ export async function runLogPut(
     return { exitCode: 0 };
   }
 
-  if (backend === "git-object") {
-    return runLogPutGitObject(args, io, redacted, branch, gitFactory);
-  }
-
-  if (backend === "xdg") {
-    return runLogPutXdg(args, io, redacted);
-  }
-
-  // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
-
-  // --- Resolve the on-disk destination path ---
-  const destAbs = path.join(args.cwd, LEDGER_STORAGE_DIRNAME, args.dest);
-
-  // Defense-in-depth: ensure the resolved path stays under .cq/logs/ even
-  // if validateLogDest was somehow bypassed.
-  const storageLogsAbs = path.join(args.cwd, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_DIRNAME);
-  const resolved = path.resolve(destAbs);
-  if (!resolved.startsWith(storageLogsAbs + path.sep) && resolved !== storageLogsAbs) {
-    io.err(
-      `cq log put: resolved destination "${resolved}" escapes ${LEDGER_STORAGE_DIRNAME}/${LEDGER_LOGS_DIRNAME}/ — rejected`,
-    );
-    return { exitCode: 1 };
-  }
-
-  // --- Atomic write ---
-  await atomicWrite(destAbs, redacted);
-
-  io.out(destAbs);
-  return { exitCode: 0 };
-}
-
-/**
- * The git-object backend write path (T413). Commits `content` as a blob at the
- * storage-relative tree path `args.dest` (the orphan tree is rooted at the
- * storage CONTENTS, so the tree path is `args.dest` verbatim — NO `.cq/` prefix,
- * just as {@link GitPersistence} stores `logs/<rel>`) on `refs/heads/<branch>`.
- *
- * Mirrors {@link GitPersistence.advance}'s read-modify-write EXACTLY so foreign
- * tree paths survive: expectedOld = readRef(ref); current = lsTreeEntries(ref);
- * sha = hashObject(content); rebuild entries with `<dest>` replaced/added;
- * tree = writeTree(entries); commit = commitTree(tree, expectedOld); CAS
- * updateRef(ref, commit, expectedOld). Because this runs OUTSIDE the server's
- * per-ledger lock, the read→CAS cycle is wrapped in a BOUNDED retry loop that
- * RE-READS (expectedOld + entries) and rebuilds on a {@link StaleRefError}, so a
- * concurrent advance's foreign paths survive and the log entry is not clobbered.
- */
-async function runLogPutGitObject(
-  args: LogPutArgs,
-  io: LogPutIo,
-  content: string,
-  branch: string,
-  gitFactory?: (root: string) => GitPlumbing,
-): Promise<LogPutOutcome> {
-  const ref = `refs/heads/${branch}`;
-  const git =
-    gitFactory !== undefined
-      ? gitFactory(args.cwd)
-      : GitPlumbing.withCwd(args.cwd, path.join(args.cwd, ".git"));
-
-  // The blob is content-addressed: its sha is stable across retries, so we hash
-  // once outside the loop (a re-hash on retry would produce the identical sha).
-  const blobSha = await git.hashObject(content);
-  const treePath = args.dest;
-  const message = `ledger: log put ${treePath}`;
-
-  let lastErr: StaleRefError | undefined;
-  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-    // RE-READ expectedOld + entries every attempt so a concurrent advance's
-    // foreign paths (and other tree paths) are carried forward on a retry.
-    const expectedOld = await git.readRef(ref);
-    const current: TreeEntry[] =
-      expectedOld === null ? [] : await git.lsTreeEntries(ref);
-
-    // Rebuild entries with our path replaced/added (mirrors advance()).
-    const kept = current.filter((e) => e.path !== treePath);
-    kept.push({ mode: BLOB_MODE, sha: blobSha, path: treePath });
-
-    const tree = await git.writeTree(kept);
-    const commit = await git.commitTree(tree, expectedOld, message);
-    try {
-      await git.updateRef(ref, commit, expectedOld);
-      io.out(`${ref}:${treePath}`);
-      return { exitCode: 0 };
-    } catch (e) {
-      if (e instanceof StaleRefError) {
-        // A concurrent writer moved the ref between our read and the CAS.
-        // Re-read + rebuild on the next iteration so we do not clobber the peer.
-        lastErr = e;
-        continue;
-      }
-      throw e;
-    }
-  }
-
-  io.err(
-    `cq log put: ref ${ref} kept moving under concurrent writers; gave up after ` +
-      `${MAX_CAS_ATTEMPTS} CAS attempts${lastErr ? ` (last: ${lastErr.message})` : ""}`,
-  );
-  return { exitCode: 1 };
+  return runLogPutXdg(args, io, redacted);
 }
 
 /** `logs/` prefix stripped from `args.dest` before joining under the resolved logs dir. */
@@ -387,8 +243,7 @@ const LOGS_PREFIX = `${LEDGER_LOGS_DIRNAME}/`;
  * out-of-tree logs area regardless of which worktree/clone it runs from, then
  * atomically writes the (already redacted + validated) `content` under
  * `resolveLogsDir(projectKey)/<dest with the leading "logs/" stripped>` —
- * mirroring the fs branch's `<root>/.cq/<dest>` layout, just rooted at the
- * out-of-tree logs dir instead of `<root>/.cq`.
+ * keeping log artifacts outside the working tree.
  *
  * `resolveProjectKey` lets {@link ProjectKeyResolutionError} propagate as the
  * fail-fast (a shallow clone or a non-git/no-commit root has no stable

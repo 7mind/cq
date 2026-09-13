@@ -18,6 +18,9 @@ import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dispatch, EXIT_USAGE, USAGE, type ConfirmIo, type DispatchIo } from "../src/main.js";
 import { parseLogPutArgs, validateLogDest } from "../src/logPut.js";
+import { useIsolatedXdgState, writeXdgConfig } from "./xdgFixture.js";
+
+useIsolatedXdgState();
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -31,9 +34,7 @@ afterAll(async () => {
 async function makeTmpDir(): Promise<string> {
   const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-test-"));
   tmpDirs.push(dir);
-  // Pin the legacy fs backend explicitly: the no-cq.toml default is xdg (K117),
-  // and this routing test asserts the in-tree fs write path.
-  await fsPromises.writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
+  await writeXdgConfig(dir);
   return dir;
 }
 

@@ -85,7 +85,7 @@ describe("dispatch", () => {
     expect(io.errs.join("\n")).toBe(USAGE);
   });
 
-  it("USAGE text includes all four modes and all six native subcommands", () => {
+  it("USAGE text includes all four modes and current native subcommands", () => {
     // modes
     expect(USAGE).toContain("mcp");
     expect(USAGE).toContain("--management");
@@ -96,7 +96,7 @@ describe("dispatch", () => {
     expect(USAGE).toContain("init");
     expect(USAGE).toContain("reset");
     expect(USAGE).toContain("erase");
-    expect(USAGE).toContain("move-ledger");
+    expect(USAGE).toContain("migrate");
     expect(USAGE).toContain("advance-gate");
     expect(USAGE).toContain("log put");
   });
@@ -219,9 +219,7 @@ describe("parseSubcommandArgs", () => {
       expect(parseSubcommandArgs(["--to", "postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "postgres" });
       expect(parseSubcommandArgs(["--to=postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "postgres" });
       // --to stays UNVALIDATED at this shared-parser level (leniency, like
-      // --session) — retired subcommands (e.g. move-ledger) recognise other
-      // --to values that must keep parsing without throwing; only
-      // runMigrateCmd validates against "postgres".
+      // --session); runMigrateCmd validates the explicit remote destination.
       expect(parseSubcommandArgs(["--to", "git"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "git" });
       expect(parseSubcommandArgs(["--to=local"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "local" });
     } finally {
@@ -303,8 +301,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
     // Pin backend='xdg' with an explicit projectId (this plain tmp dir has no
     // git identity) and point XDG_STATE_HOME at a temp dir — irrelevant to
     // what THIS test asserts (dispatch routing, not backend selection), but
-    // required for runInit's store construction to succeed (T505: the legacy
-    // fs backend no longer constructs).
+    // required for runInit's XDG store construction to succeed.
     await writeFile(
       path.join(root, CQ_CONFIG_FILENAME),
       '[ledger]\nbackend = "xdg"\nprojectId = "cq-t389-init"\n',

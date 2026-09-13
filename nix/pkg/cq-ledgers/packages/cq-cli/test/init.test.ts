@@ -1,10 +1,6 @@
 /**
  * T189 + T338: `cq init` — idempotent create-empty-ledgers-if-none + cq.toml write.
  *
- * (a)/(b) — T505 as relaxed by K117: a cq.toml pinning the LEGACY backend='fs'
- * takes the warn-and-open path — `cq init` bootstraps the in-tree fs store
- * (as it did pre-T505) while a stderr deprecation warning names `cq migrate`.
- *
  * T338 asserts, on a truly FRESH init (git repo + XDG_STATE_HOME override, so
  * the new xdg default resolves and nothing touches the real machine state):
  *   (c) `cq init` on a fresh root creates cq.toml whose content === CQ_TOML_TEMPLATE.
@@ -12,8 +8,8 @@
  *   (e) `cq init --force` overwrites a modified cq.toml back to the template.
  */
 
-import { describe, it, expect, afterAll, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
+import { describe, it, expect, afterAll, beforeEach, afterEach } from "bun:test";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -25,7 +21,8 @@ import {
   type DispatchIo,
 } from "../src/main.js";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
-import { LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
+import { createLedgerStore } from "@cq/ledger";
+import { writeXdgConfig } from "./xdgFixture.js";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
@@ -71,25 +68,22 @@ async function gitRepo(): Promise<string> {
 }
 
 describe("cq init", () => {
-  it("(a/b — K117) backend='fs' pinned: warns DEPRECATED on stderr and bootstraps the in-tree fs store", async () => {
+  it("explicit XDG configuration is retained and initialized", async () => {
     const root = await makeTmpDir();
-    await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
-
-    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    await writeXdgConfig(root);
+    const config = await readFile(path.join(root, CQ_CONFIG_FILENAME), "utf8");
+    const previous = process.env["XDG_STATE_HOME"];
+    process.env["XDG_STATE_HOME"] = await makeTmpDir();
     try {
-      const outcome = await dispatch(["init", "--cwd", root], recordingIo());
-      expect(outcome.exitCode).toBe(0);
-      const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
-      expect(warned).toContain("DEPRECATED");
-      expect(warned).toContain("cq migrate");
+      expect((await dispatch(["init", "--cwd", root], recordingIo())).exitCode).toBe(0);
+      expect(await readFile(path.join(root, CQ_CONFIG_FILENAME), "utf8")).toBe(config);
+      const initialized = await createLedgerStore(root);
+      try { expect(initialized.store.enumerate()).toContain("tasks"); }
+      finally { await initialized.store.dispose(); }
     } finally {
-      stderrSpy.mockRestore();
+      if (previous === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previous;
     }
-
-    // The legacy fs tree WAS bootstrapped (pre-T505 behavior, restored by K117).
-    await expect(
-      stat(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml")),
-    ).resolves.toBeDefined();
   });
 
   describe("on a fresh root (xdg default, T501)", () => {

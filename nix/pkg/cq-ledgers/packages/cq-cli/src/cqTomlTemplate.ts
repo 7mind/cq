@@ -145,9 +145,7 @@ export const CQ_TOML_TEMPLATE: string = `\
 
 # Ledger storage backend — "xdg" is the DEFAULT (K117; also what a fresh
 # \`cq init\` writes, T501): the out-of-tree bun:sqlite primary (K102), keyed
-# off this repo's git identity (or [ledger].projectId below). "fs" (in-tree
-# .cq/) and "git-object" are LEGACY, deprecated — selecting one explicitly
-# still works but warns and points at \`cq migrate\`.
+# off this repo's git identity (or [ledger].projectId below).
 # "remote" selects a repository-backed cq serve endpoint; serverUrl is a
 # required, non-secret HTTP(S) URL. Its ordinary bearer secret comes only from
 # CQ_LEDGER_REMOTE_TOKEN and never from this file.

@@ -15,18 +15,20 @@
  *   - safety: an empty root (no .cq/, no cq.toml) REFUSES (exit 2) rather than
  *     silently succeeding.
  *
- * The tree is seeded with FsLedgerStore (the same reader/writer the production
- * path uses) so .cq/.locks/, ledgers.yaml and the active *.md exist for real;
- * the store is disposed before erase so no lock collides.
+ * The tree is a human-readable backup exported from an isolated XDG primary;
+ * the store is disposed before erase.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
+import { createLedgerStore, buildBackupDump, exportBackupInTree, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
 import { dispatch, assertXdgProjectDirScoped, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
+import { useIsolatedXdgState, writeXdgConfig } from "./xdgFixture.js";
+
+useIsolatedXdgState();
 const dirs: string[] = [];
 afterAll(async () => {
   for (const d of dirs) await fs.rm(d, { recursive: true, force: true }).catch(() => undefined);
@@ -50,16 +52,17 @@ async function seedTree(): Promise<{ root: string; storageDir: string; configFil
   const root = await fs.mkdtemp(path.join(tmpdir(), "cq-erase-"));
   dirs.push(root);
 
-  const store = new FsLedgerStore({ root });
-  await store.init();
+  await writeXdgConfig(root);
+  const { store } = await createLedgerStore(root);
   await store.createLedger("ops", opsSchema);
   await store.createMilestone({ id: "M1", title: "m1" });
   await store.createItem("ops", "M1", { status: "done", fields: { headline: "seeded" } });
+  await exportBackupInTree(root, await buildBackupDump(store, null));
   await store.dispose();
 
   const storageDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   // Populate archive/ + logs/ + .backup/ so the test asserts erase removes ALL
-  // of them (the store already wrote .cq/ledgers.yaml, ops.md, .locks/).
+  // of them (the backup already contains ledgers.yaml and ops.md).
   await fs.mkdir(path.join(storageDir, "archive", "ops"), { recursive: true });
   await fs.writeFile(path.join(storageDir, "archive", "ops", "M1.md"), "# archived\n");
   await fs.mkdir(path.join(storageDir, "logs"), { recursive: true });
@@ -69,7 +72,6 @@ async function seedTree(): Promise<{ root: string; storageDir: string; configFil
 
   // The config file at <root>/cq.toml.
   const configFile = path.join(root, "cq.toml");
-  await fs.writeFile(configFile, "[ledger]\nname = \"demo\"\n");
 
   // Sentinel siblings under the root that MUST survive a bounded erase.
   await fs.writeFile(path.join(root, SENTINEL), "do not delete\n");

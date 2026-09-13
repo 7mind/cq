@@ -12,7 +12,7 @@
  *  - invalid JSONL is still rejected (exit non-zero, nothing written, nothing
  *    readable);
  *  - the redaction + strict-JSONL-validation guarantees are shared with the
- *    fs/git-object branches (covered in depth by log-put-fs.test.ts) — this
+ *    content contract (covered in depth by log-put-content.test.ts) — this
  *    file adds the backend-aware xdg-location assertions only.
  *
  * Throwaway git repo (for a stable projectKey) + a throwaway XDG_STATE_HOME;

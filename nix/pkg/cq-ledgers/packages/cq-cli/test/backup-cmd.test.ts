@@ -5,7 +5,7 @@
  *   - refuses (usage error) when `[ledger].backup` is "none"/absent — backups
  *     are OFF by default (Q244) and nothing is ever written;
  *   - refuses for a non-xdg backend (the exporter dumps the out-of-tree
- *     primary; fs/git-object already keep the .cq layout human-readable);
+ *     primary);
  *   - backup="in-tree": exports a parseable dump under `<root>/.cq/`
  *     including the primary log store's artifacts byte-identically (Q247);
  *   - backup="orphan-branch": commits the dump to refs/heads/<branch>.
@@ -103,17 +103,6 @@ describe("cq backup (T502)", () => {
     await expect(fs.stat(path.join(root, ".cq"))).rejects.toThrow();
   });
 
-  it("refuses for a non-xdg backend", async () => {
-    const root = await gitRepo("cq-backup-fs-");
-    await fs.writeFile(
-      path.join(root, "cq.toml"),
-      '[ledger]\nbackend = "fs"\nbackup = "in-tree"\n',
-    );
-    const io = recordingIo();
-    const outcome = await dispatch(["backup", "--cwd", root], io);
-    expect(outcome.exitCode).toBe(EXIT_USAGE);
-    expect(io.errs.join("\n")).toContain("backend='fs'");
-  });
 
   it('backup="in-tree": exports a parseable .cq/ dump including the log artifacts', async () => {
     const root = await gitRepo("cq-backup-intree-");

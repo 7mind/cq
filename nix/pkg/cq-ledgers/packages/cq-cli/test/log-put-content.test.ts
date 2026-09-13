@@ -1,9 +1,8 @@
 /**
- * T410: `cq log put` — fs-backend write path integration tests.
+ * T410: `cq log put` — XDG content and atomic-write contracts.
  *
  * Acceptance:
- *   - With an explicit backend='fs' cq.toml (the no-cq.toml default is xdg
- *     since K117), `cq log put --stdin --dest logs/raw/<name>.jsonl` on a
+ *   - With an isolated XDG primary, `cq log put --stdin --dest logs/raw/<name>.jsonl` on a
  *     transcript containing a fake AKIA… key produces a file whose content
  *     is redacted ([REDACTED:aws-key]) and otherwise byte-identical.
  *   - A malformed (pretty-printed) .jsonl input exits non-zero citing the
@@ -17,7 +16,17 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { runLogPut, parseLogPutArgs, type LogPutIo } from "../src/logPut.js";
-import { LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
+import { resolveLogsDir, resolveProjectKey } from "@cq/ledger";
+import { loadConfig } from "@cq/config";
+import { useIsolatedXdgState, writeXdgConfig } from "./xdgFixture.js";
+
+useIsolatedXdgState();
+
+async function logsDir(root: string): Promise<string> {
+  const projectId = loadConfig(root)?.ledger?.projectId;
+  if (projectId === undefined) throw new Error("XDG fixture projectId missing");
+  return resolveLogsDir(await resolveProjectKey({ repoRoot: root, projectId }));
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,11 +39,9 @@ afterAll(async () => {
 });
 
 async function makeTmpDir(): Promise<string> {
-  const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-fs-"));
+  const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-content-"));
   tmpDirs.push(dir);
-  // Pin the legacy fs backend explicitly: the no-cq.toml default is xdg (K117),
-  // and these tests exercise the in-tree fs write path.
-  await fsPromises.writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
+  await writeXdgConfig(dir);
   return dir;
 }
 
@@ -86,7 +93,7 @@ async function findTmpOrphans(dir: string): Promise<string[]> {
 // Valid JSONL with redaction
 // ---------------------------------------------------------------------------
 
-describe("cq log put fs — .jsonl with redaction", () => {
+describe("cq log put XDG — .jsonl with redaction", () => {
   it("writes redacted content; AKIA key replaced; byte-identical otherwise", async () => {
     const root = await makeTmpDir();
     const realKey = "AKIAIOSFODNN7EXAMPLE";
@@ -112,7 +119,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
     expect(outcome.exitCode).toBe(0);
     expect(io.errs).toEqual([]);
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "20260101-abc.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "20260101-abc.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(expectedRedacted);
 
@@ -120,7 +127,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
     expect(io.outs).toEqual([destAbs]);
 
     // No .tmp orphans.
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 
   it("is idempotent: running again overwrites with same content", async () => {
@@ -136,7 +143,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
     const outcome2 = await runLogPut(args, io2);
     expect(outcome2.exitCode).toBe(0);
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "idem.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "idem.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(rawInput);
   });
@@ -146,7 +153,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
 // Malformed JSONL
 // ---------------------------------------------------------------------------
 
-describe("cq log put fs — malformed .jsonl input", () => {
+describe("cq log put XDG — malformed .jsonl input", () => {
   it("exits non-zero, reports line+reason, writes NOTHING", async () => {
     const root = await makeTmpDir();
     // Pretty-printed JSON is not valid JSONL (multi-line value → second line
@@ -167,11 +174,11 @@ describe("cq log put fs — malformed .jsonl input", () => {
     expect(io.errs.join("\n")).toContain("malformed JSONL");
 
     // The file must NOT have been created.
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "bad.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "bad.jsonl");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
 
     // No .tmp orphans.
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 
   it("does not write partial content on validation failure", async () => {
@@ -185,7 +192,7 @@ describe("cq log put fs — malformed .jsonl input", () => {
 
     expect(outcome.exitCode).not.toBe(0);
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "partial.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "partial.jsonl");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
   });
 });
@@ -194,7 +201,7 @@ describe("cq log put fs — malformed .jsonl input", () => {
 // .md summary: redacted but no JSONL check
 // ---------------------------------------------------------------------------
 
-describe("cq log put fs — .md summary destination", () => {
+describe("cq log put XDG — .md summary destination", () => {
   it("writes redacted content without JSONL validation", async () => {
     const root = await makeTmpDir();
     // Content that would fail JSONL validation (not JSON) but is valid Markdown.
@@ -214,12 +221,12 @@ describe("cq log put fs — .md summary destination", () => {
     expect(outcome.exitCode).toBe(0);
     expect(io.errs).toEqual([]);
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "summary", "20260101.md");
+    const destAbs = path.join(await logsDir(root), "summary", "20260101.md");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(expectedRedacted);
 
     // No .tmp orphans.
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 });
 
@@ -227,7 +234,7 @@ describe("cq log put fs — .md summary destination", () => {
 // From file path (not --stdin)
 // ---------------------------------------------------------------------------
 
-describe("cq log put fs — positional src file path", () => {
+describe("cq log put XDG — positional src file path", () => {
   it("reads from a file, redacts, and writes to dest", async () => {
     const root = await makeTmpDir();
     // Write a source file with a fake AWS key.
@@ -247,13 +254,13 @@ describe("cq log put fs — positional src file path", () => {
 
     expect(outcome.exitCode).toBe(0);
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "from-file.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "from-file.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toContain("[REDACTED:aws-key]");
     expect(written).not.toContain("AKIAIOSFODNN7EXAMPLE");
 
     // No .tmp orphans.
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 });
 
@@ -261,7 +268,7 @@ describe("cq log put fs — positional src file path", () => {
 // Empty / whitespace-only input (T866)
 // ---------------------------------------------------------------------------
 
-describe("cq log put fs — empty input refusal", () => {
+describe("cq log put XDG — empty input refusal", () => {
   it("empty stdin exits 1, cites the refusal, and writes NOTHING (absent, not zero-byte)", async () => {
     const root = await makeTmpDir();
     const io = makeIo("");
@@ -271,9 +278,9 @@ describe("cq log put fs — empty input refusal", () => {
     expect(outcome.exitCode).toBe(1);
     expect(io.errs.join("\n")).toContain("refusing to write an empty log");
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    const destAbs = path.join(await logsDir(root), "x.md");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 
   it("empty stdin to a .jsonl dest is refused BEFORE jsonl validation (validateJsonl passes empty vacuously)", async () => {
@@ -285,9 +292,9 @@ describe("cq log put fs — empty input refusal", () => {
     expect(outcome.exitCode).toBe(1);
     expect(io.errs.join("\n")).toContain("refusing to write an empty log");
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "x.jsonl");
+    const destAbs = path.join(await logsDir(root), "raw", "x.jsonl");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
-    expect(await findTmpOrphans(root)).toEqual([]);
+    expect(await findTmpOrphans(await logsDir(root))).toEqual([]);
   });
 
   it("whitespace-only stdin is refused identically", async () => {
@@ -299,7 +306,7 @@ describe("cq log put fs — empty input refusal", () => {
     expect(outcome.exitCode).toBe(1);
     expect(io.errs.join("\n")).toContain("refusing to write an empty log");
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    const destAbs = path.join(await logsDir(root), "x.md");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
   });
 
@@ -317,7 +324,7 @@ describe("cq log put fs — empty input refusal", () => {
     expect(outcome.exitCode).toBe(1);
     expect(io.errs.join("\n")).toContain("refusing to write an empty log");
 
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    const destAbs = path.join(await logsDir(root), "x.md");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
   });
 
@@ -328,7 +335,7 @@ describe("cq log put fs — empty input refusal", () => {
     const outcome = await runLogPut(args, io);
 
     expect(outcome.exitCode).toBe(0);
-    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    const destAbs = path.join(await logsDir(root), "x.md");
     expect(await fsPromises.readFile(destAbs, "utf8")).toBe("# summary\n");
   });
 });

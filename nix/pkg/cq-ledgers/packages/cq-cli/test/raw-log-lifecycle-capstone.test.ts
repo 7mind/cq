@@ -1,36 +1,4 @@
-/**
- * T420 (G49) — CAPSTONE end-to-end verification of the raw-log lifecycle under
- * the live git-object backend.
- *
- * This single scenario proves the seven G49 milestones COMPOSE on one throwaway
- * git-object fixture repo (NOT the real repo), driving the REAL primitives each
- * milestone shipped — no mocks of the cq machinery:
- *
- *   1. CAPTURE — `cq log put --stdin --dest logs/raw/<f>.jsonl` (runLogPut
- *      git-object branch, T413) lands the transcript at logs/raw/<f>.jsonl on
- *      the orphan ref (verified via GitPlumbing.catFile) while the working
- *      tree / index / HEAD stay byte-identical (git status clean — ref-only,
- *      NO leak onto the working branch).
- *   2. READ_LOG — the git-backed ReadLogCapability (GitObjectLedgerBackend.readLog,
- *      T408) serves the bytes back byte-identically from the ref tip.
- *   3. WEB PARSE — the web viewer parser (parseRawLog, T412) turns those bytes
- *      into a structured conversation model (ordered turns, tool_use↔tool_result
- *      pairing).
- *   4. MOVE-LEDGER RETIRED (T505) — the historical `cq move-ledger` round-trip
- *      stage is gone with the subcommand: an invocation now errors (exit 2)
- *      pointing at `cq migrate`, and the ref/working tree stay untouched.
- *   5. ERASE — `cq erase --yes` deletes cq.toml (the orphan ref itself is git
- *      data, deliberately untouched); the repo root + sibling tracked files
- *      survive (bounded delete).
- *
- * Throughout, the working branch HEAD + working tree stay clean: the orphan-ref
- * lifecycle never leaks onto the working branch.
- *
- * Reuses the harness patterns from log-put-git-object.test.ts (gitObjectRepo,
- * makeIo, plumbing/REF) and gitObjectLedgerBackend.test.ts (readLog) —
- * Blackbox-Atomic against real git objects. Throwaway repos via mkdtemp;
- * cleaned up in afterAll.
- */
+/** Capture, read, render, and erase XDG logs without changing the working branch. */
 
 import { describe, it, expect, afterAll } from "bun:test";
 import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
@@ -38,13 +6,16 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { GitPlumbing, GitObjectLedgerBackend, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
+import { SqliteLedgerStore, ensureStateDir, resolveLogsDir, resolveStateDir, resolveProjectKey, XDG_DB_FILENAME, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 import { runLogPut, parseLogPutArgs, type LogPutIo } from "../src/logPut.js";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 // The web log viewer's parser (T412) — browser-safe, no node: imports. Imported
 // from the @cq/ledger-web source to feed the real read_log bytes through it.
 import { parseRawLog, type ToolUseTurn, type ToolResultTurn } from "../../ledger-web/src/rawLog.js";
 
+import { useIsolatedXdgState } from "./xdgFixture.js";
+
+useIsolatedXdgState();
 const exec = promisify(execFile);
 const dirs: string[] = [];
 
@@ -52,10 +23,8 @@ afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
 
-const REF = "refs/heads/cq-ledger";
 const DEST = "logs/raw/2026-06-12T00-00-00-capstone.jsonl";
-/** The ref tree path (logs/<rel>) and the read_log path (raw/<rel>). */
-const TREE_PATH = DEST; // logs/raw/...
+/** The public read_log path strips the storage-relative logs prefix. */
 const READLOG_PATH = DEST.slice("logs/".length); // raw/...
 /** On-disk path relative to root: .cq/logs/raw/... */
 const STORAGE_PATH = path.join(LEDGER_STORAGE_DIRNAME, DEST); // .cq/logs/raw/...
@@ -117,16 +86,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return r.stdout;
 }
 
-/** Real GitPlumbing bound to a repo root (production shape: scratch index under .git). */
-function plumbing(root: string): GitPlumbing {
-  return GitPlumbing.withCwd(root, path.join(root, ".git"));
-}
-
-/**
- * A throwaway git repo with one committed sibling file + a cq.toml selecting the
- * git-object backend — the fixture under which logs live in the orphan ref.
- */
-async function gitObjectRepo(): Promise<string> {
+/** A scratch repository with one committed source file and an XDG primary. */
+async function xdgRepo(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "cq-capstone-git-"));
   dirs.push(dir);
   await git(dir, "init", "-q");
@@ -134,11 +95,11 @@ async function gitObjectRepo(): Promise<string> {
   await git(dir, "config", "user.name", "t");
   await git(dir, "config", "commit.gpgsign", "false");
   // A tracked sibling — a stand-in for real project source that must stay
-  // byte-identical through the whole ref lifecycle and survive erase.
+  // byte-identical through the whole log lifecycle and survive erase.
   await writeFile(path.join(dir, "README.md"), "# repo\n");
   await git(dir, "add", "README.md");
   await git(dir, "commit", "-q", "-m", "init");
-  await writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "git-object"\n', "utf8");
+  await writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "xdg"\n', "utf8");
   return dir;
 }
 
@@ -151,9 +112,11 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-describe("T420 capstone — raw-log lifecycle under the git-object backend", () => {
-  it("captures → read_log → web-parse → move-ledger retired error → erase with NO working-branch leak", async () => {
-    const root = await gitObjectRepo();
+describe("T420 capstone — raw-log lifecycle under the XDG backend", () => {
+  it("captures → read_log → web-parse → erase with NO working-branch leak", async () => {
+    const root = await xdgRepo();
+    const projectKey = await resolveProjectKey({ repoRoot: root, projectId: null });
+    const logFile = path.join(resolveLogsDir(projectKey), READLOG_PATH);
 
     // ---- baseline: working tree / index / HEAD before any log activity -------
     const statusBefore = await git(root, "status", "--porcelain");
@@ -169,11 +132,10 @@ describe("T420 capstone — raw-log lifecycle under the git-object backend", () 
       expect(outcome.exitCode).toBe(0);
       expect(io.errs).toEqual([]);
 
-      // The transcript landed at the docs-relative tree path on the orphan ref.
-      const onRef = await plumbing(root).catFile(REF, TREE_PATH);
-      expect(onRef).toBe(SAMPLE_JSONL);
+      expect(await Bun.file(logFile).text()).toBe(SAMPLE_JSONL);
+      expect(await exists(path.join(root, STORAGE_PATH))).toBe(false);
 
-      // Ref-only: working tree + index + HEAD byte-identical (NO leak).
+      // Out-of-tree: working tree + index + HEAD byte-identical (NO leak).
       const statusAfter = await git(root, "status", "--porcelain");
       const headAfter = (await git(root, "rev-parse", "HEAD")).trim();
       expect(statusAfter).toBe(statusBefore);
@@ -185,12 +147,12 @@ describe("T420 capstone — raw-log lifecycle under the git-object backend", () 
     }
 
     // =========================================================================
-    // 2. READ_LOG — git-backed ReadLogCapability serves the bytes back (T408).
-    //    A fresh backend instance forces a real read from the ref tip.
+    // 2. READ_LOG — a fresh SQLite instance reads the out-of-tree artifact.
     // =========================================================================
     let readBack = "";
     {
-      const reader = new GitObjectLedgerBackend({ repoRoot: root });
+      await ensureStateDir(resolveStateDir(projectKey));
+      const reader = new SqliteLedgerStore({ dbPath: path.join(resolveStateDir(projectKey), XDG_DB_FILENAME), logsDir: resolveLogsDir(projectKey) });
       await reader.init();
       const res = await reader.readLog(READLOG_PATH);
       expect(res.path).toBe(READLOG_PATH);
@@ -223,42 +185,23 @@ describe("T420 capstone — raw-log lifecycle under the git-object backend", () 
     }
 
     // =========================================================================
-    // 4. MOVE-LEDGER RETIRED (T505) — the old round-trip invocation now errors
-    //    pointing at `cq migrate`; ref, working tree and HEAD stay untouched.
-    // =========================================================================
-    {
-      const io1 = recordingIo();
-      const out1 = await dispatch(["move-ledger", "--cwd", root, "--to", "local"], io1);
-      expect(out1.exitCode).toBe(2);
-      expect(io1.errs.join("\n")).toContain("cq migrate");
-
-      // Nothing moved: the log stays ONLY on the ref, nothing lands on disk or
-      // in the index, and HEAD never moved.
-      expect(await plumbing(root).catFile(REF, TREE_PATH)).toBe(SAMPLE_JSONL);
-      expect(await exists(path.join(root, STORAGE_PATH))).toBe(false);
-      expect((await git(root, "ls-files", `${LEDGER_STORAGE_DIRNAME}/`)).trim()).toBe("");
-      expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(headBefore);
-    }
-
-    // =========================================================================
-    // 5. ERASE — `cq erase --yes` deletes cq.toml; the orphan ref is git data
-    //    (deliberately untouched) and the tracked sibling survives.
+    // 4. ERASE — project-local state and config disappear; tracked source survives.
     // =========================================================================
     {
       const ioErase = recordingIo();
       const outErase = await dispatch(["erase", "--cwd", root, "--yes"], ioErase);
       expect(outErase.exitCode).toBe(0);
 
-      // cq.toml deleted; no .cq/ ever existed on disk under git-object.
+      // cq.toml and the XDG log are deleted; no in-tree log existed.
       expect(await exists(path.join(root, "cq.toml"))).toBe(false);
       expect(await exists(path.join(root, LEDGER_STORAGE_DIRNAME))).toBe(false);
 
-      // Bounded: the repo root + the tracked sibling survive, and the orphan
-      // ref still carries the log (erase never rewrites git history).
+      // Bounded: the repository and tracked source survive.
       expect(await exists(root)).toBe(true);
       expect(await exists(path.join(root, "README.md"))).toBe(true);
       expect(await Bun.file(path.join(root, "README.md")).text()).toBe("# repo\n");
-      expect(await plumbing(root).catFile(REF, TREE_PATH)).toBe(SAMPLE_JSONL);
+      expect(await exists(logFile)).toBe(false);
+      expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(headBefore);
     }
   }, 30_000);
 });

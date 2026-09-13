@@ -81,6 +81,13 @@ function parseRemoteExample(source: string) {
 }
 
 describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
+  it("documents only supported primary backends and matches the remote example", () => {
+    const backends = [...CQ_TOML_TEMPLATE.matchAll(/backend\s*=\s*"([^"]+)"/g)].map((match) => match[1]);
+    expect([...new Set(backends)].sort()).toEqual(["remote", "xdg"]);
+    expect(parseConfig(CQ_TOML_TEMPLATE).ledger?.backend).toBe("xdg");
+    expect(parseRemoteExample(CQ_TOML_TEMPLATE)).toEqual(parseRemoteExample(readFileSync(EXAMPLE_PATH, "utf8")));
+  });
+
   it("parses without throwing (schema-valid)", () => {
     expect(() => parseConfig(CQ_TOML_TEMPLATE)).not.toThrow();
   });

@@ -166,7 +166,7 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
     return allowVerdict("external-signal present in advance marker — allow");
   }
 
-  // (4) Derive the predicates from the in-process fs-backed store.
+  // (4) Derive the predicates from the in-process XDG/SQLite store.
   let predicates: DerivedPredicates;
   if (resolveLedgerBackend(args.cwd).backend === "remote") {
     predicates = await withRemoteClient(args.cwd, (client) => client.derivePredicates());

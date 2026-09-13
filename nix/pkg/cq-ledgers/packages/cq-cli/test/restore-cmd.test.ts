@@ -104,15 +104,6 @@ describe("cq restore (T503)", () => {
     expect(outcome.exitCode).toBe(EXIT_USAGE);
   });
 
-  it("refuses for a non-xdg backend", async () => {
-    const root = await gitRepo("cq-restore-fs-");
-    await fs.writeFile(
-      path.join(root, "cq.toml"),
-      '[ledger]\nbackend = "fs"\nbackup = "in-tree"\n',
-    );
-    const outcome = await dispatch(["restore", "--cwd", root], recordingIo());
-    expect(outcome.exitCode).toBe(EXIT_USAGE);
-  });
 
   /**
    * The full backup -> wipe -> restore --yes round-trip, parameterised by the

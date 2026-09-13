@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { createLedgerStore, requireWorksetStore } from "@cq/ledger";
+import { useIsolatedXdgState, writeXdgConfig } from "./xdgFixture.js";
 import {
   WorksetEffectBroker,
   createProcessWorksetEffectAdmissionProvider,
@@ -12,6 +13,7 @@ import {
   type RegisteredLaunchBootstrapSpecification,
 } from "@cq/process-control";
 
+useIsolatedXdgState();
 const roots: string[] = [];
 const cli = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const parentFixture = fileURLToPath(
@@ -82,7 +84,7 @@ describe("cq workset effect provider control [Behavioral-Active Blackbox Good-Co
   test("retains and closes the actual durable admission around a registered child", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-cli-workset-provider-"));
     roots.push(root);
-    await writeFile(join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    await writeXdgConfig(root);
     const initialized = await createLedgerStore(root);
     await initialized.store.dispose();
 
@@ -116,7 +118,7 @@ describe("cq workset effect provider control [Behavioral-Active Blackbox Good-Co
     const root = await mkdtemp(join(tmpdir(), "cq-cli-workset-provider-parent-"));
     roots.push(root);
     const marker = join(root, "target.json");
-    await writeFile(join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    await writeXdgConfig(root);
     const initialized = await createLedgerStore(root);
     await initialized.store.dispose();
 

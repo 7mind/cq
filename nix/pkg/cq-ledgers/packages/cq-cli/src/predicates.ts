@@ -60,7 +60,7 @@ export interface PredicatesOutput {
 }
 
 /**
- * `cq predicates`: build the fs-backed store in-process, derive the predicates
+ * `cq predicates`: build the XDG/SQLite store in-process, derive the predicates
  * via the shared workset-aware engine, dispose the store (try/finally), and print
  * `{ predicates }` to stdout UNCONDITIONALLY. ALWAYS exits 0 — no session, no
  * marker, no block.
