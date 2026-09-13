@@ -57,7 +57,9 @@ describe("LiveManager", () => {
     const changed: Array<string | null> = [];
     const mgr = new LiveManager({
       url: "ws://x/ws",
-      onChanged: (l) => changed.push(l),
+      onChanged: (l) => {
+        changed.push(l);
+      },
       WebSocketCtor: Ctor,
       pingIntervalMs: 1000,
       pongTimeoutMs: 1000,
