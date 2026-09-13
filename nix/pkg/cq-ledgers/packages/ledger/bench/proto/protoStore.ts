@@ -3,7 +3,7 @@
  *
  * THROWAWAY research artifact (G67-A / T492). Both milestone-A prototypes
  * (`SqliteProtoStore`, `JsonlProtoStore`) implement ONLY this surface — enough
- * to run the identical benchmark workload the fs/git-object drivers do
+ * to run the same benchmark workload as the production SQLite driver
  * (registry + one `tasks` ledger + single-item mutations + cold load). This is
  * deliberately NOT the full `LedgerStore` interface: prototypes exist to
  * measure the two Q248 numbers (p95 single-item mutation, cold `init()`), not
@@ -28,8 +28,7 @@ export interface ProtoItem {
  *  - `updateItem()`      — the single-item mutation under measurement;
  *  - `dispose()`         — release in-process resources (db handle / buffers).
  *
- * Structurally a subset of `LedgerStore`, so the real fs/git-object stores
- * satisfy it too (used by the bench's `BenchStore` alias).
+ * The bench wraps these narrower signatures into its `BenchStore` surface.
  */
 export interface ProtoStore {
   init(): Promise<void>;

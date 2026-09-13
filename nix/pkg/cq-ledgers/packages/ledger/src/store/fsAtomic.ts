@@ -1,7 +1,7 @@
 /**
  * fsAtomic — the store's atomic-write primitive (tmp + fsync + rename).
  *
- * Factored out of FsLedgerStore so other writers reuse the SAME primitive
+ * Shared across filesystem writers so they reuse the SAME primitive
  * instead of duplicating the tmp/rename dance.
  * A reader never observes a partially-written file: content is written to a
  * uniquely-named sibling temp file, fsync'd, then atomically renamed over the

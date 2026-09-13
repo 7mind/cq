@@ -4,7 +4,7 @@
  * The `list_projects` MCP tool answers "what project(s) does this server know
  * about" — the read-side of the multi-tenant Postgres `projects` registry
  * (T572/T577), and a synthesized single-entry answer for every OTHER backend
- * (xdg, in-memory, the legacy fs/git-object stores), which each hold exactly
+ * (XDG, in-memory), which each hold exactly
  * one project. Unlike `read_log`/`get_config`/`fetch_prompt` (which throw a
  * documented not-implemented error when their capability is absent), EVERY
  * real server always answers `list_projects`: the public builder

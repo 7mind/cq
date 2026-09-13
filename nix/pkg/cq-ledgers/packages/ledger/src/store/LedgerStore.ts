@@ -1,6 +1,6 @@
 /**
  * LedgerStore — abstract interface implemented by the production
- * FsLedgerStore and the test-only InMemoryLedgerStore.
+ * SQLite/PostgreSQL stores and the test-only InMemoryLedgerStore.
  *
  * Lifecycle:
  *  1. Construct.
@@ -18,16 +18,16 @@
  *    mutates the milestones ledger OR creates/archives an item that
  *    references the milestones ledger.
  *  - Multi-lock acquisition order: `__milestones__` first; then per-ledger
- *    locks in alphabetical order. Documented in FsLedgerStore.
+ *    locks in alphabetical order.
  *
  * Cross-process concurrency (T497 / Q246):
  *  - Multiple processes may hold independent stores over ONE shared location
  *    (worktrees/clones of a repo share a store — Q246). A store serving a
- *    shared location must satisfy the multi-writer contract documented on
- *    `LedgerPersistence`: mutations are serialized or transactionally
+ *    shared location must satisfy the multi-writer contract: mutations are
+ *    serialized or transactionally
  *    isolated across processes (zero lost updates), readers never observe
  *    torn state, and out-of-band writes are detectable via the coherence
- *    token (`LedgerPersistence.currentSourceToken`). The in-process locking
+ *    version. The in-process locking
  *    discipline above is necessary but NOT sufficient for this — the
  *    cross-process guarantee comes from the persistence backend (decision
  *    K102: SQLite WAL + busy_timeout for the shared primary store; first
@@ -302,7 +302,7 @@ export interface LedgerStore {
   /**
    * Un-archive a single item out of an archived milestone-GROUP (Q78).
    *
-   * Archive layout (FsLedgerStore.ts:7): a non-milestones ledger archives a
+   * Portable archive layout: a non-milestones ledger archives a
    * whole milestone-group as ONE file keyed by milestone id at
    * `./archive/<ledger>/<milestoneId>.md`; only the milestones ledger keeps
    * per-ITEM archive files. So the op operates at GROUP granularity and the
@@ -366,8 +366,7 @@ export interface LedgerStore {
    * Record one MCP call's usage counters (I20/G155, T1509): atomically
    * increment the per-project counters for `endpoint` (the canonical
    * unprefixed MCP tool name). Durable where the backend is durable
-   * (SQLite/Postgres), process-local otherwise (in-memory and the
-   * AbstractLedgerStore fs/git-object family). Primary-store local telemetry:
+   * (SQLite/Postgres), process-local otherwise (in-memory). Primary-store local telemetry:
    * outside the cq backup/restore dump surface.
    */
   recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void>;

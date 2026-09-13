@@ -52,8 +52,7 @@ export function serializePlanLifecycleDump(state: PlanLifecycleDumpState): strin
 
 /**
  * Parse a `plan-lifecycle.json` body back into scoped maps. Rejects truncated
- * or hand-edited payloads the same way AbstractLedgerStore.loadPlanLifecycleState
- * does, so a dump cannot smuggle a different failure mode through restore.
+ * or hand-edited payloads at the restore boundary.
  */
 export function parsePlanLifecycleDump(text: string): PlanLifecycleDumpState {
   let value: unknown;

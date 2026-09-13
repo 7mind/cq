@@ -2,9 +2,8 @@
  * SqliteLedgerStore — bun:sqlite implementation of `LedgerStore` (G67-C1,
  * T526: init/bootstrap + the synchronous read surface + dispose).
  *
- * Implements the interface DIRECTLY — NOT via AbstractLedgerStore, whose
- * writeLedgerFile → serializeLedger funnel is exactly what K102 forbids for
- * this backend: rows are NORMALIZED (schema.ts), there is no serialized
+ * Implements the interface directly over normalized rows (schema.ts), without
+ * a Markdown serialization funnel (K102). There is no serialized
  * ledger blob and no in-memory ledger cache. bun:sqlite is synchronous, so
  * every ROW read is a fresh query that observes the latest committed WAL
  * state — a peer process's committed write is visible on the very next read
@@ -177,7 +176,7 @@ import { backfillActiveItemReferences, ensureSchema, SCHEMA_VERSION } from "./sc
 import { createSqliteWorksetStore, type SqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
-import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
+import { serializeWorksetRootsDocument } from "../../worksetRootsDocument.js";
 import {
   claimInMemoryPlan,
   finalizeInMemoryPlan,
@@ -266,8 +265,7 @@ export interface SqliteLedgerStoreOpts {
   planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
   /**
    * Policy for a persisted canonical-ledger schema that diverged from canon
-   * (detected at init(), same detection as AbstractLedgerStore via
-   * schemasEqual/schemaCompatible):
+   * (detected at init() via schemasEqual/schemaCompatible):
    *
    * - `'abort'` (default, {@link DEFAULT_ON_SCHEMA_DIVERGENCE}): refuse to
    *   start — throw `BootstrapViolationError` — leaving every row untouched,
@@ -379,8 +377,7 @@ function rowToItem(row: ItemRow): Item {
 }
 
 /**
- * Allowed shape for a created ledger's name (same rule as
- * AbstractLedgerStore.createLedger): path-safe, no separators.
+ * Allowed shape for a created ledger's name: path-safe, no separators.
  */
 const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -474,7 +471,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.migrateStoredRefsToV2(db);
 
     // Pass 1 — READ-ONLY divergence detection over the persisted canonical
-    // ledgers (parity with AbstractLedgerStore.init): a missing canonical
+    // ledgers: a missing canonical
     // ledger will be provisioned from canon; safe forward widenings (optional
     // fields and append-only statuses/transitions) upgrade to canon in place;
     // anything else routes through onSchemaDivergence before any bootstrap
@@ -499,8 +496,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
     if (divergent.length > 0 && this.onSchemaDivergence === "abort") {
       // Opt-out: refuse to start so the divergence is loud + operator-handled.
-      // No backup — parity with AbstractLedgerStore (backupAndReinit is only
-      // reached on the default policy).
+      // The abort policy does not take a backup.
       db.close();
       throw new BootstrapViolationError(
         `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema`,
@@ -508,8 +504,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
 
     if (divergent.length > 0) {
-      // Default policy — T529 divergence BACKUP action (parity with
-      // AbstractLedgerStore.backupAndReinit): VACUUM INTO a byte-complete
+      // Default policy — T529 divergence BACKUP action: VACUUM INTO a complete
       // snapshot of the WHOLE db (every table, not just the divergent
       // ledger's — including workset_state so roots survive in the artifact)
       // BEFORE any row is touched, emit the stderr WARNING naming that locator,
@@ -725,9 +720,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
-   * Divergence BACKUP action (T529, parity with
-   * AbstractLedgerStore.backupAndReinit's byte-level copy): a `VACUUM INTO` a
-   * timestamped sibling of `dbPath` — a byte-complete point-in-time snapshot
+   * Divergence BACKUP action (T529): `VACUUM INTO` a timestamped sibling of
+   * `dbPath` — a complete point-in-time snapshot
    * of the WHOLE database (every ledger's rows, not just the divergent one),
    * taken BEFORE any row is touched. Must run OUTSIDE any transaction (VACUUM
    * refuses to run inside one); `db` is not mid-transaction at this call site.
@@ -997,10 +991,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /**
    * Bounded, root-confined read of a log file under the out-of-tree logs area
-   * (T499) — the xdg backend's `read_log` capability, the analogue of {@link
-   * FsLedgerStore.readLog} (T147/Q87) rooted at `this.logsDir`
-   * (`resolveLogsDir(projectKey)`, T495 layout) instead of `<root>/.cq/logs`.
-   * Mirrors the FS capability's confinement + TOCTOU defences EXACTLY (D26/
+   * (T499) — the XDG backend's `read_log` capability rooted at `this.logsDir`
+   * (`resolveLogsDir(projectKey)`, T495 layout).
+   * Enforces path confinement and TOCTOU defences (D26/
    * D28): absolute paths rejected; a leading `.cq/logs/` prefix stripped
    * (sessionLogs/rawLogs store that repo-relative form regardless of backend);
    * lexical + realpath containment against `..`/symlink escape; oversized
@@ -1135,7 +1128,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /**
    * Delegates to the worker-owned derived projection (parity with
-   * AbstractLedgerStore.ftsSearch / InMemoryLedgerStore.ftsSearch — same
+   * InMemoryLedgerStore.ftsSearch — same
    * qualifier/fuzzy/prefix/boost/matchedFields/limit semantics). Hits are
    * cloned so a caller cannot mutate the index's backing items.
    */
@@ -1194,9 +1187,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   /**
    * Materialise the `ArchiveContent` union from the archived rows (T529):
    * a whole detached milestone-GROUP for a non-milestones ledger, or the
-   * single detached milestone-ITEM for the milestones ledger — mirroring
-   * AbstractLedgerStore.fetchArchive's `kind` discrimination, but reading
-   * `archived_items` rows instead of parsing an archive markdown file.
+   * single detached milestone-ITEM for the milestones ledger. Uses the portable
+   * archive `kind` discrimination, reading `archived_items` rows.
    */
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     return this.read(() => {
@@ -1256,9 +1248,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   // affected rows: the item row, the ledger counter, and the lazily-provisioned
   // group row. There is NO serialize/rewrite funnel (K102): the domain guards
   // are REUSED from core.ts by materialising just enough Ledger state for the
-  // pure apply* helpers, so results and error types match FsLedgerStore.
-  // The write lock held from BEGIN also subsumes the fs store's H41/D61
-  // reload-under-lock pattern: every read inside the transaction is fresh.
+  // pure apply* helpers, preserving shared results and error types.
+  // The write lock held from BEGIN ensures fresh transaction reads.
   // ---------------------------------------------------------------------------
 
   async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
@@ -1343,8 +1334,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       );
     }
     const item = immediateWriteTransaction(this.db(), () => {
-      // Strict Q5 existence check against the milestones ledger. Ordering
-      // parity with AbstractLedgerStore.createItem: this check runs BEFORE
+      // Strict Q5 existence check against the milestones ledger. This runs BEFORE
       // the target-ledger existence check (createItemShim below).
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), milestoneId);
       assertRawPlanCreateAllowed((id) => this.loadLedger(id), ledgerId, init.fields);
@@ -1450,11 +1440,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   /**
    * Un-archive a single item out of an archived milestone-GROUP (Q78),
    * row-natively: reuses `applyReattachItem` (core.ts) against the FULL
-   * `Ledger` materialised by {@link loadLedger} — the SAME domain guard
-   * (duplicate-id check across the whole ledger, lazy group re-creation) the
-   * fs store uses — then persists the reattached item row, drops the
-   * `archived_items` row, and drops the `archive_pointers` row too when the
-   * group archive becomes empty (parity with AbstractLedgerStore.unarchiveItem).
+   * `Ledger` materialised by {@link loadLedger}. The shared domain guard checks
+   * duplicate ids across the whole ledger and lazily re-creates the group.
+   * Then persists the reattached item row, drops the `archived_items` row, and
+   * drops the `archive_pointers` row too when the group archive becomes empty.
    */
   async unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item> {
     const isMilestones = ledgerId === MILESTONES_LEDGER;
@@ -2720,9 +2709,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * (applyUpdateItem / applyUpdateMilestoneItem / applyReopenItem): the real
    * schema + counters plus AT MOST the one target item in a bare group. When
    * the item row is absent the shim carries no items, so `findItem` inside
-   * the helper throws the same `ItemNotFoundError` the fs store surfaces.
-   * Throws `LedgerNotFoundError` first when the ledger row is absent (parity
-   * with AbstractLedgerStore's withLock guard). Must run inside a write
+   * the shared helper throws `ItemNotFoundError`.
+   * Throws `LedgerNotFoundError` first when the ledger row is absent.
+   * Must run inside a write
    * transaction — the caller persists the mutated item via
    * {@link persistItemRow}.
    */
@@ -2764,7 +2753,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    *  - on the caller-supplied-id path, the item row with that id when it
    *    exists — injected so applyCreateItem's own duplicate check throws
    *    `DuplicateIdError` at the SAME point in its guard sequence (after
-   *    status/fields/prefix validation) as the fs store.
+   *    status/fields/prefix validation) as the shared contract.
    *
    * The auto-id path needs no item rows at all: {@link allocateItemId}
    * guarantees DB-wide uniqueness via its RETURNING dup-avoid loop, and
@@ -2831,8 +2820,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /**
    * Build the optional `StatusChangePrecondition` for an `updateItem` against
-   * `ledgerId` (parity with AbstractLedgerStore.statusChangePrecondition; the
-   * rule logic lives in core.ts). The cross-ledger inputs are read INSIDE the
+   * `ledgerId` using the rule logic in core.ts. Cross-ledger inputs are read INSIDE the
    * write transaction, so the F2 goal-phase check sees the same committed
    * state the write will serialize against.
    */
@@ -2921,8 +2909,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    *
    * Auto-id path: the id is allocated FIRST via
    * `UPDATE ledgers SET item_counter = item_counter + 1 … RETURNING`
-   * ({@link allocateItemId}) — the K102 replacement for the fs store's
-   * H41/D61 reload-under-lock counter refresh — then the pure core.ts helper
+   * ({@link allocateItemId}) — then the pure core.ts helper
    * re-derives the SAME id from `counter - 1` while running the FULL guard
    * set (status/fields/prefix/duplicate checks, lazy group materialisation,
    * ledger-specific invariants). Any divergence is an invariant violation and

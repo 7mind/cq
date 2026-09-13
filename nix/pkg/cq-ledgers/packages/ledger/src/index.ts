@@ -207,14 +207,10 @@ export type {
   CreateInMemoryWorksetStoreOptions,
 } from "./worksetStore.js";
 export {
-  createGitObjectWorksetStore,
   parseWorksetRootsDocument,
   serializeWorksetRootsDocument,
-} from "./worksetStoreGit.js";
-export type {
-  CreateGitObjectWorksetStoreOptions,
-  WorksetRootsDocument,
-} from "./worksetStoreGit.js";
+} from "./worksetRootsDocument.js";
+export type { WorksetRootsDocument } from "./worksetRootsDocument.js";
 export {
   WORKSET_GENERIC_MUTATION_OPERATION_KINDS,
   WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES,
@@ -269,16 +265,6 @@ export type {
   ResolveGenericMutationClosureOptions,
 } from "./store/genericMutationDataSource.js";
 export {
-  createFsWorksetGuardedLedger,
-  createFsWorksetManagementLedger,
-} from "./store/fsWorksetGuardedLedger.js";
-export type { CreateFsWorksetGuardedLedgerOptions } from "./store/fsWorksetGuardedLedger.js";
-export {
-  createGitObjectWorksetGuardedLedger,
-  createGitObjectWorksetManagementLedger,
-} from "./store/git/worksetGuardedLedger.js";
-export type { CreateGitObjectWorksetGuardedLedgerOptions } from "./store/git/worksetGuardedLedger.js";
-export {
   createSqliteWorksetGuardedLedger,
   createSqliteWorksetManagementLedger,
 } from "./store/sqlite/worksetGuardedLedger.js";
@@ -326,18 +312,7 @@ export type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
-export type { LedgerPersistence } from "./store/LedgerPersistence.js";
-export {
-  AbstractLedgerStore,
-  schemasEqual,
-  schemaCompatible,
-} from "./store/AbstractLedgerStore.js";
-export { FsPersistence } from "./store/FsPersistence.js";
-export type { FsPersistenceLayout } from "./store/FsPersistence.js";
-export { FsLedgerStore } from "./store/FsLedgerStore.js";
-export type { FsLedgerStoreOpts, ResetSummary } from "./store/FsLedgerStore.js";
-export { createFsWorksetStore } from "./store/fsWorksetStore.js";
-export type { CreateFsWorksetStoreOptions } from "./store/fsWorksetStore.js";
+export { schemasEqual, schemaCompatible } from "./store/schemaCompat.js";
 export {
   buildBackupDump,
   exportBackupInTree,
@@ -602,9 +577,6 @@ export type {
   ReverifyGuardedRebaseBridgeOptions,
   RunGuardedRebaseOptions,
 } from "./guardedRebaseContinuation.js";
-export { GitPersistence } from "./store/git/GitPersistence.js";
-export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
-export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export { createSqliteWorksetStore } from "./store/sqlite/sqliteWorksetStore.js";

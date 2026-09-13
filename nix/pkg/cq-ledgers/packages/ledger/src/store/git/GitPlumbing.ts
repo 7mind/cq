@@ -6,8 +6,8 @@
  *
  * ## Purpose (G43 / T348)
  *
- * It is the low-level git seam the planned `GitObjectLedgerBackend` (T351) will
- * build on: store a ledger on an ORPHAN ref and advance it per write WITHOUT
+ * This low-level Git seam supports orphan-branch backup/restore and managed
+ * Git effects. Orphan-ref operations advance the backup WITHOUT
  * ever switching the working tree, mutating the real index, or perturbing
  * `git status`. Every mutation is: blob -> ISOLATED scratch-index tree ->
  * `commit-tree` -> compare-and-swap `update-ref`; every read is `cat-file` /
@@ -334,7 +334,7 @@ export class GitPlumbing {
    * recursively, WITHOUT any checkout. Unlike {@link lsTree} (name-only), this
    * returns the mode + sha needed to RE-ASSEMBLE a tree with one path
    * replaced/added/removed — the read-current-tree step of the orphan-ref
-   * read-modify-write the `GitObjectLedgerBackend` performs under its lock.
+   * read-modify-write performed by coordinated backup callers.
    *
    * Runs: `git ls-tree -r <ref>` and parses the porcelain lines
    * `<mode> <type> <sha>\t<path>`, keeping only blob (`type === "blob"`)

@@ -729,10 +729,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
 export const LEDGER_STORAGE_DIRNAME = ".cq" as const;
 
 /**
- * The logs sub-directory name within the storage base. This is the same
- * logical segment as the git-object backend's `LOGS_TREE_PREFIX` (the orphan
- * tree is rooted at the docs contents, so its `logs/` subtree mirrors
- * `<root>/.cq/logs/` on the filesystem — keep them in sync via this constant).
+ * Logs sub-directory name shared by the XDG storage area and portable backups.
  */
 export const LEDGER_LOGS_DIRNAME = "logs" as const;
 

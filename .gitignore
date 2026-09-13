@@ -42,11 +42,11 @@ var/
 *.sqlite-wal
 *.sqlite-shm
 
-# @cq/ledger per-cwd lockfiles + backups (the ledger files themselves are tracked)
+# @cq/ledger per-cwd scratch lockfiles and backup artifacts
 .cq/.locks/
-# `cq reset` moves the bootstrap files here (timestamped) before regenerating.
+# Retained scratch backup directory.
 .cq/.ledger-backup/
-# per-cwd runtime ledger registry — regenerated on connect, never tracked (fix D1).
+# Scratch/portable-dump registry, not primary storage.
 .cq/ledgers.yaml
 
 # scratch
@@ -58,10 +58,3 @@ var/
 .cq/.backup/
 # Ledger archives are runtime artifacts, not source.
 .cq/archive/
-
-# cq git-object ledger backend (managed) — do not edit
-.cq/*.md
-.cq/ledgers.yaml
-.cq/.locks/
-.cq/logs/
-# cq git-object ledger backend (managed) — end

@@ -33,7 +33,7 @@
  * when `store` exposes one (e.g. `PostgresLedgerStore`), it is preferred over
  * `logsDir` unconditionally — there is no filesystem area to fall back to
  * under postgres, and a store that advertises `listLogs` is authoritative
- * regardless of backend. The xdg/fs/git-object `logsDir`-walking path is
+ * regardless of backend. The XDG `logsDir`-walking path is
  * untouched.
  *
  * Trigger: {@link BackupScheduler} — a best-effort DEBOUNCED export after
@@ -62,7 +62,7 @@ import { atomicWrite } from "./fsAtomic.js";
 import { GitPlumbing, StaleRefError, type TreeEntry } from "./git/GitPlumbing.js";
 import { PLAN_LIFECYCLE_DUMP_PATH } from "./planLifecycleDump.js";
 import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
-import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
+import { serializeWorksetRootsDocument } from "../worksetRootsDocument.js";
 import type { WorksetStore } from "../worksetStore.js";
 import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
 
@@ -75,7 +75,7 @@ export interface BackupDumpFile {
   readonly content: string;
 }
 
-/** Regular-file git mode for a dump blob (mirrors GitPersistence / logPut). */
+/** Regular-file git mode for a dump blob. */
 const BLOB_MODE = "100644";
 
 /**
@@ -83,7 +83,7 @@ const BLOB_MODE = "100644";
  * analogue's alternative to a filesystem `logsDir`. Mirrors
  * `main.ts`'s `readLogOf` duck-type: a store opts in simply by exposing a
  * `listLogs(): AsyncIterable<{ path, content }>` method (no `LedgerStore`
- * interface change required); a store with none (fs/git-object/xdg, or the
+ * interface change required); a store with none (XDG, or the
  * in-memory test store) returns `undefined` and `buildBackupDump` falls back
  * to walking `logsDir`.
  */

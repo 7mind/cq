@@ -48,7 +48,7 @@ import {
   type PlanLifecycleDumpState,
 } from "./planLifecycleDump.js";
 import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
-import { parseWorksetRootsDocument } from "../worksetStoreGit.js";
+import { parseWorksetRootsDocument } from "../worksetRootsDocument.js";
 import {
   WorksetAdmissionError,
   isTrustedWorksetManagementAuthority,
@@ -360,10 +360,7 @@ export async function restoreDumpToXdg(opts: {
           // G80/M245 (T553): normalize dependsOn/blockedBy to the canonical
           // `<ledger>:<id>` form as rows are (re-)inserted, so importing an OLD
           // (pre-grammar) backup with bare refs lands normalized — matching the
-          // v1→v2 on-open migration's output for the same data. The removed legacy
-          // fs/git-object primaries re-enter the xdg primary ONLY via `cq restore`
-          // / `cq migrate` (which builds a dump then calls this), so THIS path is
-          // what carries the git-object rollback ref forward normalized too. The
+          // v1→v2 on-open migration's output for the same data. The prefix
           // registry spans the dump's full ledger set (canonical + custom), the
           // same shape the writers' prefix registry uses.
           const refRegistry = buildPrefixRegistry(

@@ -55,8 +55,8 @@
  * authorized (T720; see `resolveIdempotencyKeyReclaim`).
  *
  * The clock is injected as `now: () => string` (ISO-8601 UTC), the pattern the
- * surrounding store code already uses (`AbstractLedgerStore`, `FsPersistence`,
- * `InMemoryLedgerStore`), so every deadline, expiry and sweep boundary is driven
+ * surrounding store code already uses (`InMemoryLedgerStore`), so every
+ * deadline, expiry and sweep boundary is driven
  * by a fake clock in tests.
  *
  * This module calls {@link validateDispatchInput} (Ajv), `Bun.CryptoHasher` and

@@ -1,8 +1,11 @@
 # ledger-suite — project instructions
 
-Markdown-backed ledgers: an MCP server (`@cq/ledger-mcp`) plus a terminal
+XDG SQLite-backed ledgers with optional Markdown backups: an MCP server (`@cq/ledger-mcp`) plus a terminal
 (`@cq/ledger-tui`) and web (`@cq/ledger-web`) client, over the `@cq/ledger`
 library. Bun + TypeScript workspace; products are packaged with Nix.
+
+Checkouts select `xdg` (default) or `remote`. PostgreSQL is private `cq serve`
+state, not a checkout backend. Frontends access either through MCP.
 
 The Bun workspace lives under `nix/pkg/cq-ledgers/` (run the `bun` commands
 below from there); the contributed LLM assets live under `nix/pkg/cq-assets/`.

@@ -1,13 +1,7 @@
 /**
  * schemaCompat.ts — pure schema-divergence comparison helpers shared by every
- * backend's init()-time canonical-bootstrap check (AbstractLedgerStore for the
- * fs/git backends, SqliteLedgerStore for the sqlite backend).
- *
- * Extracted from AbstractLedgerStore.ts (T527) so the sqlite backend can reuse
- * the detection WITHOUT dragging the parser/serialize funnel into its module
- * graph — K102 forbids that funnel for the normalized-row backend, and
- * AbstractLedgerStore imports parser/serialize.js for its own write path.
- * No behavioural change; AbstractLedgerStore re-exports these names.
+ * durable backend's init()-time canonical-bootstrap check.
+ * These helpers have no parser/serializer dependency (K102).
  */
 
 import type { LedgerSchema } from "../types.js";

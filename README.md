@@ -2,7 +2,7 @@
 
 One flake, two products:
 
-1. **ledger-suite** — markdown-backed _ledgers_: an MCP server plus terminal
+1. **ledger-suite** — SQLite-backed _ledgers_: an MCP server plus terminal
    and browser frontends for browsing and editing them.
 2. **LLM coding-agent harness** — a portable home-manager module
    (`homeManagerModules.dev-llm`) that configures Claude Code, Codex and Pi,
@@ -31,7 +31,7 @@ nix/
     reattach-llm/
   hm/                         # home-manager modules: dev-llm.nix, programs-pi.nix
   lib/                        # mk-agent-harness.nix (harness module factory)
-docs/                         # this repo's own dogfooding ledger
+docs/                         # operator documentation and historical research
 ```
 
 ---
@@ -40,15 +40,16 @@ docs/                         # this repo's own dogfooding ledger
 
 A _ledger_ is an ordered set of milestones; each milestone holds typed _items_
 (tasks, defects, hypotheses, questions, decisions, goals, …). Everything is
-stored as human-readable Markdown under a `docs/` tree, so the data is
-diffable and git-friendly. Milestones form a dependency DAG via their
+stored in an out-of-tree XDG SQLite primary, or accessed through a remote
+`cq serve` service. Optional Markdown backups are diffable and git-friendly.
+Milestones form a dependency DAG via their
 `dependsOn` / `blockedBy` references.
 
 ## Packages
 
 | Package          | What it is                                                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@cq/ledger`     | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions.                                                                                                                    |
+| `@cq/ledger`     | The library: SQLite storage, private PostgreSQL service storage, Markdown backup codecs, schema/registry, FTS index, and MCP tool definitions. |
 | `@cq/ledger-mcp` | Standalone MCP server exposing the 60-tool management ledger surface over **stdio** or **Streamable HTTP**.                                                                                                        |
 | `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`).                                                    |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
@@ -76,7 +77,7 @@ single command needs no separately-running server.
 `git_resolve_continue`.
 
 The six attestation dispatch-lifecycle tools require both a supported durable backend
-(`xdg`, `fs`, or PostgreSQL in its supported server construction) and an
+(`xdg`, or PostgreSQL in its supported server construction) and an
 attested prompt surface. A server that cannot satisfy those prerequisites
 omits those six names; broker availability similarly controls the two git
 dispatch-lifecycle tools. Omitting all eight leaves the canonical 34-tool
@@ -103,7 +104,7 @@ compatibility object factory for direct invocation and composition.
 ## Quick start (Nix)
 
 **Embedded (one command, no separate server)** — the frontend runs the MCP
-server in-process against a ledger root (its `docs/` tree):
+server in-process against a project's configured storage (XDG by default):
 
 ```sh
 # Terminal UI, embedded:
@@ -134,8 +135,8 @@ nix run .#cq -- web --port 5180 --mcp-url http://127.0.0.1:7777/mcp
 
 A ready-made dataset lives in
 [`nix/pkg/cq-ledgers/examples/sample-ledger`](nix/pkg/cq-ledgers/examples/sample-ledger)
-— point `--cwd` at it to explore immediately. See its README for the exact
-commands.
+— import its portable dump into an isolated XDG project before opening the UIs.
+See its README for the commands.
 
 ## Server deployment (NixOS)
 
@@ -158,15 +159,21 @@ for the operator commands.
 
 ## Storage layout
 
-A ledger root is any directory; the store keeps state under `<root>/docs/`:
+A checkout selects `backend = "xdg"` (default) or `backend = "remote"` in
+`cq.toml`. XDG primary state is keyed by project identity, not by checkout path:
 
 ```
-docs/
-  ledgers.yaml            # registry: ledger name → schema
-  milestones.md           # the milestones ledger
-  tasks.md  defects.md  … # one file per ledger
-  archive/                # archived milestone groups + items
+$XDG_STATE_HOME/cq/projects/<projectKey>/
+  ledger.db               # primary ledger state
+  logs/                   # out-of-tree session/raw-log artifacts
 ```
+
+When `XDG_STATE_HOME` is unset, the base is `~/.local/state`. Backups default
+to `none`; `in-tree` exports a `.cq/` Markdown dump and `orphan-branch` exports
+the same portable layout to the configured Git branch. `cq restore` imports
+a portable dump. Git plumbing remains supported for backups and managed Git
+effects; it is not a primary ledger backend. Remote checkouts use
+`serverUrl` and `CQ_LEDGER_REMOTE_TOKEN`; PostgreSQL stays private to `cq serve`.
 
 ---
 

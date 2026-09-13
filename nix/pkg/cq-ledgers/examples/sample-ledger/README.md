@@ -1,7 +1,7 @@
 # sample-ledger
 
-A synthetic dataset for trying the ledger UIs. Its `docs/` tree is committed,
-so you can point a server at it directly. Regenerate it any time with:
+A synthetic dataset for trying the ledger UIs. Its committed `docs/` tree is a
+portable Markdown dump, not a live backend. Regenerate the dump with:
 
 ```sh
 bun run examples/seed-sample-ledger.ts
@@ -23,13 +23,27 @@ ledger:
 
 ## Try the UIs against it
 
-`--cwd` must be **absolute** — run these from the repo root so `$PWD` resolves.
+Import the dump into a fresh, isolated XDG primary first. From the Bun workspace
+(`nix/pkg/cq-ledgers/`), with `cq` on PATH:
+
+```sh
+CQ_SAMPLE_ROOT=$(mktemp -d /tmp/cq-sample.XXXXXX)
+export XDG_STATE_HOME="$CQ_SAMPLE_ROOT/state"
+cp -R examples/sample-ledger/docs "$CQ_SAMPLE_ROOT/.cq"
+printf '%s\n' '[ledger]' 'backend = "xdg"' 'backup = "in-tree"' \
+  'projectId = "isolated-sample"' > "$CQ_SAMPLE_ROOT/cq.toml"
+cq restore --cwd "$CQ_SAMPLE_ROOT"
+```
+
+Keep that shell for the MCP server so it retains the isolated state directory.
+The UIs can run in other shells; they connect over MCP. The following source
+commands also run from the Bun workspace.
 
 ### With Bun (from source)
 
 ```sh
 # 1. Ledger MCP server over HTTP, pointed at the sample data:
-bun run packages/ledger-mcp/src/main.ts --cwd "$PWD/examples/sample-ledger" --http 7777
+bun run packages/ledger-mcp/src/main.ts --cwd "$CQ_SAMPLE_ROOT" --http 7777
 
 # 2a. Terminal UI (new shell):
 bun run packages/ledger-tui/src/main.tsx --url http://127.0.0.1:7777/mcp
@@ -52,8 +66,10 @@ bun run packages/ledger-web/src/serve.ts --host 0.0.0.0 --port 5180 \
 
 ### With Nix
 
+After importing as above, run the packaged server from the repository root:
+
 ```sh
-nix run .#cq -- mcp --cwd "$PWD/examples/sample-ledger" --http 7777
+nix run .#cq -- mcp --cwd "$CQ_SAMPLE_ROOT" --http 7777
 nix run .#cq -- tui --url http://127.0.0.1:7777/mcp
 nix run .#cq -- web --port 5180 --mcp-url http://127.0.0.1:7777/mcp
 ```
@@ -77,5 +93,6 @@ Field values render as markdown in both UIs. The richest examples:
 Open the item (web: click the row; TUI: highlight it — the right pane shows
 the rendered detail) to see it formatted.
 
-> Edits write back through the server to the Markdown files under
-> `examples/sample-ledger/docs/` — re-run the seed script to reset.
+> Edits write through MCP to the isolated SQLite primary. The configured backup
+> updates the temporary `.cq/` dump, never the committed sample. Use a fresh
+> temporary project and import again to reset the demonstration.

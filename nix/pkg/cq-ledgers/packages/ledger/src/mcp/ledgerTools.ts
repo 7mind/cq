@@ -12,7 +12,7 @@
  * intersected before either transport serializes `tools/list`.
  *
  * Capability-gated tools:
- *  - read_log requires an explicit FS-store `readLog` capability (Q87 / R137 #6);
+ *  - read_log requires an explicit `readLog` capability (Q87 / R137 #6);
  *    over an in-memory store it throws `ReadLogNotImplementedError`.
  *  - sectioned get_config requires an injected
  *    `configCapability` (constructed in @cq/ledger-mcp over @cq/config, R193/G18);
@@ -490,8 +490,8 @@ const projectionSchema = ITEM_PROJECTION_SCHEMA.describe(ITEM_PROJECTION_DESCRIP
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or
- * whitespace — anything that could escape the filesystem path
- * `FsLedgerStore` derives from them.
+ * whitespace — anything that could escape the portable archive path
+ * derived from them.
  */
 const safeIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
 

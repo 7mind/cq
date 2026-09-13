@@ -178,7 +178,7 @@ export interface InMemoryLedgerStoreOpts {
   /** Pre-populate registered ledgers (the milestones ledger is added automatically on init). */
   seed?: Array<{ name: string; schema: LedgerSchema }>;
   /**
-   * Same contract as `FsLedgerStoreOpts.onMutation`. Provided here so
+   * Same contract as `SqliteLedgerStoreOpts.onMutation`. Provided here so
    * the dual-tests abstract suite can exercise the hook against both
    * adapters uniformly. Fires AFTER every successful write.
    */
@@ -553,7 +553,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /**
    * Build the optional `StatusChangePrecondition` for an `updateItem`. Same
-   * contract and rule wiring as `FsLedgerStore.statusChangePrecondition`,
+   * contract and rule wiring as the durable adapters,
    * evaluated against the same in-memory source of truth via the same hook so
    * the two adapters cannot drift (F2 goal-phase + D29 questions-answer).
    */
@@ -1131,13 +1131,13 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   /**
    * In-memory adapter is the source of truth — there is no other
    * writer for `invalidate` to consult. Provided so the interface
-   * shape is uniform with `FsLedgerStore` and the dual-tests suite
+   * shape is uniform with the durable adapters and the dual-tests suite
    * can assert the no-op contract.
    */
   async invalidate(_ledgerId: string): Promise<void> {}
 
   /**
-   * Duck-typed BackupDump source (D139): see AbstractLedgerStore.
+   * Duck-typed BackupDump source (D139).
    */
   exportPlanLifecycleState(): string | null {
     this.assertInit();
@@ -1295,7 +1295,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     // Phase 1b — verify the milestone-item itself is terminal. Must run before
     // any Phase 2 mutations so a non-terminal item causes a clean throw with no
-    // partial state. Mirror the FsLedgerStore path: surface via
+    // partial state. Surface the shared domain error via
     // applyDetachMilestoneItem so the error type matches; the function throws
     // before any mutation when the item is absent or non-terminal.
     const milestonesLedger = this.getLedger(MILESTONES_LEDGER);
@@ -1601,8 +1601,7 @@ function replaceMap<T>(target: Map<string, T>, replacement: ReadonlyMap<string, 
   for (const [key, value] of replacement) target.set(key, value);
 }
 
-/** Deep-clone an Item (exported for SqliteLedgerStore, whose K102 module
- * graph must not reach AbstractLedgerStore's parser imports). */
+/** Deep-clone an Item without parser dependencies (K102). */
 export function cloneItem(i: Item): Item {
   const out: Item = {
     id: i.id,

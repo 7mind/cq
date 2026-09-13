@@ -14,7 +14,6 @@ import {
   type LedgerSchema,
 } from "@cq/ledger";
 import { startLedgerCoherenceWatcher } from "@cq/ledger-mcp";
-import { LEDGER_BACKENDS } from "@cq/config";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
 const dirs: string[] = [];
@@ -105,15 +104,6 @@ describe("embedded TUI exposes the resolved backend descriptor (D51 / T505)", ()
     await expect(McpLedgerClient.embedded(dir)).rejects.toBeInstanceOf(ProjectKeyResolutionError);
   });
 
-  for (const backend of LEDGER_BACKENDS.filter((kind) => kind !== "xdg" && kind !== "remote")) {
-    it(`rejects unsupported local backend '${backend}' before opening persistent state`, async () => {
-      const dir = await plainDir();
-      await writeCqToml(dir, `[ledger]\nbackend = "${backend}"\n`);
-      const before = await fs.readdir(dir);
-      await expect(McpLedgerClient.embedded(dir)).rejects.toThrow(/unsupported local backend/);
-      expect(await fs.readdir(dir)).toEqual(before);
-    });
-  }
 });
 
 /**

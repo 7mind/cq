@@ -8,8 +8,38 @@
   "opaqueEdges": [
     {
       "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-tui/test/embeddedCoherence.test.ts",
+      "sha256": "c73f524acf1fc4d41c7ba555c958ee013b0b59c45b242679433c373939de4f63",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/sqliteResponsivenessGate.ts",
+      "sha256": "9526ca49d0f529cf4a05186ce138be11594531e6cf620c56213f9ae83ebd539c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/path-traversal.test.ts",
+      "sha256": "6e5db0f665793a5beebad11fb179c6651be851bf5a2617b422f04ccc02363f99",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/createLedgerStore.test.ts",
+      "sha256": "3ff45039bfb64e678537b1d647b18557258ec300a2d5b58d8cdd3e604352be52",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/log-put-content.test.ts",
+      "sha256": "0cd967733cac2dca50990814db2916097bfe49a6a72847c6472a68fcc01290fa",
+      "targets": []
+    },
+    {
+      "kind": "path",
       "source": "nix/pkg/cq-ledgers/bunfig.toml",
-      "sha256": "ee14a8cf9028bc387e18e694e8933c6d97a454555adac5c293d3d4a262c59324",
+      "sha256": "745349091ad3645c45abacd3fbc9c01184f708b068009ad079cf5d6fe5926881",
       "targets": ["nix/pkg/cq-ledgers/test-setup/isolate-state-dir.ts"]
     },
     {
@@ -27,7 +57,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "b34988b61bc3ec457978739c1a5c63332bf09ed8e912bcc18cfc4aa8e0fcda8e",
+      "sha256": "732447d2928eb2669bd976ffaa03e3e99b59c16519efc43f4ec8a5a9626421fd",
       "targets": []
     },
     {
@@ -39,13 +69,13 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/orchestratorPromptSources.test.ts",
-      "sha256": "9bb3a026119007124a978b846ef504015a26bc1bdb24db0016f4159ff1eda415",
+      "sha256": "26656a4aad2ab08fd657cc5b5d8b63d9b4ffb59ba540efd6bbd7d5a9c496272b",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts"]
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/orchestratorPromptSources.test.ts",
-      "sha256": "9bb3a026119007124a978b846ef504015a26bc1bdb24db0016f4159ff1eda415",
+      "sha256": "26656a4aad2ab08fd657cc5b5d8b63d9b4ffb59ba540efd6bbd7d5a9c496272b",
       "targets": []
     },
     {
@@ -75,7 +105,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "925f76dd3d53af35e11d9f2a6f9204616e9c41bce64801c0a3623bfb3249d3f2",
+      "sha256": "94d82f3ffb458ca6206eeb3c6ad25f5c109468261b63ae9e08feb4ec8cc2ce05",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"]
     },
     {
@@ -132,7 +162,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/raw-log-lifecycle-capstone.test.ts",
-      "sha256": "8243bed89c8b58f081c570bb3409d60bd6b5971cb580fad9471e43006ab4658d",
+      "sha256": "0652338a29c4fed308a61ce1d1ab9e0d127b3ce4781fb47322d0c431f842fe74",
       "targets": []
     },
     {
@@ -186,13 +216,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/attestationStore-crossProcess.test.ts",
-      "sha256": "b57412c15be51aac3838af47bbd01928741a9ae1f45befea53bdd7b16b41b719",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/attestationStore-fs.test.ts",
-      "sha256": "4aa236dd09b68b8a9f1e07c248977b2d34583dd2ea811aaea37b8d00c7f30949",
+      "sha256": "e02a7f62f15c5d6da9273e953bbad3ac23bcd5dcafb8179fde0be607d0b45f6b",
       "targets": []
     },
     {
@@ -210,7 +234,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexBoundaryDiagnostics.test.ts",
-      "sha256": "3bbd14c64485f8cc346fdb0d552a7b98cc5c3b3aa69ebc290cff41fd03241183",
+      "sha256": "195be0387bff45de2ff2ee927c4347b8ed1c24423cdc364edf28a213d6cfa3ba",
       "targets": []
     },
     {
@@ -228,7 +252,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
-      "sha256": "f9020f080e576e57713085d1383f5476d38727ec4762271a21ba8cc8bf7f2a7d",
+      "sha256": "d0b4bd1dbef0331c754e3cc7e7378794b708f076ddeedd368d35c3245633b5a1",
       "targets": []
     },
     {
@@ -246,13 +270,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "9a475a9b469d2d40026ee9f8008e78e024850b78d63a3fec8326e4d678b01069",
+      "sha256": "82e688a20bc0c66fabe4bf4835604fcbb5410e8ab832708cbcb3c4236fb13981",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "9a475a9b469d2d40026ee9f8008e78e024850b78d63a3fec8326e4d678b01069",
+      "sha256": "82e688a20bc0c66fabe4bf4835604fcbb5410e8ab832708cbcb3c4236fb13981",
       "targets": []
     },
     {
@@ -306,7 +330,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/orchestratorPromptSources.test.ts",
-      "sha256": "9bb3a026119007124a978b846ef504015a26bc1bdb24db0016f4159ff1eda415",
+      "sha256": "26656a4aad2ab08fd657cc5b5d8b63d9b4ffb59ba540efd6bbd7d5a9c496272b",
       "targets": []
     },
     {
@@ -384,7 +408,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "7f379c339d9b8e6928874b852a6458079bc8c9788f21fc357c8618506c661e02",
+      "sha256": "f11a97bc3589b205f5a7739f7b49a60ea65bb484c1b3bbeca44cb8c47a56ab21",
       "targets": []
     },
     {
@@ -408,7 +432,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "925f76dd3d53af35e11d9f2a6f9204616e9c41bce64801c0a3623bfb3249d3f2",
+      "sha256": "94d82f3ffb458ca6206eeb3c6ad25f5c109468261b63ae9e08feb4ec8cc2ce05",
       "targets": []
     },
     {
@@ -426,7 +450,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/codexBrokerReviewer.ts",
-      "sha256": "5ed823048b4ee56b8815d34e33d557919a716b1bf1ce188c26ae9ea7c0498283",
+      "sha256": "8978ff784c6d7adce3012be6ccec24d0b0cdd4e93ca498c8e0fc6ba7cafd5339",
       "targets": []
     },
     {
@@ -444,13 +468,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
-      "sha256": "ec29959425da59cc64b3f6728f9f4129e117405b2eb0771b7a717e2cb2f485fd",
+      "sha256": "f177b685fc2172cedbf9ba7ca5399156b341d68ed080fc657853c1d192120baa",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
-      "sha256": "ec29959425da59cc64b3f6728f9f4129e117405b2eb0771b7a717e2cb2f485fd",
+      "sha256": "f177b685fc2172cedbf9ba7ca5399156b341d68ed080fc657853c1d192120baa",
       "targets": [
         "nix/pkg/cq-ledgers/packages/cq-cli/src/main.ts",
         "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/production-bootstrap-v1.json"
@@ -459,7 +483,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/createLedgerMcpServer.test.ts",
-      "sha256": "8a3a9ceb5d5769fe35a276245200a935b2183bb4fb682e3d4118d7766f368858",
+      "sha256": "fe988ad22a99ee5cb7c0f9d8f50cca4072a9f0361e380332580c142badd1fc70",
       "targets": []
     },
     {
@@ -485,19 +509,19 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/productionDispatchRuntime.test.ts",
-      "sha256": "4430ec23a7e068a8ea4fdd3cd0609643c20d30fba77d0cc626f5ae6c63473413",
+      "sha256": "a669dab4e197f3f67a9f68d9766d003c4b39e989405843bd7d52889080783615",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "79fcc11660668b4dbf06de61b992f15ad095680f0fab55d150bde7f8432950a0",
+      "sha256": "283b02f95f8a631393cfdcb0e62ca225c953b190c51aec163b791dab150ef0ab",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "79fcc11660668b4dbf06de61b992f15ad095680f0fab55d150bde7f8432950a0",
+      "sha256": "283b02f95f8a631393cfdcb0e62ca225c953b190c51aec163b791dab150ef0ab",
       "targets": []
     },
     {
@@ -509,13 +533,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "a92f0acd54f8f82115e14abf8c1cac2a4a6f82dca235fbe84c496ff32366c08a",
+      "sha256": "101b45da0cf682fe4e9fd6fc9b5c53b2329e332a202af70cf8a709e7d385af30",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "c395902d9421080181e836ad0cac3727a6af9c46559efe257f17a606500e91ab",
+      "sha256": "6f703c545c39ede3297fdff8130af6acafb4c2b00fa007fc64bcab46350bc729",
       "targets": []
     },
     {
@@ -533,7 +557,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/src/serve.ts",
-      "sha256": "dd5c0e20cfa8067a4fee49b152d671bdfa57cbf02921442eebf3d9faaed84b8e",
+      "sha256": "49d3b0e62dc01ab73f7cb5dad69cac3d700c20b1fca3d11be7f8714e5e785c3f",
       "targets": []
     },
     {
@@ -569,25 +593,19 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/attestationConstruction-singleProject.test.ts",
-      "sha256": "cace27d38921826c8ab07206fbdaf088c2dbe7ea36d153625a7a66d7c12c325a",
-      "targets": []
-    },
-    {
-      "kind": "spawn",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/attestationStore-gitObject.test.ts",
-      "sha256": "0d302093693280b1a4eb20f8f2e860ed2c589da49047a58e8e25824963732c99",
+      "sha256": "7ac9c7c6d959c6f23a12e02b755e329d2c656fafb52c4bd454377330ca5c0be0",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/dispatch-lineage-direct-prepare-fence.test.ts",
-      "sha256": "ce971b4edf16c2d72265a6c1f18397e2f6a7689ade5253b5a9dec18956c66a53",
+      "sha256": "1585cd437c6dd72b8622b2362745c24e12df9ee31b79f41a97abc115f180a611",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/codexInvalidOutputAttestation.test.ts",
-      "sha256": "953ecdd55991a55a44399fae6e562e6d2301b3b838756cb3838ad1cb0938e141",
+      "sha256": "632df68f2ea23df659af8fbf516f38da031bc295f656f02863524b0bce0c56de",
       "targets": []
     },
     {
@@ -623,7 +641,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoption.test.ts",
-      "sha256": "ea5b1596e5268821acdabe80cf0ce53e2b2c12f4590d0e150e27fc755824298a",
+      "sha256": "a415143e4158222028dda7439ab7948f040760fb30b48c2e6b18919065f913f8",
       "targets": []
     },
     {
@@ -647,19 +665,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-command-conformance.test.ts",
-      "sha256": "094a2b016d7b708d7412d804547fc4e3a6fa9428bffec42dc6d8dce495ddbb2a",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-fs.test.ts",
-      "sha256": "b4a95d2a12198ad3ed26a53855eba55919c17f883555538e36389fa512c215c0",
-      "targets": []
-    },
-    {
-      "kind": "spawn",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-fs.test.ts",
-      "sha256": "b4a95d2a12198ad3ed26a53855eba55919c17f883555538e36389fa512c215c0",
+      "sha256": "3da9532850c84446ccf015d6cd7fcb82db55e150410f7159fe5897c1277665b6",
       "targets": []
     },
     {
@@ -693,15 +699,9 @@
       "targets": []
     },
     {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worksetFsStorePeer.ts",
-      "sha256": "a20c9e1b893481240cee3589e3a6a88dc6e5de203e85479e955e22e5cfb63496",
-      "targets": []
-    },
-    {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/worktree-manage-mcp.test.ts",
-      "sha256": "a88ba831d1f20ee0ef4bc92fe2d3d48acd2c2752fafeaef7df8a6932d0dfb5b2",
+      "sha256": "437d1a435a32b95d5e8d2c5747016d2eb5517507ee221fb228967206555a0401",
       "targets": []
     },
     {
@@ -749,19 +749,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/advanceGate.ts",
-      "sha256": "8adde655385e7ea22fcc78fd2c1f993db218247e45e2b88119ae1c665c427c40",
+      "sha256": "f27e09c334019b8f95568932d4974a089c9553598b4ccad720862c4b92608b34",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/logPut.ts",
-      "sha256": "c68e33c96fd0d79c9f974e03a52849b7f63e0a194ff201c63f48e2aaec64ba81",
+      "sha256": "9c4f4f3792baf8310fd826d8ef97688c7c31f540ffe62b5b3bf7b2429e2893fa",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/migrate.ts",
-      "sha256": "7216b3193f52a0dea2442e4db560ecf582ee2920c0ddec5aae4ebbbf565a6139",
+      "sha256": "fcb127aaf59c0e46ee4d40c747282f3ccc70f163123c94aac15868399b90be06",
       "targets": []
     },
     {
@@ -773,7 +773,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/backup-cmd.test.ts",
-      "sha256": "1b879917337fae447740eb7a5574c85049267db832d89a04dd28cab2e4b7cdd7",
+      "sha256": "19781b4189a08ebc0fc594e693ec0ec7b2deea98f35823a647941cc4cf96918f",
       "targets": []
     },
     {
@@ -785,13 +785,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/cqTomlTemplate.test.ts",
-      "sha256": "50c816ad3c8ef1e269ed288bcf7c6c61d00ca1382f495220e3cd1614452054f3",
+      "sha256": "e289fba9b63f722ed4fce670d0d5e9010927f0471c9f3f036bbf81e8c16962fc",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/erase.test.ts",
-      "sha256": "12e8c77aec967b89b94e70a01278825d5f91cd6034664befae5ef21edc53d638",
+      "sha256": "496be83dc94ec98b4fc90386e5a4a599bdf051c953d9885902d83d9afb6457ec",
       "targets": []
     },
     {
@@ -815,19 +815,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/init.test.ts",
-      "sha256": "fff8e055f89a9c989653e02eedfdbcf149e0262f9892f2457c9b19c005d70ac7",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/log-put-fs.test.ts",
-      "sha256": "6e5270104cb4b5ac11e36d9b74ea276d8ecce3e534b828e13a47e2ed355b323b",
+      "sha256": "10a4642b6931554d81c3bcd288b38334e717616610ebdee0125fc1e6d9b2b21c",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/migrate-cmd.test.ts",
-      "sha256": "47f07d975e071a74c146a143e73ef6c52a2422bfa53b3e437fea7b196091a29c",
+      "sha256": "f8829d2b5cf5530472f6bc48f600590de629cc080f71cf6e5274fba0ae2f708f",
       "targets": []
     },
     {
@@ -851,19 +845,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/reset.test.ts",
-      "sha256": "a0b5750b9afc5ee0932d30d0963e569438e52274ee9d5c55d8248fe68ee5c0cd",
+      "sha256": "1826ed9cd134abe471ce1f72bdf5de44b944651b308a3186a8d580a9029c72d0",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/workset-effect-provider.test.ts",
-      "sha256": "0d3eba7dac99128007b826a4cba893f5cd21066f6bc97782230de70fb7796910",
+      "sha256": "b9627b3971a83fd5cdc7ec8aaffbc61a25fc212c392c22fbf5349e6c6128f152",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/workset-effect-provider.test.ts",
-      "sha256": "0d3eba7dac99128007b826a4cba893f5cd21066f6bc97782230de70fb7796910",
+      "sha256": "b9627b3971a83fd5cdc7ec8aaffbc61a25fc212c392c22fbf5349e6c6128f152",
       "targets": []
     },
     {
@@ -899,13 +893,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/config.ts",
-      "sha256": "134f909fe98fd667e0163aa3991b2172d0e841a6cd71745ba2907be049d8c215",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/dispatchAttestationFs.ts",
-      "sha256": "e0496c89375770135277b0e9969ebf96e5c969a311d0cc22bce1e002b5da4bd6",
+      "sha256": "41b6554135eef174e9fdace966d76ab3f68fbc923de06a5e56e50cd53e30dbb9",
       "targets": []
     },
     {
@@ -965,7 +953,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
-      "sha256": "f9020f080e576e57713085d1383f5476d38727ec4762271a21ba8cc8bf7f2a7d",
+      "sha256": "d0b4bd1dbef0331c754e3cc7e7378794b708f076ddeedd368d35c3245633b5a1",
       "targets": []
     },
     {
@@ -1043,7 +1031,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/expectedFailurePolicy.test.ts",
-      "sha256": "c0b577dac2f20471d8243e31bb69730159518f6983b116129e4c73eee8a56282",
+      "sha256": "ee6a10d3cd204c57fa12304412d4ee4dcf5521b68adc0efb770e1f730c1743d4",
       "targets": []
     },
     {
@@ -1217,7 +1205,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "7f379c339d9b8e6928874b852a6458079bc8c9788f21fc357c8618506c661e02",
+      "sha256": "f11a97bc3589b205f5a7739f7b49a60ea65bb484c1b3bbeca44cb8c47a56ab21",
       "targets": []
     },
     {
@@ -1319,7 +1307,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "925f76dd3d53af35e11d9f2a6f9204616e9c41bce64801c0a3623bfb3249d3f2",
+      "sha256": "94d82f3ffb458ca6206eeb3c6ad25f5c109468261b63ae9e08feb4ec8cc2ce05",
       "targets": []
     },
     {
@@ -1349,13 +1337,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/configCapability.test.ts",
-      "sha256": "462526517f34736a2412a00b21d6cde25277fed86c98aaa82645b474d2314f5a",
+      "sha256": "b4eae9cafb7c61c85d3a63d6eb5a53adb8ca2ccd67f3bb82f35b2dfef0d376b1",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/createLedgerMcpServer.test.ts",
-      "sha256": "8a3a9ceb5d5769fe35a276245200a935b2183bb4fb682e3d4118d7766f368858",
+      "sha256": "fe988ad22a99ee5cb7c0f9d8f50cca4072a9f0361e380332580c142badd1fc70",
       "targets": []
     },
     {
@@ -1367,13 +1355,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/ideasAmbientE2e.test.ts",
-      "sha256": "90b38cefb161c46b5c872dc6f3a27e33a9df34f43fca3c96304040dc256d7ac8",
+      "sha256": "43b7f8d704b070b08a68da30a5328d33e15f8edb25b402444706c64dabf9a654",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "a92f0acd54f8f82115e14abf8c1cac2a4a6f82dca235fbe84c496ff32366c08a",
+      "sha256": "101b45da0cf682fe4e9fd6fc9b5c53b2329e332a202af70cf8a709e7d385af30",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts"]
     },
     {
@@ -1385,13 +1373,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "c395902d9421080181e836ad0cac3727a6af9c46559efe257f17a606500e91ab",
+      "sha256": "6f703c545c39ede3297fdff8130af6acafb4c2b00fa007fc64bcab46350bc729",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/responseContractDocs.test.ts",
-      "sha256": "603a4a7251761fa3650446cf90b6409bf0473c5da8f848fad4ce361258982739",
+      "sha256": "8927fe9389ecb0ae093da113b8f5ba36159bdc539410ae6f7af4812ce541bd5f",
       "targets": []
     },
     {
@@ -1403,7 +1391,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/xdgProjectRuntimeCapabilities.test.ts",
-      "sha256": "c7dc7d2b38e1344aa5ee08af64e9787428bff6348131bbac227f010c7cb0d4a5",
+      "sha256": "92f1cfca6d5ba7cb68a6a023b3a771f90fdc9c695c6ca9c768c69c1611d6b5d4",
       "targets": []
     },
     {
@@ -1493,7 +1481,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/proto/jsonlProtoStore.ts",
-      "sha256": "79962b4f80b57513106b4dac8dbccb7dae1d5587fcc94b769b8456839ece77c5",
+      "sha256": "4a0afbfe284a8bafe3f57cb4e5c4324b9268c51d5696549eedb09b6e0cc8ad5d",
       "targets": []
     },
     {
@@ -1505,7 +1493,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/currentRecoverySeal.ts",
-      "sha256": "41c9fa3a824181e74c61d191816c22a7d3b063e1192b20c83b1b517c1e70b4c5",
+      "sha256": "d7f5c8d2c88416e8111339fc82170c3017cdd1e5758662e0b5965af0ec37b3b5",
       "targets": []
     },
     {
@@ -1547,7 +1535,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "6cfae704def853fec8d812149fdab3660a4b2385e487807f7d3feaa781924890",
+      "sha256": "a703396b1524fd9f3c1fb011f706186b4e57419a8d2a7adf2e16b2dfb9f74fb8",
       "targets": []
     },
     {
@@ -1572,78 +1560,54 @@
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
       "sha256": "3e3e6a692413875521ccdcf9a10cc71af689a2ff267cac8fe5fbf93112f1c96b",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/FsLedgerStore.ts",
-      "sha256": "072db9f1c3c88f2ff09e410eb90bcc2c0dd7f39d86316f658131cdeb8fe00e15",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/FsPersistence.ts",
-      "sha256": "c57eab8250d05ae7eb719946b9d781aa5185f030cbe468a0b63e8e94bf3502f6",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/backupExporter.ts",
-      "sha256": "4b41b066da263fd9a123ca8fccf76fa21bf8b730fcbe1c6a55229245366330fb",
+      "sha256": "fa0edee7574c4ab7ad7c604531f223cdcda27c3b3af3bd0022a3a42b5af9fbd2",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/createLedgerStore.ts",
-      "sha256": "af7c76ca1af43ebc296d41631c7962a87988ec4f9eb74d6216ae595e3523e28d",
+      "sha256": "349cc3c38d4b3f693bf5ed2428a5f933743a784e094a4fbd87fb789608640fbc",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/fsAtomic.ts",
-      "sha256": "feac7a2d1f479472939b40384d2ad2bddcafd7132f7eb36c9d38b4e53b7b43c7",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/fsWorksetStore.ts",
-      "sha256": "b127d0fd1dd55588b2c2bd63ab03c7da4f0a19ff31d16798a8c29fa226503cb3",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/git/GitPersistence.ts",
-      "sha256": "1a44d418c261335798312e476c1883d47e1291b0c4ebc67836df28f13d93bbab",
+      "sha256": "a03d4e060985ad1f5b19cdf25800efa26ad8f4b74da5f366b02030909a8eef7b",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/git/GitPlumbing.ts",
-      "sha256": "4695cd4d4494dc8fec5714273f1775c2b1ce2bdd8ea5f8df3a1af8d8cdc2b9ea",
+      "sha256": "1ab40dbbed558d44f83a89154087e1d8739aa9c205931783e34fb5a106e4ede8",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/ledgerArtifacts.ts",
-      "sha256": "9ca16a2e653c83a9a04fe2dde817195dc5d00a9de077e6403c716821b8c2ba2c",
+      "sha256": "d9d9d1609d000e606429323ff2e4486beff04bb40598084c76b4d51c6997c3d1",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/lockfile.ts",
-      "sha256": "2e4b5ea3122ed72d6d01b4263461a36d69f7aa7032e1ed7e59e33900ff45285d",
+      "sha256": "959b14a4d364848bf0d92e18483c54e726dfad2fa0edc4519eaef212dae15eed",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/restoreImporter.ts",
-      "sha256": "ea6c2d9d3acca447b39bf667227bf54531185919ea5606f2895fa5f206e786be",
+      "sha256": "4e162913732aa26b89bca2c95f3c5317159ed0bc7010353cf1e49753c1b4886a",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "5ad4d3863d7c50a45f5cfcb42126552d78377bdbbaeae0f60c53f8150737c172",
+      "sha256": "aa0859afdd565335c878e977cbd2d5e9661216af73083cc48c93f41f819d0c2a",
       "targets": []
     },
     {
@@ -1660,12 +1624,6 @@
     },
     {
       "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/src/worksetStoreGit.ts",
-      "sha256": "60c4d98e402c5bfbf93ec9653e7dc39ec26b80ded3058574831a70195fd8e3a2",
-      "targets": []
-    },
-    {
-      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/activePlanTaskWaits.test.ts",
       "sha256": "1a3fe4a99440fa2ef74ac5ce106f76c0db19e764cf078454cddf149cefe66e5c",
       "targets": []
@@ -1673,13 +1631,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/added-optional-field-init.test.ts",
-      "sha256": "5dad863987570a0aed7786722f54af831a95c04dd9f584dbb6ce37d29447ddf9",
+      "sha256": "08fdafe0eb02bc966508aa335f39c36c618f87c6090f93ef2dcff3657d75669f",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-and-reinit.test.ts",
-      "sha256": "51255f85457c36473230f620dd3c7ec6f5bc7efa47e6bc8decfef06028e1386a",
+      "sha256": "2f0e85cdcda7a0179f1991e34a1e4ab84be096da77b91e45e637f8c098909ce0",
       "targets": []
     },
     {
@@ -1691,25 +1649,25 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-reinit-init.test.ts",
-      "sha256": "88d16a69b356bb08f073a79f1d78d8e3c8fca28ccf242b1f57a69d524a740a1f",
+      "sha256": "cf33a78e4ae36eec9c590d48949dccc7783dcd868563fb7bc138f060cf5e2feb",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/canonical-ledgers.test.ts",
-      "sha256": "340e9ba83a4139a663ba99f887f473befbdd55411714f8be2ef23443b7a26b0a",
+      "sha256": "631c5d356274d6a8e4dd5edff0e6bd7a5d0a9c69ea799dbcb2943c02741d5c67",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/codexInvalidOutputAttestation.test.ts",
-      "sha256": "953ecdd55991a55a44399fae6e562e6d2301b3b838756cb3838ad1cb0938e141",
+      "sha256": "632df68f2ea23df659af8fbf516f38da031bc295f656f02863524b0bce0c56de",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/concurrency.test.ts",
-      "sha256": "83e3dcbc650ea0389472c44f1b2274e445cfab2fc9be4e73892bec7e0acbb6f8",
+      "sha256": "0475b4945f37729b2be397342538906ec68ce5a98f00bd0367b2f12d3b6485ef",
       "targets": []
     },
     {
@@ -1780,18 +1738,6 @@
     },
     {
       "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitInvariants.test.ts",
-      "sha256": "ee486361d29ad5a316a2fb787cf74d57e447656ea2096a3431c9a9b21f5712c1",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitObjectLedgerBackend.test.ts",
-      "sha256": "9cae542b17499f43b9e0aefc56ee757d427e8d381c4c6211eb0824b8acd4068f",
-      "targets": []
-    },
-    {
-      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitPlumbing.test.ts",
       "sha256": "85018e93a67df2947178c1cd643187e41aa901502cf126b804fd380b8a32c781",
       "targets": []
@@ -1805,13 +1751,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/handoffs-additive-widening-init.test.ts",
-      "sha256": "aeb0925b5baf95c3fa0a802da686d2af40d7ad7f4e1ff5b57d629fe836c74bb8",
+      "sha256": "2aa81f6e366de706903516f943939ef2a5eaa47d23dd2b4c0c290da77bbd0f42",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/ideas-ambient-migration.test.ts",
-      "sha256": "1197171281d635fd72d407d9e0c0c28998d1db720255b6e05eff3925da889bb0",
+      "sha256": "a03baef633f47dfc92aed34e9a00f65533fb21a6f956f05a97e3750cc29e17e7",
       "targets": []
     },
     {
@@ -1841,13 +1787,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoption.test.ts",
-      "sha256": "ea5b1596e5268821acdabe80cf0ce53e2b2c12f4590d0e150e27fc755824298a",
+      "sha256": "a415143e4158222028dda7439ab7948f040760fb30b48c2e6b18919065f913f8",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoptionCrashWorker.ts",
-      "sha256": "6322fa2917fca78f7ec50f61af7ae10dcc8d036bc54d5ebc143452f078156531",
+      "sha256": "80ae56e6ff9b86ff4d95037d24aa036f36d611e1da13e0c99734cb52d6a01288",
       "targets": []
     },
     {
@@ -1865,7 +1811,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
-      "sha256": "3587c2b2681081ac739a10e7d9eb16d64b46e17cea45392d59d321939e73136e",
+      "sha256": "8c4c508a77573ddc416b54aebdb63c9aaa86f89344b3ce101cdc18efab83112a",
       "targets": []
     },
     {
@@ -1883,19 +1829,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-backup-roundtrip.test.ts",
-      "sha256": "74172f76d73ece2eb7f79e551055bb4482d56c10c4b8a1a8bd3fe0c3e9e07757",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-fs-git.test.ts",
-      "sha256": "f376e1c99486c16fc268860efd4b929df3cfbc6f01694d20efae3769ec796e7b",
-      "targets": []
-    },
-    {
-      "kind": "spawn",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-fs-git.test.ts",
-      "sha256": "f376e1c99486c16fc268860efd4b929df3cfbc6f01694d20efae3769ec796e7b",
+      "sha256": "8fdd6376f20c0b8a350008c9f5e19608aa428e6273e440732bae51b3d44d9207",
       "targets": []
     },
     {
@@ -1931,7 +1865,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/pre-upstream-additive-init.test.ts",
-      "sha256": "6ba028ec144338449e82a32681d0a31f39701f260dd8f27cb18f641241b38f00",
+      "sha256": "5acf91dd7028873250c10c5b841f1bbb891c21d2b7428d96f0b8297ec0de300b",
       "targets": []
     },
     {
@@ -1949,7 +1883,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/reset.test.ts",
-      "sha256": "da14c6c8235d2c437c5ed82bd122e1c20a2c6268b4238704e1d2175c6e36fd2c",
+      "sha256": "2deb907bc7004163a305765c48b6f64d9b125e1afaac9ee99fbae2236f6b3872",
       "targets": []
     },
     {
@@ -1991,37 +1925,37 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "ed4b3989d06eede24d80aab30a69f2f94679f6d34d9719659e65718fa090f8ef",
+      "sha256": "04f69b079bf498c29aaaed33b7f76a216192a14fb111650f76828afcc00e6f8d",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "ed4b3989d06eede24d80aab30a69f2f94679f6d34d9719659e65718fa090f8ef",
+      "sha256": "04f69b079bf498c29aaaed33b7f76a216192a14fb111650f76828afcc00e6f8d",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/upstream-action.test.ts",
-      "sha256": "9ab4996b8ae87e28bec8e790fe0d7f1ce34371968429f3b3fe8d4a70f4d536e4",
+      "sha256": "d05644321410c2dd8f0ee09e06c5e397f7b3f050bfe9fe15994b19a87f73dfa1",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/upstream-ledger.test.ts",
-      "sha256": "a9c63cf17d2a4a2c7bcf2cbc5127a1198c2098cbb7ad77314fc98d511850f2b4",
+      "sha256": "d31a8b198f8c52ff3cde0005684d146dea6e6c335eec7a7fe3e7d871b6296aad",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-authority-conformance.test.ts",
-      "sha256": "e1d7e759c310131bfa11cb6182640249826cf8fe813a04bd159cb8e228788c2c",
+      "sha256": "6d6df8e5a2d9bba12f3d1608aa930614369da6abf78c26f8bdffbb6316009751",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-command-conformance.test.ts",
-      "sha256": "094a2b016d7b708d7412d804547fc4e3a6fa9428bffec42dc6d8dce495ddbb2a",
+      "sha256": "3da9532850c84446ccf015d6cd7fcb82db55e150410f7159fe5897c1277665b6",
       "targets": []
     },
     {
@@ -2032,68 +1966,32 @@
     },
     {
       "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-git.test.ts",
-      "sha256": "b7d37d21f5da6ab473b29795a7f2f882e8738bb552192019acb24d27603abfd0",
-      "targets": []
-    },
-    {
-      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-conformance.test.ts",
-      "sha256": "b5b0438bda54f63441247d6e1410613cf7c56ac9dcc189e6e93bf328cb69f89a",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-fs-faults.test.ts",
-      "sha256": "566f560e465642d111f8a353cd79bc0b9fe92957cd03a6e88e8b49d3e5d84690",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-fs.test.ts",
-      "sha256": "6010d2b432d966d2549023ef8e83f4293219c3a1da323dd3df68747e4507e214",
+      "sha256": "42feb7587c56ffe83526beadc2b27c5b0f874a457876c1bb7a75da5ef193f051",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-owner-backup-restore.test.ts",
-      "sha256": "5833d5232eb16bddb5ca5b1ebbc06445ebae783a41af4bf3d1e21330be6f65ce",
+      "sha256": "bee2fc912b9a9205f269c72f09e3459f57f9883c38c13f74d7574a905ec72f85",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-plan-lifecycle-conformance.test.ts",
-      "sha256": "174520646c9a3b7f191cddfffc65a0203ffdeee4b676e57a019240ce7b9b92ba",
+      "sha256": "4b5401f0ad20e5a635832a88850822e662c5253273da53c5c4531f4d64f91405",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-root-lifecycle.test.ts",
-      "sha256": "f5ff7336191e52889b0dc813ada3a3a86380f4e2b3ad3e9d07db278e69663774",
+      "sha256": "b0e1b7f52d6df17dba0a72068bddecf313cf8b380b33d4b6325d79fc4715dccb",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-sqlite-schema-divergence.test.ts",
       "sha256": "a007321e344e8d22e70ac472db201955a74382baaa6ed28824284e516477a081",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-store-fs.test.ts",
-      "sha256": "f6d7d9abecbc785aebcfb22a827ca22e28e13937f2912c9d7934858c57d27a0f",
-      "targets": []
-    },
-    {
-      "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-store-git.test.ts",
-      "sha256": "9bd9dcbb0405af6debf8830eed894fc875a46e5fbb93bff0a4bc8d6e5d905360",
-      "targets": []
-    },
-    {
-      "kind": "spawn",
-      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worksetEffectBrokerFsChild.ts",
-      "sha256": "39ebc6fe6dc69cd5e07d652cc96787ac695b758f297deb59ea4fe0c0bb385cf9",
       "targets": []
     },
     {
@@ -2117,7 +2015,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-project-runtime.test.ts",
-      "sha256": "6aadcd95df3155e8b1611df1391cb605b1060db3e68ef4f859a02707ba78598b",
+      "sha256": "be32f45ca8607c17695fd737d00714cbe7ed7e6f080ecb37479656d36f754560",
       "targets": []
     },
     {

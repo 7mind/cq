@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ATTESTATION_TABLE, LEDGER_BACKENDS, type PromptSurface } from "@cq/config";
+import { ATTESTATION_TABLE, type PromptSurface } from "@cq/config";
 import {
   attestationNamespaceForTrustedHubProject,
   createAttestationStoreForConstruction,
@@ -19,10 +19,6 @@ import {
   refuseDispatchRuntime,
 } from "../src/dispatchCapability.js";
 import { createLedgerMcpServer } from "../src/main.js";
-import {
-  captureCurrentDispatchRecoveryForProject,
-  readCurrentDispatchRecoveryStatusForProject,
-} from "../src/dispatchRecoverySeal.js";
 import type {
   PromptArtifactRoleMetadata,
   PromptArtifactStore,
@@ -70,32 +66,6 @@ function workerArtifactStore(surface: PromptSurface): PromptArtifactStore {
 }
 
 describe("production dispatch runtime construction", () => {
-  for (const backend of LEDGER_BACKENDS.filter((kind) => kind !== "xdg" && kind !== "remote")) {
-    test(`refuses unsupported local '${backend}' dispatch and recovery before namespace access`, async () => {
-      const store = await inMemoryStore();
-      const resolved: ResolvedLedgerStore = {
-        store, backend, configRoot: "/must-not-be-resolved", branch: "cq-ledger",
-      };
-      try {
-        const runtime = await createSingleProjectDispatchRuntime({
-          construction: "direct", resolved, promptArtifactStore: workerArtifactStore("codex"),
-        });
-        expect(runtime.kind).toBe("unavailable");
-        if (runtime.kind === "available") throw new Error("expected refusal");
-        expect(runtime.reason).toContain("unsupported single-project attestation backend");
-        const recovery = { construction: "direct", resolved, taskId: "T1" } as const;
-        await expect(captureCurrentDispatchRecoveryForProject(recovery)).rejects.toThrow(
-          "single-project recovery does not support",
-        );
-        await expect(readCurrentDispatchRecoveryStatusForProject(recovery)).rejects.toThrow(
-          "single-project recovery does not support",
-        );
-      } finally {
-        await store.dispose();
-      }
-    });
-  }
-
   test("refuses unsupported construction and backend cells before registration", async () => {
     const store = await inMemoryStore();
     const unsupportedBackend: ResolvedLedgerStore = {

@@ -1,72 +1,23 @@
 #!/usr/bin/env bun
 /**
- * storeBackendBench — Q248 reference-metrics harness (T490 / G67-A).
+ * Store latency harness for the production SQLite store and independent
+ * SQLite/JSONL research prototypes. Measures p95 single-item update latency
+ * and cold initialization at 1k and 10k items. Bulk seeding is not measured.
  *
- * Generates a synthetic `tasks`-ledger workload at N items (1k, 10k) and
- * measures, against BOTH current backends (`FsLedgerStore`,
- * `GitObjectLedgerBackend`):
- *
- *  (a) p95 single-item mutation latency — `updateItem` through the store's
- *      real write funnel (mutex + lockfile + persist), one flip per item
- *      across a sample of the synthetic population;
- *  (b) cold `init()` time — construct a FRESH store instance bound to the
- *      already-populated on-disk/on-ref state and time `await store.init()`.
- *
- * ## Seeding strategy (why not just call `createItem` N times)
- *
- * Both backends' `writeLedgerFile` (AbstractLedgerStore) serializes and
- * rewrites the ENTIRE ledger source on every mutation — by design, not a bug
- * (see AbstractLedgerStore.ts). Populating N items one `createItem` at a time
- * is therefore O(n^2) in the population size: measured empirically, 1,000
- * sequential `createItem` calls against `FsLedgerStore` took ~135s wall time,
- * which extrapolates (git-object is slower still, one subprocess spawn per
- * git plumbing call) to an impractical multi-hour run at 10,000 items. No
- * real workflow creates 10k items in one sitting either — production ledgers
- * reach that size incrementally over long spans. So the harness builds the
- * synthetic N-item population directly (one `Ledger` object, serialized once,
- * written through the SAME persistence seam `writeLedgerFile` uses) and then
- * measures `updateItem`/`init()` against that already-large state — exactly
- * the two operations Q248 asks about, without paying an unrepresentative
- * one-session bulk-creation cost neither backend is optimised for.
- *
- * These are the Q248 reference numbers the milestone-A prototypes (T492) and
- * the milestone-C implementation are compared against (targets: p95 mutation
- * < 10ms, cold init < 500ms at 10k items). Re-run this same harness against a
- * new backend by adding a `BackendDriver` below — the workload generation and
- * measurement logic stay identical so numbers are comparable.
- *
- * Usage:
- *   bun run bench            (from packages/ledger/)
- *   bun run bench:store       (workspace-root alias, see root package.json)
- *
- * Output: human-readable table on stdout; exits 0 on success, non-zero if a
- * backend fails to initialise/mutate (fail-fast, no swallowed errors).
+ * Usage: bun run bench:store from the workspace root.
  */
 
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import {
-  FsLedgerStore,
-  GitObjectLedgerBackend,
-  GitPlumbing,
-  TASKS_LEDGER,
-  TASKS_SCHEMA,
-  serializeLedger,
-  type Item,
-  type Ledger,
-} from "../src/index.js";
+import { TASKS_LEDGER, type Item } from "../src/index.js";
 import { SqliteProtoStore, seedSqliteItems } from "./proto/sqliteProtoStore.js";
 import { JsonlProtoStore, seedJsonlItems } from "./proto/jsonlProtoStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
-const exec = promisify(execFile);
-
 /**
- * The narrow store surface this bench exercises. The real fs/git-object
+ * The narrow store surface this bench exercises. The production SQLite
  * `LedgerStore` satisfies it structurally; the T492 milestone-A prototypes
  * (`SqliteProtoStore`, `JsonlProtoStore`) are wrapped to present it (their
  * native signatures are narrower — see proto/protoStore.ts). Every driver's
@@ -83,15 +34,7 @@ interface BenchStore {
 /** Synthetic workload sizes (items in the `tasks` ledger). Q248 reference points. */
 const SIZES = [1_000, 10_000] as const;
 
-/**
- * Number of single-item mutations sampled to compute the p95 (per size).
- * `updateItem` also pays the O(n) full-ledger reload+rewrite cost per call
- * (see module doc comment), so at 10k items x 2 backends a large sample
- * count makes the harness run for tens of minutes; 50 keeps the p95 estimate
- * meaningful (an order-of-magnitude reference, not a rigorous benchmark —
- * see the research doc's caveats) while keeping the harness re-runnable in
- * a few minutes.
- */
+/** Number of single-item mutations sampled to compute the p95 per size. */
 const MUTATION_SAMPLES = 50;
 
 /** Build the synthetic `tasks`-ledger `Item[]` for the given milestone/size. */
@@ -113,27 +56,9 @@ function buildSyntheticItems(milestoneId: string, size: number, now: string): It
   return items;
 }
 
-/** Build the synthetic `tasks` Ledger (one milestone-group holding `size` items). */
-function buildSyntheticLedger(milestoneId: string, size: number, now: string): Ledger {
-  return {
-    id: TASKS_LEDGER,
-    schema: TASKS_SCHEMA,
-    counters: { milestone: 1, item: size + 1 },
-    milestones: [
-      {
-        id: milestoneId,
-        title: "",
-        description: "",
-        items: buildSyntheticItems(milestoneId, size, now),
-      },
-    ],
-    archivePointers: [],
-  };
-}
-
 interface BackendDriver {
   name: string;
-  /** Prepare a fresh root (tmp dir, optionally a throwaway git repo). */
+  /** Prepare a fresh temporary root. */
   setupRoot(): Promise<string>;
   /** Construct + init a store bound to `root`, populating it as a side effect
    *  is NOT done here — callers populate via a first store instance, then
@@ -148,75 +73,6 @@ interface BackendDriver {
   /** Remove any temp state created by `setupRoot`. */
   teardownRoot(root: string): Promise<void>;
 }
-
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await exec("git", args, { cwd, encoding: "utf8" });
-  return stdout.trim();
-}
-
-const fsDriver: BackendDriver = {
-  name: "fs",
-  async setupRoot() {
-    return fs.mkdtemp(path.join(tmpdir(), "bench-fs-"));
-  },
-  async openStore(root) {
-    const store = new FsLedgerStore({ root });
-    await store.init();
-    return store;
-  },
-  async seedTasksLedger(root, milestoneId, size) {
-    const now = new Date().toISOString();
-    const ledger = buildSyntheticLedger(milestoneId, size, now);
-    const text = serializeLedger(ledger);
-    await fs.writeFile(path.join(root, ".cq", `${TASKS_LEDGER}.md`), text, "utf8");
-    return ledger.milestones[0]!.items.map((it) => it.id);
-  },
-  async teardownRoot(root) {
-    await fs.rm(root, { recursive: true, force: true });
-  },
-};
-
-const gitObjectDriver: BackendDriver = {
-  name: "git-object",
-  async setupRoot() {
-    const dir = await fs.mkdtemp(path.join(tmpdir(), "bench-git-"));
-    await git(dir, "init", "-q");
-    await git(dir, "config", "user.email", "bench@example.com");
-    await git(dir, "config", "user.name", "bench");
-    await git(dir, "config", "commit.gpgsign", "false");
-    await fs.writeFile(path.join(dir, "src.txt"), "bench placeholder\n");
-    await git(dir, "add", "src.txt");
-    await git(dir, "commit", "-q", "-m", "bench: initial");
-    return dir;
-  },
-  async openStore(root) {
-    const store = new GitObjectLedgerBackend({ repoRoot: root });
-    await store.init();
-    return store;
-  },
-  async seedTasksLedger(root, milestoneId, size) {
-    const now = new Date().toISOString();
-    const ledger = buildSyntheticLedger(milestoneId, size, now);
-    const text = serializeLedger(ledger);
-    const plumbing = GitPlumbing.withCwd(root, path.join(root, ".git"));
-    const ref = "refs/heads/cq-ledger";
-    const parent = await plumbing.readRef(ref);
-    const entries = await plumbing.lsTreeEntries(ref);
-    const blob = await plumbing.hashObject(text);
-    const treeName = `${TASKS_LEDGER}.md`;
-    const nextEntries = [
-      ...entries.filter((e) => e.path !== treeName),
-      { mode: "100644" as const, sha: blob, path: treeName },
-    ];
-    const tree = await plumbing.writeTree(nextEntries);
-    const commit = await plumbing.commitTree(tree, parent, `bench: seed ${TASKS_LEDGER}`);
-    await plumbing.updateRef(ref, commit, parent);
-    return ledger.milestones[0]!.items.map((it) => it.id);
-  },
-  async teardownRoot(root) {
-    await fs.rm(root, { recursive: true, force: true });
-  },
-};
 
 /**
  * Candidate A (T492): bun:sqlite PROTOTYPE. Store wraps `SqliteProtoStore` to
@@ -249,14 +105,8 @@ const sqliteProtoDriver: BackendDriver = {
 };
 
 /**
- * The real `SqliteLedgerStore` (K102 primary, T525-T528, G67-C1). Fixed
- * `ledger.db` filename inside the per-run root (parity with
- * `test/sqliteWriterStore.ts`). `openStore` returns the store directly — it
- * already satisfies `BenchStore` structurally (same as `fsDriver` /
- * `gitObjectDriver`). Seeding writes the synthetic item rows directly via a
- * raw `bun:sqlite` connection over the same normalized schema (schema.ts),
- * bypassing the per-item `createItem` write funnel for the same O(n^2) reason
- * documented in the module doc comment.
+ * Production SQLite store with a per-run database. Seeding writes normalized
+ * item rows in one transaction; measurements use the public store methods.
  */
 const sqliteDriver: BackendDriver = {
   name: "sqlite",
@@ -335,7 +185,7 @@ const jsonlDriver: BackendDriver = {
   },
 };
 
-const DRIVERS: BackendDriver[] = [fsDriver, gitObjectDriver, sqliteDriver, sqliteProtoDriver, jsonlDriver];
+const DRIVERS: BackendDriver[] = [sqliteDriver, sqliteProtoDriver, jsonlDriver];
 
 interface SizeResult {
   size: number;

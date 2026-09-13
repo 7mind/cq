@@ -5,13 +5,12 @@
  * THROWAWAY. The canonical, human-readable source of truth is an append-only
  * JSONL log at `<root>/.cq/tasks.jsonl`: one JSON record per line, LAST record
  * per `id` wins (log-structured). A single-item mutation is a bounded APPEND of
- * one line — O(1), not the O(n) whole-file rewrite the fs/git backends pay
- * (T490 §4). Cold `init()` streams the JSONL once and folds it into an
+ * one line. Cold `init()` streams the JSONL once and folds it into an
  * in-memory `Map<id, ProtoItem>` derived index (rebuildable, never
  * authoritative) — an O(records) parse, not the whole-ledger markdown reparse.
  *
  * Multi-process (Q246): appends are serialized with the repo's advisory
- * `Lockfile` (the same one FsLedgerStore uses). O_APPEND gives per-write
+ * `Lockfile`. O_APPEND gives per-write
  * atomicity, but a full JSON line can exceed PIPE_BUF, so the lock guarantees
  * no interleaved/torn lines across processes. This is exactly the locking
  * signal the T497 contract needs: the canonical log needs a per-store write
@@ -133,8 +132,7 @@ export async function readJsonlStatuses(root: string): Promise<Map<string, strin
 
 /**
  * Direct-seed the canonical JSONL with the synthetic population by writing the
- * whole file ONCE (bulk load), bypassing the per-mutation append funnel — the
- * hybrid equivalent of the fs driver writing tasks.md once (bench module doc).
+ * whole file ONCE (bulk load), bypassing the per-mutation append funnel.
  * Returns the seeded item ids.
  */
 export async function seedJsonlItems(

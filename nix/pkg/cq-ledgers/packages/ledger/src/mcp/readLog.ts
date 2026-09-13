@@ -2,11 +2,11 @@
  * read_log capability (T147 / Q87).
  *
  * The `read_log` MCP tool performs a bounded, root-confined read of a file under
- * `<root>/.cq/logs/`. Per R137 #6 the confinement root is the EXPLICIT
- * FsLedgerStore root, NOT the generic `LedgerStore` interface (no root accessor;
- * its in-memory impl has no filesystem). So the capability is a standalone
- * function type the FS-store layer supplies (closing over its `<root>/.cq/logs`)
- * and threads explicitly into the tool factories. Wired over an in-memory store
+ * an explicitly supplied logs directory. Per R137 #6 the confinement root
+ * comes from the filesystem-backed host, NOT the generic `LedgerStore`
+ * interface (no root accessor; its in-memory impl has no filesystem). The host
+ * threads the standalone capability explicitly into the tool factories.
+ * Wired over an in-memory store
  * (no filesystem), no capability is supplied and `read_log` throws
  * `ReadLogNotImplementedError`.
  */
@@ -22,9 +22,9 @@ export interface ReadLogResult {
 }
 
 /**
- * A bounded read-log capability: resolves `relPath` against `<root>/.cq/logs`,
+ * A bounded read-log capability: resolves `relPath` against the logs directory,
  * rejects any path escaping that directory, and caps the returned size.
- * Supplied by the FS-store layer; absent for in-memory-backed factories.
+ * Supplied by the host; absent for in-memory-backed factories.
  */
 export type ReadLogCapability = (relPath: string) => Promise<ReadLogResult>;
 
@@ -41,7 +41,7 @@ export const MAX_READ_LOG_BYTES = 4 * 1024 * 1024;
  * Thrown when `read_log` is invoked on a factory wired over a store with no
  * filesystem (the in-memory dummy used in dual-tests). Documented behaviour:
  * the OTHER ops remain unaffected and read_log's path-confinement test runs
- * only against the FS-backed configuration.
+ * only against the filesystem-backed configuration.
  */
 export class ReadLogNotImplementedError extends Error {
   constructor() {

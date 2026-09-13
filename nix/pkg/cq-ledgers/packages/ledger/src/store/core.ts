@@ -1,8 +1,8 @@
 /**
  * Internal pure logic for mutating in-memory Ledger state.
- * No I/O, no locking — those concerns live in FsLedgerStore.
+ * No I/O, no locking — those concerns live in the durable adapters.
  *
- * Shared between FsLedgerStore (which wraps these with persist + lock) and
+ * Shared between SQLite/PostgreSQL stores and
  * InMemoryLedgerStore (the dual-tests dummy).
  */
 
@@ -108,7 +108,7 @@ export function effectiveIdPrefix(name: string, schema: LedgerSchema): string {
 /**
  * Caller-supplied milestone/item ids must match this regex. The set is
  * deliberately narrow — no `/`, no `.`, no whitespace — so an id cannot
- * escape the filesystem path that `FsLedgerStore` derives from it
+ * escape the portable archive path derived from it
  * (`./archive/<ledger>/<id>.md`). D-LED-01.
  */
 export const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -328,8 +328,7 @@ export interface RefValidationContext {
    * True iff `<ledger>:<id>` names an item that EXISTS in that ledger — ACTIVE
    * OR ARCHIVED (referencing an archived item is legal). Per-backend archive
    * lookup: InMemoryLedgerStore scans its `archives`/`itemArchives` maps;
-   * AbstractLedgerStore (fs/git) uses the `LedgerSearchIndex` archived bucket
-   * built from immutable archive files; SqliteLedgerStore queries the
+   * SqliteLedgerStore queries the
    * `archived_items` table. Active lookup is the in-memory ledgers / `items`
    * table respectively.
    */
@@ -568,7 +567,7 @@ export function applyUpdateItem(
  *
  * - In the milestones ledger: the only allowed `milestoneId` is the
  *   bootstrap active group (MILESTONES_ACTIVE_GROUP_ID). All milestone-items
- *   live there; the caller (FsLedgerStore.createMilestone) routes here.
+   *   live there; the store's createMilestone method routes here.
  * - In every other ledger: if no depth-2 group with id === `milestoneId`
  *   exists yet, one is auto-created (empty title, empty description).
  *   This is the per-msunify-1 plan decision #1: the dropped

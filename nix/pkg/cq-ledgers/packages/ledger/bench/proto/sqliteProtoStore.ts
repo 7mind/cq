@@ -5,8 +5,7 @@
  * opened with WAL + a busy_timeout so multiple `cq` processes can serialize
  * writes across processes (Q246). One `items` table (the `tasks` ledger) and a
  * `milestones` registry table; a single-item mutation is one indexed-by-PK
- * `UPDATE` — O(1), the whole point vs the O(n) whole-file rewrite the fs/git
- * backends pay (T490 §4). Cold `init()` just opens the db + sets PRAGMAs; no
+ * `UPDATE`. Cold `init()` just opens the db + sets PRAGMAs; no
  * full parse.
  */
 
@@ -115,8 +114,7 @@ export function readSqliteStatuses(root: string): Map<string, string> {
 /**
  * Direct-seed the `items` table with the synthetic population in ONE
  * transaction of parameterized inserts (bulk load), bypassing any per-item
- * write funnel — the SQLite equivalent of the fs driver writing tasks.md once
- * (see the bench module doc). Returns the seeded item ids.
+ * write funnel. Returns the seeded item ids.
  */
 export async function seedSqliteItems(
   root: string,

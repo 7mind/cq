@@ -26,7 +26,7 @@
  *    is vacuously all-items-terminal and must NOT be swept to `done`). Both
  *    land in `skipped[]` with explicit reasons.
  *  - Q290 — the archive plan mirrors the store's `archiveMilestone`
- *    precondition (`AbstractLedgerStore.performArchive`) so a planned archive
+ *    precondition so a planned archive
  *    can never be rejected: every item of every participating ledger is
  *    terminal (phase 1) AND the milestone-item itself is terminal (phase 1b);
  *    the ambient milestone is excluded (the server refuses it anyway). Note

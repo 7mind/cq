@@ -215,35 +215,26 @@ planners = ["opus"]
 # [ledger] — Ledger storage backend configuration (T349, T494, G81, K117).
 # Absence of this block (or of cq.toml entirely) defaults to backend="xdg"
 # (the out-of-tree bun:sqlite primary at the XDG location, K102) and
-# backup="none". "fs" (the historical in-tree FsLedgerStore) and "git-object"
-# (git object storage, Q189) are LEGACY backends: still selectable
-# explicitly, but construction emits a deprecation warning pointing at
-# `cq migrate` (the one-shot legacy -> xdg importer). A root that still
-# carries a legacy in-tree .cq/ ledger while resolving to the xdg DEFAULT
-# gets a shadow warning — the in-tree data is not read until migrated.
+# backup="none". Portable Markdown backups can be imported with `cq restore`.
 # "remote" selects the repository-backed cq serve service. PostgreSQL is
 # private cq serve state, not a public checkout backend.
 #
 # Keys:
-#   backend   — storage backend: "xdg" (default) | "remote" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
+#   backend   — checkout storage backend: "xdg" (default) | "remote"
 #   serverUrl — required for remote: non-secret absolute HTTP(S) URL with no
 #               credentials, query, or fragment. The ordinary bearer secret
 #               comes only from CQ_LEDGER_REMOTE_TOKEN and never from cq.toml.
-#   branch    — git branch for the git-object backend (default: "cq-ledger")
-#   remote    — git remote for the git-object backend (default: "origin")
+#   branch    — orphan-branch backup target (default: "cq-ledger")
 #   backup    — human-readable markdown export/backup mode:
 #               "none" (default) | "in-tree" | "orphan-branch" (Q244 — OFF by default)
 #   projectId — optional committed project-identity string, used for
 #               repo-identity keying (Q246); no default (absent => null)
 #
-# To activate the LEGACY git-object backend (deprecated — construction
-# warns), uncomment the block below and set backend = "git-object". The
-# branch/remote keys are optional; the shown values are the defaults.
+# To make local XDG storage explicit, uncomment the block below.
 #
 # [ledger]
-#   backend   = "git-object"   # "xdg" (default) | "remote" | "fs" (legacy) | "git-object" (legacy)
-#   branch    = "cq-ledger"    # git branch to store ledger objects on
-#   remote    = "origin"       # git remote to push/fetch ledger objects from
+#   backend   = "xdg"         # "xdg" (default) | "remote"
+#   branch    = "cq-ledger"    # used only for orphan-branch backup
 #   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"
 #   projectId = "my-project"   # optional repo-identity key (Q246)
 #
@@ -287,7 +278,7 @@ planners = ["opus"]
 # SHARED (cannot be overridden per-harness — shared across all harnesses):
 #   [aliases]        — alias name -> reviewer token map
 #   [webui]          — web-UI port / bind config
-#   [ledger]         — storage backend (fs / git-object)
+#   [ledger]         — checkout storage backend (xdg / remote)
 #   [agent_tiers]    — agent-name -> tier class map
 #   [agent_efforts]  — agent-name -> reasoning-effort override map
 #   [upstream]       — ordinary-report filing/recheck kill-switches

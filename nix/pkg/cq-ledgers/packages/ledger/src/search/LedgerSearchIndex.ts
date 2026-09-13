@@ -28,16 +28,14 @@
  * ------------------
  * Active and archived docs are tracked per ledger so a single ledger can be
  * rebuilt in O(docs-in-ledger) without touching other ledgers. Archived docs
- * are built from immutable archive files; active docs are rebuilt on every
- * change. See `FsLedgerStore` for the I/O wiring and the archive-immutability
- * rationale.
+ * are built from archive snapshots; active docs are rebuilt on every change.
  *
  * Scope-aware docId (D88)
  * -----------------------
  * Before this fix, `docId` was `"<ledgerId>:<itemId>"` with no scope tag, so
  * the active and archived buckets COLLIDED on the same MiniSearch document id
  * whenever an item had ever been both (e.g. across an archive/unarchive
- * round-trip). `AbstractLedgerStore.unarchiveItem` refreshes the active
+ * round-trip). An unarchive refresh can update the active
  * bucket first (re-adding the item under the shared id) and the archived
  * bucket second (discarding its now-stale tracked id under the SAME shared
  * id) — the archived-bucket discard erased the just-re-added active doc, so

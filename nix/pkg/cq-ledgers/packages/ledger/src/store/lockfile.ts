@@ -13,10 +13,8 @@
  *         ESRCH), unlink the lockfile and retry the atomic acquire.
  *       - If `pid` IS alive, WAIT: poll the atomic acquire on a short interval
  *         until either it succeeds or `acquireTimeoutMs` elapses, then throw
- *         LedgerBusyError. cq has two legitimate concurrent ledger writers on
- *         one cwd (the in-process FsLedgerStore in the cq server and the
- *         long-lived cq-mcp child); the write-through critical section is short,
- *         so a bounded wait serialises them instead of failing the second writer
+ *         LedgerBusyError. Concurrent filesystem effects may share one cwd;
+ *         a bounded wait serialises their short write-through critical sections
  *         (LOCK-D01). The timeout stays bounded so a genuinely stuck holder still
  *         surfaces LedgerBusyError.
  *

@@ -37,8 +37,7 @@ export const PLAN_LIFECYCLE_PENDING_FILENAME = "plan-lifecycle.pending.json";
 /** Recoverable filesystem archive commit pre-state; never part of a portable tree. */
 export const ARCHIVE_COMMIT_PENDING_FILENAME = "archive-commit.pending.json";
 /**
- * Durable workset roots/epoch pair (T1956). One complete batch per visible
- * tip — stored on the orphan ref for git-object and under `.cq/` for fs.
+ * Portable workset roots/epoch document (T1956), containing one complete batch.
  */
 export const WORKSET_ROOTS_FILENAME = "workset-roots.json";
 /**

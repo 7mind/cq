@@ -1,7 +1,7 @@
 # @cq/ledger-mcp
 
-Standalone MCP server exposing the 31 ledger tools backed by an xdg/sqlite,
-filesystem, or PostgreSQL ledger store. Speaks stdio (default) and Streamable
+Standalone MCP server exposing ledger tools backed by XDG SQLite or a remote
+`cq serve` service (with private PostgreSQL state). Speaks stdio (default) and Streamable
 HTTP (`--http`). The six dispatch-lifecycle tools use a separate durable,
 namespaced attestation backend and appear only when the server has both a
 supported backend construction and an attested prompt surface.
@@ -112,16 +112,16 @@ import { prefixedToolNames } from "@cq/ledger";
 const names = prefixedToolNames("myproj");
 ```
 
-### 4. Using FsLedgerStore directly
+### 4. Using SqliteLedgerStore directly
 
 If you want to bypass `createLedgerStore`'s cq.toml resolution (e.g. you always
-want the filesystem backend regardless of project config), construct
-`FsLedgerStore` yourself:
+want an explicitly located SQLite database regardless of project config), construct
+`SqliteLedgerStore` yourself. This lower-level form does not resolve XDG identity:
 
 ```ts
-import { FsLedgerStore } from "@cq/ledger";
+import { SqliteLedgerStore } from "@cq/ledger";
 
-const store = new FsLedgerStore({ root: "/path/to/your/project" });
+const store = new SqliteLedgerStore({ dbPath: "/absolute/existing/directory/ledger.db" });
 await store.init();
 
 const server = createLedgerMcpServer({

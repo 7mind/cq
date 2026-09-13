@@ -8,7 +8,7 @@
  * `snapshot`/`search`) is SYNCHRONOUS. This store therefore CANNOT use the
  * SqliteLedgerStore "every row read is a fresh query" model. Instead it serves
  * reads from an in-memory MATERIALIZED CACHE of its OWN tenant's rows —
- * FsLedgerStore/InMemoryLedgerStore style — loaded on `init()`:
+ * loaded on `init()`:
  *
  *  - Reads are answered synchronously from the cached `Ledger` objects
  *    (`this.ledgers`) + the archived-row maps (`this.archives` /
@@ -25,8 +25,8 @@
  *    SqliteLedgerStore.indexUpsertActive), fully rebuilt on structural/
  *    archive ops and on `invalidate`.
  *
- * Like SqliteLedgerStore, this implements the interface DIRECTLY (NOT via
- * AbstractLedgerStore, whose serialize funnel K102 forbids) and reuses the pure
+ * Like SqliteLedgerStore, this implements the interface directly over rows
+ * without a Markdown serialization funnel (K102), and reuses the pure
  * `core.ts` `apply*` guards VERBATIM so error types/results match the other
  * backends. Counters live in the `ledgers` table and are incremented INSIDE the
  * write transaction (`UPDATE … RETURNING`), so cross-instance id allocation
@@ -178,7 +178,7 @@ import {
   type PostgresWorksetStore,
 } from "./worksetStore.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
-import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
+import { serializeWorksetRootsDocument } from "../../worksetRootsDocument.js";
 import {
   observeTaskAdoptionEligibility,
   TaskAdoptionFenceRegistry,
@@ -1043,7 +1043,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   async dispose(): Promise<void> {
     // D148: drain per-ledger mutexes BEFORE closing the pool so an in-flight
     // coherence invalidate/reloadLedger (parked on `await prior` or mid-query)
-    // finishes against a still-open pool — matching AbstractLedgerStore.dispose.
+    // finishes against a still-open pool.
     const drains = Array.from(this.mutexes.values()).map((m) => m.run(async () => undefined));
     await Promise.all(drains);
     if (this.workset !== null) {
