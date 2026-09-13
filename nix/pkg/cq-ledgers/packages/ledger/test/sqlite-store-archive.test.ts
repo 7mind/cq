@@ -1,17 +1,17 @@
 /**
- * SqliteLedgerStore T529 acceptance — archives (archiveMilestone/
- * unarchiveItem/fetchArchive) row-native parity with FsLedgerStore over a
- * shared scenario, plus the sqlite-specific schema-divergence BACKUP action:
+ * SqliteLedgerStore T529 acceptance — direct archiveMilestone, unarchiveItem,
+ * and fetchArchive outcomes, plus the SQLite-specific schema-divergence
+ * BACKUP action:
  *
- *  1. archive → fetchArchive → unarchiveItem round-trip parity with
- *     FsLedgerStore (NonTerminalItemsError refusal, bootstrap-group refusal,
- *     M-AMBIENT refusal, pointer removal when a group archive empties).
+ *  1. archive → fetchArchive → unarchiveItem round trip, including
+ *     NonTerminalItemsError, bootstrap-group and M-AMBIENT refusal, and
+ *     pointer removal when a group archive empties.
  *  2. onMutation fires in the D-COHERENCE-asserted order on archive
  *     (alphabetic participants, then the milestones ledger; a ledger with no
  *     group for the milestone does not fire).
  *  3. includeArchived — an archived item is searchable ONLY via
  *     includeArchived:true; unarchive restores active-scope searchability
- *     (derived-index scope transition), parity with FsLedgerStore.
+ *     (derived-index scope transition).
  *  4. Divergence BACKUP: tampering a `ledgers.schema_json` row triggers
  *     VACUUM-INTO backup + reinit; the backup .db is openable and holds the
  *     pre-divergence rows while the live db is back to canonical.
@@ -34,8 +34,7 @@ import {
   MILESTONES_LEDGER,
   TASKS_SCHEMA,
 } from "../src/constants.js";
-import type { LedgerMutationOp, LedgerStore } from "../src/store/LedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
+import type { LedgerMutationOp } from "../src/store/LedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
@@ -79,34 +78,15 @@ const notesSchema: LedgerSchema = {
   fields: { notes: { type: "string", required: false } },
 };
 
-// ---------------------------------------------------------------------------
-// Parity harness — run one op against both stores, demand identical outcomes.
-// ---------------------------------------------------------------------------
-
-interface ParityStores {
-  fs: FsLedgerStore;
-  sq: SqliteLedgerStore;
-}
-
-async function parityStores(
+async function sqliteStore(
   seed: Array<{ name: string; schema: LedgerSchema }> = [],
-): Promise<ParityStores & { dispose: () => Promise<void> }> {
-  const fs = new FsLedgerStore({ root: await freshDir("ledger-fs-arch-"), now });
-  await fs.init();
-  const sq = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
-  await sq.init();
+): Promise<SqliteLedgerStore> {
+  const store = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
+  await store.init();
   for (const { name, schema } of seed) {
-    await fs.createLedger(name, schema);
-    await sq.createLedger(name, schema);
+    await store.createLedger(name, schema);
   }
-  return {
-    fs,
-    sq,
-    dispose: async (): Promise<void> => {
-      await fs.dispose();
-      await sq.dispose();
-    },
-  };
+  return store;
 }
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; err: unknown };
@@ -119,22 +99,6 @@ async function settle<T>(op: () => Promise<T>): Promise<Outcome<T>> {
   }
 }
 
-function describeOutcome(o: Outcome<unknown>): unknown {
-  if (o.ok) return { ok: true, value: o.value };
-  const err = o.err as Error;
-  return { ok: false, error: `${err.constructor.name}: ${err.message}` };
-}
-
-async function parity<T>(
-  stores: ParityStores,
-  op: (s: LedgerStore) => Promise<T>,
-): Promise<Outcome<T>> {
-  const fsOutcome = await settle(() => op(stores.fs));
-  const sqOutcome = await settle(() => op(stores.sq));
-  expect(describeOutcome(sqOutcome)).toEqual(describeOutcome(fsOutcome));
-  return sqOutcome;
-}
-
 function value<T>(o: Outcome<T>): T {
   if (!o.ok) throw new Error(`expected success, got: ${String(o.err)}`);
   return o.value;
@@ -145,23 +109,16 @@ function expectError(o: Outcome<unknown>, cls: new (...args: never[]) => Error):
   expect(o.err).toBeInstanceOf(cls);
 }
 
-function expectStoreParity({ fs, sq }: ParityStores): void {
-  expect(sq.enumerate()).toEqual(fs.enumerate());
-  for (const name of fs.enumerate()) {
-    expect(sq.fetch(name)).toEqual(fs.fetch(name));
-  }
-  expect(sq.snapshot()).toEqual(fs.snapshot());
-}
-
 // ---------------------------------------------------------------------------
-// §1 — archive → fetchArchive → unarchiveItem round-trip parity
+// §1 — archive → fetchArchive → unarchiveItem round trip
 // ---------------------------------------------------------------------------
 
-describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLedgerStore", () => {
+describe("T529: archiveMilestone / fetchArchive / unarchiveItem outcomes", () => {
   test("NonTerminalItemsError refusal (group items, then the milestone-item itself), then a full archive→fetchArchive→unarchiveItem round trip with pointer removal on empty", async () => {
-    const stores = await parityStores([{ name: WIDGETS, schema: widgetsSchema }]);
+    const store = await sqliteStore([{ name: WIDGETS, schema: widgetsSchema }]);
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> => parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
       const m = value(await p((s) => s.createMilestone({ title: "M-arch" })));
       const a = value(
@@ -186,11 +143,19 @@ describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLe
 
       // Resolve `a`; group items are now all terminal, but the milestone-item
       // itself is still non-terminal (open) — Phase 1b refuses.
-      await p((s) => s.updateItem(WIDGETS, a.id, { status: "resolved" }));
+      expect(
+        value(await p((s) => s.updateItem(WIDGETS, a.id, { status: "resolved" }))),
+      ).toMatchObject({
+        id: a.id,
+        status: "resolved",
+      });
       expectError(await p((s) => s.archiveMilestone(m.id, "summary")), NonTerminalItemsError);
 
       // Mark the milestone done — now the archive succeeds.
-      await p((s) => s.updateMilestone(m.id, { status: "done" }));
+      expect(value(await p((s) => s.updateMilestone(m.id, { status: "done" })))).toMatchObject({
+        id: m.id,
+        status: "done",
+      });
       const ptr = value(await p((s) => s.archiveMilestone(m.id, "summary one")));
       expect(ptr).toMatchObject({
         id: m.id,
@@ -200,13 +165,13 @@ describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLe
         status: "done",
       });
 
-      // Group archive readable via fetchArchive; parity on both items.
+      // Group archive is readable via fetchArchive and contains both items.
       const groupArchive = value(await p((s) => s.fetchArchive(WIDGETS, m.id)));
       expect(groupArchive.kind).toBe("group");
       if (groupArchive.kind === "group") {
         expect(groupArchive.milestone.items.map((it) => it.id).sort()).toEqual([a.id, b.id].sort());
       }
-      // Milestone-item archive readable; parity.
+      // Milestone-item archive is readable directly.
       const msArchive = value(await p((s) => s.fetchArchive(MILESTONES_LEDGER, m.id)));
       expect(msArchive.kind).toBe("item");
       if (msArchive.kind === "item") {
@@ -216,7 +181,7 @@ describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLe
       // Unknown archive id refuses identically.
       expectError(await p((s) => s.fetchArchive(WIDGETS, "M999")), LedgerError);
 
-      // Bootstrap group + M-AMBIENT refusal (parity).
+      // Bootstrap group and M-AMBIENT are refused.
       expectError(
         await p((s) => s.archiveMilestone(MILESTONES_ACTIVE_GROUP_ID, "no")),
         BootstrapViolationError,
@@ -241,17 +206,16 @@ describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLe
       const reB = value(await p((s) => s.unarchiveItem(WIDGETS, m.id, b.id)));
       expect(reB.id).toBe(b.id);
       expectError(await p((s) => s.fetchArchive(WIDGETS, m.id)), LedgerError);
-
-      expectStoreParity(stores);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
   test("unarchiveItem errors when the archived group is absent, the item is not in it, or the milestone id is unknown", async () => {
-    const stores = await parityStores([{ name: WIDGETS, schema: widgetsSchema }]);
+    const store = await sqliteStore([{ name: WIDGETS, schema: widgetsSchema }]);
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> => parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
       const m = value(await p((s) => s.createMilestone({ title: "M-x" })));
       const a = value(
@@ -265,17 +229,20 @@ describe("T529: archiveMilestone / fetchArchive / unarchiveItem parity with FsLe
       // No archive yet.
       expectError(await p((s) => s.unarchiveItem(WIDGETS, m.id, a.id)), LedgerError);
 
-      await p((s) => s.updateMilestone(m.id, { status: "done" }));
-      await p((s) => s.archiveMilestone(m.id, "summary"));
+      expect(value(await p((s) => s.updateMilestone(m.id, { status: "done" })))).toMatchObject({
+        id: m.id,
+        status: "done",
+      });
+      expect(value(await p((s) => s.archiveMilestone(m.id, "summary")))).toMatchObject({
+        id: m.id,
+      });
 
       // Group exists but the requested item is not in it.
       expectError(await p((s) => s.unarchiveItem(WIDGETS, m.id, "W999")), LedgerError);
       // Unknown milestone group.
       expectError(await p((s) => s.unarchiveItem(WIDGETS, "M999", a.id)), LedgerError);
-
-      expectStoreParity(stores);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 });
@@ -319,14 +286,15 @@ describe("T529: onMutation — D-COHERENCE archive firing order", () => {
 });
 
 // ---------------------------------------------------------------------------
-// §3 — includeArchived: derived-index scope transition, parity with fs
+// §3 — includeArchived: derived-index scope transition
 // ---------------------------------------------------------------------------
 
 describe("T529: includeArchived — derived-index scope transition on archive/unarchive", () => {
-  test("an archived item is searchable ONLY via includeArchived:true; unarchive restores active-scope searchability (parity)", async () => {
-    const stores = await parityStores([{ name: WIDGETS, schema: widgetsSchema }]);
+  test("an archived item is searchable ONLY via includeArchived:true; unarchive restores active-scope searchability", async () => {
+    const store = await sqliteStore([{ name: WIDGETS, schema: widgetsSchema }]);
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> => parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
       const m = value(await p((s) => s.createMilestone({ title: "x" })));
       const it = value(
@@ -338,41 +306,32 @@ describe("T529: includeArchived — derived-index scope transition on archive/un
         ),
       );
 
-      // Before archive: active, found by default in both stores.
-      expect((await stores.fs.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
-      expect((await stores.sq.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
+      // Before archive: active and searchable by default.
+      expect((await store.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
 
-      await p((s) => s.updateMilestone(m.id, { status: "done" }));
-      await p((s) => s.archiveMilestone(m.id, "summary"));
+      expect(value(await p((s) => s.updateMilestone(m.id, { status: "done" })))).toMatchObject({
+        id: m.id,
+        status: "done",
+      });
+      expect(value(await p((s) => s.archiveMilestone(m.id, "summary")))).toMatchObject({
+        id: m.id,
+      });
 
-      // After archive: hidden by default in both stores.
-      expect((await stores.fs.ftsSearch("zebracrossing")).length).toBe(0);
-      expect((await stores.sq.ftsSearch("zebracrossing")).length).toBe(0);
-      // includeArchived reveals it identically in both stores.
+      // After archive it is hidden by default; includeArchived reveals it.
+      expect((await store.ftsSearch("zebracrossing")).length).toBe(0);
       expect(
-        (await stores.fs.ftsSearch("zebracrossing", { includeArchived: true })).map((h) => h.item.id),
-      ).toEqual([it.id]);
-      expect(
-        (await stores.sq.ftsSearch("zebracrossing", { includeArchived: true })).map((h) => h.item.id),
+        (await store.ftsSearch("zebracrossing", { includeArchived: true })).map((h) => h.item.id),
       ).toEqual([it.id]);
 
-      // Unarchive restores default (active-scope) searchability in BOTH
-      // stores. D88 (fixed): LedgerSearchIndex's docId used to be
-      // "<ledger>:<itemId>", shared between the active and archived index
-      // buckets, so AbstractLedgerStore.unarchiveItem's active-then-archived
-      // refresh order let the archived-bucket refresh's stale-id discard
-      // erase the just-re-added active doc — `ftsSearch` returned [] post-
-      // unarchive even though `fetchItem`/`search` saw the item fine. The
-      // docId is now scope-prefixed ("active:"/"archived:"), so the two
-      // buckets can never collide regardless of refresh order; see
-      // store-fs.test.ts's dedicated D88 regression test.
-      await p((s) => s.unarchiveItem(WIDGETS, m.id, it.id));
-      expect((await stores.fs.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
-      expect((await stores.sq.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
-
-      expectStoreParity(stores);
+      // Unarchive restores default active-scope searchability. Active and
+      // archived index entries have distinct scope-prefixed identifiers.
+      expect(value(await p((s) => s.unarchiveItem(WIDGETS, m.id, it.id)))).toMatchObject({
+        id: it.id,
+        milestoneId: m.id,
+      });
+      expect((await store.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 });
@@ -383,8 +342,8 @@ describe("T529: includeArchived — derived-index scope transition on archive/un
 
 /**
  * Capture everything written to process.stderr during `fn` (same helper as
- * backup-reinit-init.test.ts's fs-backend equivalent). Restores the original
- * write implementation even on throw.
+ * backup-reinit-init.test.ts). Restores the original write implementation even
+ * on throw.
  */
 async function captureStderr(fn: () => Promise<void>): Promise<string> {
   const chunks: string[] = [];
@@ -423,7 +382,15 @@ describe("T529: schema-divergence BACKUP action (VACUUM INTO a timestamped sibli
         `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
          VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
       )
-      .run("tasks", "ZZ1", MILESTONES_AMBIENT_ID, "planned", JSON.stringify({ headline: "prior task" }), FIXED_NOW, FIXED_NOW);
+      .run(
+        "tasks",
+        "ZZ1",
+        MILESTONES_AMBIENT_ID,
+        "planned",
+        JSON.stringify({ headline: "prior task" }),
+        FIXED_NOW,
+        FIXED_NOW,
+      );
     seed.close();
 
     const store = new SqliteLedgerStore({
@@ -450,14 +417,17 @@ describe("T529: schema-divergence BACKUP action (VACUUM INTO a timestamped sibli
           .query("SELECT schema_json FROM ledgers WHERE name = ?")
           .get("tasks") as { schema_json: string } | null;
         expect(priorLedgerRow).not.toBeNull();
-        expect((JSON.parse((priorLedgerRow as { schema_json: string }).schema_json) as LedgerSchema).idPrefix).toBe(
-          "ZZ",
-        );
+        expect(
+          (JSON.parse((priorLedgerRow as { schema_json: string }).schema_json) as LedgerSchema)
+            .idPrefix,
+        ).toBe("ZZ");
         const priorItemRow = backupDb
           .query("SELECT id, fields_json FROM items WHERE ledger = ? AND id = ?")
           .get("tasks", "ZZ1") as { id: string; fields_json: string } | null;
         expect(priorItemRow).not.toBeNull();
-        expect(JSON.parse((priorItemRow as { id: string; fields_json: string }).fields_json)).toEqual({
+        expect(
+          JSON.parse((priorItemRow as { id: string; fields_json: string }).fields_json),
+        ).toEqual({
           headline: "prior task",
         });
       } finally {

@@ -1,13 +1,9 @@
 /**
- * SqliteLedgerStore T527 acceptance — mutation parity with FsLedgerStore over
- * a shared scenario matrix: every scenario op runs against BOTH stores and
- * must produce the same success value OR the same error type + message
- * (InvalidTransitionError, DuplicateIdError, BootstrapViolationError,
- * LedgerNotFoundError, milestone-not-active, …). Plus the in-process
- * two-connection createItem smoke (distinct sequential ids — the REAL
- * cross-process race is T531's subprocess stress) and the post-commit
- * onMutation contract. The BEGIN IMMEDIATE / busy-retry / module-graph
- * invariants live in sqlite-write-txn.test.ts.
+ * SqliteLedgerStore T527 acceptance — direct mutation outcomes across the
+ * canonical ledgers, including guard errors, item and milestone updates, and
+ * reopen behavior. It also covers the in-process two-connection createItem
+ * smoke, the post-commit onMutation contract, and parent-liveness
+ * serialization. Transaction mechanics remain covered in sqlite-write-txn.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -31,8 +27,7 @@ import {
   type LedgerSchema,
 } from "../src/types.js";
 import { MILESTONES_AMBIENT_ID } from "../src/constants.js";
-import type { LedgerMutationOp, LedgerStore } from "../src/store/LedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
+import type { LedgerMutationOp } from "../src/store/LedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
@@ -55,28 +50,10 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 
-// ---------------------------------------------------------------------------
-// Parity harness — run one op against both stores, demand identical outcomes.
-// ---------------------------------------------------------------------------
-
-interface ParityStores {
-  fs: FsLedgerStore;
-  sq: SqliteLedgerStore;
-}
-
-async function parityStores(): Promise<ParityStores & { dispose: () => Promise<void> }> {
-  const fs = new FsLedgerStore({ root: await freshDir("ledger-fs-mut-"), now });
-  await fs.init();
-  const sq = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
-  await sq.init();
-  return {
-    fs,
-    sq,
-    dispose: async (): Promise<void> => {
-      await fs.dispose();
-      await sq.dispose();
-    },
-  };
+async function sqliteStore(): Promise<SqliteLedgerStore> {
+  const store = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
+  await store.init();
+  return store;
 }
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; err: unknown };
@@ -89,28 +66,6 @@ async function settle<T>(op: () => Promise<T>): Promise<Outcome<T>> {
   }
 }
 
-/** Comparable projection: value on success, `Class: message` on rejection. */
-function describeOutcome(o: Outcome<unknown>): unknown {
-  if (o.ok) return { ok: true, value: o.value };
-  const err = o.err as Error;
-  return { ok: false, error: `${err.constructor.name}: ${err.message}` };
-}
-
-/**
- * Run `op` against BOTH stores and assert the outcomes are identical (deep-
- * equal value, or same error class + message). Returns the sqlite outcome so
- * scenarios can additionally pin the concrete error class / result shape.
- */
-async function parity<T>(
-  stores: ParityStores,
-  op: (s: LedgerStore) => Promise<T>,
-): Promise<Outcome<T>> {
-  const fsOutcome = await settle(() => op(stores.fs));
-  const sqOutcome = await settle(() => op(stores.sq));
-  expect(describeOutcome(sqOutcome)).toEqual(describeOutcome(fsOutcome));
-  return sqOutcome;
-}
-
 function value<T>(o: Outcome<T>): T {
   if (!o.ok) throw new Error(`expected success, got: ${String(o.err)}`);
   return o.value;
@@ -119,15 +74,6 @@ function value<T>(o: Outcome<T>): T {
 function expectError(o: Outcome<unknown>, cls: new (...args: never[]) => Error): void {
   if (o.ok) throw new Error(`expected ${cls.name}, got success`);
   expect(o.err).toBeInstanceOf(cls);
-}
-
-/** Full read-surface sweep: both stores must expose identical state. */
-function expectStoreParity({ fs, sq }: ParityStores): void {
-  expect(sq.enumerate()).toEqual(fs.enumerate());
-  for (const name of fs.enumerate()) {
-    expect(sq.fetch(name)).toEqual(fs.fetch(name));
-  }
-  expect(sq.snapshot()).toEqual(fs.snapshot());
 }
 
 const NOTES_SCHEMA: LedgerSchema = {
@@ -141,26 +87,35 @@ const NOTES_SCHEMA: LedgerSchema = {
 // Scenario matrix
 // ---------------------------------------------------------------------------
 
-describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
+describe("SqliteLedgerStore mutation outcomes", () => {
   test("createMilestone / createItem: ids, counters, group auto-create, guard errors", async () => {
-    const stores = await parityStores();
+    const store = await sqliteStore();
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> =>
-        parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
       // Auto milestone id.
       const m1 = value(
         await p((s) =>
-          s.createMilestone({ title: "m one", description: "d1", dependsOn: [MILESTONES_AMBIENT_ID] }),
+          s.createMilestone({
+            title: "m one",
+            description: "d1",
+            dependsOn: [MILESTONES_AMBIENT_ID],
+          }),
         ),
       );
       expect(m1.id).toBe("M1");
-      // Caller-supplied id jumps the counter; next auto id follows the fs
-      // counter semantics EXACTLY (parity asserts whatever fs produces).
+      // Caller-supplied id jumps the counter; the next generated id follows it.
       expect(value(await p((s) => s.createMilestone({ id: "M5", title: "m five" }))).id).toBe("M5");
-      await p((s) => s.createMilestone({ title: "m after five" }));
+      expect(value(await p((s) => s.createMilestone({ title: "m after five" })))).toMatchObject({
+        id: "M7",
+        fields: { title: "m after five" },
+      });
       expectError(await p((s) => s.createMilestone({ id: "M5", title: "dup" })), DuplicateIdError);
-      expectError(await p((s) => s.createMilestone({ id: "X9", title: "cross" })), CrossPrefixIdError);
+      expectError(
+        await p((s) => s.createMilestone({ id: "X9", title: "cross" })),
+        CrossPrefixIdError,
+      );
 
       // Items: auto id, provenance, group auto-create under M1 and M-AMBIENT.
       const t1 = value(
@@ -174,44 +129,80 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
         ),
       );
       expect(t1).toMatchObject({ id: "T1", milestoneId: "M1", author: "fable", session: "s-mut" });
-      await p((s) =>
-        s.createItem("tasks", "M1", { id: "T10", status: "planned", fields: { headline: "supplied" } }),
+      const t10 = value(
+        await p((s) =>
+          s.createItem("tasks", "M1", {
+            id: "T10",
+            status: "planned",
+            fields: { headline: "supplied" },
+          }),
+        ),
       );
-      await p((s) =>
-        s.createItem("tasks", "M1", { status: "planned", fields: { headline: "after supplied" } }),
+      expect(t10).toMatchObject({ id: "T10", milestoneId: "M1" });
+      const t11 = value(
+        await p((s) =>
+          s.createItem("tasks", "M1", {
+            status: "planned",
+            fields: { headline: "after supplied" },
+          }),
+        ),
       );
-      await p((s) =>
-        s.createItem("defects", MILESTONES_AMBIENT_ID, {
-          status: "open",
-          fields: { headline: "ambient defect", severity: "low" },
-        }),
+      expect(t11).toMatchObject({ id: "T12", milestoneId: "M1" });
+      const ambientDefect = value(
+        await p((s) =>
+          s.createItem("defects", MILESTONES_AMBIENT_ID, {
+            status: "open",
+            fields: { headline: "ambient defect", severity: "low" },
+          }),
+        ),
       );
+      expect(ambientDefect).toMatchObject({ id: "D1", milestoneId: MILESTONES_AMBIENT_ID });
+      expect(
+        store
+          .fetch("tasks")
+          .milestones.map((group) => [group.id, group.items.map((item) => item.id)]),
+      ).toEqual([["M1", ["T1", "T10", "T12"]]]);
 
-      // Guard errors — same class + message as the fs store.
+      // Guard errors are observable SQLite outcomes.
       expectError(
-        await p((s) => s.createItem("tasks", "M1", { id: "T10", status: "planned", fields: { headline: "x" } })),
+        await p((s) =>
+          s.createItem("tasks", "M1", { id: "T10", status: "planned", fields: { headline: "x" } }),
+        ),
         DuplicateIdError,
       );
       expectError(
-        await p((s) => s.createItem("tasks", "M1", { id: "D5", status: "planned", fields: { headline: "x" } })),
+        await p((s) =>
+          s.createItem("tasks", "M1", { id: "D5", status: "planned", fields: { headline: "x" } }),
+        ),
         CrossPrefixIdError,
       );
       expectError(
-        await p((s) => s.createItem("milestones", "active", { status: "open", fields: { title: "x" } })),
+        await p((s) =>
+          s.createItem("milestones", "active", { status: "open", fields: { title: "x" } }),
+        ),
         BootstrapViolationError,
       );
       expectError(
-        await p((s) => s.createItem("nope", "M1", { status: "planned", fields: { headline: "x" } })),
+        await p((s) =>
+          s.createItem("nope", "M1", { status: "planned", fields: { headline: "x" } }),
+        ),
         LedgerNotFoundError,
       );
       expectError(
-        await p((s) => s.createItem("tasks", "M999", { status: "planned", fields: { headline: "x" } })),
+        await p((s) =>
+          s.createItem("tasks", "M999", { status: "planned", fields: { headline: "x" } }),
+        ),
         MilestoneItemNotFoundError,
       );
       // Terminal milestone is not active (strict Q5 check).
-      await p((s) => s.updateMilestone("M5", { status: "done" }));
+      expect(value(await p((s) => s.updateMilestone("M5", { status: "done" })))).toMatchObject({
+        id: "M5",
+        status: "done",
+      });
       expectError(
-        await p((s) => s.createItem("tasks", "M5", { status: "planned", fields: { headline: "x" } })),
+        await p((s) =>
+          s.createItem("tasks", "M5", { status: "planned", fields: { headline: "x" } }),
+        ),
         MilestoneItemNotFoundError,
       );
       expectError(
@@ -223,35 +214,47 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
         MissingRequiredFieldError,
       );
       expectError(
-        await p((s) => s.createItem("tasks", "M1", { status: "planned", fields: { headline: "x", nope: "y" } })),
+        await p((s) =>
+          s.createItem("tasks", "M1", { status: "planned", fields: { headline: "x", nope: "y" } }),
+        ),
         SchemaValidationError,
       );
       // D39 handoffs conditional invariant.
       expectError(
-        await p((s) => s.createItem("handoffs", "M1", { status: "mixed", fields: { summary: "s" } })),
+        await p((s) =>
+          s.createItem("handoffs", "M1", { status: "mixed", fields: { summary: "s" } }),
+        ),
         SchemaValidationError,
       );
-      await p((s) =>
-        s.createItem("handoffs", "M1", {
-          status: "mixed",
-          fields: { summary: "s", blockingQuestions: ["Q1"] },
-        }),
-      );
-
-      expectStoreParity(stores);
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("handoffs", "M1", {
+              status: "mixed",
+              fields: { summary: "s", blockingQuestions: ["Q1"] },
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "HO1", status: "mixed" });
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
   test("updateItem / updateMilestone: transitions, F2/D29/D39 preconditions, provenance", async () => {
-    const stores = await parityStores();
+    const store = await sqliteStore();
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> =>
-        parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
-      await p((s) => s.createMilestone({ title: "m" })); // M1
-      await p((s) => s.createItem("tasks", "M1", { status: "planned", fields: { headline: "t" } })); // T1
+      expect(value(await p((s) => s.createMilestone({ title: "m" })))).toMatchObject({ id: "M1" });
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("tasks", "M1", { status: "planned", fields: { headline: "t" } }),
+          ),
+        ),
+      ).toMatchObject({ id: "T1" });
 
       // Legal transition + field patch + provenance overwrite.
       const wip = value(
@@ -267,58 +270,128 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
       expect(wip).toMatchObject({ status: "wip", author: "fable", session: "s-upd" });
 
       // F1 declarative transition guard + status/lookup guards.
-      expectError(await p((s) => s.updateItem("tasks", "T1", { status: "planned" })), InvalidTransitionError);
-      expectError(await p((s) => s.updateItem("tasks", "T1", { status: "bogus" })), InvalidStatusError);
-      expectError(await p((s) => s.updateItem("tasks", "T404", { status: "wip" })), ItemNotFoundError);
+      expectError(
+        await p((s) => s.updateItem("tasks", "T1", { status: "planned" })),
+        InvalidTransitionError,
+      );
+      expectError(
+        await p((s) => s.updateItem("tasks", "T1", { status: "bogus" })),
+        InvalidStatusError,
+      );
+      expectError(
+        await p((s) => s.updateItem("tasks", "T404", { status: "wip" })),
+        ItemNotFoundError,
+      );
       expectError(await p((s) => s.updateItem("nope", "T1", {})), LedgerNotFoundError);
-      expectError(await p((s) => s.updateItem("tasks", "T1", { fields: { nope: "x" } })), SchemaValidationError);
-
-      // D29 — a question cannot enter `answered` without a usable answer.
-      await p((s) => s.createItem("questions", "M1", { status: "open", fields: { question: "q?" } })); // Q1
-      expectError(await p((s) => s.updateItem("questions", "Q1", { status: "answered" })), SchemaValidationError);
-      await p((s) =>
-        s.updateItem("questions", "Q1", { status: "answered", fields: { answer: "because" } }),
+      expectError(
+        await p((s) => s.updateItem("tasks", "T1", { fields: { nope: "x" } })),
+        SchemaValidationError,
       );
 
+      // D29 — a question cannot enter `answered` without a usable answer.
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("questions", "M1", { status: "open", fields: { question: "q?" } }),
+          ),
+        ),
+      ).toMatchObject({ id: "Q1" });
+      expectError(
+        await p((s) => s.updateItem("questions", "Q1", { status: "answered" })),
+        SchemaValidationError,
+      );
+      expect(
+        value(
+          await p((s) =>
+            s.updateItem("questions", "Q1", { status: "answered", fields: { answer: "because" } }),
+          ),
+        ),
+      ).toMatchObject({ id: "Q1", status: "answered" });
+
       // F2 — goal-phase preconditions against the questions/decisions ledgers.
-      await p((s) =>
-        s.createItem("goals", "M1", { status: "clarifying", fields: { title: "g", description: "gd" } }),
-      ); // G1
-      await p((s) =>
-        s.createItem("questions", "M1", {
-          status: "open",
-          fields: { question: "blocking?", ledgerRefs: ["goals:G1"] },
-        }),
-      ); // Q2
-      expectError(await p((s) => s.updateItem("goals", "G1", { status: "planning" })), GoalPreconditionError);
-      await p((s) => s.updateItem("questions", "Q2", { status: "answered", fields: { answer: "a" } }));
-      await p((s) => s.updateItem("goals", "G1", { status: "planning" }));
-      expectError(await p((s) => s.updateItem("goals", "G1", { status: "planned" })), GoalPreconditionError);
-      await p((s) =>
-        s.createItem("decisions", "M1", {
-          status: "proposed",
-          fields: { headline: "k", ledgerRefs: ["goals:G1"] },
-        }),
-      ); // K1
-      await p((s) => s.updateItem("decisions", "K1", { status: "locked" }));
-      await p((s) => s.updateItem("goals", "G1", { status: "planned" }));
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("goals", "M1", {
+              status: "clarifying",
+              fields: { title: "g", description: "gd" },
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "G1", status: "clarifying" });
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("questions", "M1", {
+              status: "open",
+              fields: { question: "blocking?", ledgerRefs: ["goals:G1"] },
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "Q2", status: "open" });
+      expectError(
+        await p((s) => s.updateItem("goals", "G1", { status: "planning" })),
+        GoalPreconditionError,
+      );
+      expect(
+        value(
+          await p((s) =>
+            s.updateItem("questions", "Q2", { status: "answered", fields: { answer: "a" } }),
+          ),
+        ),
+      ).toMatchObject({ status: "answered" });
+      expect(
+        value(await p((s) => s.updateItem("goals", "G1", { status: "planning" }))),
+      ).toMatchObject({ status: "planning" });
+      expectError(
+        await p((s) => s.updateItem("goals", "G1", { status: "planned" })),
+        GoalPreconditionError,
+      );
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("decisions", "M1", {
+              status: "proposed",
+              fields: { headline: "k", ledgerRefs: ["goals:G1"] },
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "K1", status: "proposed" });
+      expect(
+        value(await p((s) => s.updateItem("decisions", "K1", { status: "locked" }))),
+      ).toMatchObject({ status: "locked" });
+      expect(
+        value(await p((s) => s.updateItem("goals", "G1", { status: "planned" }))),
+      ).toMatchObject({ status: "planned" });
 
       // D39 — a field-only patch cannot empty blockingQuestions on `mixed`.
-      await p((s) =>
-        s.createItem("handoffs", "M1", {
-          status: "mixed",
-          fields: { summary: "s", blockingQuestions: ["Q2"] },
-        }),
-      ); // HO1
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("handoffs", "M1", {
+              status: "mixed",
+              fields: { summary: "s", blockingQuestions: ["Q2"] },
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "HO1", status: "mixed" });
       expectError(
         await p((s) => s.updateItem("handoffs", "HO1", { fields: { blockingQuestions: [] } })),
         SchemaValidationError,
       );
 
       // updateMilestone: patch shape, immortal M-AMBIENT, lookup + transitions.
-      await p((s) =>
-        s.updateMilestone("M1", { title: "renamed", description: "nd", blockedBy: [MILESTONES_AMBIENT_ID] }),
-      );
+      expect(
+        value(
+          await p((s) =>
+            s.updateMilestone("M1", {
+              title: "renamed",
+              description: "nd",
+              blockedBy: [MILESTONES_AMBIENT_ID],
+            }),
+          ),
+        ),
+      ).toMatchObject({ id: "M1", fields: { title: "renamed" } });
       expectError(
         await p((s) => s.updateMilestone(MILESTONES_AMBIENT_ID, { status: "done" })),
         BootstrapViolationError,
@@ -328,29 +401,37 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
       // non-terminal child, so the close is refused with the new invariant.
       // Use a childless milestone for the close/reopen transition checks.
       const mClose = value(await p((s) => s.createMilestone({ title: "close-target" })));
-      await p((s) => s.updateMilestone(mClose.id, { status: "done" }));
+      expect(value(await p((s) => s.updateMilestone(mClose.id, { status: "done" })))).toMatchObject(
+        { status: "done" },
+      );
       expectError(
         await p((s) => s.updateMilestone(mClose.id, { status: "open" })),
         InvalidTransitionError,
       );
-
-      expectStoreParity(stores);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
   test("reopenItem: terminal-only, non-terminal target, createdAt preserved", async () => {
-    const stores = await parityStores();
+    const store = await sqliteStore();
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> =>
-        parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
-      await p((s) => s.createMilestone({ title: "m" })); // M1
-      await p((s) => s.createItem("tasks", "M1", { status: "planned", fields: { headline: "t" } })); // T1
+      expect(value(await p((s) => s.createMilestone({ title: "m" })))).toMatchObject({ id: "M1" });
+      expect(
+        value(
+          await p((s) =>
+            s.createItem("tasks", "M1", { status: "planned", fields: { headline: "t" } }),
+          ),
+        ),
+      ).toMatchObject({ id: "T1" });
 
       expectError(await p((s) => s.reopenItem("tasks", "T1", "wip")), LedgerError); // non-terminal
-      await p((s) => s.updateItem("tasks", "T1", { status: "done" }));
+      expect(value(await p((s) => s.updateItem("tasks", "T1", { status: "done" })))).toMatchObject({
+        status: "done",
+      });
       expectError(await p((s) => s.reopenItem("tasks", "T1", "done")), LedgerError); // terminal target
       expectError(await p((s) => s.reopenItem("tasks", "T1", "bogus")), InvalidStatusError);
       expectError(await p((s) => s.reopenItem("tasks", "T404", "wip")), ItemNotFoundError);
@@ -359,28 +440,31 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
       const reopened = value(await p((s) => s.reopenItem("tasks", "T1", "wip")));
       expect(reopened.status).toBe("wip");
       expect(reopened.createdAt).toBe(FIXED_NOW);
-
-      expectStoreParity(stores);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
-  test("createLedger: view parity, name/prefix/schema guards, then usable for createItem", async () => {
-    const stores = await parityStores();
+  test("createLedger: expected view, name/prefix/schema guards, then usable for createItem", async () => {
+    const store = await sqliteStore();
     try {
-      const p = <T>(op: (s: LedgerStore) => Promise<T>): Promise<Outcome<T>> =>
-        parity(stores, op);
+      const p = <T>(op: (s: SqliteLedgerStore) => Promise<T>): Promise<Outcome<T>> =>
+        settle(() => op(store));
 
       const created = value(await p((s) => s.createLedger("notes", NOTES_SCHEMA)));
       expect(created.schema).toEqual(NOTES_SCHEMA);
-      await p((s) => s.createMilestone({ title: "m" })); // M1
+      expect(value(await p((s) => s.createMilestone({ title: "m" })))).toMatchObject({ id: "M1" });
       expect(
-        value(await p((s) => s.createItem("notes", "M1", { status: "open", fields: { text: "n" } }))).id,
+        value(
+          await p((s) => s.createItem("notes", "M1", { status: "open", fields: { text: "n" } })),
+        ).id,
       ).toBe("N1");
 
       expectError(await p((s) => s.createLedger("notes", NOTES_SCHEMA)), DuplicateIdError);
-      expectError(await p((s) => s.createLedger("milestones", NOTES_SCHEMA)), BootstrapViolationError);
+      expectError(
+        await p((s) => s.createLedger("milestones", NOTES_SCHEMA)),
+        BootstrapViolationError,
+      );
       expectError(await p((s) => s.createLedger("bad/name", NOTES_SCHEMA)), LedgerError);
       expectError(
         await p((s) => s.createLedger("taskclone", { ...NOTES_SCHEMA, idPrefix: "T" })),
@@ -388,14 +472,16 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
       );
       expectError(
         await p((s) =>
-          s.createLedger("badschema", { statusValues: ["a"], terminalStatuses: ["zzz"], fields: {} }),
+          s.createLedger("badschema", {
+            statusValues: ["a"],
+            terminalStatuses: ["zzz"],
+            fields: {},
+          }),
         ),
         SchemaValidationError,
       );
-
-      expectStoreParity(stores);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 });
@@ -417,8 +503,14 @@ describe("two stores over one db (in-process smoke)", () => {
 
       const ids: string[] = [];
       for (let i = 0; i < 3; i++) {
-        ids.push((await s1.createItem("tasks", "M1", { status: "planned", fields: { headline: `a${i}` } })).id);
-        ids.push((await s2.createItem("tasks", "M2", { status: "planned", fields: { headline: `b${i}` } })).id);
+        ids.push(
+          (await s1.createItem("tasks", "M1", { status: "planned", fields: { headline: `a${i}` } }))
+            .id,
+        );
+        ids.push(
+          (await s2.createItem("tasks", "M2", { status: "planned", fields: { headline: `b${i}` } }))
+            .id,
+        );
       }
       expect(ids).toEqual(["T1", "T2", "T3", "T4", "T5", "T6"]);
       expect(new Set(ids).size).toBe(ids.length);
@@ -498,7 +590,11 @@ describe("onMutation", () => {
 // ---------------------------------------------------------------------------
 
 describe("two SqliteLedgerStore instances — parent-liveness serialization (D267/T1857)", () => {
-  async function twoStores(): Promise<{ s1: SqliteLedgerStore; s2: SqliteLedgerStore; dbPath: string }> {
+  async function twoStores(): Promise<{
+    s1: SqliteLedgerStore;
+    s2: SqliteLedgerStore;
+    dbPath: string;
+  }> {
     const dbPath = await freshDbPath();
     const s1 = new SqliteLedgerStore({ dbPath, now });
     const s2 = new SqliteLedgerStore({ dbPath, now });
@@ -558,7 +654,7 @@ describe("two SqliteLedgerStore instances — parent-liveness serialization (D26
           s1.updateMilestone(m.id, { status: "done" }),
           s2.createItem("tasks", m.id, { status: "planned", fields: { headline: "x" } }),
         ]);
-        expect(closeResult.status === "fulfilled" !== (createResult.status === "fulfilled")).toBe(
+        expect((closeResult.status === "fulfilled") !== (createResult.status === "fulfilled")).toBe(
           true,
         );
       } finally {
@@ -623,11 +719,9 @@ describe("two SqliteLedgerStore instances — parent-liveness serialization (D26
       // Restored to terminal: reattachment proceeds and retains the status.
       const db2 = openLedgerDb(dbPath);
       try {
-        db2.query("UPDATE archived_items SET status = ? WHERE ledger = ? AND id = ?").run(
-          "done",
-          "tasks",
-          t.id,
-        );
+        db2
+          .query("UPDATE archived_items SET status = ? WHERE ledger = ? AND id = ?")
+          .run("done", "tasks", t.id);
       } finally {
         db2.close();
       }

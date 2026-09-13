@@ -1,13 +1,8 @@
 /**
- * SqliteLedgerStore T528 acceptance — ftsSearch parity with FsLedgerStore
- * over identical seeded data, mirroring the archive-INDEPENDENT FTS
- * assertions of test/store-abstract.ts (the includeArchived-after-archive
- * assertion needs archiveMilestone and is owned by T529; sqlite joins
- * runStoreAbstractSuite in T530). Both stores share the same derived
- * LedgerSearchIndex, so hits are compared EXACTLY (ids, order, scores,
- * matchedFields). Plus the sqlite-specific coherence contract: incremental
- * post-commit index maintenance and the peer-commit + invalidate() refresh
- * path (the xdg domain-state watcher's trigger).
+ * SqliteLedgerStore T528 acceptance — direct FTS search outcomes over seeded
+ * SQLite data. Archive scope transitions are owned by T529; the shared store
+ * contract covers broader behavior. This suite preserves SQLite-specific
+ * incremental post-commit index maintenance and peer-commit invalidation.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -15,12 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { LedgerSchema } from "../src/types.js";
-import type {
-  FtsSearchHit,
-  FtsSearchOpts,
-  LedgerStore,
-} from "../src/store/LedgerStore.js";
-import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
+import type { FtsSearchHit } from "../src/store/LedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
@@ -64,216 +54,304 @@ const notesSchema: LedgerSchema = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Parity harness — seed IDENTICAL data into both stores, compare hits exactly.
-// ---------------------------------------------------------------------------
-
-interface ParityStores {
-  fs: FsLedgerStore;
-  sq: SqliteLedgerStore;
-  /** Run one op against BOTH stores (deterministic ids via fixed `now`). */
-  both: (op: (s: LedgerStore) => Promise<unknown>) => Promise<void>;
-  dispose: () => Promise<void>;
-}
-
-async function parityStores(
+async function sqliteStore(
   seed: Array<{ name: string; schema: LedgerSchema }> = [],
-): Promise<ParityStores> {
-  const fs = new FsLedgerStore({ root: await freshDir("ledger-fs-fts-"), now });
-  await fs.init();
-  const sq = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
-  await sq.init();
-  const both = async (op: (s: LedgerStore) => Promise<unknown>): Promise<void> => {
-    await op(fs);
-    await op(sq);
-  };
+): Promise<SqliteLedgerStore> {
+  const store = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
+  await store.init();
   for (const { name, schema } of seed) {
-    await both((s) => s.createLedger(name, schema));
+    await store.createLedger(name, schema);
   }
-  return {
-    fs,
-    sq,
-    both,
-    dispose: async (): Promise<void> => {
-      await fs.dispose();
-      await sq.dispose();
-    },
-  };
+  return store;
 }
 
-/** Comparable projection of a hit — id, rank-relevant score, matched fields. */
-function hitKey(h: FtsSearchHit): unknown {
-  return {
-    ledgerId: h.ledgerId,
-    itemId: h.item.id,
-    status: h.item.status,
-    score: h.score,
-    matchedFields: [...h.matchedFields].sort(),
-  };
-}
-
-/**
- * ftsSearch BOTH stores with the same query/opts and assert the hit lists are
- * identical (same items, same ORDER, same scores, same matchedFields — both
- * stores run the same LedgerSearchIndex over the same docs). Returns the
- * sqlite hits for extra pinning.
- */
-async function ftsParity(
-  stores: ParityStores,
-  query: string,
-  opts?: FtsSearchOpts,
-): Promise<FtsSearchHit[]> {
-  const fsHits = await stores.fs.ftsSearch(query, opts);
-  const sqHits = await stores.sq.ftsSearch(query, opts);
-  expect(sqHits.map(hitKey)).toEqual(fsHits.map(hitKey));
-  return sqHits;
+function projectHits(hits: FtsSearchHit[]) {
+  const projections = hits.map(({ ledgerId, item, score, matchedFields }) => ({
+    ledgerId,
+    itemId: item.id,
+    status: item.status,
+    score,
+    matchedFields,
+  }));
+  return projections;
 }
 
 // ---------------------------------------------------------------------------
-// Parity: ranked search, boosts, fuzzy/prefix/status, qualifiers, limit
+// Ranked search, boosts, fuzzy/prefix/status, qualifiers, limit
 // ---------------------------------------------------------------------------
 
-describe("T528: ftsSearch parity with FsLedgerStore", () => {
+describe("T528: ftsSearch outcomes", () => {
   test("cross-ledger ranked search + single-ledger filter + full Item + score>0", async () => {
-    const stores = await parityStores([
+    const store = await sqliteStore([
       { name: WIDGETS, schema: widgetsSchema },
       { name: NOTES, schema: notesSchema },
     ]);
     try {
-      await stores.both((s) => s.createMilestone({ title: "x" }));
-      await stores.both((s) =>
-        s.createItem(WIDGETS, "M1", {
+      await store.createMilestone({ title: "x" });
+      await store.createItem(WIDGETS, "M1", {
+        status: "open",
+        fields: { severity: "minor", location: "x.ts", description: "stream scroll defect" },
+      });
+      await store.createItem(NOTES, "M1", {
+        status: "open",
+        fields: { notes: "stream notes here" },
+      });
+
+      const cross = await store.ftsSearch("stream");
+      expect(projectHits(cross)).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
           status: "open",
-          fields: { severity: "minor", location: "x.ts", description: "stream scroll defect" },
-        }),
-      );
-      await stores.both((s) =>
-        s.createItem(NOTES, "M1", { status: "open", fields: { notes: "stream notes here" } }),
-      );
+          score: 2.0329364592780506,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.6483955729033781,
+          matchedFields: ["body"],
+        },
+      ]);
 
-      const cross = await ftsParity(stores, "stream");
-      expect(cross.map((h) => h.ledgerId).sort()).toEqual([NOTES, WIDGETS].sort());
-
-      const single = await ftsParity(stores, "stream", { ledger: NOTES });
-      expect(single.map((h) => h.ledgerId)).toEqual([NOTES]);
-      expect(single[0]?.item.fields["notes"]).toBe("stream notes here");
-      expect((single[0]?.score ?? 0) > 0).toBe(true);
+      const single = await store.ftsSearch("stream", { ledger: NOTES });
+      expect(projectHits(single)).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
+          status: "open",
+          score: 2.0329364592780506,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
   test("a headline-field match outranks a body-only match (boosts + matchedFields)", async () => {
     // The canonical defects ledger's required field IS 'headline'.
-    const stores = await parityStores();
+    const store = await sqliteStore();
     try {
-      await stores.both((s) => s.createMilestone({ title: "x" }));
-      await stores.both((s) =>
-        s.createItem("defects", "M1", {
+      await store.createMilestone({ title: "x" });
+      await store.createItem("defects", "M1", {
+        status: "open",
+        fields: { headline: "widget overflow", severity: "minor", description: "x" },
+      });
+      await store.createItem("defects", "M1", {
+        status: "open",
+        fields: {
+          headline: "unrelated heading",
+          severity: "minor",
+          description: "the widget here",
+        },
+      });
+      const hits = await store.ftsSearch("widget", { ledger: "defects" });
+      expect(projectHits(hits)).toEqual([
+        {
+          ledgerId: "defects",
+          itemId: "D1",
           status: "open",
-          fields: { headline: "widget overflow", severity: "minor", description: "x" },
-        }),
-      );
-      await stores.both((s) =>
-        s.createItem("defects", "M1", {
+          score: 6.680107172389065,
+          matchedFields: ["headline"],
+        },
+        {
+          ledgerId: "defects",
+          itemId: "D2",
           status: "open",
-          fields: { headline: "unrelated heading", severity: "minor", description: "the widget here" },
-        }),
-      );
-      const hits = await ftsParity(stores, "widget", { ledger: "defects" });
-      expect(hits.length).toBe(2);
-      expect(hits[0]?.item.fields["headline"]).toBe("widget overflow");
-      expect((hits[0]?.score ?? 0) > (hits[1]?.score ?? 1)).toBe(true);
-      expect(hits[0]?.matchedFields).toContain("headline");
+          score: 2.9465650211134755,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
-  test("edit-distance fuzzy, prefix, and statusFilter behave identically", async () => {
-    const stores = await parityStores([{ name: WIDGETS, schema: widgetsSchema }]);
+  test("edit-distance fuzzy, prefix, and statusFilter return expected hits", async () => {
+    const store = await sqliteStore([{ name: WIDGETS, schema: widgetsSchema }]);
     try {
-      await stores.both((s) => s.createMilestone({ title: "x" }));
-      await stores.both((s) =>
-        s.createItem(WIDGETS, "M1", {
-          status: "open",
-          fields: { severity: "minor", location: "x.ts", description: "neuromancer motorcycle" },
-        }),
-      );
-      await stores.both((s) =>
-        s.createItem(WIDGETS, "M1", {
-          status: "resolved",
-          fields: { severity: "major", location: "y.ts", description: "neuromancer scooter" },
-        }),
-      );
+      await store.createMilestone({ title: "x" });
+      await store.createItem(WIDGETS, "M1", {
+        status: "open",
+        fields: { severity: "minor", location: "x.ts", description: "neuromancer motorcycle" },
+      });
+      await store.createItem(WIDGETS, "M1", {
+        status: "resolved",
+        fields: { severity: "major", location: "y.ts", description: "neuromancer scooter" },
+      });
       // Exact misses the typo; fuzzy (edit distance) finds both.
-      expect((await ftsParity(stores, "neromancer")).length).toBe(0);
-      expect((await ftsParity(stores, "neromancer", { fuzzy: true })).length).toBe(2);
+      expect((await store.ftsSearch("neromancer")).length).toBe(0);
+      expect(projectHits(await store.ftsSearch("neromancer", { fuzzy: true }))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 0.741742825283985,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W2",
+          status: "resolved",
+          score: 0.741742825283985,
+          matchedFields: ["body"],
+        },
+      ]);
       // Prefix finds by term prefix.
-      expect((await ftsParity(stores, "motor")).length).toBe(0);
-      expect((await ftsParity(stores, "motor", { prefix: true })).length).toBe(1);
+      expect((await store.ftsSearch("motor")).length).toBe(0);
+      expect(projectHits(await store.ftsSearch("motor", { prefix: true }))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.018483610464757,
+          matchedFields: ["body"],
+        },
+      ]);
       // Status filter restricts.
-      const open = await ftsParity(stores, "neuromancer", { statusFilter: "open" });
-      expect(open.map((h) => h.item.status)).toEqual(["open"]);
+      expect(projectHits(await store.ftsSearch("neuromancer", { statusFilter: "open" }))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.7981644249308726,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
-  test("status:/ledger: qualifiers, OR-of-qualifiers, and limit behave identically", async () => {
-    const stores = await parityStores([
+  test("status:/ledger: qualifiers, OR-of-qualifiers, and limit return expected hits", async () => {
+    const store = await sqliteStore([
       { name: WIDGETS, schema: widgetsSchema },
       { name: NOTES, schema: notesSchema },
     ]);
     try {
-      await stores.both((s) => s.createMilestone({ title: "x" }));
-      await stores.both((s) =>
-        s.createItem(WIDGETS, "M1", {
-          status: "open",
-          fields: { severity: "minor", location: "a.ts", description: "falcon launch" },
-        }),
-      );
-      await stores.both((s) =>
-        s.createItem(WIDGETS, "M1", {
-          status: "resolved",
-          fields: { severity: "major", location: "b.ts", description: "falcon landing" },
-        }),
-      );
-      await stores.both((s) =>
-        s.createItem(NOTES, "M1", { status: "open", fields: { notes: "falcon notes" } }),
-      );
+      await store.createMilestone({ title: "x" });
+      await store.createItem(WIDGETS, "M1", {
+        status: "open",
+        fields: { severity: "minor", location: "a.ts", description: "falcon launch" },
+      });
+      await store.createItem(WIDGETS, "M1", {
+        status: "resolved",
+        fields: { severity: "major", location: "b.ts", description: "falcon landing" },
+      });
+      await store.createItem(NOTES, "M1", { status: "open", fields: { notes: "falcon notes" } });
 
       // Free text + status: qualifier.
-      const open = await ftsParity(stores, "falcon status:open");
-      expect(open.map((h) => h.item.status)).toEqual(["open", "open"]);
+      const open = await store.ftsSearch("falcon status:open");
+      expect(projectHits(open)).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
+          status: "open",
+          score: 1.748988645234638,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.3682218864752826,
+          matchedFields: ["body"],
+        },
+      ]);
       // Free text + ledger: qualifier.
-      const widgetsOnly = await ftsParity(stores, "falcon ledger:widgets");
-      expect(widgetsOnly.map((h) => h.ledgerId)).toEqual([WIDGETS, WIDGETS]);
+      const widgetsOnly = await store.ftsSearch("falcon ledger:widgets");
+      expect(projectHits(widgetsOnly)).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.3682218864752826,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W2",
+          status: "resolved",
+          score: 1.3682218864752826,
+          matchedFields: ["body"],
+        },
+      ]);
       // OR-of-qualifiers (structured evaluator, not the MiniSearch fast path).
-      const orHits = await ftsParity(stores, "falcon (status:open OR status:resolved)");
-      expect(orHits.length).toBe(3);
+      const orHits = await store.ftsSearch("falcon (status:open OR status:resolved)");
+      expect(projectHits(orHits)).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
+          status: "open",
+          score: 1.748988645234638,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.3682218864752826,
+          matchedFields: ["body"],
+        },
+        {
+          ledgerId: WIDGETS,
+          itemId: "W2",
+          status: "resolved",
+          score: 1.3682218864752826,
+          matchedFields: ["body"],
+        },
+      ]);
       // Pure-qualifier OR query (no free text) — matches ALL open/resolved
-      // items in BOTH stores, canonical bootstrap items included.
-      const pureOr = await ftsParity(stores, "(status:open OR status:resolved) ledger:widgets");
-      expect(pureOr.length).toBe(2);
-      // limit caps the ranked list identically.
-      const limited = await ftsParity(stores, "falcon", { limit: 1 });
-      expect(limited.length).toBe(1);
+      // items in the canonical bootstrap ledger set included.
+      const pureOr = await store.ftsSearch("(status:open OR status:resolved) ledger:widgets");
+      expect(projectHits(pureOr)).toEqual([
+        { ledgerId: WIDGETS, itemId: "W1", status: "open", score: 0, matchedFields: [] },
+        { ledgerId: WIDGETS, itemId: "W2", status: "resolved", score: 0, matchedFields: [] },
+      ]);
+      // limit caps the ranked list.
+      const limited = await store.ftsSearch("falcon", { limit: 1 });
+      expect(projectHits(limited)).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
+          status: "open",
+          score: 1.748988645234638,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 
   test("milestone title is searchable; updateMilestone is reflected", async () => {
-    const stores = await parityStores();
+    const store = await sqliteStore();
     try {
-      await stores.both((s) => s.createMilestone({ title: "quasar migration" }));
-      expect((await ftsParity(stores, "quasar")).map((h) => h.item.id)).toEqual(["M1"]);
-      await stores.both((s) => s.updateMilestone("M1", { title: "pulsar migration" }));
-      expect((await ftsParity(stores, "quasar")).length).toBe(0);
-      expect((await ftsParity(stores, "pulsar")).map((h) => h.item.id)).toEqual(["M1"]);
+      await store.createMilestone({ title: "quasar migration" });
+      expect(projectHits(await store.ftsSearch("quasar"))).toEqual([
+        {
+          ledgerId: "milestones",
+          itemId: "M1",
+          status: "open",
+          score: 3.8458488727842126,
+          matchedFields: ["headline"],
+        },
+      ]);
+      await store.updateMilestone("M1", { title: "pulsar migration" });
+      expect(projectHits(await store.ftsSearch("quasar"))).toEqual([]);
+      expect(projectHits(await store.ftsSearch("pulsar"))).toEqual([
+        {
+          ledgerId: "milestones",
+          itemId: "M1",
+          status: "open",
+          score: 3.8458488727842126,
+          matchedFields: ["headline"],
+        },
+      ]);
     } finally {
-      await stores.dispose();
+      await store.dispose();
     }
   });
 });
@@ -293,17 +371,49 @@ describe("T528: sqlite derived-index coherence", () => {
         status: "open",
         fields: { severity: "minor", location: "x.ts", description: "aardvark" },
       });
-      expect((await sq.ftsSearch("aardvark")).map((h) => h.item.id)).toEqual([it.id]);
+      expect(projectHits(await sq.ftsSearch("aardvark"))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 2.400450540265541,
+          matchedFields: ["body"],
+        },
+      ]);
       // Update swaps the searchable text.
       await sq.updateItem(WIDGETS, it.id, { fields: { description: "buffalo" } });
-      expect((await sq.ftsSearch("aardvark")).length).toBe(0);
-      expect((await sq.ftsSearch("buffalo")).map((h) => h.item.id)).toEqual([it.id]);
+      expect(projectHits(await sq.ftsSearch("aardvark"))).toEqual([]);
+      expect(projectHits(await sq.ftsSearch("buffalo"))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 2.400450540265541,
+          matchedFields: ["body"],
+        },
+      ]);
       // Terminal → reopen: the status: qualifier tracks each transition.
       await sq.updateItem(WIDGETS, it.id, { status: "resolved" });
-      expect((await sq.ftsSearch("buffalo status:resolved")).length).toBe(1);
+      expect(projectHits(await sq.ftsSearch("buffalo status:resolved"))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "resolved",
+          score: 2.400450540265541,
+          matchedFields: ["body"],
+        },
+      ]);
       await sq.reopenItem(WIDGETS, it.id, "in-progress");
-      expect((await sq.ftsSearch("buffalo status:resolved")).length).toBe(0);
-      expect((await sq.ftsSearch("buffalo status:in-progress")).length).toBe(1);
+      expect(projectHits(await sq.ftsSearch("buffalo status:resolved"))).toEqual([]);
+      expect(projectHits(await sq.ftsSearch("buffalo status:in-progress"))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "in-progress",
+          score: 2.400450540265541,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
       await sq.dispose();
     }
@@ -324,16 +434,32 @@ describe("T528: sqlite derived-index coherence", () => {
         status: "open",
         fields: { severity: "minor", location: "x.ts", description: "xylophone" },
       });
-      expect((await b.ftsSearch("xylophone")).length).toBe(1);
+      expect(projectHits(await b.ftsSearch("xylophone"))).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 1.8210493974474302,
+          matchedFields: ["body"],
+        },
+      ]);
       // …but A's derived index is in-memory and does NOT auto-observe the
       // peer commit (the row IS visible to A's row reads).
-      expect((await a.ftsSearch("xylophone")).length).toBe(0);
+      expect(projectHits(await a.ftsSearch("xylophone"))).toEqual([]);
       expect(a.search(WIDGETS, "xylophone").length).toBe(1);
       // invalidate — the T530 coherence watcher's trigger — rebuilds the
       // bucket from the committed rows.
       await a.invalidate(WIDGETS);
       const hits = await a.ftsSearch("xylophone");
-      expect(hits.map((h) => h.item.fields["description"])).toEqual(["xylophone"]);
+      expect(projectHits(hits)).toEqual([
+        {
+          ledgerId: WIDGETS,
+          itemId: "W1",
+          status: "open",
+          score: 2.400450540265541,
+          matchedFields: ["body"],
+        },
+      ]);
     } finally {
       await a.dispose();
       await b.dispose();
@@ -351,9 +477,17 @@ describe("T528: sqlite derived-index coherence", () => {
       await b.createLedger(NOTES, notesSchema);
       await b.createItem(NOTES, m.id, { status: "open", fields: { notes: "quokka" } });
       // A has never seen the notes ledger; its index is stale until invalidated.
-      expect((await a.ftsSearch("quokka")).length).toBe(0);
+      expect(projectHits(await a.ftsSearch("quokka"))).toEqual([]);
       await a.invalidate(NOTES);
-      expect((await a.ftsSearch("quokka")).length).toBe(1);
+      expect(projectHits(await a.ftsSearch("quokka"))).toEqual([
+        {
+          ledgerId: NOTES,
+          itemId: "N1",
+          status: "open",
+          score: 2.0794415416798357,
+          matchedFields: ["body"],
+        },
+      ]);
       // Unknown ledger id: no throw, nothing surfaces.
       await a.invalidate("nope-not-here");
       expect(a.enumerate()).not.toContain("nope-not-here");
