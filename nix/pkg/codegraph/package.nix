@@ -27,7 +27,7 @@ buildNpmPackage {
   npmDeps = fetchNpmDeps {
     inherit src;
     # Hash of the pinned main rev's package-lock.json closure. Refresh on bumps.
-    hash = "sha256-7cGlc4q+9DoPsyPDos5BfE9n2Qmvlvl8QEDiD/y6+e0=";
+    hash = "sha256-pmkzXQObY25kqCnlpPKm+wYwe0jCAkwD2ZPfPg/4Auc=";
   };
 
   nodejs = nodejs_24;
@@ -35,6 +35,15 @@ buildNpmPackage {
   npmBuildScript = "build";
   npmInstallFlags = [ "--ignore-scripts" ];
   dontNpmRebuild = true;
+
+  # The nixpkgs npm hook resolves workspace executables from the root, selecting
+  # Vite 5 instead of the UI workspace's declared Vite 7.
+  postPatch = ''
+    substituteInPlace package.json \
+      --replace-fail \
+        'npm run build --workspace ui && node scripts/check-ui-build.mjs' \
+        '(cd ui && node node_modules/vite/bin/vite.js build) && node scripts/check-ui-build.mjs'
+  '';
 
   # `build` runs the `copy-assets` npm script (.wasm + schema.sql -> dist/), so
   # there is nothing extra to stage here. Pure JS + WASM, no native addons.
@@ -45,6 +54,8 @@ buildNpmPackage {
     mkdir -p $out/lib/codegraph
     cp -r dist $out/lib/codegraph/dist
     cp package.json $out/lib/codegraph/
+    # The compiled viewer is in dist/viewer; its source-workspace link is not a runtime dependency.
+    rm node_modules/@colbymchenry/codegraph-ui
     cp -r node_modules $out/lib/codegraph/node_modules
 
     # Launcher wrapper: --liftoff-only keeps tree-sitter's large WASM grammars
