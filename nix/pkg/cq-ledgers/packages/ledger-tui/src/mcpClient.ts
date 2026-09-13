@@ -66,8 +66,7 @@ export interface EmbeddedContext {
   readonly cwd: string;
   /**
    * The resolved backend descriptor (store + backend + branch) so the host can
-   * select the matching coherence watcher via `startLedgerCoherenceWatcher`
-   * (ref-sha-watch under git-object, file-watch under fs) — mirroring the web
+   * select XDG projection reconciliation via `startLedgerCoherenceWatcher`, mirroring the web
    * embedded path (ledger-web/src/serve.ts). Fixes D51.
    */
   readonly resolved: ResolvedLedgerStore;
@@ -134,7 +133,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
 
   /**
    * Run the MCP server IN-PROCESS over an in-memory transport, backed by a
-   * file-store rooted at `cwd`. No socket, no subprocess: the same tool surface
+   * XDG store selected by `cwd`. No socket, no subprocess: the same tool surface
    * the `--http` server exposes, wired client↔server through a linked transport
    * pair. The returned client OWNS the store and disposes it on {@link close}.
    * Used when ledger-tui is launched with no `--mcp-url`.

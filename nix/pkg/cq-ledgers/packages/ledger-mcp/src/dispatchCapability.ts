@@ -2405,6 +2405,9 @@ export async function createSingleProjectDispatchRuntime(
     }
     throw error;
   }
+  if (backend !== "xdg") {
+    return unavailable(`unsupported single-project attestation backend: ${backend}`);
+  }
   if (options.promptArtifactStore === undefined) {
     return unavailable("no attested prompt artifact surface is configured");
   }
@@ -2416,33 +2419,12 @@ export async function createSingleProjectDispatchRuntime(
     repoRoot: options.resolved.configRoot,
     projectId,
   });
-  let attestationBackend: AttestationBackend;
-  switch (backend) {
-    case "xdg":
-      attestationBackend = await createAttestationStoreForConstruction({
-        backend,
-        namespace,
-        ...(options.environment === undefined ? {} : { env: options.environment }),
-      });
-      break;
-    case "fs":
-      attestationBackend = await createAttestationStoreForConstruction({
-        backend,
-        namespace,
-        ledgerRoot: options.resolved.configRoot,
-      });
-      break;
-    case "git-object":
-      attestationBackend = await createAttestationStoreForConstruction({
-        backend,
-        namespace,
-        repoRoot: options.resolved.configRoot,
-        ref: options.resolved.branch,
-      });
-      break;
-    default:
-      throw new Error(`unsupported single-project attestation backend: ${String(backend)}`);
-  }
+  const attestationBackend = await createAttestationStoreForConstruction({
+    backend: "xdg",
+    namespace,
+    ...(options.environment === undefined ? {} : { env: options.environment }),
+  });
+
   return available(
     attestationBackend,
     options.promptArtifactStore,

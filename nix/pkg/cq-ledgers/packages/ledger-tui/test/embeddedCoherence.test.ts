@@ -1,25 +1,7 @@
 /**
- * Embedded-TUI external-change coherence wiring (D51 / G43; xdg cutover T505).
- *
- * Regression lineage (D51): the embedded ledger-tui used to hard-wire the FS
- * .cq/*.md file-watcher directly in main.tsx rather than the backend-selecting
- * `startLedgerCoherenceWatcher(ctx.resolved, …)`. With the legacy fs /
- * git-object runtime primaries removed (T505) the embedded backend is the
- * out-of-tree xdg SqliteLedgerStore, and the same D51 contract now reads:
- *
- *  1. `McpLedgerClient.embedded` exposes the resolved backend descriptor
- *     (`embedded.resolved`) — backend 'xdg' with a concrete dbPath;
- *  2. the no-cq.toml default resolves to xdg (K117) — on a non-git root that
- *     surfaces as ProjectKeyResolutionError (no repo identity), never a
- *     silent in-tree legacy store; an explicit legacy 'git-object' takes the
- *     K117 warn-and-open path, which on a non-git root fails its git-env
- *     check;
- *  3. driving the SAME watcher wiring main.tsx uses —
- *     `startLedgerCoherenceWatcher(ctx.resolved, ctx.cwd, onChange)` — fires
- *     onChange on an EXTERNAL write (a second SqliteLedgerStore process-peer
- *     committing to the same ledger.db), via the data_version poll watcher.
- *
- * Throwaway dirs/repos via mkdtemp; cleaned up in afterAll.
+ * Embedded TUI selects an isolated XDG store, rejects unsupported local
+ * configuration, and publishes acknowledged peer changes through the same
+ * watcher wiring as the production host.
  */
 
 import { describe, it, expect, afterAll, beforeAll } from "bun:test";
@@ -27,12 +9,12 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  GitEnvironmentError,
   ProjectKeyResolutionError,
   SqliteLedgerStore,
   type LedgerSchema,
 } from "@cq/ledger";
 import { startLedgerCoherenceWatcher } from "@cq/ledger-mcp";
+import { LEDGER_BACKENDS } from "@cq/config";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
 const dirs: string[] = [];
@@ -123,15 +105,15 @@ describe("embedded TUI exposes the resolved backend descriptor (D51 / T505)", ()
     await expect(McpLedgerClient.embedded(dir)).rejects.toBeInstanceOf(ProjectKeyResolutionError);
   });
 
-  it("[ledger] backend='git-object' takes the K117 warn-and-open path — on a non-git root the git-env check fails", async () => {
-    const dir = await plainDir();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    const err = await McpLedgerClient.embedded(dir).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(GitEnvironmentError);
-  });
+  for (const backend of LEDGER_BACKENDS.filter((kind) => kind !== "xdg" && kind !== "remote")) {
+    it(`rejects unsupported local backend '${backend}' before opening persistent state`, async () => {
+      const dir = await plainDir();
+      await writeCqToml(dir, `[ledger]\nbackend = "${backend}"\n`);
+      const before = await fs.readdir(dir);
+      await expect(McpLedgerClient.embedded(dir)).rejects.toThrow(/unsupported local backend/);
+      expect(await fs.readdir(dir)).toEqual(before);
+    });
+  }
 });
 
 /**
@@ -147,7 +129,7 @@ function wireOnSubscribe(
   return () => watcher.close();
 }
 
-describe("embedded TUI wiring selects the data_version watcher under xdg (D51 / T505)", () => {
+describe("embedded TUI wiring selects the domain-state-version watcher under xdg (D51 / T505)", () => {
   it("fires onChange on an external peer commit to the same ledger.db", async () => {
     const dir = await xdgDir();
 
@@ -171,13 +153,13 @@ describe("embedded TUI wiring selects the data_version watcher under xdg (D51 / 
     });
 
     // An EXTERNAL writer (a peer SqliteLedgerStore on the same ledger.db)
-    // commits — bumping data_version — without going through ctx.store.
+    // commits — bumping domain-state-version — without going through ctx.store.
     const external = new SqliteLedgerStore({ dbPath });
     await external.init();
     await external.createItem("widgets", ms.id, { status: "open", fields: { note: "external" } });
     await external.dispose();
 
-    // The data_version poll watcher (selected for xdg) detects the commit.
+    // The domain-state-version poll watcher (selected for xdg) detects the commit.
     expect(await waitUntil(() => fired > 0)).toBe(true);
 
     unsubscribe();

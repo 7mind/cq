@@ -103,7 +103,7 @@ async function createRepository(
       `${marker} = "claude:opus-4.8[1m]"`,
       "",
       "[ledger]",
-      'backend = "fs"',
+      'backend = "xdg"',
       `projectId = "${projectKey}"`,
       "",
     ].join("\n"),

@@ -1354,6 +1354,12 @@ export async function captureCurrentDispatchRecoveryForProject(
     options.construction,
     options.resolved.backend,
   );
+  if (backendKind !== "xdg") {
+    throw new CurrentRecoverySealError(
+      "invalid",
+      `single-project recovery does not support ${backendKind}`,
+    );
+  }
   const projectId = loadConfig(options.resolved.configRoot)?.ledger?.projectId ?? null;
   const namespace = await resolveSingleProjectAttestationNamespace({
     construction: options.construction,
@@ -1361,34 +1367,11 @@ export async function captureCurrentDispatchRecoveryForProject(
     repoRoot: options.resolved.configRoot,
     projectId,
   });
-  const backend = await (async () => {
-    switch (backendKind) {
-      case "xdg":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          ...(options.environment === undefined ? {} : { env: options.environment }),
-        });
-      case "fs":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          ledgerRoot: options.resolved.configRoot,
-        });
-      case "git-object":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          repoRoot: options.resolved.configRoot,
-          ref: options.resolved.branch,
-        });
-      default:
-        throw new CurrentRecoverySealError(
-          "invalid",
-          `single-project recovery capture does not support ${String(backendKind)}`,
-        );
-    }
-  })();
+  const backend = await createAttestationStoreForConstruction({
+    backend: backendKind,
+    namespace,
+    ...(options.environment === undefined ? {} : { env: options.environment }),
+  });
   try {
     return await captureCurrentDispatchRecoverySeal({
       backend,
@@ -1410,6 +1393,12 @@ export async function readCurrentDispatchRecoveryStatusForProject(
     options.construction,
     options.resolved.backend,
   );
+  if (backendKind !== "xdg") {
+    throw new CurrentRecoverySealError(
+      "invalid",
+      `single-project recovery does not support ${backendKind}`,
+    );
+  }
   const projectId = loadConfig(options.resolved.configRoot)?.ledger?.projectId ?? null;
   const namespace = await resolveSingleProjectAttestationNamespace({
     construction: options.construction,
@@ -1417,34 +1406,11 @@ export async function readCurrentDispatchRecoveryStatusForProject(
     repoRoot: options.resolved.configRoot,
     projectId,
   });
-  const backend = await (async () => {
-    switch (backendKind) {
-      case "xdg":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          ...(options.environment === undefined ? {} : { env: options.environment }),
-        });
-      case "fs":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          ledgerRoot: options.resolved.configRoot,
-        });
-      case "git-object":
-        return await createAttestationStoreForConstruction({
-          backend: backendKind,
-          namespace,
-          repoRoot: options.resolved.configRoot,
-          ref: options.resolved.branch,
-        });
-      default:
-        throw new CurrentRecoverySealError(
-          "invalid",
-          `single-project recovery status does not support ${String(backendKind)}`,
-        );
-    }
-  })();
+  const backend = await createAttestationStoreForConstruction({
+    backend: backendKind,
+    namespace,
+    ...(options.environment === undefined ? {} : { env: options.environment }),
+  });
   try {
     return await readCurrentDispatchRecoveryStatus({
       backend,

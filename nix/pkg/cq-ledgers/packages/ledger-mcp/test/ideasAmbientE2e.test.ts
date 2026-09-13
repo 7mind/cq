@@ -2,25 +2,21 @@
  * T1533 — cross-package acceptance for ambient-only ideas.
  *
  * Constructive taxonomy: Behavioral / Active / Blackbox / Group. The test
- * crosses the durable filesystem store, initialization migration, production
+ * crosses the durable SQLite store, initialization migration, production
  * MCP server, SDK transport, milestone listing, and global archive boundary.
  */
 
 import { expect, it } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-  FsLedgerStore,
+  SqliteLedgerStore,
   IDEAS_LEDGER,
-  IDEAS_SCHEMA,
-  LEDGER_STORAGE_DIRNAME,
   MILESTONES_AMBIENT_ID,
-  parseLedger,
-  serializeLedger,
-  type Item,
 } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
 
@@ -43,10 +39,10 @@ function decode<T>(result: unknown): T {
 
 it("[BA/BG] migrates stray ideas before MCP listing and work-milestone archive", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "cq-ideas-ambient-e2e-"));
-  const ideasPath = path.join(root, LEDGER_STORAGE_DIRNAME, `${IDEAS_LEDGER}.md`);
+  const dbPath = path.join(root, "ledger.db");
 
   try {
-    const bootstrap = new FsLedgerStore({ root });
+    const bootstrap = new SqliteLedgerStore({ dbPath });
     await bootstrap.init();
     await bootstrap.createMilestone({
       id: LEGACY_MILESTONE,
@@ -55,25 +51,24 @@ it("[BA/BG] migrates stray ideas before MCP listing and work-milestone archive",
     await bootstrap.updateMilestone(LEGACY_MILESTONE, { status: "done" });
     await bootstrap.dispose();
 
-    const ideas = parseLedger(await readFile(ideasPath, "utf8"), { schema: IDEAS_SCHEMA });
-    const legacyIdea: Item = {
-      id: LEGACY_IDEA,
-      milestoneId: LEGACY_MILESTONE,
-      status: "open",
-      fields: { title: "Legacy idea must not block work archive" },
-      createdAt: NOW,
-      updatedAt: NOW,
-    };
-    ideas.counters.item = 16;
-    ideas.milestones.push({
-      id: LEGACY_MILESTONE,
-      title: "Completed work milestone",
-      description: "",
-      items: [legacyIdea],
-    });
-    await writeFile(ideasPath, serializeLedger(ideas), "utf8");
+    const db = new Database(dbPath, { readwrite: true, create: false });
+    try {
+      db.transaction(() => {
+        db.query("INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')")
+          .run(IDEAS_LEDGER, LEGACY_MILESTONE, "Completed work milestone");
+        db.query(
+          "INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?)",
+        ).run(
+          IDEAS_LEDGER, LEGACY_IDEA, LEGACY_MILESTONE,
+          JSON.stringify({ title: "Legacy idea must not block work archive" }), NOW, NOW,
+        );
+        db.query("UPDATE ledgers SET item_counter = 16 WHERE name = ?").run(IDEAS_LEDGER);
+      })();
+    } finally {
+      db.close();
+    }
 
-    const store = new FsLedgerStore({ root });
+    const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     const server = createLedgerMcpServer({ store, displayName: "ideas-ambient-e2e" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

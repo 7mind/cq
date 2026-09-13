@@ -1,9 +1,9 @@
 /**
- * fs-watch coherence + WebSocket push.
+ * SQLite coherence + WebSocket push.
  *
  * 1) A store with a watcher notices writes made by a SEPARATE store instance
- *    (the cross-process case) and serves fresh reads after the debounce.
- * 2) The HTTP server pushes a `changed` frame over /ws when files change, and
+ *    (the cross-process case) and serves fresh reads after projection reconciliation.
+ * 2) The HTTP server pushes a `changed` frame over /ws after peer commits, and
  *    answers app-level ping with a nonce-matched pong.
  */
 
@@ -11,9 +11,8 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore, type LedgerSchema } from "@cq/ledger";
+import { SqliteLedgerStore, startXdgCoherenceWatcher, type LedgerSchema } from "@cq/ledger";
 import { serveHttp, changedFrame, LEDGER_TOPIC, WS_PATH } from "../src/main.js";
-import { startLedgerWatcher } from "../src/watcher.js";
 
 const opsSchema: LedgerSchema = {
   statusValues: ["open", "done"],
@@ -30,25 +29,25 @@ async function waitUntil(pred: () => boolean, timeoutMs = 3000): Promise<boolean
   return pred();
 }
 
-describe("fs-watch cross-process coherence", () => {
+describe("SQLite cross-process coherence", () => {
   it("re-reads a ledger after another process writes it", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-watch-"));
-    const a = new FsLedgerStore({ root });
+    const a = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await a.init();
     await a.createLedger("ops", opsSchema);
     const ms = await a.createMilestone({ id: "M1", title: "m1" });
-    const watcher = startLedgerWatcher(a, root); // invalidate-only
+    const watcher = startXdgCoherenceWatcher(a, path.join(root, "ledger.db")); // invalidate-only
 
     // Sanity: A sees no items yet.
     expect(a.fetch("ops").milestones.flatMap((g) => g.items)).toHaveLength(0);
 
-    // A DIFFERENT store writes an item to the same files.
-    const b = new FsLedgerStore({ root });
+    // A DIFFERENT store writes an item to the same database.
+    const b = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await b.init();
     await b.createItem("ops", ms.id, { status: "open", fields: { headline: "from B" } });
     await b.dispose();
 
-    // After the watcher's debounce, A's cache reflects B's write.
+    // After reconciliation, A's projection reflects B's write.
     const seen = await waitUntil(
       () => a.fetch("ops").milestones.flatMap((g) => g.items).some((i) => i.fields["headline"] === "from B"),
     );
@@ -62,19 +61,19 @@ describe("fs-watch cross-process coherence", () => {
 
 describe("ledger-mcp WebSocket push", () => {
   let root: string;
-  let store: FsLedgerStore;
+  let store: SqliteLedgerStore;
   let server: ReturnType<typeof Bun.serve>;
-  let watcher: ReturnType<typeof startLedgerWatcher>;
+  let watcher: ReturnType<typeof startXdgCoherenceWatcher>;
   let msId: string;
 
   beforeAll(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-ws-"));
-    store = new FsLedgerStore({ root });
+    store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await store.init();
     await store.createLedger("ops", opsSchema);
     msId = (await store.createMilestone({ id: "M1", title: "m1" })).id;
     server = serveHttp(store, { host: "127.0.0.1", port: 0 }, "test-project");
-    watcher = startLedgerWatcher(store, root, (ledger) => {
+    watcher = startXdgCoherenceWatcher(store, path.join(root, "ledger.db"), undefined, (ledger) => {
       server.publish(LEDGER_TOPIC, changedFrame(ledger));
     });
   });
@@ -86,7 +85,7 @@ describe("ledger-mcp WebSocket push", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("answers ping with a nonce-matched pong and pushes changed on a file write", async () => {
+  it("answers ping with a nonce-matched pong and pushes changed on a peer commit", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}${WS_PATH}`);
     const msgs: Array<{ type?: string; nonce?: string; ledger?: string }> = [];
     await new Promise<void>((res, rej) => {
@@ -100,7 +99,7 @@ describe("ledger-mcp WebSocket push", () => {
     expect(await waitUntil(() => msgs.some((m) => m.type === "pong" && m.nonce === "n1"))).toBe(true);
 
     // A separate store writes → the watcher publishes a `changed` frame.
-    const b = new FsLedgerStore({ root });
+    const b = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
     await b.init();
     await b.createItem("ops", msId, { status: "open", fields: { headline: "live" } });
     await b.dispose();

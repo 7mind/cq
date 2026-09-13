@@ -4,7 +4,7 @@
  *
  * Two modes:
  *   - EMBEDDED (default, no `--mcp-url`): runs the ledger MCP server in-process
- *     over an in-memory transport, backed by a file-store rooted at
+ *     over an in-memory transport, backed by an XDG store selected by
  *     `--cwd` > `$LEDGER_ROOT` > the process CWD. No server to start.
  *   - REMOTE (`--mcp-url`): connects to an already-running `ledger-mcp --http`
  *     server over Streamable HTTP.
@@ -150,12 +150,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       process.exit(1);
     }
   }
-  // Embedded mode has no WebSocket: wire live refresh to the in-process
-  // backend-selecting coherence watcher so external edits (the agent's stdio
-  // server, git, a second UI) refresh the view. Self-edits already refetch
-  // post-mutation. startLedgerCoherenceWatcher selects the file-watch under the
-  // fs backend (behaviour unchanged) and the orphan-ref-sha poll under the
-  // git-object backend, mirroring ledger-web/src/serve.ts (D51).
+  // Embedded mode has no WebSocket: acknowledged XDG projection changes
+  // refresh the view after peer commits. Self-edits already refetch post-mutation.
   const ctx = client.embedded;
   const onSubscribe =
     ctx !== null

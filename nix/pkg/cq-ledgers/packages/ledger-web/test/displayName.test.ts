@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore } from "@cq/ledger";
+import { InMemoryLedgerStore } from "@cq/ledger";
 import { serveHttp, MCP_HTTP_PATH } from "@cq/ledger-mcp";
 import { McpLedgerClient } from "../src/mcpClient.js";
 import { FakeClient } from "./fakeClient.js";
@@ -35,13 +35,13 @@ describe("web FakeClient.displayName()", () => {
 // ---------------------------------------------------------------------------
 
 let tmpRoot: string;
-let store: FsLedgerStore;
+let store: InMemoryLedgerStore;
 let server: ReturnType<typeof Bun.serve>;
 let client: McpLedgerClient;
 
 beforeAll(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-dn-"));
-  store = new FsLedgerStore({ root: tmpRoot });
+  store = new InMemoryLedgerStore({});
   await store.init();
   const displayName = path.basename(tmpRoot);
   server = serveHttp(store, { host: "127.0.0.1", port: 0 }, displayName);

@@ -27,17 +27,13 @@ import {
   computeSection,
 } from "../src/configCapability.js";
 import type { AgentModelEntry } from "@cq/ledger";
-import { FsLedgerStore } from "@cq/ledger";
 
 let dir: string;
 const callerHarness = process.env["CQ_HARNESS"];
 
-beforeEach(async () => {
+beforeEach(() => {
   delete process.env["CQ_HARNESS"];
   dir = mkdtempSync(path.join(tmpdir(), "t232-"));
-  const store = new FsLedgerStore({ root: dir });
-  await store.init();
-  await store.dispose();
 });
 
 afterEach(() => {

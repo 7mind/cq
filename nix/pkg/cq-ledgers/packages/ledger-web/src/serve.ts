@@ -371,9 +371,9 @@ function serveProxy(
 }
 
 /**
- * Host the MCP server IN-PROCESS: an embedded file-store rooted at `opts.cwd`,
- * the shared `attachMcpHttp` handlers mounted on `/mcp` + `/ws`, and the file
- * watcher publishing `changed` frames to subscribed browser sockets. The
+ * Host the MCP server IN-PROCESS: an XDG store selected by `opts.cwd`,
+ * the shared `attachMcpHttp` handlers mounted on `/mcp` + `/ws`, and projection
+ * reconciliation publishing `changed` frames to subscribed browser sockets. The
  * browser is unchanged — it still talks to the same-origin `/mcp` and `/ws`.
  * The returned server's `stop()` is wrapped to also close the watcher and
  * dispose the store.
@@ -443,10 +443,7 @@ async function serveEmbedded(
     }),
   );
 
-  // Publish a `changed` frame to subscribed browser sockets on any change
-  // (this server's own writes, the agent's stdio server, git, a hand-edit).
-  // Watcher is selected by backend (file watch for fs, orphan-ref-sha poll for
-  // git-object).
+  // Publish acknowledged local and peer projection changes to browser sockets.
   const watcher = startLedgerCoherenceWatcher(resolved, opts.cwd, (ledger) => {
     server.publish(LEDGER_TOPIC, changedFrame(ledger));
   });

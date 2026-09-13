@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { FsLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { SqliteLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES } from "@cq/ledger";
 import {
   serveHttp,
   attachMcpHttp,
@@ -24,7 +24,7 @@ import {
 } from "../src/main.js";
 
 let tmpRoot: string;
-let store: FsLedgerStore;
+let store: SqliteLedgerStore;
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl: URL;
 
@@ -32,7 +32,7 @@ const EXPECTED_HTTP_INSTRUCTIONS = `Project: test-project\n\n${buildServerInstru
 
 beforeAll(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-http-"));
-  store = new FsLedgerStore({ root: tmpRoot });
+  store = new SqliteLedgerStore({ dbPath: path.join(tmpRoot, "ledger.db") });
   await store.init();
   await store.createLedger("xenos", {
     statusValues: ["open", "done"],
@@ -196,7 +196,7 @@ describe("ledger-mcp Streamable HTTP", () => {
     });
 
     // Fresh store confirms the writes hit disk.
-    const verify = new FsLedgerStore({ root: tmpRoot });
+    const verify = new SqliteLedgerStore({ dbPath: path.join(tmpRoot, "ledger.db") });
     await verify.init();
     const item = verify.fetchItem("xenos", itemId);
     expect(item.status).toBe("done");
@@ -213,13 +213,13 @@ describe("ledger-mcp Streamable HTTP", () => {
 describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
   const PREFIX = "myproj";
   let prefixedRoot: string;
-  let prefixedStore: FsLedgerStore;
+  let prefixedStore: SqliteLedgerStore;
   let prefixedServer: ReturnType<typeof Bun.serve>;
   let prefixedBaseUrl: URL;
 
   beforeAll(async () => {
     prefixedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-http-prefix-"));
-    prefixedStore = new FsLedgerStore({ root: prefixedRoot });
+    prefixedStore = new SqliteLedgerStore({ dbPath: path.join(prefixedRoot, "ledger.db") });
     await prefixedStore.init();
     prefixedServer = serveHttp(
       prefixedStore,
@@ -262,7 +262,7 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
 
   it("attachMcpHttp with toolPrefix also registers prefixed names", async () => {
     const root2 = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-attach-prefix-"));
-    const store2 = new FsLedgerStore({ root: root2 });
+    const store2 = new SqliteLedgerStore({ dbPath: path.join(root2, "ledger.db") });
     await store2.init();
     const handlers = attachMcpHttp(store2, "attach-prefix-test", PREFIX);
     const attachServer = Bun.serve({

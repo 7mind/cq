@@ -57,7 +57,6 @@ import {
   resolveProjectKey,
   RemoteLedgerClientNotWiredError,
   startXdgCoherenceWatcher,
-  nodeGitRunner,
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
@@ -144,13 +143,6 @@ import {
   resolvePromptSurface,
   type PromptSurface,
 } from "./promptSurfaceSelection.js";
-import { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
-import { startLedgerRefWatcher } from "./refWatcher.js";
-
-// Re-export so in-process hosts (ledger-tui embedded, ledger-web embedded) can
-// wire live refresh against the same watcher the standalone binary uses.
-export { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
-export { startLedgerRefWatcher, type LedgerRefWatcher, REF_POLL_MS } from "./refWatcher.js";
 export {
   FileSystemPromptArtifactStore,
   InMemoryPromptArtifactStore,
@@ -533,7 +525,7 @@ export function projectInstructionLine(displayName: string): string {
 
 /**
  * Build a fresh McpServer with the selected canonical ledger tools bound to
- * `store`. read_log is wired only when `store` is filesystem-backed.
+ * `store`. read_log is wired only when `store` advertises that capability.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory
  * name). Frontends are pure MCP clients and never read cwd, so the server
@@ -543,20 +535,9 @@ export function projectInstructionLine(displayName: string): string {
  * a fallback for SDK runtimes that omit `title`. Stable across reconnects.
  */
 /**
- * Duck-typed root-dir capability check (T357). Both FsLedgerStore and the
- * git-object backend expose a `rootDir` accessor (the resolved ledger root the
- * root-bound config / prompt-catalog capabilities attach to); the in-memory test
- * store does not. Returns the root string when the store advertises one, else
- * `undefined`. Backend-independent on purpose — config/promptCatalog are not
- * FS-specific, so they must NOT be gated on `instanceof FsLedgerStore`.
- *
- * D93: the xdg `SqliteLedgerStore` exposes NO `rootDir` — its data lives
- * out-of-tree, entirely independent of the cq.toml config root — so this
- * duck-type alone under-detects the capability for xdg. Callers that hold the
- * {@link ResolvedLedgerStore} from `createLedgerStore` should prefer its
- * `configRoot` (the actual cq.toml root) over this function; `rootDirOf`
- * remains the fallback for call sites (tests, mainly) that construct a store
- * directly and have no `ResolvedLedgerStore` to hand.
+ * Resolve the optional root-dir capability for directly constructed stores.
+ * Production XDG construction supplies ResolvedLedgerStore.configRoot explicitly:
+ * the SQLite database location is independent of the repository's cq.toml.
  */
 export function rootDirOf(store: LedgerStore): string | undefined {
   const candidate = (store as { rootDir?: unknown }).rootDir;
@@ -564,15 +545,8 @@ export function rootDirOf(store: LedgerStore): string | undefined {
 }
 
 /**
- * Duck-typed read-log capability check (T408). Both FsLedgerStore (tails the
- * on-disk `<root>/.cq/logs`) and GitObjectLedgerBackend (resolves `logs/<rel>`
- * from the orphan ref tip) expose a bounded, root-confined `readLog(relPath)`
- * returning a `ReadLogResult`; the in-memory test store does not. Returns the
- * bound capability when the store advertises one, else `undefined` — so
- * read_log is wired for BOTH file-backed AND git-object backends but throws the
- * documented not-implemented error over an in-memory store. Backend-aware on
- * purpose, replacing the former `instanceof FsLedgerStore` gate (which excluded
- * the git-object backend even though it can serve read_log from the ref tree).
+ * Log capabilities are advertised by the store. SQLite confines reads to its
+ * configured log directory; stores without readLog return not-implemented.
  */
 const MAX_PUT_LOG_BYTES = 4 * 1024 * 1024;
 
@@ -661,33 +635,17 @@ export function listProjectsOf(
 }
 
 /**
- * Start the per-backend coherence watcher for a resolved store (T357 item 5;
- * xdg case wired in T500): file-watch ({@link startLedgerWatcher}) for the fs
- * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
- * domain-state-version poll ({@link startXdgCoherenceWatcher}) for xdg.
- * Public postgres is retired (T736). Remote launches do not watch a local store.
- * Local watchers return a handle with `.close()`, so the host wires shutdown
- * identically regardless of backend.
- * The git-object path binds a {@link nodeGitRunner} at the repo root so the
- * watcher polls `refs/heads/<branch>` for ledger advances by another process.
- *
- * The xdg watcher bulk-invalidates every known ledger off a content-version
- * bump, so its `onChange` (D89) fires once per invalidate pass with `null`
- * rather than once per ledger id — `onChange` is forwarded here exactly as
- * for the other backends, driving the same WS "changed" push for a peer
- * process's write. Public postgres is retired; hub live frames come from
- * in-process `onMutation` (T726/T736).
+ * Start acknowledged XDG projection reconciliation and publish scoped changes.
+ * Remote clients must use the server's live transport, never a local watcher.
+ * Unsupported local backends fail before watcher construction.
  */
 export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,
   root: string,
   onChange?: (ledgerId: string | null) => void,
-): LedgerWatcher | XdgCoherenceWatcher {
+): XdgCoherenceWatcher {
   if (resolved.backend === "remote") {
     throw new RemoteLedgerClientNotWiredError("startLedgerCoherenceWatcher", root);
-  }
-  if (resolved.backend === "git-object") {
-    return startLedgerRefWatcher(resolved.store, resolved.branch, nodeGitRunner(root), onChange);
   }
   if (resolved.backend === "xdg") {
     if (resolved.dbPath === undefined) {
@@ -698,7 +656,7 @@ export function startLedgerCoherenceWatcher(
     }
     return startXdgCoherenceWatcher(resolved.store, resolved.dbPath, undefined, onChange);
   }
-  return startLedgerWatcher(resolved.store, root, onChange);
+  throw new Error(`startLedgerCoherenceWatcher: unsupported local backend '${resolved.backend}'`);
 }
 
 /**
@@ -797,14 +755,6 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
   // Resolve before constructing the server so unknown profiles fail before any
   // `tools/list` serializer or transport can observe a partial surface.
   ledgerToolNamesForProfile(toolProfile);
-  // read_log (Q87 / R137 #6 / T408) is BACKEND-AWARE: the FS store tails the
-  // on-disk per-ledger log under <root>/.cq/logs, and the git-object backend
-  // resolves the SAME `logs/<rel>` from the orphan ref tip (same confinement +
-  // 4 MiB cap). So gate it on the duck-typed `readLog` capability (T357
-  // precedent, mirroring `rootDirOf`) rather than `instanceof FsLedgerStore` —
-  // read_log is wired for BOTH backends. An in-memory store (tests) exposes no
-  // `readLog` and supplies none; read_log then throws the documented
-  // not-implemented error.
   const readLog: ReadLogCapability | undefined = readLogOf(store);
   // cq.toml config remains root-bound and backend-independent. Prompt-catalog
   // tools prefer an injected, already-built artifact store; the source-backed
@@ -950,6 +900,10 @@ export function buildServer(
  * {@link startLedgerCoherenceWatcher}.
  */
 export async function createEmbeddedStore(cwd: string): Promise<ResolvedLedgerStore> {
+  const { backend } = resolveLedgerBackend(cwd);
+  if (backend !== "xdg" && backend !== "remote") {
+    throw new Error(`createEmbeddedStore: unsupported local backend '${backend}'`);
+  }
   return createLedgerStore(cwd);
 }
 
@@ -1186,8 +1140,7 @@ export function wsHeartbeat(send: (frame: string) => void, raw: string | Buffer)
  * and register the transport under the generated session id once the SDK
  * fires `onsessioninitialized`. Subsequent requests carry the
  * `mcp-session-id` header and route back to the same transport. All
- * sessions share the single `store` (FsLedgerStore is concurrency-safe via
- * its own mutex + lockfile).
+ * sessions share the single store and its transactional mutation boundary.
  *
  * Returns the running Bun server so callers (tests) can `.stop()` it.
  */
@@ -1304,13 +1257,8 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  // Construct the store via the backend-selecting factory (T357), init it, then
-  // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg'
-  // is the K117 default; an explicit legacy fs/git-object opens with a
-  // deprecation warning naming `cq migrate`). If construction/init fails we
-  // surface the error to stderr and exit non-zero — the parent MCP client
-  // sees the channel close and treats the server as unhealthy.
-  const resolved = await createLedgerStore(cwd);
+  // Reject unsupported local configuration before opening persistent state.
+  const resolved = await createEmbeddedStore(cwd);
   const store = resolved.store;
   const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
     construction: http === null ? "stdio" : "http-single-project",
@@ -1368,8 +1316,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       implementationEvidence,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
-    // subscribed UIs on any change. The watcher is selected by backend (file
-    // watch for fs, orphan-ref-sha poll for git-object).
+    // subscribed UIs after the XDG projection acknowledges each scoped change.
     const watcher = startLedgerCoherenceWatcher(resolved, cwd, (ledger) => {
       server.publish(LEDGER_TOPIC, changedFrame(ledger));
     });
@@ -1406,9 +1353,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const server = management
     ? createManagementLedgerMcpServer(serverOptions)
     : createLedgerMcpServer(serverOptions);
-  // Even on stdio, watch the ledger so this server's cache stays fresh when
-  // another process writes the same ledgers (file watch for fs, ref-sha poll
-  // for git-object).
+  // Keep stdio search coherent with peer commits to the same SQLite database.
   const watcher = startLedgerCoherenceWatcher(resolved, cwd);
 
   // Graceful shutdown on SIGTERM / SIGINT / parent death / stdin end (T2019).
