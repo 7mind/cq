@@ -132,6 +132,25 @@ describe("T1325 role tool capability matrix", () => {
     }
   });
 
+  // Regression origin: tasks:T4126 — planning commands must not synthesize claim authority.
+  test("planning command sources mint authority before claiming", () => {
+    for (const roleId of ["plan/advance", "plan/follow-up"] as const) {
+      const catalogRole = PROMPT_CATALOG_PROJECTION.catalog.find(
+        (candidate) => candidate.roleId === roleId,
+      );
+      if (catalogRole === undefined) throw new Error(`missing prompt catalog role ${roleId}`);
+      const source = readFileSync(
+        path.join(REPO_ROOT, "nix", "pkg", "cq-assets", catalogRole.canonicalSource),
+        "utf8",
+      );
+      const mintIndex = source.indexOf("mint_plan_claim_authority({})");
+      const claimIndex = source.indexOf("claim_plan", mintIndex);
+      expect(mintIndex, roleId).toBeGreaterThanOrEqual(0);
+      expect(claimIndex, roleId).toBeGreaterThan(mintIndex);
+      expect(exposedLedgerToolsForRole(roleId), roleId).toContain("mint_plan_claim_authority");
+    }
+  });
+
   test("T1697 does not widen either explorer ledger MCP profile", () => {
     for (const role of ["investigate-explorer", "research-explorer"] as const) {
       expect(exposedLedgerToolsForRole(role), role).toEqual([
@@ -299,7 +318,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(59);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(60);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {

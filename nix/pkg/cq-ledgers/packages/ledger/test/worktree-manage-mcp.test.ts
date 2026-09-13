@@ -21,7 +21,6 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -37,6 +36,7 @@ import {
   LEDGER_TOOL_NAMES,
   listManagedLiveWorktrees,
   materializeOperatorAction,
+  normalizeLedgerToolInputSchema,
   parseWorktreeManageInput,
   recordOperatorActionEvidence,
   registerLedgerStdioTools,
@@ -243,7 +243,7 @@ async function invokeDirect(
 ): Promise<Outcome> {
   const target = tools.find((candidate) => candidate.name === name);
   if (target === undefined) throw new Error(`direct tool not found: ${name}`);
-  const parsed = z.object(target.inputSchema as Record<string, z.ZodType>).safeParse(args);
+  const parsed = normalizeLedgerToolInputSchema(target.inputSchema).safeParse(args);
   if (!parsed.success) return { ok: false, message: parsed.error.message };
   try {
     const result = (await target.handler(parsed.data as never, null)) as TextToolResult;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { z } from "zod";
 import {
   InMemoryLedgerStore,
   createLedgerMcpTools,
+  normalizeLedgerToolInputSchema,
   type FieldValue,
   type FetchedMilestoneItem,
   type Item,
@@ -95,12 +95,7 @@ async function buildFixture(
   });
   return {
     store,
-    tools: createLedgerMcpTools(
-      store,
-      readLog,
-      undefined,
-      promptCatalog,
-    ),
+    tools: createLedgerMcpTools(store, readLog, undefined, promptCatalog),
     milestone,
     first,
     second,
@@ -113,11 +108,7 @@ function findTool(tools: Tools, name: string) {
   return found;
 }
 
-function callTool(
-  tools: Tools,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolResult> {
+function callTool(tools: Tools, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return findTool(tools, name).handler(args as never, null) as Promise<ToolResult>;
 }
 
@@ -184,10 +175,7 @@ function expectNoteOmitted(toolName: string, items: ItemDto[]): void {
 function expectExactComplement(toolName: string, items: ItemDto[]): void {
   expect(items.length, `${toolName}: fixture items`).toBeGreaterThan(0);
   for (const item of items) {
-    expect(Object.keys(item).sort(), `${toolName}: ${item.id} envelope`).toEqual([
-      "fields",
-      "id",
-    ]);
+    expect(Object.keys(item).sort(), `${toolName}: ${item.id} envelope`).toEqual(["fields", "id"]);
     expect(item.fields, `${toolName}: ${item.id} narrative`).toHaveProperty("description");
     expect(item.fields, `${toolName}: ${item.id} note`).toHaveProperty("note");
     for (const fieldName of EXPECTED_COMPACT_FIELD_NAMES) {
@@ -221,7 +209,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
     for (const { label, tool: toolName, args } of READ_SCHEMA_CASES) {
       const tool = findTool(tools, toolName);
-      const input = z.object(tool.inputSchema);
+      const input = normalizeLedgerToolInputSchema(tool.inputSchema);
       expect(input.safeParse(args).success, `${label}: omitted`).toBe(false);
       expect(input.safeParse({ ...args, projection: "summary" }).success, `${label}: invalid`).toBe(
         false,
@@ -453,10 +441,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       validateInput: () => ({ ok: true }),
       validateOutput: () => ({ ok: true }),
     };
-    const { store, tools } = await buildFixture(
-      async () => logPayload,
-      promptCatalog,
-    );
+    const { store, tools } = await buildFixture(async () => logPayload, promptCatalog);
 
     const cases = [
       {
@@ -478,12 +463,8 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
     for (const testCase of cases) {
       const result = await callTool(tools, testCase.name, testCase.args);
-      expect(result.content[0]?.text, testCase.name).toBe(
-        JSON.stringify(testCase.expected),
-      );
-      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(
-        false,
-      );
+      expect(result.content[0]?.text, testCase.name).toBe(JSON.stringify(testCase.expected));
+      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(false);
     }
   });
 });

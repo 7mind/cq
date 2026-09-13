@@ -9,8 +9,10 @@ import {
   createTrustedWorksetManagementAuthority,
   InMemoryLedgerStore,
   ITEM_PROJECTION_DESCRIPTION,
+  LEDGER_TOOL_NAMES,
   LEDGER_RESPONSE_CONTRACTS,
   MANAGEMENT_LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   type DispatchCapability,
 } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
@@ -42,6 +44,18 @@ function section(markdown: string, name: string): string {
 
 async function packageReadme(): Promise<string> {
   return readFile(packageReadmePath, "utf8");
+}
+
+function rootOrdinaryToolNames(markdown: string): string[] {
+  const heading = `## Ordinary tool surface (${LEDGER_TOOL_NAMES.length})`;
+  const startIndex = markdown.indexOf(heading);
+  if (startIndex === -1) throw new Error(`missing documentation heading ${heading}`);
+  const inventoryStart = startIndex + heading.length;
+  const inventoryEnd = markdown.indexOf("\n\nThe six attestation", inventoryStart);
+  if (inventoryEnd === -1) throw new Error("ordinary tool inventory lacks its boundary prose");
+  return [...markdown.slice(inventoryStart, inventoryEnd).matchAll(/`([^`]+)`/g)].map(
+    (match) => match[1]!,
+  );
 }
 
 interface DocumentedExample {
@@ -142,7 +156,7 @@ describe("public MCP response-contract documentation", () => {
     expect(readme).toContain('projection: "complement"');
     expect(readme).toContain("fields(full) = fields(compact) ∪ fields(complement)");
     expect(readme).toContain("After a `compact` read");
-    expect(readme).toContain("closed 59-tool matrix");
+    expect(readme).toContain("closed 60-tool matrix");
   });
 
   // Regression: T678 review round 2 — field-level documentation drift must fail.
@@ -171,7 +185,11 @@ describe("public MCP response-contract documentation", () => {
       readFile(path.join(repoRoot, "CLAUDE.md"), "utf8"),
     ]);
 
-    expect(rootReadme).toContain("59-tool ledger surface");
+    expect(rootReadme).toContain("60-tool management ledger surface");
+    expect(rootOrdinaryToolNames(rootReadme)).toEqual([...LEDGER_TOOL_NAMES]);
+    expect(LEDGER_TOOL_NAMES).toHaveLength(42);
+    expect(NON_DISPATCH_LEDGER_TOOL_NAMES).toHaveLength(34);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(60);
     expect(rootReadme).toContain("compact/complement/full projection");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");

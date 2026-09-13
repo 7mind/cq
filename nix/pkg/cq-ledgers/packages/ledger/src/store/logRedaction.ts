@@ -84,7 +84,7 @@ const PATTERNS: ReadonlyArray<{
     re: /xox[bp]-[0-9A-Za-z-]+/gm,
   },
   // Plan-lifecycle owner fence tokens (T852 / G99). The value is an opaque
-  // caller-generated base64url secret with no distinguishing prefix, so the
+  // runtime-minted base64url secret with no distinguishing prefix, so the
   // KEY is the anchor: the JSON (`"ownerFenceToken":"…"`), YAML
   // (`ownerFenceToken: …` / `ownerFenceToken: '…'`), and shell
   // (`ownerFenceToken=…`) spellings a transcript can carry.

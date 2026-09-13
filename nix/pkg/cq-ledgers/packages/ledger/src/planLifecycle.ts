@@ -28,9 +28,7 @@ const taskIdSchema = z.string().regex(TASK_ID_RE);
 const questionIdSchema = z.string().regex(QUESTION_ID_RE);
 const researchIdSchema = z.string().regex(RESEARCH_ID_RE);
 /** Bare `T<n>` or canonical `tasks:T<n>` only — no other ledger, no free text. */
-export const taskRefSchema = z
-  .string()
-  .regex(/^(?:tasks:)?T\d+$/);
+export const taskRefSchema = z.string().regex(/^(?:tasks:)?T\d+$/);
 const defectIdSchema = z.string().regex(DEFECT_ID_RE);
 const reviewIdSchema = z.string().regex(REVIEW_ID_RE);
 const decisionIdSchema = z.string().regex(DECISION_ID_RE);
@@ -44,20 +42,10 @@ export const PLAN_LIFECYCLE_CONTRACT_VERSION = 1 as const;
 export const PlanClaimPurposeSchema = z.enum(["initial", "follow-up"]);
 export type PlanClaimPurpose = z.infer<typeof PlanClaimPurposeSchema>;
 
-export const PlanClaimGoalPhaseSchema = z.enum([
-  "clarifying",
-  "planning",
-  "planned",
-  "building",
-]);
+export const PlanClaimGoalPhaseSchema = z.enum(["clarifying", "planning", "planned", "building"]);
 export type PlanClaimGoalPhase = z.infer<typeof PlanClaimGoalPhaseSchema>;
 
-export const PlanReviewDefectSeveritySchema = z.enum([
-  "low",
-  "medium",
-  "high",
-  "critical",
-]);
+export const PlanReviewDefectSeveritySchema = z.enum(["low", "medium", "high", "critical"]);
 export type PlanReviewDefectSeverity = z.infer<typeof PlanReviewDefectSeveritySchema>;
 
 export const PlanOperationSchema = z.enum(["claim", "publish-draft", "release", "finalize"]);
@@ -684,10 +672,9 @@ const idempotencyKeyReusedConflictSchema = z
     operationId: opaqueIdSchema,
   })
   .strict();
-const publishDraftIdempotencyKeyReusedConflictSchema =
-  idempotencyKeyReusedConflictSchema.extend({
-    operation: z.literal("publish-draft"),
-  });
+const publishDraftIdempotencyKeyReusedConflictSchema = idempotencyKeyReusedConflictSchema.extend({
+  operation: z.literal("publish-draft"),
+});
 const releaseIdempotencyKeyReusedConflictSchema = idempotencyKeyReusedConflictSchema.extend({
   operation: z.literal("release"),
 });
@@ -765,17 +752,12 @@ const reviewDraftMismatchConflictSchema = z
   .strict();
 
 const worksetConflictShape = {
-    code: z.literal("workset-conflict"),
-    operation: z.enum([
-      "claim-plan",
-      "publish-plan-draft",
-      "release-plan-claim",
-      "finalize-plan",
-    ]),
-    reason: z.enum(["target-excluded", "stale-epoch", "revoked"]),
-    goalId: goalIdSchema,
-    refs: z.array(z.string().regex(/^[a-z][A-Za-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*$/)),
-    epoch: z.number().int().nonnegative(),
+  code: z.literal("workset-conflict"),
+  operation: z.enum(["claim-plan", "publish-plan-draft", "release-plan-claim", "finalize-plan"]),
+  reason: z.enum(["target-excluded", "stale-epoch", "revoked"]),
+  goalId: goalIdSchema,
+  refs: z.array(z.string().regex(/^[a-z][A-Za-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*$/)),
+  epoch: z.number().int().nonnegative(),
 } as const;
 
 function sortedUniqueWorksetRefs(
@@ -1056,10 +1038,7 @@ export const PlanClaimResultSchema = z.discriminatedUnion("ok", [
 ]);
 export type PlanClaimResult = z.infer<typeof PlanClaimResultSchema>;
 
-function claimRequestChanged(
-  record: PlanPrivateClaimRecord,
-  input: PlanClaimInput,
-): boolean {
+function claimRequestChanged(record: PlanPrivateClaimRecord, input: PlanClaimInput): boolean {
   return (
     record.purpose !== input.purpose ||
     record.expectedGeneration !== input.expectedGeneration ||
@@ -1073,10 +1052,7 @@ function claimRequestChanged(
  * state. Exact replay echoes the caller-supplied token only after its SHA-256
  * digest matches; the durable record itself never contains plaintext authority.
  */
-export function replayPlanClaim(
-  durableRecord: unknown,
-  retryInput: unknown,
-): PlanClaimResult {
+export function replayPlanClaim(durableRecord: unknown, retryInput: unknown): PlanClaimResult {
   const record = PlanPrivateClaimRecordSchema.parse(durableRecord);
   const input = PlanClaimInputSchema.parse(retryInput);
   if (record.goalId !== input.goalId || record.claimRequestId !== input.claimRequestId) {
@@ -1095,9 +1071,7 @@ export function replayPlanClaim(
     };
   }
 
-  const suppliedVerifier = createHash("sha256")
-    .update(input.ownerFenceToken, "utf8")
-    .digest("hex");
+  const suppliedVerifier = createHash("sha256").update(input.ownerFenceToken, "utf8").digest("hex");
   if (suppliedVerifier !== record.ownerFenceTokenVerifier) {
     return {
       ok: false,
@@ -1391,18 +1365,17 @@ export const PLAN_LEGACY_ADOPTION = {
 } as const;
 
 export const PLAN_AUTHORITY_RULES = {
-  ownerTokenInput: "caller-generated-random-base64url-at-least-128-bits",
+  authorityMint: "runtime-minted-independent-16-byte-request-id-and-32-byte-owner-token",
+  ownerTokenInput: "caller-supplied-to-claim-from-runtime-mint",
   ownerTokenPersistence: "sha256-verifier-only",
-  ownerTokenEcho: "winning-or-exact-claim-retry-channel-only",
+  ownerTokenEcho: "mint-root-or-winning-or-exact-claim-retry-channel-only",
   observerExposure: "never",
   claimRequestScope: ["goalId", "claimRequestId"],
   operationScope: ["claimId", "generation", "operation", "operationId"],
-  exactReplay:
-    "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
+  exactReplay: "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
   claimReplayPersistence:
     "request-fields-token-verifier-phase-and-legacy-adoption-without-plaintext-token",
-  operationReplayPersistence:
-    "payload-verifier-is-idempotency-only-never-authority",
+  operationReplayPersistence: "payload-verifier-is-idempotency-only-never-authority",
   changedClaimReplayPayload: "claim-request-reused",
   changedOperationReplayPayload: "idempotency-key-reused",
   expiry: "none",
@@ -1443,10 +1416,7 @@ export const PLAN_RELEASE_VARIANT_CONFLICTS = {
     "stale-generation",
     "idempotency-key-reused",
   ],
-} as const satisfies Record<
-  PlanReleaseInput["kind"],
-  readonly PlanReleaseConflict["code"][]
->;
+} as const satisfies Record<PlanReleaseInput["kind"], readonly PlanReleaseConflict["code"][]>;
 
 export const PLAN_OPERATION_CONTRACTS = {
   claim: {

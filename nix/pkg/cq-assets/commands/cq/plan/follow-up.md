@@ -12,6 +12,7 @@ Effect-boundary authority follows this shared contract:
 {{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "target goal id followed by free text or one or more idea ids"
@@ -42,9 +43,20 @@ yet.
 
 Inspect `planGeneration` before appending or linking anything.
 
-For a protocol-managed goal, mint a fresh request id and secret fence token,
-then call `claim_plan(purpose: "follow-up")` with the observed plan generation
-and write provenance. Never log the token. Any rejected claim result exits
+For a protocol-managed goal, prepare a follow-up claim with the observed plan
+generation and write provenance. Immediately before the new claim request,
+call `mint_plan_claim_authority({})`. Pass the returned `claimRequestId` and
+`ownerFenceToken` unchanged to `claim_plan(purpose: "follow-up")`. Keep the pair
+only in memory; never log the token. Never synthesize either value with shell
+commands or host random utilities.
+
+If the `claim_plan` response is lost or uncertain, retry the identical claim
+payload with the exact same minted pair. Do not mint again while that result
+is uncertain. Mint a new pair only for a distinct request after a definite
+result and a fresh state reread (for example, a stale-generation conflict).
+That later request is a new invocation, not a fallback after a rejected claim.
+
+Any rejected claim result exits
 before appending scope or mutating the goal or ideas; report its conflict and
 perform no fallback raw transition. This rule covers every rejection,
 including a terminal or phase conflict, active claim or implementation,
@@ -66,6 +78,7 @@ Append each scope to the existing description without replacing history:
 
 ```markdown
 ## Follow-up (<date or ordinal>)
+
 <scope>
 ```
 

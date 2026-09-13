@@ -1,11 +1,11 @@
 /** T1981: direct MCP plan lifecycle must enter through workset admission. */
 
 import { describe, expect, it } from "bun:test";
-import { z } from "zod";
 import {
   GOALS_LEDGER,
   PlanLifecycleNotImplementedError,
   createLedgerMcpTools,
+  normalizeLedgerToolInputSchema,
   type LedgerStore,
 } from "../src/index.js";
 import {
@@ -23,9 +23,7 @@ describe("workset-guarded plan lifecycle — direct MCP [Behavioral-Active Black
       for (const { tool: toolName, operation, input } of EXCLUDED_PLAN_CASES) {
         const tool = tools.find(({ name }) => name === toolName);
         if (tool === undefined) throw new Error(`${toolName} tool not found`);
-        const parsed = z
-          .object(tool.inputSchema as Record<string, z.ZodType>)
-          .parse(input);
+        const parsed = normalizeLedgerToolInputSchema(tool.inputSchema).parse(input);
         const result = await tool.handler(parsed as never, null);
         const text = result.content[0]?.type === "text" ? result.content[0].text : undefined;
         if (text === undefined) throw new Error(`${toolName} returned no text payload`);
@@ -65,7 +63,7 @@ describe("workset-guarded plan lifecycle — direct MCP [Behavioral-Active Black
     }
   });
 
-  it("the four-tool inventory has no fallback to raw lifecycle methods", async () => {
+  it("the four stateful lifecycle tools have no fallback to raw store methods", async () => {
     const store = await seedExcludedPlanStore();
     const rawCalls: string[] = [];
     const rawMethods = new Set([

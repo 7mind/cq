@@ -20,6 +20,10 @@ import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
+import {
+  createNodeCryptoPlanClaimAuthorityMinter,
+  type PlanClaimAuthorityMinter,
+} from "./planLifecycleTools.js";
 import type { ImplementationEvidenceService } from "../implementationEvidence.js";
 import {
   bindWorksetInvocationAuthority,
@@ -45,6 +49,7 @@ export interface CreateLedgerSdkMcpServerOptions {
   readonly worktreeManage?: WorktreeManageCapability;
   readonly worksetAuthority?: WorksetInvocationAuthority;
   readonly implementationEvidence?: ImplementationEvidenceService;
+  readonly planClaimAuthorityMinter?: PlanClaimAuthorityMinter;
 }
 
 /**
@@ -70,13 +75,16 @@ export function createLedgerSdkMcpServer(
       options.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
       options.implementationEvidence,
       isTrustedWorksetManagementAuthority(options.worksetAuthority),
+      options.planClaimAuthorityMinter ?? createNodeCryptoPlanClaimAuthorityMinter(),
     ),
     profileName,
   );
+  // The Anthropic SDK's declaration still narrows inputSchema to a raw shape;
+  // its runtime forwards complete Zod schemas to McpServer.registerTool.
   const tools = specifications.map((specification) => ({
     ...specification,
     name: prefixToolName(toolPrefix, specification.name),
-  })) as SdkMcpToolDefinition[];
+  })) as unknown as SdkMcpToolDefinition[];
   const server = createSdkMcpServer({
     name: options.name,
     ...(options.version === undefined ? {} : { version: options.version }),

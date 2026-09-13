@@ -14,6 +14,8 @@ import {
   PLAN_RESEARCH_WAIT_DISPOSITION,
   PLAN_RELEASE_VARIANT_CONFLICTS,
   PLAN_SECRET_FIELD_NAMES,
+  createNodeCryptoPlanClaimAuthorityMinter,
+  mintPlanClaimAuthority,
   PlanAbandonConflictSchema,
   PlanClaimInputSchema,
   PlanClaimResultSchema,
@@ -38,6 +40,7 @@ import {
   resolvePlanFinalizeDraftBinding,
   resolvePlanOperationReplay,
   type PlanLifecycleStore,
+  type PlanClaimAuthorityMinter,
 } from "../src/index.js";
 
 const ownerFenceToken = "A".repeat(22);
@@ -86,6 +89,43 @@ const manifest = {
     },
   ],
 } as const;
+
+describe("plan claim authority minting", () => {
+  // Regression origin: tasks:T4126 — authority allocation was left to callers.
+  it("requests independent fixed-width inputs and emits the exact public pair [BA]", () => {
+    const draws: number[] = [];
+    const minter: PlanClaimAuthorityMinter = {
+      randomBytes: (byteLength) => {
+        draws.push(byteLength);
+        return new Uint8Array(byteLength).fill(byteLength === 16 ? 1 : 2);
+      },
+    };
+
+    expect(mintPlanClaimAuthority(minter)).toEqual({
+      claimRequestId: "AQEBAQEBAQEBAQEBAQEBAQ",
+      ownerFenceToken: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    });
+    expect(draws).toEqual([16, 32]);
+  });
+
+  // This is a transport regression guard, not a statistical entropy proof.
+  it("produces the contracted unique shapes across exactly 256 production calls [BA]", () => {
+    const minter = createNodeCryptoPlanClaimAuthorityMinter();
+    const authorities = Array.from({ length: 256 }, () => mintPlanClaimAuthority(minter));
+
+    expect(authorities.every(({ claimRequestId }) => claimRequestId.length === 22)).toBe(true);
+    expect(authorities.every(({ ownerFenceToken }) => ownerFenceToken.length === 43)).toBe(true);
+    expect(new Set(authorities.map(({ claimRequestId }) => claimRequestId)).size).toBe(256);
+    expect(new Set(authorities.map(({ ownerFenceToken }) => ownerFenceToken)).size).toBe(256);
+    expect(
+      new Set(
+        authorities.map(
+          ({ claimRequestId, ownerFenceToken }) => `${claimRequestId}:${ownerFenceToken}`,
+        ),
+      ).size,
+    ).toBe(256);
+  });
+});
 
 const reviewDefects = {
   reviewId: "R852",
@@ -483,13 +523,9 @@ describe("T846 r1 contract reproductions", () => {
   });
 
   it("documents every follow-up claim phase on the public MCP surface", () => {
-    const claimTool = PLAN_LIFECYCLE_TOOL_SPECS.find(
-      ({ name }) => name === "claim_plan",
-    );
+    const claimTool = PLAN_LIFECYCLE_TOOL_SPECS.find(({ name }) => name === "claim_plan");
 
-    expect(claimTool?.description).toContain(
-      "purpose=follow-up claims a planned|building goal",
-    );
+    expect(claimTool?.description).toContain("purpose=follow-up claims a planned|building goal");
   });
 
   it("binds finalization to the exact reviewed draft identity", () => {
@@ -1214,14 +1250,14 @@ describe("executable lifecycle semantics", () => {
 
   it("makes claim authority recoverable without clocks, digests, or a coordinator", () => {
     expect(PLAN_AUTHORITY_RULES).toEqual({
-      ownerTokenInput: "caller-generated-random-base64url-at-least-128-bits",
+      authorityMint: "runtime-minted-independent-16-byte-request-id-and-32-byte-owner-token",
+      ownerTokenInput: "caller-supplied-to-claim-from-runtime-mint",
       ownerTokenPersistence: "sha256-verifier-only",
-      ownerTokenEcho: "winning-or-exact-claim-retry-channel-only",
+      ownerTokenEcho: "mint-root-or-winning-or-exact-claim-retry-channel-only",
       observerExposure: "never",
       claimRequestScope: ["goalId", "claimRequestId"],
       operationScope: ["claimId", "generation", "operation", "operationId"],
-      exactReplay:
-        "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
+      exactReplay: "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
       claimReplayPersistence:
         "request-fields-token-verifier-phase-and-legacy-adoption-without-plaintext-token",
       operationReplayPersistence: "payload-verifier-is-idempotency-only-never-authority",

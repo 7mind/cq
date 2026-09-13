@@ -15,6 +15,7 @@ import {
   implementationAuditManifestDigest,
   MANAGEMENT_LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
+  normalizeLedgerToolInputSchema,
   MILESTONES_AMBIENT_ID,
   registerLedgerStdioManagementTools,
   registerLedgerStdioTools,
@@ -31,6 +32,7 @@ import {
   type ImplementationReviewerIdentity,
   type ImplementationAuditPanelRecord,
   type PackagedImplementationAuditManifest,
+  type PlanClaimAuthorityMinter,
 } from "../src/index.js";
 import { POST_TARGET_ADDITIONS } from "./toolSurfaceTarget.js";
 
@@ -82,7 +84,10 @@ const PROMPT_RESULT = {
   inputSchema: { type: "object", required: ["goalId"] },
   outputSchema: { type: "object", required: ["verdict"] },
 };
-// A caller-generated owner fence token (base64url, >=22 chars) and the plan
+const PARITY_PLAN_CLAIM_AUTHORITY_MINTER: PlanClaimAuthorityMinter = {
+  randomBytes: (byteLength) => new Uint8Array(byteLength).fill(byteLength === 16 ? 1 : 2),
+};
+// A fixed owner fence token and the plan
 // identities the in-memory lifecycle allocates deterministically for G1's
 // first claim. Hardcoding them keeps the matrix static; the publish/release
 // assertions below fail loudly if the allocation ever stops matching.
@@ -473,11 +478,7 @@ async function buildImplementationEvidenceFixture() {
       taskRef,
       ownerGoalRef: `goals:${PARITY_GOAL_ID}`,
       status:
-        taskRef === "tasks:T9104"
-          ? "planned"
-          : taskRef.startsWith("tasks:T910")
-            ? "done"
-            : "wip",
+        taskRef === "tasks:T9104" ? "planned" : taskRef.startsWith("tasks:T910") ? "done" : "wip",
       finalizedManifest: "stdio parity manifest\n",
     }),
     repositoryHead: async () => PARITY_IMPLEMENTATION_BASE,
@@ -530,8 +531,7 @@ async function buildImplementationEvidenceFixture() {
     },
     executeExternalAudit: async ({ panel, identity }) => ({
       adapterIdentity: identity.adapterId,
-      stdout:
-        panel.taskRef === "tasks:T9103" ? "" : JSON.stringify(parityAuditVerdict(panel)),
+      stdout: panel.taskRef === "tasks:T9103" ? "" : JSON.stringify(parityAuditVerdict(panel)),
       stderr: panel.taskRef === "tasks:T9103" ? "parity audit adapter unavailable" : "",
       exitCode: panel.taskRef === "tasks:T9103" ? 1 : 0,
     }),
@@ -656,11 +656,9 @@ async function buildImplementationEvidenceFixture() {
   });
   implementationEvidence.continueEvidenceActivation = async (input) => ({
     status: "continued" as const,
-    continuationRef:
-      `cq-implementation-evidence-activation-continuation:v1:${"3".repeat(64)}`,
+    continuationRef: `cq-implementation-evidence-activation-continuation:v1:${"3".repeat(64)}`,
     previousRequirementRef: input.priorRequirementRef,
-    requirementRef:
-      `cq-implementation-evidence-activation-requirement:v1:${"4".repeat(64)}`,
+    requirementRef: `cq-implementation-evidence-activation-requirement:v1:${"4".repeat(64)}`,
     activationRef: `cq-implementation-evidence-activation:v1:${"5".repeat(64)}`,
     taskRef: input.completedTaskRef,
     completionRef: input.completionRef,
@@ -790,18 +788,20 @@ function directTools(
   implementationEvidence?: ImplementationEvidenceService,
   management = false,
 ): DirectTools {
-  if (management) return createManagementLedgerMcpTools(
-    store,
-    capabilities.readLog,
-    capabilities.config,
-    capabilities.promptCatalog,
-    prefix,
-    capabilities.listProjects,
-    capabilities.dispatch,
-    profileName,
-    capabilities.worktreeManage,
-    implementationEvidence,
-  );
+  if (management)
+    return createManagementLedgerMcpTools(
+      store,
+      capabilities.readLog,
+      capabilities.config,
+      capabilities.promptCatalog,
+      prefix,
+      capabilities.listProjects,
+      capabilities.dispatch,
+      profileName,
+      capabilities.worktreeManage,
+      implementationEvidence,
+      PARITY_PLAN_CLAIM_AUTHORITY_MINTER,
+    );
   return createLedgerMcpTools(
     store,
     capabilities.readLog,
@@ -814,6 +814,7 @@ function directTools(
     capabilities.worktreeManage,
     undefined,
     implementationEvidence,
+    PARITY_PLAN_CLAIM_AUTHORITY_MINTER,
   );
 }
 
@@ -955,6 +956,7 @@ async function connectStdio(
       profileName,
       capabilities.worktreeManage,
       implementationEvidence,
+      PARITY_PLAN_CLAIM_AUTHORITY_MINTER,
     );
   } else {
     registerLedgerStdioTools(
@@ -970,6 +972,7 @@ async function connectStdio(
       capabilities.worktreeManage,
       undefined,
       implementationEvidence,
+      PARITY_PLAN_CLAIM_AUTHORITY_MINTER,
     );
   }
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -1016,6 +1019,7 @@ async function connectAnthropicDirect(
       ? {}
       : { worktreeManage: capabilities.worktreeManage }),
     ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
+    planClaimAuthorityMinter: PARITY_PLAN_CLAIM_AUTHORITY_MINTER,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(serverTransport);
@@ -1088,7 +1092,7 @@ async function invokeDirect(
 ): Promise<ToolOutcome> {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`direct tool not found: ${name}`);
-  const input = z.object(tool.inputSchema as Record<string, z.ZodType>);
+  const input = normalizeLedgerToolInputSchema(tool.inputSchema);
   const parsed = input.safeParse(args);
   if (!parsed.success) {
     return normalizedValidationError(parsed.error.issues);
@@ -1457,6 +1461,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
     },
     { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
     { name: "list_projects", args: {} },
+    { name: "mint_plan_claim_authority", args: {} },
     {
       name: "claim_plan",
       args: {
@@ -1649,8 +1654,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       args: {
         goal_ref: `goals:${PARITY_GOAL_ID}`,
         manifest_id: "d347-implementation-evidence-activation-v2",
-        prior_requirement_ref:
-          `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`,
+        prior_requirement_ref: `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`,
         completed_task_ref: PARITY_IMPLEMENTATION_TASK_REF,
         completion_ref: `cq-implementation-completion:v1:${"2".repeat(64)}`,
         expected_from_head: PARITY_IMPLEMENTATION_BASE,
@@ -1830,6 +1834,10 @@ function assertRepresentativeContracts(
   // Guarded plan lifecycle: the winning claim is the ONLY response that may
   // carry the owner token, and it must actually be the WINNER — otherwise the
   // three owner operations below would be exercising conflict paths only.
+  expect(responses.get("mint_plan_claim_authority")).toEqual({
+    claimRequestId: "AQEBAQEBAQEBAQEBAQEBAQ",
+    ownerFenceToken: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+  });
   expect(responses.get("claim_plan")).toMatchObject({
     ok: true,
     replayed: false,
@@ -2132,7 +2140,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 59 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 60 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

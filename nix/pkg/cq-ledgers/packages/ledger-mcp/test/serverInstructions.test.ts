@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { exposedLedgerToolsForRole } from "@cq/config";
-import {
-  LEDGER_TOOL_NAMES,
-  MANAGEMENT_LEDGER_TOOL_NAMES,
-  prefixedToolNames,
-} from "@cq/ledger";
+import { LEDGER_TOOL_NAMES, MANAGEMENT_LEDGER_TOOL_NAMES, prefixedToolNames } from "@cq/ledger";
 import { buildServerInstructions } from "../src/main.js";
 
 /**
@@ -19,7 +15,7 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "Reads compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search defaults active+filters; terminal stays active until archive_terminal_items or archive_milestone.",
   "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches. create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
   "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent.",
-  "CQ snapshot/derive_predicates; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
+  "CQ snapshot/derive_predicates; mint_plan_claim_authority then claim_plan; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join(" ");
 
 const REQUIRED_INSTRUCTION_FACTS = [
@@ -35,6 +31,7 @@ const REQUIRED_INSTRUCTION_FACTS = [
   "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent",
   "exclude transient reasoning/session notes/unconfirmed preferences",
   "CQ snapshot/derive_predicates",
+  "mint_plan_claim_authority then claim_plan",
   "dispatch/plan capability/generation/fence/recovery/idempotency",
 ] as const;
 
@@ -115,7 +112,7 @@ describe("buildServerInstructions", () => {
     // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
     expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
     // Pin the ordinary registered tool count so management-only operations cannot leak here.
-    expect(LEDGER_TOOL_NAMES.length).toBe(41);
+    expect(LEDGER_TOOL_NAMES.length).toBe(42);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }

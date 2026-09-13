@@ -67,7 +67,7 @@ Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycl
  * Public tools added after the frozen T1326 baseline was measured. The
  * baseline keeps its historical 32-tool surface; these definitions extend the
  * measured target so the inventory gate tracks legitimate additions
- * (I20/G155, T1511: get_usage_stats).
+ * (I20/G155, T1511: get_usage_stats; T4126: mint_plan_claim_authority).
  */
 export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
@@ -139,6 +139,16 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     description:
       "Return the per-project MCP usage counters (I20/G155): per-endpoint { name, callCount, bytesIn, bytesOut } sorted by name, plus totals. Read-only telemetry.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "mint_plan_claim_authority",
+    description:
+      "Mint fresh runtime authority for one plan claim. Takes no input and returns exactly one public claim request id plus one secret owner fence token.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
   },
   {
     name: "materialize_operator_action",
@@ -971,7 +981,13 @@ const REQUIRED_CAPABILITY_COVERAGE = Object.freeze({
     "abort_dispatch",
     "fetch_dispatch_result",
   ],
-  planFencing: ["claim_plan", "publish_plan_draft", "release_plan_claim", "finalize_plan"],
+  planFencing: [
+    "mint_plan_claim_authority",
+    "claim_plan",
+    "publish_plan_draft",
+    "release_plan_claim",
+    "finalize_plan",
+  ],
 });
 
 function serializedMeasurement(value: unknown): SerializedMeasurement {

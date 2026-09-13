@@ -250,21 +250,13 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   workset: purposeBuiltSmall(
     'Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`.',
   ),
-  derive_predicates: purposeBuiltSmall(
-    "`{ <predicate>: { value, items } }`.",
-  ),
+  derive_predicates: purposeBuiltSmall("`{ <predicate>: { value, items } }`."),
   materialize_operator_action: purposeBuiltSmall(
     '`{ state: "created"|"existing", action, handoff }` with revision 1.',
   ),
-  acknowledge_operator_action: purposeBuiltSmall(
-    "`{ state, action, reason? }`.",
-  ),
-  record_operator_action_evidence: purposeBuiltSmall(
-    "`{ state, action, reason? }`.",
-  ),
-  revise_operator_action: purposeBuiltSmall(
-    "`{ action, task?, handoff? }`.",
-  ),
+  acknowledge_operator_action: purposeBuiltSmall("`{ state, action, reason? }`."),
+  record_operator_action_evidence: purposeBuiltSmall("`{ state, action, reason? }`."),
+  revise_operator_action: purposeBuiltSmall("`{ action, task?, handoff? }`."),
   complete_operator_action: purposeBuiltSmall("`{ task }` after the exact verified revision."),
   reopen_item: fixedAcknowledgement(
     "item",
@@ -301,9 +293,13 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     'Full typed prompt entry under the default `projection: "full"`, including prompt text and schemas when available; `projection: "schema"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null).',
   ),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
+  mint_plan_claim_authority: purposeBuiltSmall(
+    "Exactly `{ claimRequestId, ownerFenceToken }`: an unpadded 22-character " +
+      "base64url request id and an independent unpadded 43-character base64url token.",
+  ),
   claim_plan: purposeBuiltSmall(
-    "`{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes " +
-      "`ownerFenceToken`, and only back to the winning or exactly-retried " +
+    "`{ ok: true, replayed, acknowledgement }` — echoes the minted " +
+      "`ownerFenceToken` only back to the winning or exactly-retried " +
       "claimant — or `{ ok: false, conflict }` carrying public claim metadata only.",
   ),
   publish_plan_draft: purposeBuiltSmall(
@@ -378,9 +374,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   continue_implementation_evidence_activation: purposeBuiltSmall(
     "Exactly one continued or existing activation-continuation acknowledgement.",
   ),
-  get_implementation_evidence_service_status: purposeBuiltSmall(
-    "One typed service-status object.",
-  ),
+  get_implementation_evidence_service_status: purposeBuiltSmall("One typed service-status object."),
   prepare_implementation_completion: purposeBuiltSmall(
     "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
   ),

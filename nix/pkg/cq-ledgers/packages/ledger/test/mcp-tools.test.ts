@@ -7,7 +7,6 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { z } from "zod";
 import { validateAgainstSchema } from "@cq/config";
 import {
   BootstrapViolationError,
@@ -16,6 +15,7 @@ import {
   LEDGER_TOOL_NAMES,
   MANAGEMENT_LEDGER_TOOL_NAMES,
   MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   MILESTONES_AMBIENT_ID,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
@@ -23,6 +23,7 @@ import {
   derivePredicates,
   deriveWorksetPredicates,
   ledgerToolInputJsonSchema,
+  normalizeLedgerToolInputSchema,
   requireWorksetStore,
   type DerivedPredicates,
   type DispatchCapability,
@@ -236,20 +237,17 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("keeps the 41 ordinary names separate from the 59-name management inventory", async () => {
+  it("keeps the 42 ordinary names separate from the 60-name management inventory", async () => {
     const store = await buildStore();
     const tools = createManagementLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual([
-      ...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
-    ].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(41);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(59);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain(
-      "advance_implementation_evidence_bootstrap",
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
     );
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain(
-      "get_implementation_evidence_service_status",
-    );
+    expect(LEDGER_TOOL_NAMES.length).toBe(42);
+    expect(NON_DISPATCH_LEDGER_TOOL_NAMES.length).toBe(34);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(60);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain("advance_implementation_evidence_bootstrap");
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain("get_implementation_evidence_service_status");
     expect(LEDGER_TOOL_NAMES).not.toContain("prepare_implementation_review_panel" as never);
     expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain("prepare_implementation_review_panel");
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
@@ -275,6 +273,7 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).not.toContain("validate_input" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("validate_output" as never);
     expect(LEDGER_TOOL_NAMES).toContain("list_projects");
+    expect(LEDGER_TOOL_NAMES).toContain("mint_plan_claim_authority");
     expect(LEDGER_TOOL_NAMES).toContain("claim_plan");
     expect(LEDGER_TOOL_NAMES).toContain("publish_plan_draft");
     expect(LEDGER_TOOL_NAMES).toContain("release_plan_claim");
@@ -285,13 +284,7 @@ describe("ledger MCP tools", () => {
   it("prefixes every registered non-dispatch tool", async () => {
     const store = await buildStore();
     const prefix = "myproj";
-    const tools = createManagementLedgerMcpTools(
-      store,
-      undefined,
-      undefined,
-      undefined,
-      prefix,
-    );
+    const tools = createManagementLedgerMcpTools(store, undefined, undefined, undefined, prefix);
     expect(tools.map((t) => t.name).sort()).toEqual(
       MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`).sort(),
     );
@@ -1021,7 +1014,7 @@ describe("ledger MCP tools", () => {
     ): { success: boolean } {
       const t = tools.find((x) => x.name === "create_ledger");
       if (t === undefined) throw new Error("create_ledger not found");
-      return z.object(t.inputSchema).safeParse(args);
+      return normalizeLedgerToolInputSchema(t.inputSchema).safeParse(args);
     }
 
     it("rejects terminalStatuses not in statusValues", async () => {
@@ -1114,7 +1107,7 @@ describe("ledger MCP tools", () => {
     ): { success: boolean } {
       const t = tools.find((x) => x.name === name);
       if (t === undefined) throw new Error(`tool not found: ${name}`);
-      return z.object(t.inputSchema).safeParse(args);
+      return normalizeLedgerToolInputSchema(t.inputSchema).safeParse(args);
     }
 
     it("generic root creation rejects unsafe explicit ids at the Zod boundary", async () => {

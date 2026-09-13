@@ -3,7 +3,7 @@
  *
  * Spawns the standalone stdio binary as a subprocess, drives it through the
  * `@modelcontextprotocol/sdk` Client + StdioClientTransport pair, and asserts:
- *   1. tools/list returns exactly the 23-tool non-dispatch ledger surface.
+ *   1. tools/list returns exactly the canonical non-dispatch ledger surface.
  *   2. enumerate_ledgers reflects the bootstrapped + seeded ledgers.
  *   3. Fixed mutation acks plus compact/full reads work through the transport
  *      and persist to disk (verified with a fresh store).
@@ -183,6 +183,24 @@ function decode<T>(result: unknown): T {
 }
 
 describe("ledger-mcp stdio binary", () => {
+  // Regression origin: tasks:T4126 — production stdio must retain the strict schema.
+  it("mints the exact plan authority shape and rejects every supplied property", async () => {
+    await withClient(async (client) => {
+      const rejected = (await client.callTool({
+        name: "mint_plan_claim_authority",
+        arguments: { unexpected: true },
+      })) as { isError?: boolean };
+      expect(rejected.isError).toBe(true);
+
+      const authority = decode<{ claimRequestId: string; ownerFenceToken: string }>(
+        await client.callTool({ name: "mint_plan_claim_authority", arguments: {} }),
+      );
+      expect(Object.keys(authority).sort()).toEqual(["claimRequestId", "ownerFenceToken"]);
+      expect(authority.claimRequestId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+      expect(authority.ownerFenceToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    });
+  });
+
   it("keeps two stdio clients for the same project alive concurrently", async () => {
     await withClient(async (first) => {
       await withClient(async (second) => {
@@ -229,106 +247,109 @@ describe("ledger-mcp stdio binary", () => {
   });
 
   it("runs the durable one-shot dispatch lifecycle through the production stdio process", async () => {
-    await withClient(async (client) => {
-      expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(
-        [...LEDGER_TOOL_NAMES].sort(),
-      );
-      const expectedChild = { childId: "child-t695", runId: "run-t695" };
-      const prepared = decode<{
-        accepted: true;
-        prepared: {
-          attestationId: string;
-          generation: number;
-          resultCapability: { scope: "store-result"; token: string };
-          promptProvenance: {
-            roleId: string;
-            version: number;
-            promptDigest: string;
-            inputDigest: string;
+    await withClient(
+      async (client) => {
+        expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(
+          [...LEDGER_TOOL_NAMES].sort(),
+        );
+        const expectedChild = { childId: "child-t695", runId: "run-t695" };
+        const prepared = decode<{
+          accepted: true;
+          prepared: {
+            attestationId: string;
+            generation: number;
+            resultCapability: { scope: "store-result"; token: string };
+            promptProvenance: {
+              roleId: string;
+              version: number;
+              promptDigest: string;
+              inputDigest: string;
+            };
           };
-        };
-      }>(
-        await client.callTool({
-          name: "prepare_dispatch",
-          arguments: {
-            roleId: "plan-advance",
-            input: {
-              goalId: "G695",
-              activeClaim: {
+        }>(
+          await client.callTool({
+            name: "prepare_dispatch",
+            arguments: {
+              roleId: "plan-advance",
+              input: {
                 goalId: "G695",
-                claimId: "claim_G695_1",
-                generation: 1,
-                purpose: "initial",
+                activeClaim: {
+                  goalId: "G695",
+                  claimId: "claim_G695_1",
+                  generation: 1,
+                  purpose: "initial",
+                },
+                currentDraftIdentity: null,
+                latestReviewId: null,
               },
-              currentDraftIdentity: null,
-              latestReviewId: null,
+              idempotencyKey: "T695-production-stdio",
+              timeoutMs: 120_000,
+              expectedChild,
             },
-            idempotencyKey: "T695-production-stdio",
-            timeoutMs: 120_000,
-            expectedChild,
-          },
-        }),
-      );
-      expect(prepared.accepted).toBe(true);
-      const handle = {
-        attestationId: prepared.prepared.attestationId,
-        generation: prepared.prepared.generation,
-      };
+          }),
+        );
+        expect(prepared.accepted).toBe(true);
+        const handle = {
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+        };
 
-      const stored = decode<{ state: string }>(
-        await client.callTool({
-          name: "store_result",
-          arguments: {
-            resultCapability: prepared.prepared.resultCapability,
-            output: {
-              mode: "default",
-              action: "noop",
+        const stored = decode<{ state: string }>(
+          await client.callTool({
+            name: "store_result",
+            arguments: {
+              resultCapability: prepared.prepared.resultCapability,
+              output: {
+                mode: "default",
+                action: "noop",
+              },
             },
-          },
-        }),
-      );
-      expect(stored.state).toBe("result-stored");
+          }),
+        );
+        expect(stored.state).toBe("result-stored");
 
-      const confirmed = decode<{ state: string }>(
-        await client.callTool({
-          name: "confirm_dispatch_completion",
-          arguments: {
-            ...handle,
-            nativeCompletion: {
-              kind: "native-completion",
-              actor: "trusted-parent",
-              ...expectedChild,
-              completedAt: new Date().toISOString(),
+        const confirmed = decode<{ state: string }>(
+          await client.callTool({
+            name: "confirm_dispatch_completion",
+            arguments: {
+              ...handle,
+              nativeCompletion: {
+                kind: "native-completion",
+                actor: "trusted-parent",
+                ...expectedChild,
+                completedAt: new Date().toISOString(),
+              },
+              expectedProvenance: {
+                roleId: prepared.prepared.promptProvenance.roleId,
+                version: prepared.prepared.promptProvenance.version,
+                promptDigest: prepared.prepared.promptProvenance.promptDigest,
+                inputDigest: prepared.prepared.promptProvenance.inputDigest,
+              },
             },
-            expectedProvenance: {
-              roleId: prepared.prepared.promptProvenance.roleId,
-              version: prepared.prepared.promptProvenance.version,
-              promptDigest: prepared.prepared.promptProvenance.promptDigest,
-              inputDigest: prepared.prepared.promptProvenance.inputDigest,
-            },
-          },
-        }),
-      );
-      expect(confirmed.state).toBe("consumed");
+          }),
+        );
+        expect(confirmed.state).toBe("consumed");
 
-      const firstFetch = decode<{ state: string; output?: unknown }>(
-        await client.callTool({
-          name: "fetch_dispatch_result",
-          arguments: handle,
-        }),
-      );
-      expect(firstFetch.state).toBe("consumed");
-      expect(firstFetch.output).toBeDefined();
+        const firstFetch = decode<{ state: string; output?: unknown }>(
+          await client.callTool({
+            name: "fetch_dispatch_result",
+            arguments: handle,
+          }),
+        );
+        expect(firstFetch.state).toBe("consumed");
+        expect(firstFetch.output).toBeDefined();
 
-      const repeatedFetch = decode<{ state: string; output?: unknown }>(
-        await client.callTool({
-          name: "fetch_dispatch_result",
-          arguments: handle,
-        }),
-      );
-      expect(repeatedFetch.state).toBe("output-already-materialized");
-      expect(repeatedFetch.output).toBeUndefined();
-    }, { CQ_PROMPT_ROOT: dispatchPromptRoot });
+        const repeatedFetch = decode<{ state: string; output?: unknown }>(
+          await client.callTool({
+            name: "fetch_dispatch_result",
+            arguments: handle,
+          }),
+        );
+        expect(repeatedFetch.state).toBe("output-already-materialized");
+        expect(repeatedFetch.output).toBeUndefined();
+      },
+      { CQ_PROMPT_ROOT: dispatchPromptRoot },
+    );
   });
 
   it("supports ack, compact, and full round-trips that persist", async () => {

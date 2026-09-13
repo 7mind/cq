@@ -1,9 +1,10 @@
 /**
- * T852 — the four guarded plan mutations over MCP.
+ * T852 / T4126 — plan authority minting and the four guarded mutations over MCP.
  *
  * Classification: Behavioral-Active Blackbox-GoodCommunication. Every
  * assertion goes through a real tool invocation (direct `tool()` handler or a
- * linked-pair stdio `McpServer`), never a direct `PlanLifecycleStore` call, so
+ * linked-pair Anthropic or stdio `McpServer`), never a direct
+ * `PlanLifecycleStore` call, so
  * what is under test is the MCP surface: its schemas, its authority
  * discipline, and what it lets out onto the wire.
  *
@@ -25,7 +26,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "bun:test";
-import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -33,13 +33,16 @@ import {
   assertPlanLifecycleTokenExposure,
   buildBackupDump,
   createLedgerMcpTools,
+  createLedgerSdkMcpServer,
   GOALS_LEDGER,
   PLAN_GENERATION_FIELD,
   redactSecrets,
+  normalizeLedgerToolInputSchema,
   registerLedgerStdioTools,
   TASKS_LEDGER,
   type LedgerStore,
   type LedgerToolName,
+  type PlanClaimAuthorityMinter,
   type WorksetPlanLifecycleTx,
 } from "../src/index.js";
 import { InMemoryPlanLifecycleFixture } from "./planLifecycleInMemoryAdapter.js";
@@ -50,9 +53,7 @@ const OWNER_B = "owner_b_fence_token_00000";
 const PROVENANCE = { author: "t852", session: "t852-session" } as const;
 const MANIFEST = {
   milestones: [{ key: "delivery", title: "Delivery" }],
-  tasks: [
-    { key: "implementation", milestoneKey: "delivery", headline: "Implementation" },
-  ],
+  tasks: [{ key: "implementation", milestoneKey: "delivery", headline: "Implementation" }],
 } as const;
 
 type ToolArgs = Record<string, unknown>;
@@ -79,15 +80,10 @@ async function invokeDirect(
 ): Promise<Outcome> {
   const target = tools.find((candidate) => candidate.name === name);
   if (target === undefined) throw new Error(`direct tool not found: ${name}`);
-  const parsed = z
-    .object(target.inputSchema as Record<string, z.ZodType>)
-    .safeParse(args);
+  const parsed = normalizeLedgerToolInputSchema(target.inputSchema).safeParse(args);
   if (!parsed.success) return { ok: false, message: parsed.error.message };
   try {
-    const result = (await target.handler(
-      parsed.data as never,
-      null,
-    )) as TextToolResult;
+    const result = (await target.handler(parsed.data as never, null)) as TextToolResult;
     const text = result.content[0]?.text;
     if (text === undefined) throw new Error("expected one text content block");
     return { ok: true, payload: JSON.parse(text) };
@@ -97,11 +93,7 @@ async function invokeDirect(
   }
 }
 
-async function invokeStdio(
-  client: Client,
-  name: LedgerToolName,
-  args: ToolArgs,
-): Promise<Outcome> {
+async function invokeStdio(client: Client, name: LedgerToolName, args: ToolArgs): Promise<Outcome> {
   const result = (await client.callTool({
     name,
     arguments: args,
@@ -116,12 +108,29 @@ interface StdioSurface {
   close(): Promise<void>;
 }
 
-async function connectStdio(store: LedgerStore): Promise<StdioSurface> {
+async function connectStdio(
+  store: LedgerStore,
+  planClaimAuthorityMinter?: PlanClaimAuthorityMinter,
+): Promise<StdioSurface> {
   const server = new McpServer(
     { name: "plan-lifecycle-mcp-test", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  registerLedgerStdioTools(server, store);
+  registerLedgerStdioTools(
+    server,
+    store,
+    undefined,
+    undefined,
+    undefined,
+    "",
+    undefined,
+    undefined,
+    "full",
+    undefined,
+    undefined,
+    undefined,
+    planClaimAuthorityMinter,
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(
@@ -134,6 +143,31 @@ async function connectStdio(store: LedgerStore): Promise<StdioSurface> {
     close: async () => {
       await client.close();
       await server.close();
+    },
+  };
+}
+
+async function connectAnthropic(
+  store: LedgerStore,
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter,
+): Promise<StdioSurface> {
+  const server = createLedgerSdkMcpServer({
+    name: "plan-lifecycle-anthropic-test",
+    store,
+    planClaimAuthorityMinter,
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.instance.connect(serverTransport);
+  const client = new Client(
+    { name: "plan-lifecycle-anthropic-client", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: async () => {
+      await client.close();
+      await server.instance.close();
     },
   };
 }
@@ -278,14 +312,84 @@ function carriesNoToken(payload: unknown, token: string, label: string): void {
 // ---------------------------------------------------------------------------
 
 describe("T852 guarded plan lifecycle over MCP", () => {
+  // Regression origin: tasks:T4126 — raw-shape reconstruction stripped unknown input.
+  it("mints strict authority pairs before claim on Anthropic and stdio MCP [BG]", async () => {
+    for (const transport of ["anthropic", "stdio"] as const) {
+      const fixture = await InMemoryPlanLifecycleFixture.create();
+      const draws: number[] = [];
+      const minter: PlanClaimAuthorityMinter = {
+        randomBytes: (byteLength) => {
+          draws.push(byteLength);
+          return new Uint8Array(byteLength).fill(byteLength === 16 ? 1 : 2);
+        },
+      };
+      const surface =
+        transport === "anthropic"
+          ? await connectAnthropic(fixture.store, minter)
+          : await connectStdio(fixture.store, minter);
+      try {
+        const listed = (await surface.client.listTools()).tools.find(
+          ({ name }) => name === "mint_plan_claim_authority",
+        );
+        expect(listed?.inputSchema).toEqual({
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        });
+
+        const rejected = (await surface.client.callTool({
+          name: "mint_plan_claim_authority",
+          arguments: { unexpected: true },
+        })) as TextToolResult;
+        expect(rejected.isError, transport).toBe(true);
+        expect(draws, transport).toEqual([]);
+
+        expect(
+          await invokeStdio(surface.client, "mint_plan_claim_authority", {}),
+          transport,
+        ).toEqual({
+          ok: true,
+          payload: {
+            claimRequestId: "AQEBAQEBAQEBAQEBAQEBAQ",
+            ownerFenceToken: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+          },
+        });
+        expect(draws, transport).toEqual([16, 32]);
+      } finally {
+        await surface.close();
+        await fixture.dispose();
+      }
+    }
+  });
+
+  // Regression origin: tasks:T4126 — replay must bind the runtime-minted pair unchanged.
+  it("replays claim_plan with one exact minted authority pair [BA]", async () => {
+    const single = await buildSingle();
+    try {
+      const authority = (await single.call("mint_plan_claim_authority", {})) as {
+        claimRequestId: string;
+        ownerFenceToken: string;
+      };
+      const input = claimArgs(authority.claimRequestId, authority.ownerFenceToken, null);
+      const first = await single.call("claim_plan", input);
+      const replay = await single.call("claim_plan", input);
+      expect(replay).toEqual({ ...(first as object), replayed: true });
+      expect(replay).toMatchObject({
+        acknowledgement: {
+          claimRequestId: authority.claimRequestId,
+          ownerFenceToken: authority.ownerFenceToken,
+        },
+      });
+    } finally {
+      await single.dispose();
+    }
+  });
+
   it("recovers a lost claim response across retry, restart, and ordering on both transports", async () => {
     const duo = await PlanDuo.create();
     try {
       // 1. The initial claim wins and echoes the caller's own token.
-      const first = await duo.call(
-        "claim_plan",
-        claimArgs("request_1", OWNER_A, null),
-      );
+      const first = await duo.call("claim_plan", claimArgs("request_1", OWNER_A, null));
       expect(first).toMatchObject({
         ok: true,
         replayed: false,
@@ -302,10 +406,7 @@ describe("T852 guarded plan lifecycle over MCP", () => {
       const claim = winningClaim(first);
 
       // 2. The response was lost in transit: the SAME request replays.
-      const retried = await duo.call(
-        "claim_plan",
-        claimArgs("request_1", OWNER_A, null),
-      );
+      const retried = await duo.call("claim_plan", claimArgs("request_1", OWNER_A, null));
       expect(retried).toEqual({
         ...(first as object),
         replayed: true,
@@ -314,22 +415,14 @@ describe("T852 guarded plan lifecycle over MCP", () => {
       // 3. …and still replays after both processes restart, reconstructed
       //    from durable state that holds only the SHA-256 verifier.
       await duo.restart();
-      const afterRestart = await duo.call(
-        "claim_plan",
-        claimArgs("request_1", OWNER_A, null),
-      );
+      const afterRestart = await duo.call("claim_plan", claimArgs("request_1", OWNER_A, null));
       expect(afterRestart).toEqual(retried);
 
       // 4. Ordering is immaterial: a LATE arrival of the original request is
       //    indistinguishable from the retry, and a second claimant loses
       //    against the still-active claim with public metadata only.
-      expect(
-        await duo.call("claim_plan", claimArgs("request_1", OWNER_A, null)),
-      ).toEqual(retried);
-      const contender = await duo.call(
-        "claim_plan",
-        claimArgs("request_2", OWNER_B, 1),
-      );
+      expect(await duo.call("claim_plan", claimArgs("request_1", OWNER_A, null))).toEqual(retried);
+      const contender = await duo.call("claim_plan", claimArgs("request_2", OWNER_B, 1));
       expect(contender).toEqual({
         ok: false,
         conflict: {
@@ -341,10 +434,7 @@ describe("T852 guarded plan lifecycle over MCP", () => {
       });
 
       // 5. A retry that CHANGES the request is not a retry.
-      const changed = await duo.call(
-        "claim_plan",
-        claimArgs("request_1", OWNER_A, 1),
-      );
+      const changed = await duo.call("claim_plan", claimArgs("request_1", OWNER_A, 1));
       expect(changed).toEqual({
         ok: false,
         conflict: {
@@ -389,9 +479,8 @@ describe("T852 guarded plan lifecycle over MCP", () => {
         },
       });
       carriesNoToken(published, OWNER_A, "publish_plan_draft");
-      const revision = (
-        published as { acknowledgement: { manifest: { revision: number } } }
-      ).acknowledgement.manifest.revision;
+      const revision = (published as { acknowledgement: { manifest: { revision: number } } })
+        .acknowledgement.manifest.revision;
 
       await single.fixture.seedReview({
         reviewId: "R1",
@@ -484,9 +573,7 @@ describe("T852 guarded plan lifecycle over MCP", () => {
       const waiting = (paused as { acknowledgement: { waitingResearches: string[] } })
         .acknowledgement.waitingResearches;
       expect(waiting).toHaveLength(1);
-      expect((await single.fixture.observe(GOAL_ID)).waitingResearches).toEqual(
-        waiting,
-      );
+      expect((await single.fixture.observe(GOAL_ID)).waitingResearches).toEqual(waiting);
     } finally {
       await single.dispose();
     }
@@ -693,10 +780,7 @@ describe("T852 guarded plan lifecycle over MCP", () => {
     const single = await buildSingle();
     const logsDir = await mkdtemp(path.join(tmpdir(), "t852-logs-"));
     try {
-      const live = await single.call(
-        "claim_plan",
-        claimArgs("request_1", OWNER_A, null),
-      );
+      const live = await single.call("claim_plan", claimArgs("request_1", OWNER_A, null));
       const liveTranscript = JSON.stringify({ type: "tool_result", result: live });
 
       // The LIVE response is untouched — the owner needs the token to act.
@@ -744,9 +828,7 @@ describe("T852 guarded plan lifecycle over MCP", () => {
           `${liveTranscript}\n`,
           "utf8",
         );
-        const leaked = JSON.stringify(
-          await buildBackupDump(single.fixture.store, unredactedDir),
-        );
+        const leaked = JSON.stringify(await buildBackupDump(single.fixture.store, unredactedDir));
         expect(leaked).toContain(OWNER_A);
       } finally {
         await rm(unredactedDir, { recursive: true, force: true });
@@ -813,6 +895,20 @@ describe("T852 guarded plan lifecycle over MCP", () => {
 describe("assertPlanLifecycleTokenExposure", () => {
   const acknowledgement = { claimId: "claim_G1_1", ownerFenceToken: OWNER_A };
 
+  it("accepts the keyed mint response and rejects every other mint token path", () => {
+    expect(() =>
+      assertPlanLifecycleTokenExposure("mint_plan_claim_authority", {
+        claimRequestId: "AQEBAQEBAQEBAQEBAQEBAQ",
+        ownerFenceToken: OWNER_A,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPlanLifecycleTokenExposure("mint_plan_claim_authority", {
+        acknowledgement: { ownerFenceToken: OWNER_A },
+      }),
+    ).toThrow(/acknowledgement\.ownerFenceToken/);
+  });
+
   it("accepts exactly the winning-claim echo", () => {
     expect(() =>
       assertPlanLifecycleTokenExposure("claim_plan", {
@@ -840,11 +936,7 @@ describe("assertPlanLifecycleTokenExposure", () => {
   });
 
   it("rejects an owner-operation acknowledgement that leaks the token", () => {
-    for (const toolName of [
-      "publish_plan_draft",
-      "release_plan_claim",
-      "finalize_plan",
-    ] as const) {
+    for (const toolName of ["publish_plan_draft", "release_plan_claim", "finalize_plan"] as const) {
       expect(() =>
         assertPlanLifecycleTokenExposure(toolName, {
           ok: true,
@@ -899,10 +991,7 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
    * intercepting the transaction object keeps this control on the production
    * admission path.
    */
-  function withLeakingLifecycle(
-    base: LedgerStore,
-    stub: LifecycleStub,
-  ): LedgerStore {
+  function withLeakingLifecycle(base: LedgerStore, stub: LifecycleStub): LedgerStore {
     return new Proxy(base, {
       get(target, prop, receiver): unknown {
         if (prop === "runAtomicWorksetPlanLifecycleMutation") {

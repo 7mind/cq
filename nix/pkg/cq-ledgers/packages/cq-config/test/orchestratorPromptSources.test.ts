@@ -154,6 +154,22 @@ function assertOperationalToolMappings(
   }
 }
 
+function assertRuntimeMintClaimWorkflow(content: string): void {
+  const text = content.replace(/\s+/g, " ");
+  const mint = text.indexOf("mint_plan_claim_authority({})");
+  expect(mint).toBeGreaterThanOrEqual(0);
+  expect(text.indexOf("claim_plan", mint)).toBeGreaterThan(mint);
+  expect(text).toContain("Immediately before the new claim request");
+  expect(text).toContain("Pass the returned `claimRequestId` and `ownerFenceToken` unchanged");
+  expect(text).toContain("Keep the pair only in memory");
+  expect(text).toContain("response is lost or uncertain");
+  expect(text).toContain("retry the identical claim payload with the exact same minted pair");
+  expect(text).toContain("Do not mint again while that result is uncertain");
+  expect(text).toContain("Mint a new pair only for a distinct request after a definite result and a fresh state reread");
+  expect(text).toContain("Never synthesize either value with shell commands or host random utilities");
+  expect(text).not.toMatch(/openssl rand|uuidgen|randomBytes\(|\/dev\/urandom/);
+}
+
 function assertFollowUpPlannerResumeWorkflow(
   followUp: string,
   advance: string,
@@ -420,6 +436,8 @@ describe("orchestrator command prompt sources", () => {
         first.artifacts[followUpIndex + 2]!.content,
         first.artifacts[advanceIndex + 2]!.content,
       );
+      assertRuntimeMintClaimWorkflow(first.artifacts[followUpIndex + 2]!.content);
+      assertRuntimeMintClaimWorkflow(first.artifacts[advanceIndex + 2]!.content);
       assertConfiguredCandidateLedgerRefs(first.artifacts[advanceIndex + 2]!.content);
       assertDefectFixClosure(first.artifacts[implementAdvanceIndex + 2]!.content);
     }

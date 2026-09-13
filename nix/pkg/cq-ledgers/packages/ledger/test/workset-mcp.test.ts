@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { z } from "zod";
 import { validateAgainstSchema } from "@cq/config";
 import {
   createLedgerMcpTools,
   createManagementLedgerMcpTools,
   InMemoryLedgerStore,
   ledgerToolInputJsonSchema,
+  normalizeLedgerToolInputSchema,
   SqliteLedgerStore,
   TASKS_LEDGER,
   type LedgerStore,
@@ -31,7 +31,7 @@ function worksetTool(tools: Tools) {
 
 async function invoke(tools: Tools, args: Record<string, unknown>): Promise<WorksetResult> {
   const target = worksetTool(tools);
-  const parsed = z.object(target.inputSchema as Record<string, z.ZodType>).parse(args);
+  const parsed = normalizeLedgerToolInputSchema(target.inputSchema).parse(args);
   const result = (await target.handler(parsed as never, null)) as {
     content: Array<{ type: string; text?: string }>;
   };
@@ -124,8 +124,9 @@ function runContract(factory: Factory): void {
         const management = createManagementLedgerMcpTools(fixture.store);
         await invoke(management, { op: "set", roots: ["T9001"] });
         const before = await fixture.store.worksetStore?.().snapshot();
-        await expect(invoke(management, { op: "set", roots: ["tasks:T-missing"] }))
-          .rejects.toThrow(/inactive/);
+        await expect(invoke(management, { op: "set", roots: ["tasks:T-missing"] })).rejects.toThrow(
+          /inactive/,
+        );
         expect(await fixture.store.worksetStore?.().snapshot()).toEqual(before);
       } finally {
         await fixture.close();
@@ -172,12 +173,13 @@ describe("workset MCP authority-shaped schema", () => {
     try {
       const ordinary = worksetTool(createLedgerMcpTools(store));
       const management = worksetTool(createManagementLedgerMcpTools(store));
-      const ordinarySchema = z.object(ordinary.inputSchema as Record<string, z.ZodType>);
-      const managementSchema = z.object(management.inputSchema as Record<string, z.ZodType>);
+      const ordinarySchema = normalizeLedgerToolInputSchema(ordinary.inputSchema);
+      const managementSchema = normalizeLedgerToolInputSchema(management.inputSchema);
 
       expect(ordinarySchema.safeParse({ op: "get", projection: "id" }).success).toBe(true);
-      expect(ordinarySchema.safeParse({ op: "fetch", roots: [], projection: "compact" }).success)
-        .toBe(true);
+      expect(
+        ordinarySchema.safeParse({ op: "fetch", roots: [], projection: "compact" }).success,
+      ).toBe(true);
       expect(ordinarySchema.safeParse({ op: "set", roots: [] }).success).toBe(false);
       expect(managementSchema.safeParse({ op: "set", roots: [] }).success).toBe(true);
     } finally {

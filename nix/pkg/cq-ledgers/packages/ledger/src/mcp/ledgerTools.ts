@@ -104,7 +104,12 @@ import {
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
 import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
-import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
+import {
+  PLAN_LIFECYCLE_TOOL_SPECS,
+  createNodeCryptoPlanClaimAuthorityMinter,
+  type PlanClaimAuthorityMinter,
+} from "./planLifecycleTools.js";
+import { normalizeLedgerToolInputSchema, type LedgerToolInputSchema } from "./toolInputSchema.js";
 import { WORKTREE_MANAGE_TOOL_SPEC, type WorktreeManageCapability } from "./worktreeManageTools.js";
 import {
   acknowledgeOperatorAction,
@@ -239,9 +244,10 @@ type AnyTool = SdkMcpToolDefinition<any>;
  * One transport-independent ledger tool specification. Direct Claude tools
  * and raw MCP SDK registrations both derive from this shape.
  */
-export type LedgerToolSpecification = AnyTool & {
+export type LedgerToolSpecification = Omit<AnyTool, "name" | "description" | "inputSchema"> & {
   readonly name: LedgerToolName;
   readonly description: string;
+  readonly inputSchema: LedgerToolInputSchema;
 };
 
 const JSON_SCHEMA_MAP_KEYS = new Set([
@@ -286,10 +292,10 @@ function simplifyInputSchemaNode(value: unknown, preserveKeys: boolean = false):
 export function ledgerToolInputJsonSchema(
   specification: LedgerToolSpecification,
 ): Record<string, unknown> {
-  const converted = z.toJSONSchema(
-    z.object(specification.inputSchema as Record<string, z.ZodType>),
-    { target: "draft-7", unrepresentable: "any" },
-  );
+  const converted = z.toJSONSchema(normalizeLedgerToolInputSchema(specification.inputSchema), {
+    target: "draft-7",
+    unrepresentable: "any",
+  });
   const schema = simplifyInputSchemaNode(converted) as Record<string, unknown>;
   if (specification.name === "create_item" || specification.name.endsWith("_create_item")) {
     schema["dependencies"] = {
@@ -621,6 +627,7 @@ export function createLedgerMcpToolSpecifications(
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
   implementationEvidence?: ImplementationEvidenceService,
   exposeImplementationEvidence = isTrustedWorksetManagementAuthority(worksetAuthority),
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
 ): LedgerToolSpecification[] {
   let genericMutations: WorksetGenericMutationGateway | null = null;
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
@@ -2009,13 +2016,18 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
-  // ---- Guarded plan lifecycle (4) ----------------------------------------
+  // ---- Plan authority mint + guarded lifecycle (5) -----------------------
 
   // Built from the SHARED specs so the stdio registration cannot drift: one
   // description, one Zod shape, one handler per guarded mutation (T852).
   const planLifecycleTools = PLAN_LIFECYCLE_TOOL_SPECS.map((spec) =>
-    tool(spec.name, spec.description, spec.inputSchema, async (args: unknown) =>
-      wireResult(await spec.run(store, args)),
+    // The Anthropic helper still types input as a raw shape although its MCP
+    // adapter accepts complete Zod schemas. Keep that mismatch at this edge.
+    tool(
+      spec.name,
+      spec.description,
+      spec.inputSchema as Record<string, z.ZodType>,
+      async (args: unknown) => wireResult(await spec.run(store, args, planClaimAuthorityMinter)),
     ),
   );
 
@@ -2226,6 +2238,7 @@ export function createLedgerMcpTools(
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
   implementationEvidence?: ImplementationEvidenceService,
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
 ): AnyTool[] {
   assertToolPrefix(toolPrefix);
   const specifications = selectLedgerMcpToolSpecifications(
@@ -2240,6 +2253,7 @@ export function createLedgerMcpTools(
       worksetAuthority,
       implementationEvidence,
       isTrustedWorksetManagementAuthority(worksetAuthority),
+      planClaimAuthorityMinter,
     ),
     profileName,
   );
@@ -2265,6 +2279,7 @@ export function createManagementLedgerMcpTools(
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
   implementationEvidence?: ImplementationEvidenceService,
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
 ): AnyTool[] {
   return createLedgerMcpTools(
     store,
@@ -2278,6 +2293,7 @@ export function createManagementLedgerMcpTools(
     worktreeManage,
     createTrustedWorksetManagementAuthority(),
     implementationEvidence,
+    planClaimAuthorityMinter,
   );
 }
 

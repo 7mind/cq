@@ -24,6 +24,10 @@ import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
 import type { ImplementationEvidenceService } from "../implementationEvidence.js";
 import {
+  createNodeCryptoPlanClaimAuthorityMinter,
+  type PlanClaimAuthorityMinter,
+} from "./planLifecycleTools.js";
+import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
@@ -86,6 +90,7 @@ export function registerLedgerStdioTools(
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
   implementationEvidence?: ImplementationEvidenceService,
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
 ): void {
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(
@@ -99,6 +104,7 @@ export function registerLedgerStdioTools(
       worksetAuthority,
       implementationEvidence,
       isTrustedWorksetManagementAuthority(worksetAuthority),
+      planClaimAuthorityMinter,
     ),
     profileName,
   );
@@ -119,6 +125,7 @@ export function registerLedgerStdioManagementTools(
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
   implementationEvidence?: ImplementationEvidenceService,
+  planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
 ): void {
   registerLedgerStdioTools(
     server,
@@ -133,5 +140,6 @@ export function registerLedgerStdioManagementTools(
     worktreeManage,
     createTrustedWorksetManagementAuthority(),
     implementationEvidence,
+    planClaimAuthorityMinter,
   );
 }

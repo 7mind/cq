@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 29 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the canonical ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
@@ -80,6 +80,8 @@ import {
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
   type ImplementationEvidenceService,
+  type PlanClaimAuthorityMinter,
+  createNodeCryptoPlanClaimAuthorityMinter,
 } from "@cq/ledger";
 import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
 import { z } from "zod";
@@ -459,7 +461,7 @@ const SERVER_INSTRUCTIONS_TEMPLATE = [
   "Reads compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search defaults active+filters; terminal stays active until archive_terminal_items or archive_milestone.",
   "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches. create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
   "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent.",
-  "CQ snapshot/derive_predicates; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
+  "CQ snapshot/derive_predicates; mint_plan_claim_authority then claim_plan; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join(" ");
 
 /** Escape a string for safe use as a literal inside a RegExp. */
@@ -530,7 +532,7 @@ export function projectInstructionLine(displayName: string): string {
 }
 
 /**
- * Build a fresh McpServer with the 29 ledger tools bound to
+ * Build a fresh McpServer with the selected canonical ledger tools bound to
  * `store`. read_log is wired only when `store` is filesystem-backed.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory
@@ -771,6 +773,8 @@ export interface CreateLedgerMcpServerOptions {
   enableLogWrite?: boolean;
   /** Protected implementation review/completion evidence service. */
   implementationEvidence?: ImplementationEvidenceService;
+  /** Runtime source for plan-claim authority; production defaults to node:crypto. */
+  planClaimAuthorityMinter?: PlanClaimAuthorityMinter;
 }
 
 /**
@@ -855,6 +859,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
       opts.implementationEvidence,
       isTrustedWorksetManagementAuthority(opts.worksetAuthority),
+      opts.planClaimAuthorityMinter ?? createNodeCryptoPlanClaimAuthorityMinter(),
     ),
     toolProfile,
   );

@@ -841,6 +841,8 @@ export {
   prefixToolName,
   prefixedToolNames,
 } from "./mcp/ledgerTools.js";
+export { normalizeLedgerToolInputSchema } from "./mcp/toolInputSchema.js";
+export type { LedgerToolInputSchema } from "./mcp/toolInputSchema.js";
 export type {
   LedgerToolListDefinition,
   LedgerToolName,
@@ -908,13 +910,22 @@ export {
 } from "./mcp/stdioLedgerTools.js";
 export {
   PLAN_CLAIM_TOKEN_ECHO_PATH,
+  PLAN_MINT_TOKEN_ECHO_PATH,
   PLAN_LIFECYCLE_TOOL_NAMES,
   PLAN_LIFECYCLE_TOOL_SPECS,
+  PlanClaimAuthoritySchema,
   PlanLifecycleNotImplementedError,
   assertPlanLifecycleTokenExposure,
+  createNodeCryptoPlanClaimAuthorityMinter,
   isPlanLifecycleStore,
+  mintPlanClaimAuthority,
 } from "./mcp/planLifecycleTools.js";
-export type { PlanLifecycleToolName, PlanLifecycleToolSpec } from "./mcp/planLifecycleTools.js";
+export type {
+  PlanClaimAuthority,
+  PlanClaimAuthorityMinter,
+  PlanLifecycleToolName,
+  PlanLifecycleToolSpec,
+} from "./mcp/planLifecycleTools.js";
 export {
   WORKTREE_MANAGE_INPUT_SHAPE,
   WORKTREE_MANAGE_TOOL_NAME,

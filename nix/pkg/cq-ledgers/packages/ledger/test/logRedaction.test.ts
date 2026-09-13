@@ -192,7 +192,8 @@ describe("redactSecrets", () => {
   // a JSON string, so the escaping is produced the same way the real writer
   // produces it rather than hand-spelled.
 
-  const FENCE_TOKEN = "tZ3n5Qw8Lp2Rk9Vb4Xc7Ym";
+  const CLAIM_REQUEST_ID = "AQEBAQEBAQEBAQEBAQEBAQ";
+  const FENCE_TOKEN = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
 
   /** One raw-JSONL line carrying `payload` as a stringified tool result. */
   function rawJsonlLine(payload: unknown): string {
@@ -218,9 +219,30 @@ describe("redactSecrets", () => {
       goalId: "G1",
       claimId: "claim_G1_1",
       generation: 1,
+      claimRequestId: CLAIM_REQUEST_ID,
       ownerFenceToken: FENCE_TOKEN,
     },
   };
+
+  const mintResponse = {
+    claimRequestId: CLAIM_REQUEST_ID,
+    ownerFenceToken: FENCE_TOKEN,
+  };
+
+  // Regression origin: tasks:T4126 — both keyed authority responses may be persisted.
+  it("keeps the exact request id and redacts the exact token in mint and claim transcripts", () => {
+    for (const payload of [mintResponse, claimResponse]) {
+      const redacted = redactSecrets(rawJsonlLine(payload));
+      expect(redacted).toContain(CLAIM_REQUEST_ID);
+      expect(redacted).not.toContain(FENCE_TOKEN);
+      expect(redacted).toContain("[REDACTED:plan-owner-fence-token]");
+    }
+  });
+
+  it("does not add an entropy-shaped bare-base64url heuristic", () => {
+    expect(redactSecrets(CLAIM_REQUEST_ID)).toBe(CLAIM_REQUEST_ID);
+    expect(redactSecrets(FENCE_TOKEN)).toBe(FENCE_TOKEN);
+  });
 
   it("redacts the token in the escaped JSON-in-JSON shape a raw JSONL line actually stores", () => {
     const line = rawJsonlLine(claimResponse);
@@ -241,13 +263,16 @@ describe("redactSecrets", () => {
       message: { content: Array<{ content: string }> };
     };
     const inner = JSON.parse(envelope.message.content[0]!.content) as {
-      acknowledgement: { claimId: string; ownerFenceToken: string };
+      acknowledgement: {
+        claimId: string;
+        claimRequestId: string;
+        ownerFenceToken: string;
+      };
     };
-    expect(inner.acknowledgement.ownerFenceToken).toBe(
-      "[REDACTED:plan-owner-fence-token]",
-    );
+    expect(inner.acknowledgement.ownerFenceToken).toBe("[REDACTED:plan-owner-fence-token]");
     // Public metadata around the secret survives untouched.
     expect(inner.acknowledgement.claimId).toBe("claim_G1_1");
+    expect(inner.acknowledgement.claimRequestId).toBe(CLAIM_REQUEST_ID);
   });
 
   it("redacts the doubly-escaped shape of a nested transcript capture", () => {
@@ -272,8 +297,7 @@ describe("redactSecrets", () => {
   it("leaves the verifier untouched in the escaped shape too", () => {
     // The escape-crossing must not become a licence to eat the public digest.
     const line = rawJsonlLine({
-      ownerFenceTokenVerifier:
-        "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+      ownerFenceTokenVerifier: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
     });
     expect(redactSecrets(line)).toBe(line);
   });

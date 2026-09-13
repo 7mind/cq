@@ -1,7 +1,8 @@
 /**
- * Guarded plan-lifecycle MCP tools (T852 / G99 / D134).
+ * Plan-lifecycle MCP tools (T852 / G99 / D134).
  *
- * The four guarded mutations of {@link PlanLifecycleStore} — claim,
+ * The runtime authority mint plus four guarded mutations of
+ * {@link PlanLifecycleStore} — claim,
  * publish-or-replace draft, pause-or-abandon, finalize — reach MCP callers
  * through this ONE module, which both transport factories consume:
  * `createLedgerMcpTools` (Claude in-process `tool()`) and
@@ -10,7 +11,11 @@
  * literals kept in step by a test.
  *
  * Authority discipline (PLAN_AUTHORITY_RULES):
- *  - `ownerFenceToken` is CALLER-generated (>=128 bits of base64url) and is
+ *  - `ownerFenceToken` is supplied by the caller to `claim_plan`, but the
+ *    runtime obtains it from `mint_plan_claim_authority`; callers do not
+ *    synthesize authority. The mint response is the only other live response
+ *    allowed to expose the token, exactly at its keyed `ownerFenceToken` field.
+ *    The token is
  *    never allocated, echoed, or persisted in plaintext by the store. A claim
  *    is therefore replayable: a caller that loses the initial response retries
  *    the SAME `goalId` + `claimRequestId` + token and gets the identical
@@ -32,6 +37,7 @@
  * response.
  */
 
+import { randomBytes as nodeRandomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   PlanClaimInputSchema,
@@ -50,8 +56,56 @@ import {
 } from "../worksetPlanLifecycle.js";
 import type { WorksetStore } from "../worksetStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
+import type { LedgerToolInputSchema } from "./toolInputSchema.js";
+
+const CLAIM_REQUEST_ID_BYTES = 16;
+const OWNER_FENCE_TOKEN_BYTES = 32;
+const MintPlanClaimAuthorityInputSchema = z.object({}).strict();
+
+export const PlanClaimAuthoritySchema = z
+  .object({
+    claimRequestId: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+    ownerFenceToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  })
+  .strict();
+export type PlanClaimAuthority = z.infer<typeof PlanClaimAuthoritySchema>;
+
+/** Runtime boundary used by the mint tool; tests can inject deterministic bytes. */
+export interface PlanClaimAuthorityMinter {
+  randomBytes(byteLength: number): Uint8Array;
+}
+
+/** Production adapter over `node:crypto`, kept outside the transport handler. */
+export function createNodeCryptoPlanClaimAuthorityMinter(): PlanClaimAuthorityMinter {
+  return { randomBytes: (byteLength) => nodeRandomBytes(byteLength) };
+}
+
+function exactRandomBytes(
+  minter: PlanClaimAuthorityMinter,
+  byteLength: number,
+  field: keyof PlanClaimAuthority,
+): Uint8Array {
+  const bytes = minter.randomBytes(byteLength);
+  if (bytes.byteLength !== byteLength) {
+    throw new TypeError(
+      `PlanClaimAuthorityMinter returned ${bytes.byteLength} bytes for ${field}; expected ${byteLength}`,
+    );
+  }
+  return bytes;
+}
+
+export function mintPlanClaimAuthority(minter: PlanClaimAuthorityMinter): PlanClaimAuthority {
+  const claimRequestId = Buffer.from(
+    exactRandomBytes(minter, CLAIM_REQUEST_ID_BYTES, "claimRequestId"),
+  ).toString("base64url");
+  const ownerFenceToken = Buffer.from(
+    exactRandomBytes(minter, OWNER_FENCE_TOKEN_BYTES, "ownerFenceToken"),
+  ).toString("base64url");
+  return PlanClaimAuthoritySchema.parse({ claimRequestId, ownerFenceToken });
+}
 
 export const PLAN_LIFECYCLE_TOOL_NAMES = [
+  "mint_plan_claim_authority",
   "claim_plan",
   "publish_plan_draft",
   "release_plan_claim",
@@ -87,15 +141,10 @@ export function isPlanLifecycleStore(
   store: LedgerStore,
 ): store is LedgerStore & PlanLifecycleStore {
   const candidate = store as Partial<PlanLifecycleStore>;
-  return PLAN_LIFECYCLE_STORE_METHODS.every(
-    (method) => typeof candidate[method] === "function",
-  );
+  return PLAN_LIFECYCLE_STORE_METHODS.every((method) => typeof candidate[method] === "function");
 }
 
-function requireLifecycle(
-  store: LedgerStore,
-  toolName: PlanLifecycleToolName,
-): PlanLifecycleStore {
+function requireLifecycle(store: LedgerStore, toolName: PlanLifecycleToolName): PlanLifecycleStore {
   const candidate = store as LedgerStore & {
     worksetStore?: unknown;
     runAtomicOwnedMutation?: unknown;
@@ -131,14 +180,13 @@ function requireLifecycle(
 
 const OWNER_FENCE_TOKEN_KEY = "ownerFenceToken";
 
-/** The ONLY response position that may carry the plaintext owner token. */
+/** The claim acknowledgement's permitted plaintext token position. */
 export const PLAN_CLAIM_TOKEN_ECHO_PATH = "acknowledgement.ownerFenceToken";
+export const PLAN_MINT_TOKEN_ECHO_PATH = "ownerFenceToken";
 
 function ownerFenceTokenPaths(value: unknown, prefix: string): string[] {
   if (Array.isArray(value)) {
-    return value.flatMap((entry, index) =>
-      ownerFenceTokenPaths(entry, `${prefix}[${index}]`),
-    );
+    return value.flatMap((entry, index) => ownerFenceTokenPaths(entry, `${prefix}[${index}]`));
   }
   if (value === null || typeof value !== "object") return [];
   const found: string[] = [];
@@ -164,17 +212,19 @@ export function assertPlanLifecycleTokenExposure(
   toolName: PlanLifecycleToolName,
   result: unknown,
 ): void {
-  const echoAllowed =
+  const claimEchoAllowed =
     toolName === "claim_plan" &&
     typeof result === "object" &&
     result !== null &&
     (result as { ok?: unknown }).ok === true;
-  const expected = echoAllowed ? [PLAN_CLAIM_TOKEN_ECHO_PATH] : [];
+  const expected =
+    toolName === "mint_plan_claim_authority"
+      ? [PLAN_MINT_TOKEN_ECHO_PATH]
+      : claimEchoAllowed
+        ? [PLAN_CLAIM_TOKEN_ECHO_PATH]
+        : [];
   const found = ownerFenceTokenPaths(result, "");
-  if (
-    found.length !== expected.length ||
-    found.some((path, index) => path !== expected[index])
-  ) {
+  if (found.length !== expected.length || found.some((path, index) => path !== expected[index])) {
     throw new TypeError(
       `${toolName} response carries ownerFenceToken at [${found.join(", ")}] ` +
         `but the authority rules allow exactly [${expected.join(", ")}]`,
@@ -182,10 +232,7 @@ export function assertPlanLifecycleTokenExposure(
   }
 }
 
-function planResult(
-  toolName: PlanLifecycleToolName,
-  result: object,
-): ProducedWireDto<object> {
+function planResult(toolName: PlanLifecycleToolName, result: object): ProducedWireDto<object> {
   assertPlanLifecycleTokenExposure(toolName, result);
   return produceWireDto(result);
 }
@@ -272,14 +319,26 @@ const RELEASE_MEMBER_KEYS = [
 export interface PlanLifecycleToolSpec {
   readonly name: PlanLifecycleToolName;
   readonly description: string;
-  readonly inputSchema: Record<string, z.ZodType>;
-  run(store: LedgerStore, args: unknown): Promise<ProducedWireDto<object>>;
+  readonly inputSchema: LedgerToolInputSchema;
+  run(
+    store: LedgerStore,
+    args: unknown,
+    minter: PlanClaimAuthorityMinter,
+  ): Promise<ProducedWireDto<object>>;
 }
+
+const MINT_DESCRIPTION =
+  "Mint fresh runtime authority for one plan claim. Takes no input. Returns exactly " +
+  "a public 16-byte claimRequestId and a secret, independent 32-byte ownerFenceToken " +
+  "as unpadded base64url. Pass both values unchanged to claim_plan, retain the token " +
+  "only in memory, and never log it.";
 
 const CLAIM_DESCRIPTION =
   "Claim the planning lifecycle of one goal, fencing every later plan write " +
-  "of that generation. `ownerFenceToken` is CALLER-generated (>=128 bits of " +
-  "base64url, >=22 chars) and never leaves your process except back to you: " +
+  "of that generation. Supply the exact `claimRequestId` and `ownerFenceToken` " +
+  "returned by `mint_plan_claim_authority`; authority is caller-supplied to this " +
+  "operation but runtime-minted, not caller-synthesized. The token never leaves " +
+  "your process except back to you: " +
   "the store persists only its SHA-256 verifier. `claimRequestId` scopes the " +
   "request so a lost response is recoverable — retry the SAME goalId + " +
   "claimRequestId + token and the identical acknowledgement returns with " +
@@ -328,6 +387,15 @@ const FINALIZE_DESCRIPTION =
 
 export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
   {
+    name: "mint_plan_claim_authority",
+    description: MINT_DESCRIPTION,
+    inputSchema: MintPlanClaimAuthorityInputSchema,
+    run: async (_store, args, minter) => {
+      MintPlanClaimAuthorityInputSchema.parse(args);
+      return planResult("mint_plan_claim_authority", mintPlanClaimAuthority(minter));
+    },
+  },
+  {
     name: "claim_plan",
     description: CLAIM_DESCRIPTION,
     inputSchema: claimShape,
@@ -344,10 +412,7 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
     run: async (store, args) => {
       const input = PlanPublishDraftInputSchema.parse(args);
       const lifecycle = requireLifecycle(store, "publish_plan_draft");
-      return planResult(
-        "publish_plan_draft",
-        await lifecycle.publishPlanDraft(input),
-      );
+      return planResult("publish_plan_draft", await lifecycle.publishPlanDraft(input));
     },
   },
   {
@@ -362,10 +427,7 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
         ...definedEntries(raw, RELEASE_MEMBER_KEYS),
       });
       const lifecycle = requireLifecycle(store, "release_plan_claim");
-      return planResult(
-        "release_plan_claim",
-        await lifecycle.releasePlanClaim(input),
-      );
+      return planResult("release_plan_claim", await lifecycle.releasePlanClaim(input));
     },
   },
   {

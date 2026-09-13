@@ -70,9 +70,17 @@ state.
 - A waited task in `done` or `abandoned`, or one missing from the active view
   because it is absent or archived, does not block planning.
 
-Otherwise mint a fresh request id and secret fence token and call `claim_plan`
-with `purpose: "initial"` and the observed plan generation. Keep the
-acknowledged claim id, generation, and token in memory; never log the token.
+Otherwise prepare an initial claim with the observed plan generation.
+Immediately before the new claim request, call `mint_plan_claim_authority({})`.
+Pass the returned `claimRequestId` and `ownerFenceToken` unchanged to
+`claim_plan` with `purpose: "initial"`. Keep the pair only in memory; never log
+the token. Never synthesize either value with shell commands or host random
+utilities. Retain the acknowledged claim id and generation in memory as well.
+
+If the `claim_plan` response is lost or uncertain, retry the identical claim
+payload with the exact same minted pair. Do not mint again while that result
+is uncertain. Mint a new pair only for a distinct request after a definite
+result and a fresh state reread (for example, a stale-generation conflict).
 
 Treat claim conflicts as follows:
 
