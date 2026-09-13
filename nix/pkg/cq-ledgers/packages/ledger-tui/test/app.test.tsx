@@ -634,6 +634,7 @@ describe("ledger-tui scrolling", () => {
 
 class FakeWS {
   static instances: FakeWS[] = [];
+  readonly sent: string[] = [];
   readyState = 0;
   onopen: ((e: unknown) => void) | null = null;
   onmessage: ((e: unknown) => void) | null = null;
@@ -642,7 +643,13 @@ class FakeWS {
   constructor(public url: string) {
     FakeWS.instances.push(this);
   }
-  send(): void {}
+  send(data: string): void {
+    this.sent.push(data);
+    const message = JSON.parse(data) as { type?: string; nonce?: string; ts?: number };
+    if (message.type === "ping") {
+      queueMicrotask(() => this.push({ type: "pong", nonce: message.nonce, ts: message.ts }));
+    }
+  }
   close(): void {
     this.readyState = 3;
   }
@@ -650,8 +657,62 @@ class FakeWS {
     this.readyState = 1;
     this.onopen?.({});
   }
+  serverClose(): void {
+    this.readyState = 3;
+    this.onclose?.({ code: 1006, reason: "disconnected" });
+  }
   push(obj: unknown): void {
     this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+}
+
+class DeferredRecoveryClient extends FakeClient {
+  maxConcurrentFetches = 0;
+  private activeFetches = 0;
+  private holdNextBugsFetch = false;
+  private heldResolve: (() => void) | null = null;
+  private releaseResolve: (() => void) | null = null;
+  private heldPromise: Promise<void> = Promise.resolve();
+  private releasePromise: Promise<void> = Promise.resolve();
+
+  holdNextRecoveryFetch(): void {
+    this.holdNextBugsFetch = true;
+    this.heldPromise = new Promise<void>((resolve) => { this.heldResolve = resolve; });
+    this.releasePromise = new Promise<void>((resolve) => { this.releaseResolve = resolve; });
+  }
+
+  waitUntilRecoveryFetchIsHeld(): Promise<void> {
+    return this.heldPromise;
+  }
+
+  releaseRecoveryFetch(): void {
+    if (this.releaseResolve === null) throw new Error("recovery fetch is not held");
+    this.releaseResolve();
+    this.releaseResolve = null;
+  }
+
+  override async fetchLedger(
+    ledgerId: string,
+    projection: import("../src/types.js").ItemProjection,
+  ): Promise<FetchedLedger> {
+    if (ledgerId !== "bugs" || projection !== "full") {
+      return super.fetchLedger(ledgerId, projection);
+    }
+    const shouldHold = this.holdNextBugsFetch;
+    this.holdNextBugsFetch = false;
+    this.activeFetches += 1;
+    this.maxConcurrentFetches = Math.max(this.maxConcurrentFetches, this.activeFetches);
+    try {
+      const snapshot = await super.fetchLedger(ledgerId, projection);
+      if (shouldHold) {
+        this.heldResolve?.();
+        this.heldResolve = null;
+        await this.releasePromise;
+      }
+      return snapshot;
+    } finally {
+      this.activeFetches -= 1;
+    }
   }
 }
 
@@ -685,6 +746,38 @@ describe("ledger-tui live updates", () => {
       await tick(20);
     }
     expect(r.lastFrame() ?? "").toContain("pushed-tui");
+    r.unmount();
+  });
+
+  it("recovers a disconnect-missed mutation without an overlapping stale overwrite", async () => {
+    FakeWS.instances = [];
+    const client = new DeferredRecoveryClient();
+    const r = render(
+      <App client={client} liveUrl="ws://x/ws" liveWsCtor={FakeWS as unknown as { new (u: string): WebSocket }} />,
+    );
+    await tick();
+    const first = FakeWS.instances[0]!;
+    first.open();
+    await tick(20);
+    r.stdin.write(ENTER);
+    await tick(30);
+
+    first.serverClose();
+    await client.createItem("bugs", "M1", { status: "open", fields: { headline: "missed-offline-tui" } });
+    client.holdNextRecoveryFetch();
+    for (let index = 0; index < 60 && FakeWS.instances.length < 2; index += 1) await tick(20);
+    const replacement = FakeWS.instances[1];
+    if (replacement === undefined) throw new Error("replacement socket was not created");
+    replacement.open();
+    await client.waitUntilRecoveryFetchIsHeld();
+
+    await client.createItem("bugs", "M1", { status: "open", fields: { headline: "queued-during-recovery-tui" } });
+    replacement.push({ type: "changed", ledger: "bugs" });
+    client.releaseRecoveryFetch();
+    await waitForFrame(() => r.lastFrame() ?? "", "queued-during-recovery-tui", 2000);
+
+    expect(r.lastFrame() ?? "").toContain("missed-offline-tui");
+    expect(client.maxConcurrentFetches).toBe(1);
     r.unmount();
   });
 });

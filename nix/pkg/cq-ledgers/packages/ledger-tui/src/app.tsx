@@ -501,7 +501,7 @@ export function App({
    * within the session.
    */
   const [columnsByLedger, setColumnsByLedger] = useState<Map<string, string[]>>(new Map());
-  const refreshRef = React.useRef<() => void>(() => {});
+  const refreshRef = React.useRef<() => Promise<void>>(async () => {});
   // Max scroll offset of the detail pane for the current item, published by
   // ContentPane each render so the key handler can clamp scroll (avoids
   // over-scrolling past the end, which would make scroll-back feel stuck).
@@ -760,17 +760,18 @@ export function App({
 
   // Keep the refresh closure current for the long-lived live connection.
   useEffect(() => {
-    refreshRef.current = (): void => {
-      void (async () => {
-        try {
-          setLedgers(await client.enumerateLedgers());
-          await reloadItems();
-        } catch {
-          /* surfaces on the next change */
+    refreshRef.current = async (): Promise<void> => {
+      try {
+        setLedgers(await client.enumerateLedgers());
+        if (top.kind === "items" && !(await reloadItems())) {
+          throw new Error("live ledger refresh failed");
         }
-      })();
+      } catch (error) {
+        setFlash(errMsg(error));
+        throw error;
+      }
     };
-  }, [client, reloadItems]);
+  }, [client, reloadItems, top.kind]);
 
   // Lazily fetch secondary ledgers needed for relationship resolution.
   // When the user is browsing defects, fetch tasks (for fix-task links); when
@@ -1664,6 +1665,7 @@ function LiveBadge({ stats }: { stats: LiveStats | null }): React.ReactElement {
   const map: Record<string, { glyph: string; text: string; color: string }> = {
     alive: { glyph: "●", text: "live", color: "green" },
     connecting: { glyph: "○", text: "live…", color: "yellow" },
+    recovering: { glyph: "◐", text: "recovering", color: "yellow" },
     stale: { glyph: "◐", text: "stale", color: "yellow" },
     dead: { glyph: "↻", text: "reconnecting", color: "yellow" },
     terminal: { glyph: "✕", text: "offline", color: "red" },

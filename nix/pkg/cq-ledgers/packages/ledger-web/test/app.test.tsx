@@ -16,7 +16,7 @@ import { App, clampPanelSize } from "../src/App";
 import { FakeClient } from "./fakeClient";
 import type { HoldClock } from "../src/HoldButton";
 import { HOLD_MS } from "../src/HoldButton";
-import type { ItemProjection } from "../src/types.js";
+import type { FetchedLedger, ItemProjection } from "../src/types.js";
 
 /**
  * Deterministic fake clock for driving HoldButton in tests.
@@ -1432,6 +1432,7 @@ describe("clampPanelSize", () => {
 // Minimal fake WebSocket the test drives.
 class FakeWS {
   static instances: FakeWS[] = [];
+  readonly sent: string[] = [];
   readyState = 0;
   onopen: ((e: unknown) => void) | null = null;
   onmessage: ((e: unknown) => void) | null = null;
@@ -1440,7 +1441,13 @@ class FakeWS {
   constructor(public url: string) {
     FakeWS.instances.push(this);
   }
-  send(): void {}
+  send(data: string): void {
+    this.sent.push(data);
+    const message = JSON.parse(data) as { type?: string; nonce?: string; ts?: number };
+    if (message.type === "ping") {
+      queueMicrotask(() => this.push({ type: "pong", nonce: message.nonce, ts: message.ts }));
+    }
+  }
   close(): void {
     this.readyState = 3;
   }
@@ -1448,8 +1455,59 @@ class FakeWS {
     this.readyState = 1;
     this.onopen?.({});
   }
+  serverClose(): void {
+    this.readyState = 3;
+    this.onclose?.({ code: 1006, reason: "disconnected" });
+  }
   push(obj: unknown): void {
     this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+}
+
+class DeferredRecoveryClient extends FakeClient {
+  maxConcurrentFetches = 0;
+  private activeFetches = 0;
+  private holdNextBugsFetch = false;
+  private heldResolve: (() => void) | null = null;
+  private releaseResolve: (() => void) | null = null;
+  private heldPromise: Promise<void> = Promise.resolve();
+  private releasePromise: Promise<void> = Promise.resolve();
+
+  holdNextRecoveryFetch(): void {
+    this.holdNextBugsFetch = true;
+    this.heldPromise = new Promise<void>((resolve) => { this.heldResolve = resolve; });
+    this.releasePromise = new Promise<void>((resolve) => { this.releaseResolve = resolve; });
+  }
+
+  waitUntilRecoveryFetchIsHeld(): Promise<void> {
+    return this.heldPromise;
+  }
+
+  releaseRecoveryFetch(): void {
+    if (this.releaseResolve === null) throw new Error("recovery fetch is not held");
+    this.releaseResolve();
+    this.releaseResolve = null;
+  }
+
+  override async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger> {
+    if (ledgerId !== "bugs" || projection !== "full") {
+      return super.fetchLedger(ledgerId, projection);
+    }
+    const shouldHold = this.holdNextBugsFetch;
+    this.holdNextBugsFetch = false;
+    this.activeFetches += 1;
+    this.maxConcurrentFetches = Math.max(this.maxConcurrentFetches, this.activeFetches);
+    try {
+      const snapshot = await super.fetchLedger(ledgerId, projection);
+      if (shouldHold) {
+        this.heldResolve?.();
+        this.heldResolve = null;
+        await this.releasePromise;
+      }
+      return snapshot;
+    } finally {
+      this.activeFetches -= 1;
+    }
   }
 }
 
@@ -1486,6 +1544,47 @@ describe("ledger-web live updates", () => {
     await flush();
     // the table refetched and now shows the new item
     expect(text()).toContain("pushed in");
+  });
+
+  it("recovers a disconnect-missed mutation without an overlapping stale overwrite", async () => {
+    FakeWS.instances = [];
+    const client = new DeferredRecoveryClient();
+    fake = client;
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => client,
+          initialUrl: "http://x/mcp",
+          liveUrl: "ws://x/ws",
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+    const first = FakeWS.instances[0]!;
+    act(() => first.open());
+    await flush();
+    click(testid("ledger-bugs"));
+    await flush();
+
+    act(() => first.serverClose());
+    await client.createItem("bugs", "M1", { status: "open", fields: { headline: "missed-offline" } });
+    client.holdNextRecoveryFetch();
+    act(() => window.dispatchEvent(new Event("online")));
+    for (let index = 0; index < 50 && FakeWS.instances.length < 2; index += 1) await flush();
+    const replacement = FakeWS.instances[1];
+    if (replacement === undefined) throw new Error("replacement socket was not created");
+    act(() => replacement.open());
+    await client.waitUntilRecoveryFetchIsHeld();
+
+    await client.createItem("bugs", "M1", { status: "open", fields: { headline: "queued-during-recovery" } });
+    act(() => replacement.push({ type: "changed", ledger: "bugs" }));
+    client.releaseRecoveryFetch();
+    for (let index = 0; index < 50 && !text().includes("queued-during-recovery"); index += 1) await flush();
+
+    expect(text()).toContain("missed-offline");
+    expect(text()).toContain("queued-during-recovery");
+    expect(client.maxConcurrentFetches).toBe(1);
   });
 });
 
@@ -1567,8 +1666,11 @@ describe("ledger-web editor survives same-id live reload (D219)", () => {
         this.readyState = 3;
         this.onclose?.({ code: 1000 } as CloseEvent);
       }
-      send(): void {
-        /* no-op */
+      send(data: string): void {
+        const message = JSON.parse(data) as { type?: string; nonce?: string; ts?: number };
+        if (message.type === "ping") {
+          queueMicrotask(() => this.push({ type: "pong", nonce: message.nonce, ts: message.ts }));
+        }
       }
       addEventListener(): void {
         /* no-op */
@@ -1685,8 +1787,11 @@ describe("ledger-web dirty-only save preserves concurrent external fields (D282)
         this.readyState = 3;
         this.onclose?.({ code: 1000 } as CloseEvent);
       }
-      send(): void {
-        /* no-op */
+      send(data: string): void {
+        const message = JSON.parse(data) as { type?: string; nonce?: string; ts?: number };
+        if (message.type === "ping") {
+          queueMicrotask(() => this.push({ type: "pong", nonce: message.nonce, ts: message.ts }));
+        }
       }
       addEventListener(): void {
         /* no-op */

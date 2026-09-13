@@ -144,6 +144,7 @@ body {
   color: var(--ok);
 }
 .lw-live-connecting,
+.lw-live-recovering,
 .lw-live-stale {
   color: var(--warn);
 }

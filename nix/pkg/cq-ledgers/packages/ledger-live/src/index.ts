@@ -24,7 +24,7 @@
  *    wires visibility/online; the TUI is a long-lived process).
  */
 
-export type LiveState = "connecting" | "alive" | "stale" | "dead" | "terminal";
+export type LiveState = "connecting" | "recovering" | "alive" | "stale" | "dead" | "terminal";
 
 export interface LiveStats {
   state: LiveState;
@@ -44,7 +44,7 @@ export interface LiveStats {
 export interface LiveManagerOpts {
   url: string;
   /** Called when the server reports a change; `ledger` is null if unspecified. */
-  onChanged: (ledger: string | null) => void;
+  onChanged: (ledger: string | null) => Promise<void> | void;
   /** Called on every health-state change (drive a connection indicator). */
   onUpdate?: (stats: LiveStats) => void;
   /** Injectable WebSocket constructor (defaults to global). */
@@ -86,12 +86,21 @@ export class LiveManager {
   private readonly url: string;
   private readonly WS: { new (url: string): WebSocket };
   private readonly now: () => number;
-  private readonly onChanged: (ledger: string | null) => void;
+  private readonly onChanged: (ledger: string | null) => Promise<void> | void;
   private readonly onUpdate: ((s: LiveStats) => void) | undefined;
 
   private ws: WebSocket | null = null;
+  private socketGeneration = 0;
   private state: LiveState = "connecting";
   private destroyed = false;
+  private heartbeatEstablished = false;
+  private transportHealthy = false;
+
+  private recoveryRequired = false;
+  private reconciliationRunning = false;
+  private pendingFullRefresh = false;
+  private readonly pendingLedgers = new Set<string>();
+  private reconciliationRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private rttMs: number | null = null;
   private attempt = 0;
@@ -175,22 +184,22 @@ export class LiveManager {
       return;
     }
     this.ws = ws;
+    const generation = ++this.socketGeneration;
     // Connect timeout (R4): abort a handshake that never opens.
     this.connectTimer = setTimeout(() => {
-      if (this.ws === ws && this.state === "connecting") this.forceReconnect(1006, "connect timeout");
+      if (this.isActive(ws, generation) && ws.readyState !== 1) {
+        this.forceReconnect(1006, "connect timeout");
+      }
     }, this.o.connectTimeoutMs);
     ws.onopen = (): void => {
-      if (this.destroyed || this.ws !== ws) return;
+      if (!this.isActive(ws, generation)) return;
       if (this.connectTimer !== null) clearTimeout(this.connectTimer);
       this.connectTimer = null;
-      this.attempt = 0;
-      this.nextRetryAt = null;
-      this.setState("alive");
-      this.startHeartbeat();
+      this.startHeartbeat(ws, generation);
     };
-    ws.onmessage = (ev: MessageEvent): void => this.onMessage(ev);
+    ws.onmessage = (ev: MessageEvent): void => this.onMessage(ws, generation, ev);
     ws.onclose = (ev: CloseEvent): void => {
-      if (this.ws !== ws) return;
+      if (!this.isActive(ws, generation)) return;
       this.handleClose(ev.code, ev.reason);
     };
     ws.onerror = (): void => {
@@ -198,26 +207,34 @@ export class LiveManager {
     };
   }
 
-  private startHeartbeat(): void {
-    this.sendPing();
-    this.pingTimer = setInterval(() => this.sendPing(), this.o.pingIntervalMs);
+  private isActive(ws: WebSocket, generation: number): boolean {
+    return !this.destroyed && this.ws === ws && this.socketGeneration === generation;
   }
 
-  private sendPing(): void {
-    if (this.ws === null || this.ws.readyState !== 1 /* OPEN */) return;
+  private startHeartbeat(ws: WebSocket, generation: number): void {
+    this.sendPing(ws, generation);
+    this.pingTimer = setInterval(() => this.sendPing(ws, generation), this.o.pingIntervalMs);
+  }
+
+  private sendPing(ws: WebSocket, generation: number): void {
+    if (!this.isActive(ws, generation) || ws.readyState !== 1 /* OPEN */) return;
     const nonce = randomNonce();
     this.pendingPing = { nonce, sentAt: this.now() };
     try {
-      this.ws.send(JSON.stringify({ type: "ping", nonce, ts: this.pendingPing.sentAt }));
+      ws.send(JSON.stringify({ type: "ping", nonce, ts: this.pendingPing.sentAt }));
     } catch {
       this.forceReconnect(1006, "send failed");
       return;
     }
     if (this.pongTimer !== null) clearTimeout(this.pongTimer);
-    this.pongTimer = setTimeout(() => this.onPongTimeout(), this.o.pongTimeoutMs);
+    this.pongTimer = setTimeout(
+      () => this.onPongTimeout(ws, generation, nonce),
+      this.o.pongTimeoutMs,
+    );
   }
 
-  private onMessage(ev: MessageEvent): void {
+  private onMessage(ws: WebSocket, generation: number, ev: MessageEvent): void {
+    if (!this.isActive(ws, generation)) return;
     let msg: { type?: string; nonce?: string; ledger?: string } | undefined;
     try {
       msg = JSON.parse(typeof ev.data === "string" ? ev.data : String(ev.data)) as typeof msg;
@@ -235,23 +252,104 @@ export class LiveManager {
           clearTimeout(this.graceTimer); // recovered from STALE
           this.graceTimer = null;
         }
-        this.setState("alive");
+        this.transportHealthy = true;
+        if (!this.heartbeatEstablished) {
+          this.heartbeatEstablished = true;
+          this.attempt = 0;
+          this.nextRetryAt = null;
+          this.recoveryRequired = true;
+        }
+        this.setState("recovering");
+        void this.drainReconciliation(ws, generation);
       }
       return;
     }
     if (msg.type === "changed") {
-      this.onChanged(msg.ledger ?? null);
+      this.enqueueChanged(msg.ledger ?? null, ws, generation);
     }
   }
 
-  private onPongTimeout(): void {
-    if (this.destroyed || this.state !== "alive") return;
+  private onPongTimeout(ws: WebSocket, generation: number, nonce: string): void {
+    if (!this.isActive(ws, generation) || this.pendingPing?.nonce !== nonce) return;
     // Heartbeat missed → STALE, with a grace window to recover (R2/R6-lite).
+    this.transportHealthy = false;
     this.setState("stale");
     this.graceTimer = setTimeout(() => {
+      if (!this.isActive(ws, generation)) return;
       this.graceTimer = null;
       this.forceReconnect(1006, "heartbeat timeout");
     }, this.o.staleGraceMs);
+  }
+
+  private enqueueChanged(ledger: string | null, ws: WebSocket, generation: number): void {
+    if (!this.isActive(ws, generation)) return;
+    if (ledger === null) {
+      this.pendingFullRefresh = true;
+      this.pendingLedgers.clear();
+    } else if (!this.pendingFullRefresh) {
+      this.pendingLedgers.add(ledger);
+    }
+    if (!this.transportHealthy) return;
+    this.setState("recovering");
+    void this.drainReconciliation(ws, generation);
+  }
+
+  private async drainReconciliation(ws: WebSocket, generation: number): Promise<void> {
+    if (
+      !this.isActive(ws, generation) ||
+      !this.transportHealthy ||
+      this.reconciliationRunning ||
+      this.reconciliationRetryTimer !== null
+    ) {
+      return;
+    }
+
+    let kind: "recovery" | "full" | "ledger";
+    let ledger: string | null;
+    if (this.recoveryRequired) {
+      kind = "recovery";
+      ledger = null;
+    } else if (this.pendingFullRefresh) {
+      kind = "full";
+      ledger = null;
+      this.pendingFullRefresh = false;
+    } else {
+      const nextLedger = this.pendingLedgers.values().next().value as string | undefined;
+      if (nextLedger === undefined) {
+        this.setState("alive");
+        return;
+      }
+      kind = "ledger";
+      ledger = nextLedger;
+      this.pendingLedgers.delete(nextLedger);
+    }
+
+    this.reconciliationRunning = true;
+    this.setState("recovering");
+    try {
+      await this.onChanged(ledger);
+    } catch {
+      if (!this.isActive(ws, generation)) return;
+      this.reconciliationRunning = false;
+      if (kind === "full") {
+        this.pendingFullRefresh = true;
+        this.pendingLedgers.clear();
+      } else if (kind === "ledger" && !this.pendingFullRefresh) {
+        this.pendingLedgers.add(ledger as string);
+      }
+      this.setState("recovering");
+      this.reconciliationRetryTimer = setTimeout(() => {
+        if (!this.isActive(ws, generation)) return;
+        this.reconciliationRetryTimer = null;
+        void this.drainReconciliation(ws, generation);
+      }, this.o.baseBackoffMs);
+      return;
+    }
+
+    if (!this.isActive(ws, generation)) return;
+    this.reconciliationRunning = false;
+    if (kind === "recovery") this.recoveryRequired = false;
+    void this.drainReconciliation(ws, generation);
   }
 
   /** Tear the socket down and reconnect with backoff. */
@@ -303,7 +401,9 @@ export class LiveManager {
       // Suspended/resumed (sleep, freeze, debugger). NAT/TCP state is likely
       // gone and no close will fire — reconnect proactively rather than wait
       // out the pong timeout.
-      if (this.state === "alive" || this.state === "stale") this.forceReconnect(1006, "resume after pause");
+      if (this.state === "alive" || this.state === "recovering" || this.state === "stale") {
+        this.forceReconnect(1006, "resume after pause");
+      }
       else if (this.state === "dead" && this.reconnectTimer !== null) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
@@ -315,7 +415,9 @@ export class LiveManager {
   /** Public hook: ask the manager to re-check liveness now (e.g. tab visible). */
   poke(): void {
     if (this.destroyed) return;
-    if (this.state === "alive") this.sendPing();
+    if (this.ws !== null && this.ws.readyState === 1) {
+      this.sendPing(this.ws, this.socketGeneration);
+    }
     else if (this.state === "dead" && this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -324,15 +426,24 @@ export class LiveManager {
   }
 
   private clearConn(): void {
+    this.socketGeneration += 1;
     if (this.pingTimer !== null) clearInterval(this.pingTimer);
     if (this.pongTimer !== null) clearTimeout(this.pongTimer);
     if (this.graceTimer !== null) clearTimeout(this.graceTimer);
     if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+    if (this.reconciliationRetryTimer !== null) clearTimeout(this.reconciliationRetryTimer);
     this.pingTimer = null;
     this.pongTimer = null;
     this.graceTimer = null;
     this.connectTimer = null;
+    this.reconciliationRetryTimer = null;
     this.pendingPing = null;
+    this.heartbeatEstablished = false;
+    this.transportHealthy = false;
+    this.recoveryRequired = false;
+    this.reconciliationRunning = false;
+    this.pendingFullRefresh = false;
+    this.pendingLedgers.clear();
     if (this.ws !== null) {
       const ws = this.ws;
       this.ws = null;

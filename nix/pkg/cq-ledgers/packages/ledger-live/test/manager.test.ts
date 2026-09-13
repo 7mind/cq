@@ -1,6 +1,6 @@
 /**
  * LiveManager tests driven by a fake WebSocket (no network, no real timers
- * beyond short ones). Covers: connect→alive + heartbeat, pong→rtt, `changed`
+ * beyond short ones). Covers: connect→heartbeat→alive, pong→rtt, `changed`
  * dispatch, missed-pong → stale → reconnect, non-retriable close → terminal,
  * and max-attempts → terminal.
  */
@@ -65,14 +65,18 @@ describe("LiveManager", () => {
     mgr.start();
     const ws = FakeWS.instances[0]!;
     ws.open();
-    expect(mgr.getStats().state).toBe("alive");
+    expect(mgr.getStats().state).toBe("connecting");
     const ping = ws.lastPing();
     expect(ping.type).toBe("ping");
     ws.message({ type: "pong", nonce: ping.nonce, ts: ping.ts });
     expect(mgr.getStats().rttMs).not.toBeNull();
+    await Promise.resolve();
+    expect(mgr.getStats().state).toBe("alive");
     ws.message({ type: "changed", ledger: "tasks" });
+    await Promise.resolve();
     ws.message({ type: "changed" });
-    expect(changed).toEqual(["tasks", null]);
+    await Promise.resolve();
+    expect(changed).toEqual([null, "tasks", null]);
     mgr.destroy();
   });
 

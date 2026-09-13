@@ -593,7 +593,7 @@ export function App({
   const referenceLookup = useMemo(() => client === null ? null : new ItemReferenceLookup(client), [client]);
   // Latest-callback ref: the live connection lives across ledger changes, so
   // its onChanged must call the freshest refresh closure, not a stale one.
-  const refreshRef = useRef<() => void>(() => {});
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
   // A project switch's derived ws URL, applied to `activeLiveUrl` only once
   // the NEW client is confirmed (see the connect effect below) — so `client`
   // and `activeLiveUrl` transition TOGETHER in one batched render, rather than
@@ -964,8 +964,8 @@ export function App({
     [client, mainView, closeFinalizePreview],
   );
 
-  const reload = useCallback(async () => {
-    if (client === null || ledger === null) return;
+  const reload = useCallback(async (): Promise<boolean> => {
+    if (client === null || ledger === null) return true;
     try {
       const v = await client.fetchLedger(ledger, "full");
       setView(v);
@@ -976,8 +976,10 @@ export function App({
         setFlash(`Item ${cur.item.id} is no longer available. Unsaved edits were not saved.`);
         return null;
       });
+      return true;
     } catch (e) {
       setFlash(errMsg(e));
+      return false;
     }
   }, [client, ledger]);
 
@@ -1280,27 +1282,26 @@ export function App({
 
   // Keep the refresh closure current (used by the long-lived live connection).
   useEffect(() => {
-    refreshRef.current = (): void => {
+    refreshRef.current = async (): Promise<void> => {
       if (client === null) return;
-      void (async () => {
-        try {
-          setLedgers(await client.enumerateLedgers());
-          await reload();
-          if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
-        } catch {
-          /* a transient fetch error surfaces on the next change */
-        }
-        // Refresh the goalDrift verdict on the same 'changed' push (G84/D113,
-        // T611); independent try/catch so an unsupported/older server doesn't
-        // suppress the counters refresh above.
-        try {
-          const predicates = await client.derivePredicates();
-          setGoalDrift(predicates.goalDrift);
-          setUpstreamBlocked(predicates.upstreamBlocked);
-        } catch {
-          /* server predates derive_predicates — indicator stays hidden */
-        }
-      })();
+      try {
+        setLedgers(await client.enumerateLedgers());
+        if (!(await reload())) throw new Error("live ledger refresh failed");
+        if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
+      } catch (error) {
+        setFlash(errMsg(error));
+        throw error;
+      }
+      // Refresh the goalDrift verdict on the same 'changed' push (G84/D113,
+      // T611); independent try/catch so an unsupported/older server doesn't
+      // suppress the counters refresh above.
+      try {
+        const predicates = await client.derivePredicates();
+        setGoalDrift(predicates.goalDrift);
+        setUpstreamBlocked(predicates.upstreamBlocked);
+      } catch {
+        /* server predates derive_predicates — indicator stays hidden */
+      }
     };
   }, [client, reload, ledger, mainView]);
 
@@ -2560,6 +2561,7 @@ function LiveIndicator({ stats }: { stats: LiveStats | null }): React.ReactEleme
   const view: Record<string, { glyph: string; text: string }> = {
     alive: { glyph: "●", text: "live" },
     connecting: { glyph: "○", text: "connecting" },
+    recovering: { glyph: "◐", text: "recovering" },
     stale: { glyph: "◐", text: "stale" },
     dead: { glyph: "↻", text: "reconnecting" },
     terminal: { glyph: "✕", text: "offline" },
