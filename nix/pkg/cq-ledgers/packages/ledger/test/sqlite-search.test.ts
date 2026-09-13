@@ -361,6 +361,18 @@ describe("T528: ftsSearch outcomes", () => {
 // ---------------------------------------------------------------------------
 
 describe("T528: sqlite derived-index coherence", () => {
+  test("concurrent disposal closes the worker once and the store can be reinitialized", async () => {
+    const store = await sqliteStore();
+    try {
+      await Promise.all([store.dispose(), store.dispose()]);
+      await store.init();
+      expect(store.searchProjectionHealth().state).toBe("current");
+      expect(await store.ftsSearch("absent")).toEqual([]);
+    } finally {
+      await store.dispose();
+    }
+  });
+
   test("local coherence: create/update/reopen reflected in ftsSearch without any rebuild call", async () => {
     const sq = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
     await sq.init();
