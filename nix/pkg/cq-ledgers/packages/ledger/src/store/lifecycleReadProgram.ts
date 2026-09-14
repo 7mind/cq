@@ -1,18 +1,13 @@
-import { LedgerError } from "../types.js";
 import type { AsyncLifecycleRowRepository } from "./asyncRowRepository.js";
 import type { LifecycleRowRepository } from "./lifecycleRowRepository.js";
+import { repositoryRead, runRepositoryReads, runAsyncRepositoryReads, type RepositoryReadProgram } from "./readProgram.js";
 
 type LifecycleReadSource = LifecycleRowRepository | AsyncLifecycleRowRepository;
 
-interface LifecycleRead {
-  execute(rows: LifecycleReadSource): unknown;
-}
+export type LifecycleReadProgram<Result> = RepositoryReadProgram<LifecycleReadSource, Result>;
 
-export type LifecycleReadProgram<Result> = Generator<LifecycleRead, Result, unknown>;
-
-function* read<Result>(execute: (rows: LifecycleReadSource) => Result | Promise<Result>): LifecycleReadProgram<Result> {
-  // The interpreter sends back precisely the result of this suspended read.
-  return (yield { execute }) as Result;
+function read<Result>(execute: (rows: LifecycleReadSource) => Result | Promise<Result>): LifecycleReadProgram<Result> {
+  return repositoryRead(execute);
 }
 
 export function createLifecycleReadRequests() {
@@ -33,17 +28,9 @@ export function createLifecycleReadRequests() {
 }
 
 export function runLifecycleReads<Result>(rows: LifecycleRowRepository, program: LifecycleReadProgram<Result>): Result {
-  let step = program.next();
-  while (!step.done) {
-    const value = step.value.execute(rows);
-    if (value instanceof Promise) throw new LedgerError("a synchronous lifecycle repository returned an asynchronous read");
-    step = program.next(value);
-  }
-  return step.value;
+  return runRepositoryReads(rows, program);
 }
 
 export async function runAsyncLifecycleReads<Result>(rows: AsyncLifecycleRowRepository, program: LifecycleReadProgram<Result>): Promise<Result> {
-  let step = program.next();
-  while (!step.done) step = program.next(await step.value.execute(rows));
-  return step.value;
+  return runAsyncRepositoryReads(rows, program);
 }

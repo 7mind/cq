@@ -221,6 +221,7 @@ import {
 } from "../operatorActionLifecycle.js";
 import { createKeyedOwnedWriteTransaction } from "../keyedOwnedWriteTransaction.js";
 import { assertOwnedMutationAdmission, WorksetOwnedLifecycleError, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import { assertPlanMutationAdmission, assertChangedPlanItemsSelected, assertPlanCreatedOwnership, WorksetPlanLifecycleError, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { authorizeKeyedWorksetPlan, guardedPlanRowRequest } from "../keyedWorksetPlanAuthorization.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
@@ -1887,23 +1888,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private assertOwnedMutationDelta(context: AdmittedOwnedMutation, before: ReadonlyMap<string, Ledger>, delta: GenericProjectionDelta): void {
-    const operation = context.operation;
-    const ledgerId = operation.kind === "create-owned" ? operation.childLedgerId
-      : operation.kind === "create-ownerless" ? operation.ledgerId : GOALS_LEDGER;
-    const ownerRef = context.admission.targets[0];
-    let created = 0;
-    for (const row of delta.activeUpserts) {
-      const prior = before.get(row.ledgerId)?.milestones.flatMap(({ items }) => items).find(({ id }) => id === row.item.id);
-      if (prior === undefined) {
-        created += 1;
-        if (row.ledgerId !== ledgerId || row.item.fields.worksetOwnerRef !== ownerRef) {
-          throw new WorksetOwnedLifecycleError("forged-ownership", "owned transaction created a row outside its requested owner/ledger");
-        }
-      } else if (operation.kind !== "idea-to-goal" || !operation.consumeIdea || `${row.ledgerId}:${row.item.id}` !== ownerRef) {
-        throw new WorksetOwnedLifecycleError("owner-excluded", "owned transaction changed an existing row outside its declared operation");
-      }
-    }
-    if (created > 1 || delta.activeDeletes.length > 0 || delta.archivedUpserts.length > 0 || delta.archivedDeletes.length > 0) {
+    assertOwnedMutationRows(context, before, delta.activeUpserts);
+    if (delta.activeDeletes.length > 0 || delta.archivedUpserts.length > 0 || delta.archivedDeletes.length > 0) {
       throw new WorksetOwnedLifecycleError("bundle-incomplete", "owned transaction exceeded its declared single-child operation");
     }
   }

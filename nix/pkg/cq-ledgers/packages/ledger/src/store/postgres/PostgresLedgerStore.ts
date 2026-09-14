@@ -97,10 +97,12 @@ import type {
   PlanReleaseResult,
 } from "../../planLifecycle.js";
 import { PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
-import type { PlanLifecycleRowRequest, PlanLifecycleRowPlan } from "../planLifecycleRowPlan.js";
+import type { PlanLifecycleRowRequest } from "../planLifecycleRowPlan.js";
 import { runPostgresKeyedOperation } from "./operationKernel.js";
 import { resolvePostgresPlanRows } from "./planRowOperation.js";
-import { persistPostgresPlanRows } from "./planRowPersistence.js";
+import { persistPostgresPlanRows, type PostgresPublicRowPlan } from "./planRowPersistence.js";
+import { resolvePostgresOwnedRows } from "./ownedRowOperation.js";
+import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import type { PostgresAccessObserver } from "./operationAccess.js";
 import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
@@ -200,7 +202,7 @@ import {
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
-import { assertOwnedMutationAdmission, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import type { AdmittedOwnedMutation, WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
@@ -2177,7 +2179,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return committed.value;
   }
 
-  private absorbPlanRows(plan: PlanLifecycleRowPlan): void {
+  private absorbPlanRows(plan: PostgresPublicRowPlan): void {
     for (const [ledgerId, selected] of plan.state.ledgers) {
       let cached = this.ledgers.get(ledgerId);
       if (cached === undefined) {
@@ -2207,12 +2209,31 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   /** Run one tenant-scoped owned lifecycle operation and notify after commit. */
   async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation | null): Promise<T> {
     this.assertInit();
+    if (context !== null) {
+      const committed = await runPostgresKeyedOperation(this.pool(), {
+        projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+      }, {
+        name: `owned_${context.operation.kind}`,
+        resolve: (queries) => resolvePostgresOwnedRows(queries, context, this.now),
+        apply: async (queries, resolution) => {
+          if (resolution.kind === "rejected") throw resolution.error;
+          const { owned } = resolution;
+          const value = mutate(owned.tx);
+          const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
+          const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
+          assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);
+          return { value, plan, dirty: changed.ledgers };
+        },
+      });
+      this.absorbPlanRows(committed.plan);
+      for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+      return committed.value;
+    }
     let result!: T;
     let dirtyLedgers: readonly string[] = [];
     let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
       await this.lockTenantCounters(tx);
-      if (context !== null) assertOwnedMutationAdmission(context);
       const tenant = await this.readLiveTenant(tx);
       const archivedIds = new Map<string, Set<string>>();
       for (const item of tenant.archived) {

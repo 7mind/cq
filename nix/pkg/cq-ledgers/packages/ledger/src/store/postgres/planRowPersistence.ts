@@ -1,5 +1,4 @@
 import { LedgerError, type Item, type Ledger } from "../../types.js";
-import type { PlanLifecycleRowPlan } from "../planLifecycleRowPlan.js";
 import type { PostgresOperationQueries } from "./operationAccess.js";
 import { persistPostgresActiveItem } from "./keyedRows.js";
 
@@ -8,7 +7,12 @@ export interface PostgresPlanRowChanges {
   readonly ledgers: readonly string[];
 }
 
-export async function persistPostgresPlanRows(queries: PostgresOperationQueries, plan: PlanLifecycleRowPlan,
+export interface PostgresPublicRowPlan {
+  readonly beforeLedgers: ReadonlyMap<string, Ledger>;
+  readonly state: { readonly ledgers: ReadonlyMap<string, Ledger> };
+}
+
+export async function persistPostgresPlanRows(queries: PostgresOperationQueries, plan: PostgresPublicRowPlan,
   dirtyLedgers: readonly string[]): Promise<PostgresPlanRowChanges> {
   const changedItems: { ledgerId: string; item: Item }[] = [];
   const changedLedgers = new Set<string>();

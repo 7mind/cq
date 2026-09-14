@@ -77,13 +77,19 @@ test("native owned admission rejects substitution, extra changed rows, foreign o
     await store.createItem("questions", "M-AMBIENT", { id: "Q90000", status: "open", fields: { question: "unrelated" } });
     await store.replaceWorksetRoots(["goals:G1"]);
     const admission = await store.worksetStore().admitLedgerMutation({ kind: "owned-write", targets: ["goals:G1"] });
-    const context: AdmittedOwnedMutation = { admission, operation: { kind: "create-owned", owner: { ledgerId: "goals", itemId: "G1" }, childLedgerId: "questions" } };
+    const context: AdmittedOwnedMutation = { admission, operation: { kind: "create-owned", input: {
+      owner: { ledgerId: "goals", itemId: "G1" }, creationKind: "exact-gate-question",
+      child: { ledgerId: "questions", status: "open", fields: { question: "selected" } },
+    } } };
     const snapshot = () => ["items", "groups", "ledgers", "item_references", "coherence_vector"]
       .map((table) => [table, db.query(`SELECT * FROM ${table} ORDER BY rowid`).all()]);
     const before = snapshot();
     try {
       await expect(store.runAtomicOwnedMutation(() => undefined, { ...context, admission: { ...admission } })).rejects.toThrow("exact live owner admission");
-      await expect(store.runAtomicOwnedMutation(() => undefined, { admission, operation: { kind: "create-owned", owner: { ledgerId: "goals", itemId: "G2" }, childLedgerId: "questions" } })).rejects.toThrow("exact live owner admission");
+      await expect(store.runAtomicOwnedMutation(() => undefined, { admission, operation: { kind: "create-owned", input: {
+        owner: { ledgerId: "goals", itemId: "G2" }, creationKind: "exact-gate-question",
+        child: { ledgerId: "questions", status: "open", fields: { question: "selected" } },
+      } } })).rejects.toThrow("exact live owner admission");
       await expect(store.runAtomicOwnedMutation((tx) => tx.updateItem("questions", "Q90000", { fields: { question: "foreign change" } }), context)).rejects.toThrow("outside its declared operation");
       await expect(store.runAtomicOwnedMutation((tx) => tx.createItemWithSealedOwnership("questions", "M-AMBIENT", {
         status: "open", fields: { question: "wrong owner" },

@@ -11,6 +11,8 @@ import {
   type WorksetGraph,
 } from "../worksetGraph.js";
 import type { Item, LedgerSchema } from "../types.js";
+import type { AsyncGenericMutationDataSource } from "./asyncRowRepository.js";
+import { repositoryRead, runRepositoryReads, runAsyncRepositoryReads, type RepositoryReadProgram } from "./readProgram.js";
 
 export interface GenericMutationLedgerMetadata {
   readonly id: string;
@@ -55,7 +57,26 @@ export function resolveGenericMutationClosure(
   roots: readonly string[],
   options: ResolveGenericMutationClosureOptions,
 ): GenericMutationResolvedClosure {
-  const ledgers = source.listLedgers();
+  return runRepositoryReads(source, genericMutationClosureReads(roots, options));
+}
+
+export function resolveAsyncGenericMutationClosure(source: AsyncGenericMutationDataSource, roots: readonly string[],
+  options: ResolveGenericMutationClosureOptions): Promise<GenericMutationResolvedClosure> {
+  return runAsyncRepositoryReads(source, genericMutationClosureReads(roots, options));
+}
+
+type GenericReadSource = GenericMutationDataSource | AsyncGenericMutationDataSource;
+
+function* genericMutationClosureReads(roots: readonly string[], options: ResolveGenericMutationClosureOptions): RepositoryReadProgram<GenericReadSource, GenericMutationResolvedClosure> {
+  const source = {
+    listLedgers: () => repositoryRead((rows: GenericReadSource) => rows.listLedgers()),
+    fetchActiveItem: (ref: string) => repositoryRead((rows: GenericReadSource) => rows.fetchActiveItem(ref)),
+    fetchArchivedItem: (ref: string) => repositoryRead((rows: GenericReadSource) => rows.fetchArchivedItem(ref)),
+    referenceTargets: (ref: string, fields: readonly string[]) => repositoryRead((rows: GenericReadSource) => rows.referenceTargets(ref, fields)),
+    referenceSources: (ref: string, fields: readonly string[]) => repositoryRead((rows: GenericReadSource) => rows.referenceSources(ref, fields)),
+    liveTaskRefsByMilestone: (id: string) => repositoryRead((rows: GenericReadSource) => rows.liveTaskRefsByMilestone(id)),
+  };
+  const ledgers = yield* source.listLedgers();
   const prefixRegistry = buildPrefixRegistry(
     ledgers.map(({ id, schema }) => ({ name: id, schema })),
   );
@@ -83,18 +104,18 @@ export function resolveGenericMutationClosure(
   while (queued.length > 0) {
     const ref = queued.shift();
     if (ref === undefined) break;
-    const item = source.fetchActiveItem(ref);
+    const item = yield* source.fetchActiveItem(ref);
     if (item === undefined) {
-      const archived = source.fetchArchivedItem(ref);
+      const archived = yield* source.fetchArchivedItem(ref);
       if (archived !== undefined) archivedTargets.set(ref, archived);
       continue;
     }
     activeItems.set(ref, item);
 
-    for (const target of source.referenceTargets(ref, ["dependsOn", "blockedBy"])) {
+    for (const target of yield* source.referenceTargets(ref, ["dependsOn", "blockedBy"])) {
       enqueue(target);
     }
-    for (const child of source.referenceSources(ref, [
+    for (const child of yield* source.referenceSources(ref, [
       "worksetOwnerRef",
       ...options.incidentReferenceFields,
     ])) {
@@ -107,7 +128,7 @@ export function resolveGenericMutationClosure(
     if (ledgerId !== MILESTONES_LEDGER) enqueue(`${MILESTONES_LEDGER}:${item.milestoneId}`);
     for (const member of phaseAllowedManifestRefs(ledgerId, item) ?? []) enqueue(member);
     if (ledgerId === MILESTONES_LEDGER && explicitRoots.has(ref) && isLiveMilestone(item)) {
-      for (const task of source.liveTaskRefsByMilestone(itemId)) enqueue(task);
+      for (const task of yield* source.liveTaskRefsByMilestone(itemId)) enqueue(task);
     }
   }
 

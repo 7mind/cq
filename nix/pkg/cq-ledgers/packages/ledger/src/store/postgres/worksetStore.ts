@@ -356,18 +356,18 @@ export function createPostgresWorksetStore(
     `;
   }
 
-  async function lockRoots(tx: SQL): Promise<{
+  async function lockRoots(tx: SQL, mode: "share" | "update"): Promise<{
     roots: string[];
     epoch: number;
     admitGeneration: number;
   }> {
     await ensureRootsRow(tx);
-    const rows = await tx<RootsRow[]>`
+    const rows = await tx.unsafe<RootsRow[]>(`
       SELECT roots_json, epoch, admit_generation
       FROM workset_roots
-      WHERE project_key = ${projectKey}
-      FOR UPDATE
-    `;
+      WHERE project_key = $1
+      FOR ${mode === "share" ? "SHARE" : "UPDATE"}
+    `, [projectKey]);
     return parseRoots(rows[0]);
   }
 
@@ -382,7 +382,7 @@ export function createPostgresWorksetStore(
       WHERE project_key = ${projectKey}
     `;
     if (rows.length === 0) {
-      return writeTransaction(pool, async (tx) => lockRoots(tx));
+      return writeTransaction(pool, async (tx) => lockRoots(tx, "update"));
     }
     return parseRoots(rows[0]);
   }
@@ -695,7 +695,7 @@ export function createPostgresWorksetStore(
         | { readonly kind: "target-excluded"; readonly target: string };
 
       const granted: GrantResult = await writeTransaction(pool, async (tx) => {
-        const locked = await lockRoots(tx);
+        const locked = await lockRoots(tx, "share");
         if (locked.admitGeneration !== generationAtEntry) {
           return { kind: "revoked" };
         }
@@ -829,7 +829,7 @@ export function createPostgresWorksetStore(
         | { readonly kind: "target-excluded" };
 
       const granted: GrantResult = await writeTransaction(pool, async (tx) => {
-        const locked = await lockRoots(tx);
+        const locked = await lockRoots(tx, "share");
         if (locked.admitGeneration !== generationAtEntry) {
           return { kind: "revoked" };
         }
@@ -1096,7 +1096,7 @@ export function createPostgresWorksetStore(
       }
       const committed = await writeTransaction(pool, async (tx) => {
         const canonical = [...((await replacementValidation?.(requested, tx)) ?? requested)];
-        const locked = await lockRoots(tx);
+        const locked = await lockRoots(tx, "update");
         const nextEpoch = locked.epoch + 1;
         const nextGen = locked.admitGeneration + 1;
         await tx`
@@ -1160,7 +1160,7 @@ export function createPostgresWorksetStore(
       if (projectRows.length === 0) return;
       // Advance admit_generation so in-flight grant attempts revoke.
       await writeTransaction(pool, async (tx) => {
-        const locked = await lockRoots(tx);
+        const locked = await lockRoots(tx, "update");
         await tx`
           UPDATE workset_roots
           SET admit_generation = ${locked.admitGeneration + 1}, updated_at = now()

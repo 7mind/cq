@@ -4,6 +4,7 @@ import { PostgresOperationQueries, type PostgresQueryParameter, type PostgresRow
 
 export type PostgresLockTarget =
   | { readonly table: "workset_roots" }
+  | { readonly table: "workset_admissions"; readonly id: string }
   | { readonly table: "ledgers"; readonly ledgerId: string }
   | { readonly table: "items" | "groups" | "archive_pointers"; readonly ledgerId: string; readonly id: string }
   | { readonly table: "archived_items"; readonly ledgerId: string; readonly pointerId: string; readonly id: string }
@@ -25,7 +26,8 @@ interface LockCoordinates {
 
 function coordinates(target: PostgresLockTarget): LockCoordinates {
   switch (target.table) {
-    case "workset_roots": return { rank: 0, key: "roots", columns: [], values: [] };
+    case "workset_roots": return { rank: -1, key: "roots", columns: [], values: [] };
+    case "workset_admissions": return { rank: 0, key: `lease:${target.id}`, columns: ["admission_id"], values: [target.id] };
     case "items": return {
       rank: target.ledgerId === "milestones" ? 1 : target.ledgerId === "goals" ? 2 : 3,
       key: `${target.ledgerId}:${target.id}`, columns: ["ledger", "id"], values: [target.ledgerId, target.id],
