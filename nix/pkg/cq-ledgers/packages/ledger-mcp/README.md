@@ -272,7 +272,8 @@ measured savings without another batching schema.
 | `continue_implementation_evidence_activation`    | `purpose-built-small`       | Exactly one continued or existing activation-continuation acknowledgement.                                                                                                                                                                                                                           |
 | `get_implementation_evidence_service_status`     | `purpose-built-small`       | One typed service-status object.                                                                                                                                                                                                                                                                     |
 | `prepare_implementation_completion`              | `purpose-built-small`       | Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.                                                                                                                                                                                                     |
-| `record_implementation_completion`               | `purpose-built-small`       | One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement.                                                                                                                                                                                                         |
+| `record_implementation_completion`               | `purpose-built-small`       | Completion acknowledgement: merge-required, reprepare-required, recorded, or existing.                                                                                                                                                                                                         |
+| `record_implementation_adoption` | `purpose-built-small` | Operator-adoption acknowledgement. |
 
 <!-- ledger-response-contract:end -->
 
@@ -406,7 +407,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 60-tool matrix, not as a generic
+Treat response decoding as a closed 61-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

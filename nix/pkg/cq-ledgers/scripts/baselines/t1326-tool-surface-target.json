@@ -187,7 +187,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -249,7 +250,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "begin": {
@@ -313,7 +315,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -375,7 +378,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "implement-conflict-resolver": {
@@ -477,7 +481,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -539,7 +544,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "implement/start": {
@@ -603,7 +609,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -665,7 +672,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "implementation-auditor": {
@@ -739,7 +747,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -801,7 +810,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "investigate-explorer": {
@@ -885,7 +895,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -947,7 +958,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "plan": {
@@ -1011,7 +1023,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1073,7 +1086,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "plan-advance": {
@@ -1173,7 +1187,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1235,7 +1250,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "plan/follow-up": {
@@ -1299,7 +1315,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1361,7 +1378,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "planners": {
@@ -1433,7 +1451,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1495,7 +1514,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "research-experimenter": {
@@ -1579,7 +1599,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1641,7 +1662,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         },
         "reviewers": {
@@ -1713,7 +1735,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1775,7 +1798,8 @@
             "continue_implementation_evidence_activation",
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
-            "record_implementation_completion"
+            "record_implementation_completion",
+            "record_implementation_adoption"
           ]
         }
       },
@@ -1787,12 +1811,12 @@
           "sha256": "93e97e53374c7e5a23e97a2d58953b6d91dae86bd34a8fb7a538ff044e1373e0"
         },
         "counterfactual": {
-          "utf8Bytes": 549039,
-          "tokens": 129321,
-          "sha256": "60f793fe6c9feb9858a3e68ff151ef851a5bd05ca97ada7eb227b5c8d8be096e"
+          "utf8Bytes": 549099,
+          "tokens": 129333,
+          "sha256": "ff0df08ab9d0d5175d220da73ca326088f6d0b3f2940124d29220725a5053ae8"
         },
-        "deltaUtf8Bytes": 654658,
-        "deltaTokens": 154566
+        "deltaUtf8Bytes": 654598,
+        "deltaTokens": 154554
       }
     },
     {
@@ -2092,7 +2116,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2154,7 +2179,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "begin": {
@@ -2218,7 +2244,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2280,7 +2307,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "implement-conflict-resolver": {
@@ -2382,7 +2410,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2444,7 +2473,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "implement/start": {
@@ -2508,7 +2538,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2570,7 +2601,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "implementation-auditor": {
@@ -2644,7 +2676,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2706,7 +2739,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "investigate-explorer": {
@@ -2790,7 +2824,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2852,7 +2887,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "plan": {
@@ -2916,7 +2952,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2978,7 +3015,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "plan-advance": {
@@ -3078,7 +3116,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3140,7 +3179,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "plan/follow-up": {
@@ -3204,7 +3244,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3266,7 +3307,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "planners": {
@@ -3338,7 +3380,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3400,7 +3443,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "research-experimenter": {
@@ -3484,7 +3528,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3546,7 +3591,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       },
       "reviewers": {
@@ -3618,7 +3664,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3680,7 +3727,8 @@
           "continue_implementation_evidence_activation",
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
-          "record_implementation_completion"
+          "record_implementation_completion",
+          "record_implementation_adoption"
         ]
       }
     },

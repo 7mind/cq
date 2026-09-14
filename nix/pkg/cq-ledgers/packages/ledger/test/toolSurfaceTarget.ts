@@ -575,6 +575,139 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     },
   },
   {
+    "name": "record_implementation_adoption",
+    "description": "Record explicitly operator-approved, already-integrated work without worker or reviewer receipts. Binds exact task, journal, Git, approval and validation evidence; never creates a synthetic review.\n\nAuthoritative response: Operator-adoption acknowledgement.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "task_ref": {
+          "type": "string",
+          "pattern": "^tasks:T[0-9]+$"
+        },
+        "expected_task_updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        "expected_task_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expected_repository_head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "result_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "supersedes_completion_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^cq-implementation-completion:v1:[0-9a-f]{64}$"
+          }
+        },
+        "approval": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "explicit-operator-approval"
+            },
+            "questionRef": {
+              "type": "string",
+              "pattern": "^questions:Q[0-9]+$"
+            },
+            "answer": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "questionRef",
+            "answer"
+          ],
+          "additionalProperties": false
+        },
+        "authority_loss_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "validation": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "operator-reported-validation"
+            },
+            "validatedCommit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "exitCode": {
+              "type": "number",
+              "const": 0
+            },
+            "logPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "logSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "kind",
+            "validatedCommit",
+            "command",
+            "exitCode",
+            "logPath",
+            "logSha256"
+          ],
+          "additionalProperties": false
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "task_ref",
+        "expected_task_updated_at",
+        "expected_task_digest",
+        "expected_repository_head",
+        "result_commit",
+        "supersedes_completion_refs",
+        "approval",
+        "authority_loss_reason",
+        "completion",
+        "validation",
+        "operation_id",
+        "author"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     name: "prepare_implementation_audit_panel",
     description:
       "Resolve one immutable packaged historical record and snapshot its configured read-only auditor roster.",

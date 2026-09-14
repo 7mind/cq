@@ -414,6 +414,16 @@ async function buildImplementationEvidenceFixture() {
   const nativeAuditPanels = new Map<string, ImplementationAuditPanelRecord>();
   const implementationEvidence = new ImplementationEvidenceService({
     store: createInMemoryImplementationEvidenceStore(),
+    operatorAdoption: {
+      verify: async (input) => {
+        expect(input.approval.answer).toBe("Allow explicit operator adoption");
+      },
+      taskRevision: async () => ({ updatedAt: FIXED_NOW, digest: "d".repeat(64) }),
+      recordLedger: async (task, adoption) => {
+        expect(task.taskRef).toBe("tasks:T9201");
+        expect(adoption.resultCommit).toBe(PARITY_IMPLEMENTATION_BASE);
+      },
+    },
     resolveReviewerRoster: () => [PARITY_ADAPTER_REVIEWER],
     nativeFallback: PARITY_NATIVE_FALLBACK,
     now: () => FIXED_NOW,
@@ -1699,6 +1709,24 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         baseCommit: "a".repeat(40),
       },
     },
+    {
+      name: "record_implementation_adoption",
+      args: {
+        task_ref: "tasks:T9201",
+        expected_task_updated_at: FIXED_NOW,
+        expected_task_digest: "d".repeat(64),
+        expected_repository_head: PARITY_IMPLEMENTATION_BASE,
+        result_commit: PARITY_IMPLEMENTATION_BASE,
+        supersedes_completion_refs: [],
+        approval: { kind: "explicit-operator-approval", questionRef: "questions:Q405", answer: "Allow explicit operator adoption" },
+        authority_loss_reason: "Original dispatch unavailable",
+        completion: "Adopted integrated implementation",
+        validation: { kind: "operator-reported-validation", validatedCommit: PARITY_IMPLEMENTATION_BASE,
+          command: "bun run check", exitCode: 0, logPath: "raw/parity-adoption.md", logSha256: "e".repeat(64) },
+        operation_id: "parity_adoption",
+        ...PARITY_PROVENANCE,
+      },
+    },
   ];
 }
 
@@ -1706,6 +1734,10 @@ function assertRepresentativeContracts(
   responses: Map<LedgerToolName, unknown>,
   fixture: Fixture,
 ): void {
+  expect(responses.get("record_implementation_adoption")).toMatchObject({
+    status: "recorded", kind: "operator-adoption", taskRef: "tasks:T9201",
+    resultCommit: PARITY_IMPLEMENTATION_BASE, repositoryHead: PARITY_IMPLEMENTATION_BASE,
+  });
   const page = responses.get("fetch_ledger") as {
     items: Array<{ fields: Record<string, unknown> }>;
     total: number;
@@ -2140,7 +2172,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 60 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 61 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

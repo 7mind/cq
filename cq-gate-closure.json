@@ -452,7 +452,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "f11a97bc3589b205f5a7739f7b49a60ea65bb484c1b3bbeca44cb8c47a56ab21",
+      "sha256": "224dd43a3d686a2f7b4b29c155f0d403b7d2f956db69df5319ee8907609b6f3c",
       "targets": []
     },
     {
@@ -1249,7 +1249,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "f11a97bc3589b205f5a7739f7b49a60ea65bb484c1b3bbeca44cb8c47a56ab21",
+      "sha256": "224dd43a3d686a2f7b4b29c155f0d403b7d2f956db69df5319ee8907609b6f3c",
       "targets": []
     },
     {
@@ -1423,7 +1423,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/responseContractDocs.test.ts",
-      "sha256": "8927fe9389ecb0ae093da113b8f5ba36159bdc539410ae6f7af4812ce541bd5f",
+      "sha256": "619fb09ce9c2d761f134dc798347b20fca94841cfcfde779153f632b11d3f2e1",
       "targets": []
     },
     {
@@ -1969,13 +1969,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "04f69b079bf498c29aaaed33b7f76a216192a14fb111650f76828afcc00e6f8d",
+      "sha256": "3cbc03f024373a766a9f5a399d00d8a4d5247468c6714d77aacf01e31cfae3e2",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "04f69b079bf498c29aaaed33b7f76a216192a14fb111650f76828afcc00e6f8d",
+      "sha256": "3cbc03f024373a766a9f5a399d00d8a4d5247468c6714d77aacf01e31cfae3e2",
       "targets": []
     },
     {
