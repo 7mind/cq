@@ -154,7 +154,7 @@ function goalItem(state: InMemoryPlanLifecycleState, goalId: string): Item | und
  * allocation. An absent (archived or dangling) or terminal parent rejects the
  * operation with deterministic public conflict metadata.
  */
-function coordinationMilestoneConflict(
+export function coordinationMilestoneConflict(
   state: InMemoryPlanLifecycleState,
   goal: Item,
 ): PlanConflict | null {
@@ -217,7 +217,7 @@ function parseJsonField<T>(
   }
 }
 
-function currentDraft(goal: Item): StoredDraft | null {
+export function currentDraft(goal: Item): StoredDraft | null {
   return parseJsonField(goal, PLAN_CURRENT_DRAFT_FIELD, (value) => {
     if (typeof value !== "object" || value === null) throw new Error("expected object");
     const candidate = value as Record<string, unknown>;
@@ -228,7 +228,7 @@ function currentDraft(goal: Item): StoredDraft | null {
   });
 }
 
-function finalizedDraft(goal: Item): PlanDraftIdentity | null {
+export function finalizedDraft(goal: Item): PlanDraftIdentity | null {
   return parseJsonField(goal, PLAN_FINALIZED_DRAFT_FIELD, (value) =>
     PlanDraftIdentitySchema.parse(value),
   );
@@ -419,7 +419,7 @@ function materializeReferences(
  * set WITHOUT mutating counters or inserting items (T1724). Callers must run
  * this before superseding prior work or recording an operation.
  */
-function preflightManifestReferences(
+export function preflightManifestReferences(
   state: InMemoryPlanLifecycleState,
   input: PlanPublishDraftInput,
 ): void {
@@ -514,7 +514,7 @@ function gateMaterializedRefFields(
   normalizeRefFields(fields, {}, refCtx);
 }
 
-function sameDraft(left: PlanDraftIdentity | null, right: PlanDraftIdentity): boolean {
+export function sameDraft(left: PlanDraftIdentity | null, right: PlanDraftIdentity): boolean {
   return (
     left !== null &&
     left.goalId === right.goalId &&
@@ -821,7 +821,7 @@ function claimNotActive(
   return { code: "claim-not-active", goalId, claimId, generation: generationValue };
 }
 
-function ownerConflict(
+export function ownerConflict(
   state: InMemoryPlanLifecycleState,
   input:
     | PlanPublishDraftInput
@@ -862,7 +862,7 @@ function ownerConflict(
   return null;
 }
 
-function abandonConflict(
+export function abandonConflict(
   state: InMemoryPlanLifecycleState,
   input: Extract<PlanReleaseInput, { kind: "abandon" }>,
 ): PlanConflict | null {

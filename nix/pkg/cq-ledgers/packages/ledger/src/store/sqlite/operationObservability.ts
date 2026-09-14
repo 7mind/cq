@@ -64,6 +64,8 @@ const SCAN_GUARDED_TABLES = new Set([
   "archived_items",
   "archive_pointers",
   "item_references",
+  "plan_claims",
+  "plan_operations",
 ]);
 
 export function assertSqliteAccessContract(record: SqliteAccessRecord): void {

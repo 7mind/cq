@@ -230,6 +230,8 @@ import { resolveGenericMutationClosure } from "../genericMutationDataSource.js";
 import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
 import { closedGraphIsTargetAdmitted } from "../../worksetAccess.js";
 import { createSqliteGenericMutationDataSource } from "./genericMutationDataSource.js";
+import { createSqliteLifecycleRowRepository } from "./lifecycleRowRepository.js";
+import { loadPlanLifecycleRowPlan, type PlanLifecycleRowRequest } from "../planLifecycleRowPlan.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -1693,22 +1695,29 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.runPlanLifecycleMutation(
+    return this.runKeyedPlanLifecycleMutation(
+      { operation: "claim", input },
       (state) => claimInMemoryPlan(state, input),
       input.purpose === "follow-up" ? "follow-up-claim" : null,
     );
   }
 
   async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
-    return this.runPlanLifecycleMutation((state) => publishInMemoryPlanDraft(state, input), null);
+    return this.runKeyedPlanLifecycleMutation(
+      { operation: "publish-draft", input }, (state) => publishInMemoryPlanDraft(state, input), null,
+    );
   }
 
   async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
-    return this.runPlanLifecycleMutation((state) => releaseInMemoryPlanClaim(state, input), null);
+    return this.runKeyedPlanLifecycleMutation(
+      { operation: "release", input }, (state) => releaseInMemoryPlanClaim(state, input), null,
+    );
   }
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
-    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
+    return this.runKeyedPlanLifecycleMutation(
+      { operation: "finalize", input }, (state) => finalizeInMemoryPlan(state, input), null,
+    );
   }
 
   async mutateOperatorAction(
@@ -1743,6 +1752,43 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const state = this.loadPlanLifecycleState();
     if (state.claims.size === 0 && state.operations.size === 0) return null;
     return serializePlanLifecycleDump(state);
+  }
+
+  private async runKeyedPlanLifecycleMutation<T>(
+    request: PlanLifecycleRowRequest,
+    mutate: (state: InMemoryPlanLifecycleState) => InMemoryPlanMutation<T>,
+    contender: PlanLifecycleSerializationContender | null,
+  ): Promise<T> {
+    this.assertInit();
+    const measurement = this.beginObservedOperation(`plan_${request.operation}`);
+    try {
+      const outcome = immediateWriteTransaction(this.db(), () => {
+        if (contender !== null) this.reachPlanSerializationBoundary(contender);
+        const rows = createSqliteLifecycleRowRepository(this.db(), measurement ?? null);
+        const plan = loadPlanLifecycleRowPlan(rows, request, this.now);
+        const mutation = mutate(plan.state);
+        const delta = this.persistGenericMutationState({
+          ledgers: plan.state.ledgers,
+          beforeLedgers: plan.beforeLedgers,
+          archives: new Map(),
+          beforeArchives: new Map(),
+        }, {
+          dirtyLedgers: new Set(mutation.dirtyLedgers),
+          dirtyArchives: new Set(),
+        }, measurement);
+        rows.persistPrivateRecords(plan.privateChanges());
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
+        return mutation;
+      }, WRITE_TXN_MAX_ATTEMPTS, measurement);
+      await this.projectCommitted(
+        [...new Set(outcome.dirtyLedgers)].map((ledgerId) => ({ ledgerId, op: "update" })), measurement,
+      );
+      measurement?.finish("success");
+      return outcome.result;
+    } catch (error) {
+      measurement?.finish("error");
+      throw error;
+    }
   }
 
   private async runPlanLifecycleMutation<T>(
@@ -2098,7 +2144,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   private persistGenericMutationState(
     state: GenericMutationLoadedState,
-    transaction: ReturnType<typeof createGenericMutationTransaction>,
+    transaction: Pick<ReturnType<typeof createGenericMutationTransaction>, "dirtyLedgers" | "dirtyArchives">,
     measurement: SqliteOperationMeasurement | undefined,
   ): GenericProjectionDelta {
     const db = this.db();

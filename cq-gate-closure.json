@@ -1607,7 +1607,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "aa0859afdd565335c878e977cbd2d5e9661216af73083cc48c93f41f819d0c2a",
+      "sha256": "4f6bb517636c6dc99f75cef9c71e876f1fbe0d12ecdbb269c8123656bd8a01a2",
       "targets": []
     },
     {
