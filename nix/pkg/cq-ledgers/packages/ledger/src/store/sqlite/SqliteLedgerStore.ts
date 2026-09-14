@@ -223,8 +223,8 @@ import { createKeyedOwnedWriteTransaction } from "../keyedOwnedWriteTransaction.
 import { assertOwnedMutationAdmission, WorksetOwnedLifecycleError, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import type { OwnedMutationContext } from "../directOwnedMutation.js";
-import { assertPlanMutationAdmission, assertChangedPlanItemsSelected, assertPlanCreatedOwnership, WorksetPlanLifecycleError, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
-import { authorizeKeyedWorksetPlan, guardedPlanRowRequest } from "../keyedWorksetPlanAuthorization.js";
+import { assertPlanMutationAdmission, WorksetPlanLifecycleError, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { assertKeyedPlanMutationChanges, authorizeKeyedWorksetPlan, guardedPlanRowRequest } from "../keyedWorksetPlanAuthorization.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
   createGenericMutationTransaction,
@@ -1911,18 +1911,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         const selected = authorizeKeyedWorksetPlan(createSqliteGenericMutationDataSource(this.db(), measurement), rows, context, plan);
         const lifecycle = createWorksetPlanLifecycleTransaction(plan.state);
         const result = mutate(lifecycle.tx);
+        assertKeyedPlanMutationChanges(plan, context.operation, selected,
+          result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
         const delta = this.persistGenericMutationState({
           ledgers: plan.state.ledgers, beforeLedgers: plan.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
         }, { dirtyLedgers: lifecycle.dirtyLedgers, dirtyArchives: new Set() }, measurement);
-        const existing = new Set([...plan.beforeLedgers].flatMap(([ledgerId, ledger]) =>
-          ledger.milestones.flatMap(({ items }) => items.map(({ id }) => `${ledgerId}:${id}`))));
-        const changedExisting = delta.activeUpserts.map(({ ledgerId, item }) => `${ledgerId}:${item.id}`).filter((ref) => existing.has(ref));
-        changedExisting.push(...delta.activeDeletes.map(({ ledgerId, itemId }) => `${ledgerId}:${itemId}`));
-        assertChangedPlanItemsSelected(changedExisting, selected);
-        const afterItems = new Map<string, Item>([...plan.state.ledgers].flatMap(([ledgerId, ledger]) =>
-          ledger.milestones.flatMap(({ items }) => items.map((item) => [`${ledgerId}:${item.id}`, item] as const))));
-        assertPlanCreatedOwnership((ref) => afterItems.get(ref), context.operation.kind, context.operation.input.goalId,
-          result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
         const privateChanges = plan.privateChanges();
         rows.persistPrivateRecords(privateChanges);
         const changes = [...this.coherenceChangesForDelta(delta), ...planControlChanges(privateChanges)];

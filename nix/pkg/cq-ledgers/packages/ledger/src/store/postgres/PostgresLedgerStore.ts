@@ -105,6 +105,8 @@ import { resolvePostgresOwnedRows } from "./ownedRowOperation.js";
 import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import type { OwnedMutationContext } from "../directOwnedMutation.js";
 import { resolvePostgresDirectOwnedRows } from "./directOwnedRowOperation.js";
+import { resolvePostgresGuardedPlanRows } from "./guardedPlanRowOperation.js";
+import { assertKeyedPlanMutationChanges } from "../keyedWorksetPlanAuthorization.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import type { PostgresAccessObserver } from "./operationAccess.js";
 import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
@@ -128,7 +130,6 @@ import {
 } from "../planLifecycleGuards.js";
 import {
   decodePostgresPlanScope,
-  encodePostgresPlanScope,
   serializePlanLifecycleDump,
 } from "../planLifecycleDump.js";
 import {
@@ -204,7 +205,7 @@ import {
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
 import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
-import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import type { AdmittedPlanMutation, WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
   createGenericMutationTransaction,
@@ -2238,29 +2239,26 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
-    let result!: T;
-    let dirtyLedgers: readonly string[] = [];
-    let live!: LiveTenantState;
-    await writeTransaction(this.pool(), async (tx) => {
-      await this.lockGoalRows(tx, [context.operation.input.goalId]);
-      await this.lockTenantCounters(tx);
-      const tenant = await this.readLiveTenant(tx);
-      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
-      const lifecycle = createWorksetPlanLifecycleTransaction(state);
-      result = runAuthorizedPlanLifecycleMutation(lifecycle.tx, context, mutate);
-      dirtyLedgers = [...lifecycle.dirtyLedgers];
-      for (const ledgerId of dirtyLedgers) {
-        await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
-      }
-      if (dirtyLedgers.length > 0) {
-        await this.persistPlanRecords(tx, "plan_claims", state.claims);
-        await this.persistPlanRecords(tx, "plan_operations", state.operations);
-      }
-      live = tenant;
+    const committed = await runPostgresKeyedOperation(this.pool(), {
+      projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+    }, {
+      name: `guarded_${context.operation.kind}`,
+      resolve: (queries) => resolvePostgresGuardedPlanRows(queries, context, this.now),
+      apply: async (queries, resolution) => {
+        if (resolution.kind === "rejected") throw resolution.error;
+        const { plan, selected } = resolution;
+        const lifecycle = createWorksetPlanLifecycleTransaction(plan.state);
+        const result = mutate(lifecycle.tx);
+        assertKeyedPlanMutationChanges(plan, context.operation, selected,
+          result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
+        const changed = await persistPostgresPlanRows(queries, plan, [...lifecycle.dirtyLedgers]);
+        await persistPostgresPrivateRecords(queries, plan.privateChanges());
+        return { result, plan, dirty: changed.ledgers };
+      },
     });
-    this.absorbLiveLedgers(live);
-    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
-    return result;
+    this.absorbPlanRows(committed.plan);
+    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    return committed.result;
   }
 
   /** Run one generic mutation in one tenant-scoped PostgreSQL transaction. */
@@ -2388,81 +2386,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       if (index < 0) cached.items.push(cloneItem(item));
       else cached.items[index] = cloneItem(item);
       this.indexUpsertActive(ledgerId, item);
-    }
-  }
-
-  /**
-   * Read the fence's side records from `tx` (LIVE rows) and pair them with the
-   * `ledgers` its caller already read live in the SAME transaction.
-   */
-  private async loadPlanLifecycleState(
-    tx: SQL,
-    ledgers: Map<string, Ledger>,
-  ): Promise<InMemoryPlanLifecycleState> {
-    const claims = new Map<string, PlanPrivateClaimRecord>();
-    for (const row of await tx<PlanRecordRow[]>`
-      SELECT scope, record_json FROM plan_claims WHERE project_key = ${this.projectKey}
-    `) {
-      claims.set(
-        decodePostgresPlanScope(row.scope),
-        PlanPrivateClaimRecordSchema.parse(JSON.parse(row.record_json)),
-      );
-    }
-    const operations = new Map<string, InMemoryPlanOperationRecord>();
-    for (const row of await tx<PlanRecordRow[]>`
-      SELECT scope, record_json FROM plan_operations WHERE project_key = ${this.projectKey}
-    `) {
-      operations.set(
-        decodePostgresPlanScope(row.scope),
-        JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
-      );
-    }
-    // D283: archived existence for plan-publish G80 parity with applyCreateItem.
-    const archivedIds = new Map<string, Set<string>>();
-    const add = (ledger: string, id: string): void => {
-      let set = archivedIds.get(ledger);
-      if (set === undefined) {
-        set = new Set();
-        archivedIds.set(ledger, set);
-      }
-      set.add(id);
-    };
-    for (const [key, item] of this.itemArchives) {
-      const slash = key.indexOf("/");
-      if (slash < 0) continue;
-      add(key.slice(0, slash), item.id);
-    }
-    for (const [key, group] of this.archives) {
-      const slash = key.indexOf("/");
-      if (slash < 0) continue;
-      const ledger = key.slice(0, slash);
-      for (const item of group.items) add(ledger, item.id);
-    }
-    return { ledgers, claims, operations, now: this.now, archivedIds };
-  }
-
-  /** UPSERT the fence's side records. Only ever called inside the fence's transaction. */
-  private async persistPlanRecords<T>(
-    tx: SQL,
-    table: "plan_claims" | "plan_operations",
-    records: ReadonlyMap<string, T>,
-  ): Promise<void> {
-    for (const [scope, record] of records) {
-      const key = encodePostgresPlanScope(scope);
-      const json = JSON.stringify(record);
-      if (table === "plan_claims") {
-        await tx`
-          INSERT INTO plan_claims (project_key, scope, record_json)
-          VALUES (${this.projectKey}, ${key}, ${json})
-          ON CONFLICT (project_key, scope) DO UPDATE SET record_json = EXCLUDED.record_json
-        `;
-      } else {
-        await tx`
-          INSERT INTO plan_operations (project_key, scope, record_json)
-          VALUES (${this.projectKey}, ${key}, ${json})
-          ON CONFLICT (project_key, scope) DO UPDATE SET record_json = EXCLUDED.record_json
-        `;
-      }
     }
   }
 

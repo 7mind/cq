@@ -7,29 +7,14 @@ import { createPostgresLifecycleRowRepository } from "./lifecycleRowRepository.j
 import type { PostgresOperationQueries } from "./operationAccess.js";
 import type { PostgresOperationClosure } from "./operationKernel.js";
 import { orderedPostgresRowLocks, type PostgresLockTarget, type PostgresRowLock } from "./rowLocks.js";
+import { postgresAdmissionMatches } from "./worksetAdmissionRows.js";
 
 type ResolvedOwnedRows = { readonly kind: "loaded"; readonly owned: KeyedOwnedWriteTransaction }
   | { readonly kind: "rejected"; readonly error: LedgerError | WorksetOwnedLifecycleError };
 
 async function assertDurableAdmission(queries: PostgresOperationQueries, context: AdmittedOwnedMutation): Promise<void> {
   assertOwnedMutationAdmission(context);
-  const { admission } = context;
-  queries.recordReadTarget({ table: "workset_roots" });
-  queries.recordReadTarget({ table: "workset_admissions", id: admission.id });
-  const durable = await queries.execute<{ form: string; kind: string; epoch: number; targets_json: string }>({
-    phase: "transaction", table: "workset_admissions", mode: "read", lockMode: "none",
-    predicate: { kind: "primary-key", keys: [admission.id] },
-  }, { sql: `SELECT form, kind, epoch, targets_json FROM workset_admissions WHERE project_key = $1 AND admission_id = $2`,
-    parameters: [queries.projectKey, admission.id] }, () => admission.id);
-  const roots = await queries.execute<{ epoch: number; roots_json: string }>({
-    phase: "transaction", table: "workset_roots", mode: "read", lockMode: "none",
-    predicate: { kind: "primary-key", keys: ["roots"] },
-  }, { sql: "SELECT epoch, roots_json FROM workset_roots WHERE project_key = $1", parameters: [queries.projectKey] }, () => "roots");
-  const row = durable[0];
-  const current = roots[0];
-  if (row === undefined || current === undefined || row.form !== "ledger-mutation" || row.kind !== "owned-write" ||
-    Number(row.epoch) !== admission.epoch || Number(current.epoch) !== admission.epoch ||
-    current.roots_json !== JSON.stringify(admission.roots) || row.targets_json !== JSON.stringify(admission.targets)) {
+  if (!(await postgresAdmissionMatches(queries, context.admission))) {
     throw new WorksetOwnedLifecycleError("stale-epoch", "owned transaction admission is no longer the exact durable owner/roots epoch");
   }
 }
