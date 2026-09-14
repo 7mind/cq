@@ -14,17 +14,43 @@ import { LIFECYCLE_NOW } from "./sqlitePlanLifecycleFixture.js";
 
 export interface BoundsQueryPlan {
   readonly sql: string;
+  readonly lookups: number;
   readonly nodes: ReturnType<typeof postgresQueryPlanNodes>;
 }
 
 class BoundsQueryProbe {
   active = false;
   readonly plans: BoundsQueryPlan[] = [];
+  private readonly arrayLengths = new WeakMap<object, number>();
+
+  private lookups(parameters: readonly unknown[]): number {
+    return Math.max(1, ...parameters.map((value) => typeof value === "object" && value !== null ? (this.arrayLengths.get(value) ?? 1) : 1));
+  }
 
   wrap<Handle extends SQL>(sql: Handle): Handle {
     return new Proxy(sql, {
+      apply: (target, _thisArgument, args) => {
+        const parts = args[0] as TemplateStringsArray;
+        if (!this.active || !Array.isArray(parts) || !Object.hasOwn(parts, "raw") || !/^\s*SELECT\b/i.test(parts[0]!)) return Reflect.apply(target, target, args);
+        const explainParts = Object.assign([`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${parts[0]!}`, ...parts.slice(1)],
+          { raw: [`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${parts.raw[0]!}`, ...parts.raw.slice(1)] });
+        return (async () => {
+          const explainArgs = [explainParts, ...args.slice(1)];
+          await Reflect.apply(target, target, explainArgs);
+          const explain = await Reflect.apply(target, target, explainArgs) as Array<{ "QUERY PLAN": readonly { Plan: ExplainNode }[] }>;
+          const statement = parts.reduce((text, part, index) => text + (index === 0 ? "" : `$${index}`) + part, "");
+          this.plans.push({ sql: statement.replace(/\s+/g, " ").trim(), lookups: this.lookups(args.slice(1)), nodes: postgresQueryPlanNodes(explain[0]!["QUERY PLAN"][0]!.Plan) });
+          return await Reflect.apply(target, target, args);
+        })();
+      },
       get: (target, property) => {
         const value = Reflect.get(target, property, target) as unknown;
+        if (property === "array" && typeof value === "function") return (...args: unknown[]) => {
+          const array = Reflect.apply(value, target, args) as object;
+          assert(Array.isArray(args[0]));
+          this.arrayLengths.set(array, args[0].length);
+          return array;
+        };
         if (property === "begin" && typeof value === "function") return (...args: unknown[]) => {
           const index = typeof args[0] === "string" ? 1 : 0;
           const callback = args[index] as SQL.TransactionContextCallback<unknown>;
@@ -34,8 +60,11 @@ class BoundsQueryProbe {
         if (property === "unsafe" && typeof value === "function") return async (...args: unknown[]) => {
           const statement = args[0];
           if (this.active && typeof statement === "string" && /^\s*SELECT\b/i.test(statement)) {
-            const explain = await Reflect.apply(value, target, [`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement}`, ...args.slice(1)]) as Array<{ "QUERY PLAN": readonly { Plan: ExplainNode }[] }>;
-            this.plans.push({ sql: statement.replace(/\s+/g, " ").trim(), nodes: postgresQueryPlanNodes(explain[0]!["QUERY PLAN"][0]!.Plan) });
+            const explainArgs = [`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement}`, ...args.slice(1)];
+            await Reflect.apply(value, target, explainArgs);
+            const explain = await Reflect.apply(value, target, explainArgs) as Array<{ "QUERY PLAN": readonly { Plan: ExplainNode }[] }>;
+            this.plans.push({ sql: statement.replace(/\s+/g, " ").trim(), lookups: this.lookups(Array.isArray(args[1]) ? args[1] : []),
+              nodes: postgresQueryPlanNodes(explain[0]!["QUERY PLAN"][0]!.Plan) });
           }
           return await Reflect.apply(value, target, args);
         };
@@ -72,11 +101,14 @@ export async function postgresLifecycleBoundsFixture(unrelatedRows: number) {
   const dsn = process.env.CQ_TEST_PG_URL;
   assert(dsn !== undefined && dsn.length > 0, "PostgreSQL bounds require a live DSN");
   const projectKey = "postgres-lifecycle-bounds";
+  const applicationName = `bounds-${database.schema}`;
   const accesses: PostgresAccessRecord[] = [];
   const probe = new BoundsQueryProbe();
   let writerProjection = new BoundsProjection();
   const peerProjection = new BoundsProjection();
-  const createStore = () => new PostgresLedgerStore({ pool: probe.wrap(new SQL({ url: dsn, connection: { search_path: database.schema } })),
+  const createStore = () => new PostgresLedgerStore({ pool: probe.wrap(new SQL({ url: dsn, connection: {
+    search_path: database.schema, application_name: applicationName, lock_timeout: "5s",
+  } })),
     projectKey, displayName: projectKey, now: () => LIFECYCLE_NOW,
     accessObserver: { record: (record) => accesses.push(record) }, searchProjectionFactory: () => writerProjection });
   let store = createStore();
@@ -99,6 +131,12 @@ export async function postgresLifecycleBoundsFixture(unrelatedRows: number) {
         SELECT ${projectKey}, 'tasks', 'M-bounds-' || n::text, '', '' FROM generate_series(1, ${unrelatedRows}::integer) AS n`;
       await database.pool`INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
         SELECT ${projectKey}, 'tasks', 'M-bounds-' || n::text, '', '', 'done', 'now' FROM generate_series(1, ${unrelatedRows}::integer) AS n`;
+      await database.pool`INSERT INTO coherence_vector (project_key, ledger, document_id, scope, kind, version, origin)
+        SELECT project_key, ledger, id, 'active', 'upsert', 1, 'bounds-background' FROM items
+        WHERE project_key = ${projectKey} AND ledger = 'tasks' AND milestone_id = 'M900000'`;
+      await database.pool`INSERT INTO coherence_vector (project_key, ledger, document_id, scope, kind, version, origin)
+        SELECT project_key, ledger, jsonb_build_array(pointer_id, id)::text, 'archived', 'upsert', 1, 'bounds-background' FROM archived_items
+        WHERE project_key = ${projectKey} AND ledger = 'tasks' AND pointer_id = 'M900001'`;
     }
     await store.reloadCommittedState();
     await peer.init();
@@ -157,7 +195,7 @@ export async function postgresLifecycleBoundsFixture(unrelatedRows: number) {
       diagnostics.push({ name, phases: structuredClone(accesses), plans: structuredClone(probe.plans), elapsedMs });
       return result;
     };
-    return { ...database, projectKey, get store() { return store; }, peer, warm, capture, observations, diagnostics,
+    return { ...database, projectKey, applicationName, get store() { return store; }, peer, warm, capture, observations, diagnostics,
       restart: async () => { await store.dispose(); writerProjection = new BoundsProjection(); store = createStore(); await store.init(); }, dispose };
   } catch (error) { await dispose(); throw error; }
 }

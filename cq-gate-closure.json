@@ -3,9 +3,39 @@
   "target": {
     "packageJson": "nix/pkg/cq-ledgers/package.json",
     "script": "check",
-    "scriptDagSha256": "6160a925d203ab4936ef184bdfa5c0cf495999cc1ce230735e6f901084ada7b0"
+    "scriptDagSha256": "e61ab397845e24c5c11b6c8d3add2173fd955847d071c8c0713652b02ea12d48"
   },
   "opaqueEdges": [
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",
+      "sha256": "fa29a970783593e61bd963625d76ed3b686806ee82d8fb5c21903410c804d378",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresTestCluster.ts",
+      "sha256": "f4bca01e7c367e2f14993ddbee49bf55777ec9102ae3894642d3100050878e67",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/checkPostgresLifecycleBounds.ts",
+      "sha256": "f0e3ce928a468dd005816782312f4941e9f7c1b8049b8ea96d6e46346aa311ee",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-command.test.ts",
+      "sha256": "6bb117ac4cc2c294cc06fce7e40a03a8fe88d5280e59153a27563ad3316447ba",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredCommand.ts",
+      "sha256": "c82302fb5d1b78e5a88a4a5da31e4942f1c52710ff7241f2cdbb0223e690db37",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger/bench/checkPostgresLifecycleBounds.ts"]
+    },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/direct-owned-lifecycle-sqlite.test.ts",
@@ -63,7 +93,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "732447d2928eb2669bd976ffaa03e3e99b59c16519efc43f4ec8a5a9626421fd",
+      "sha256": "4aa7b4ef828c9d61999d64590d77de74e3143e44089e68328ed5e1aee73708c2",
       "targets": []
     },
     {
@@ -1541,7 +1571,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "5dbc61a5fa1492091ae27f1eb20df493a8e665a475d2225fd5cdd68b261624cf",
+      "sha256": "2110671878cf8158a5ca062438239ac274bd4212dba41e64d8e009cc3bddc002",
       "targets": []
     },
     {
@@ -1613,7 +1643,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "6772ca1d2ecb585f1ef31b484048e32b6391a395d4c1bbf2d5ff808168f1b602",
+      "sha256": "d4a50bd46ad03a8592200f2e71e0fbf4a489efa7917b5f8eedacf7cc37f3ce5a",
       "targets": []
     },
     {
@@ -1847,13 +1877,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
-      "sha256": "6ff6729f4fcba3ff499728b0e77c685cf49d2021476345279e125d5830bff159",
+      "sha256": "45981ab4b116d0ca708b80400e7ce6ab06c6fb842b999047f7a56118d313a84a",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
-      "sha256": "6ff6729f4fcba3ff499728b0e77c685cf49d2021476345279e125d5830bff159",
+      "sha256": "45981ab4b116d0ca708b80400e7ce6ab06c6fb842b999047f7a56118d313a84a",
       "targets": []
     },
     {

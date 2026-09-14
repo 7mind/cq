@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { directCompletionRecord } from "./directOwnedLifecycleContract.js";
 import { postgresPlanBounds, postgresOperatorBounds, postgresOwnedBounds, postgresDirectBounds, postgresGenericBounds } from "./postgresLifecycleBoundsScenarios.js";
+import { postgresIndependentProgressBounds, postgresReleaseBounds } from "./postgresLifecycleBoundsControls.js";
 
 describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL consolidated lifecycle bounds [T5925 Performance-Effectual Blackbox-GoodCommunication]", () => {
   test("follow-up task membership does not scan unrelated active rows", async () => {
@@ -27,5 +28,13 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL consolidated lifecycle 
   }, 30_000);
   test("generic archive/unarchive includes exact active and archived projection keys", async () => {
     expect((await postgresGenericBounds(0)).observations).toHaveLength(11);
+  }, 30_000);
+  test("release effects, commit rollback and restrictive refusal keep exact durable bounds", async () => {
+    expect((await postgresReleaseBounds(0)).observations).toHaveLength(14);
+  }, 30_000);
+  test("unrelated goals/actions progress while selected targets and an unrelated counter are held", async () => {
+    const result = await postgresIndependentProgressBounds(0);
+    expect(result.goals.independent.ok).toBe(true);
+    expect(result.actions.independent).toMatchObject({ kind: "acknowledge", state: "acknowledged" });
   }, 30_000);
 });
