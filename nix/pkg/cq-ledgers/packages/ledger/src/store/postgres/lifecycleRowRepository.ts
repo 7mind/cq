@@ -35,7 +35,8 @@ export function createPostgresLifecycleRowRepository(queries: PostgresOperationQ
         predicate: { kind: "milestone-members", keys: ids }, lockMode: "none" }, {
         sql: `SELECT i.id, g.id AS group_id FROM groups g JOIN items i
           ON i.project_key = g.project_key AND i.ledger = g.ledger AND i.milestone_id = g.id
-          WHERE g.project_key = $1 AND g.ledger = 'tasks' AND g.id = ANY($2::text[]) ORDER BY g.seq, i.seq`,
+          WHERE g.project_key = $1 AND g.ledger = 'tasks' AND g.id = ANY($2::text[])
+            AND i.milestone_id = ANY($2::text[]) ORDER BY g.seq, i.seq`,
         parameters: [projectKey, ids],
       }, ({ id }) => `tasks:${id}`, [{ table: "groups", predicate: { kind: "keys", keys: ids.map((id) => `tasks:${id}`) },
         rowKeys: (rows) => [...new Set(rows.map(({ group_id }) => `tasks:${group_id}`))] }]);
