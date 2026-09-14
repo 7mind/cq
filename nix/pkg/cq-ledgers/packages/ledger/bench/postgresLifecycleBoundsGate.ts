@@ -35,7 +35,7 @@ export async function runPostgresLifecycleBoundsGate(emit: (record: unknown) => 
   assert.deepEqual(largeProgress, smallProgress);
   emit({ scenario: "independent-progress", result: smallProgress });
   operations += 2;
-  const evidence = { cases: operations, postgresCases: operations, postgresSkipped: 0 };
+  const evidence = { cases: operations, postgresCases: operations, postgresSkipped: 0, postgresInapplicable: [] };
   emit({ status: "pass", classification: "Performance-Effectual Blackbox-GoodCommunication", scenarios: scenarios.length + 1,
     smallUnrelated: SMALL_UNRELATED_ROWS, activeUnrelated: LARGE_UNRELATED_ROWS, archivedUnrelated: LARGE_UNRELATED_ROWS,
     unrelatedClaims: 2_000, unrelatedOperations: 2_000, ...evidence });

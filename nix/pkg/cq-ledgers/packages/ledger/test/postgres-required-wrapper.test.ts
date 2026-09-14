@@ -6,11 +6,84 @@ function report(body: string, count: number): string {
   return `<?xml version="1.0"?><testsuites tests="${count}"><testsuite name="mixed">${body}</testsuite></testsuites>`;
 }
 
+const inapplicableCells = [
+  {
+    file: "packages/ledger/test/backup-exporter.test.ts",
+    suite: "backup exporter — T582 public postgres backend retired (T736)",
+    reason: "retired-public-backend" as const,
+    names: [
+      'backup="in-tree": a mutation produces a parseable .cq/ dump carrying every tenant log artifact byte-identically',
+      'backup="orphan-branch": the dump lands as a commit on the configured ref with the same tenant .cq/logs/** bytes',
+      "default config (backup=none): NOTHING is written in-tree or to any ref; no scheduler is constructed",
+    ],
+  },
+  {
+    file: "packages/ledger-tui/test/embeddedPostgres.test.tsx",
+    suite: "embedded ledger-tui over backend='postgres' retired (T736)",
+    reason: "retired-public-backend" as const,
+    names: [
+      "McpLedgerClient.embedded resolves backend='postgres' with a live pg handle",
+      "<App> renders against the postgres-backed embedded store — lists the canonical ledgers",
+      "<App> creates an item through the postgres store and shows it in the list",
+    ],
+  },
+  {
+    file: "packages/ledger/test/create-ledger-store-project-identity.test.ts",
+    suite: "live PostgreSQL exclusion retired with public backend (T736)",
+    reason: "retired-public-backend" as const,
+    names: ["does not write XDG identity metadata for a successful PostgreSQL open"],
+  },
+  {
+    file: "packages/ledger/test/remote-ledger-client-contract.test.ts",
+    suite: "RemoteLedgerClient contract — real cq serve/PostgreSQL hub (Behavioral-Active Blackbox-GoodCommunication)",
+    reason: "dummy-only-protocol-control" as const,
+    names: [
+      "fails loud with RemoteProtocolError when the service negotiates an unsupported protocol version",
+      "fails loud with RemoteMalformedResponseError on a malformed tool result, then recovers",
+    ],
+  },
+].flatMap(({ names, ...identity }) => names.map((name) => ({ ...identity, name })));
+
+function cellXml(cell: { file: string; suite: string; name: string }, outcome: string): string {
+  const encode = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("'", "&apos;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return `<testsuite name="${encode(cell.suite)}" file="${encode(cell.file)}"><testcase name="${encode(cell.name)}">${outcome}</testcase></testsuite>`;
+}
+
 describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox-Atomic]", () => {
+  test("Q406 reports exactly the nine approved inapplicable cells separately from executed cases", () => {
+    const xml = report('<testcase name="real PostgreSQL" />' + inapplicableCells.map((cell) => cellXml(cell, "<skipped />")).join(""), 10);
+    expect(postgresEvidenceFromJunit(xml)).toEqual({ cases: 10, postgresCases: 1, postgresSkipped: 0, postgresInapplicable: inapplicableCells });
+    expect(() => postgresEvidenceFromJunit(report(inapplicableCells.map((cell) => cellXml(cell, "<skipped />")).join(""), 9))).toThrow("no valid PostgreSQL");
+  });
+
+  test("Q406 does not exempt another file, suite, case, environmental skip, or failed control", () => {
+    for (const cell of inapplicableCells) {
+      for (const altered of [{ ...cell, file: "packages/ledger/test/other-postgres.test.ts" }, { ...cell, suite: cell.suite + " changed" }, { ...cell, name: cell.name + " changed" }]) {
+        expect(() => postgresEvidenceFromJunit(report('<testcase name="real PostgreSQL" />' + cellXml(altered, "<skipped />"), 2))).toThrow("skipped 1");
+      }
+      expect(() => postgresEvidenceFromJunit(report(cellXml(cell, "<failure />"), 1))).toThrow("failed testcase");
+      expect(() => postgresEvidenceFromJunit(report(cellXml(cell, ""), 1))).toThrow("inapplicable PostgreSQL cell executed");
+    }
+    expect(() => postgresEvidenceFromJunit(report('<testcase name="PostgreSQL requires CQ_TEST_PG_URL"><skipped /></testcase>', 1))).toThrow("skipped 1");
+  });
+
+  test("Q406 rejects omitted, unapproved, duplicated, or overlapping inapplicable JSON evidence", () => {
+    const cell = inapplicableCells[0]!;
+    const evidence = { cases: 2, postgresCases: 1, postgresSkipped: 0, postgresInapplicable: [cell] };
+    expect(requirePostgresCases(evidence)).toEqual(evidence);
+    expect(() => requirePostgresCases(JSON.parse('{"cases":1,"postgresCases":1,"postgresSkipped":0}'))).toThrow("report inapplicable cells explicitly");
+    expect(() => requirePostgresCases({ ...evidence, postgresInapplicable: [{ ...cell, name: "unapproved" }] })).toThrow("unapproved");
+    expect(() => requirePostgresCases({ ...evidence, postgresInapplicable: [{ ...cell, reason: "dummy-only-protocol-control" }] })).toThrow("unapproved");
+    expect(() => requirePostgresCases({ ...evidence, postgresInapplicable: [cell, cell] })).toThrow("duplicate");
+    expect(() => requirePostgresCases({ ...evidence, cases: 1 })).toThrow("no valid PostgreSQL");
+    expect(() => requirePostgresCases({ ...evidence, postgresSkipped: 1 })).toThrow("skipped 1");
+    expect(() => postgresEvidenceFromJunit(report('<testcase name="real PostgreSQL" />' + cellXml(cell, "<skipped />").repeat(2), 3))).toThrow("duplicate");
+  });
+
   test("counts PostgreSQL ancestry and file identities without counting an unrelated skip", () => {
     const xml = report(`<testsuite name="real PostgreSQL"><testsuite name="claim cases"><testcase name="claims" /></testsuite></testsuite>
       <testcase name="private writes" file="postgres-schema.test.ts" /><testcase name="offline control"><skipped /></testcase>`, 3);
-    expect(postgresEvidenceFromJunit(xml)).toEqual({ cases: 3, postgresCases: 2, postgresSkipped: 0 });
+    expect(postgresEvidenceFromJunit(xml)).toEqual({ cases: 3, postgresCases: 2, postgresSkipped: 0, postgresInapplicable: [] });
   });
 
   test("fails closed for skipped PostgreSQL cases, zero execution, failures, and truncated reports", () => {
@@ -19,14 +92,14 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
     expect(() => postgresEvidenceFromJunit(report('<testcase name="PostgreSQL"><failure /></testcase>', 1))).toThrow("failed testcase");
     expect(() => postgresEvidenceFromJunit(report('<testcase name="PostgreSQL" />', 2))).toThrow("inconsistent counts");
     expect(() => postgresEvidenceFromJunit(report('<testcase name="PostgreSQL" />', 1).replace('</testsuites>', ''))).toThrow("incomplete");
-    expect(() => requirePostgresCases({ cases: 1, postgresCases: 2, postgresSkipped: 0 })).toThrow("no valid PostgreSQL");
+    expect(() => requirePostgresCases({ cases: 1, postgresCases: 2, postgresSkipped: 0, postgresInapplicable: [] })).toThrow("no valid PostgreSQL");
     expect(() => postgresEvidenceFromJunit(report('<testcase name="PostgreSQL wrapper [Blackbox-Atomic]" />', 1))).toThrow("no valid PostgreSQL");
   });
 
   test("does not read test identities from comments or CDATA and preserves quoted angle brackets", () => {
     const xml = report(`<!-- <testcase name="PostgreSQL" /> -->
       <testcase name="PostgreSQL x > y"><system-out><![CDATA[<testcase name="fake" />]]></system-out></testcase>`, 1);
-    expect(postgresEvidenceFromJunit(xml)).toEqual({ cases: 1, postgresCases: 1, postgresSkipped: 0 });
+    expect(postgresEvidenceFromJunit(xml)).toEqual({ cases: 1, postgresCases: 1, postgresSkipped: 0, postgresInapplicable: [] });
   });
 
   test("shares one DSN and required flag across task/full stages and closes only its lease", async () => {
@@ -81,7 +154,7 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
       openCluster: async () => ({ dsn: "postgresql://fixture/test", ownership: "provided", close: async () => {} }),
       run: async (_command, _cwd, env) => {
         commands++;
-        if (commands === 1) await Bun.write(env.CQ_TEST_PG_REPORT_JSON!, JSON.stringify({ cases: 20, postgresCases: 20, postgresSkipped: 0 }));
+        if (commands === 1) await Bun.write(env.CQ_TEST_PG_REPORT_JSON!, JSON.stringify({ cases: 20, postgresCases: 20, postgresSkipped: 0, postgresInapplicable: [] }));
         else await Bun.write(env.CQ_TEST_JUNIT_PATH!, report('<testcase name="PostgreSQL" />', 1));
         return 0;
       },
