@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { createLedgerMcpTools, assertSqliteAccessContract, type SqliteAccessRecord } from "../src/index.js";
+import { createLedgerMcpTools } from "../src/index.js";
 import type { AdmittedOwnedMutation } from "../src/worksetOwnedLifecycle.js";
-import { ownedLifecycleSqliteFixture, seedUnrelatedOwnedRows } from "./ownedLifecycleSqliteFixtures.js";
+import { ownedLifecycleSqliteFixture } from "./ownedLifecycleSqliteFixtures.js";
+import { admittedOwnedScalingFixture } from "./sqliteLifecycleBoundsScenarios.js";
 import { LIFECYCLE_CLAIM_INPUT, LIFECYCLE_PROVENANCE, sqlitePlanLifecycleFixture } from "./sqlitePlanLifecycleFixture.js";
 
 test("sqlite owned lifecycle uses admitted keyed rows", async () => {
@@ -29,45 +30,9 @@ test("sqlite owned lifecycle uses admitted keyed rows", async () => {
   } finally { await fixture.dispose(); }
 });
 
-async function admittedOwnedScalingFixture(unrelatedRows: number) {
-  const fixture = await ownedLifecycleSqliteFixture();
-  const { store, db, accesses, guarded } = fixture;
-  const observed: { result: unknown; accesses: SqliteAccessRecord[] }[] = [];
-  const capture = async <T>(operation: () => Promise<T>): Promise<T> => {
-    accesses.length = 0;
-    const result = await operation();
-    for (const access of accesses) assertSqliteAccessContract(access);
-    expect(accesses.filter(({ table }) => table.startsWith("plan_") || table === "archived_items")).toEqual([]);
-    const admissionReads = accesses.filter(({ table }) => table === "workset_admissions");
-    expect(admissionReads).toHaveLength(1);
-    expect(admissionReads[0]!.rowKeys).toEqual(admissionReads[0]!.keyedPredicate.keys);
-    // Each call has a distinct granted id; compare the same admission coordinate.
-    const normalized = accesses.map((access) => access.table !== "workset_admissions" ? access : {
-      ...access, keyedPredicate: { ...access.keyedPredicate, keys: ["current-admission"] }, rowKeys: ["current-admission"],
-    });
-    observed.push({ result, accesses: structuredClone(normalized) });
-    return result;
-  };
-  try {
-    seedUnrelatedOwnedRows(db, unrelatedRows);
-    const idea = await capture(() => guarded.owned.createOwnerless({ ledgerId: "ideas", status: "open", fields: { title: "selected idea" } }));
-    const defect = await capture(() => guarded.owned.createOwnerless({ ledgerId: "defects", status: "open", fields: { headline: "selected defect", severity: "high" } }));
-    await store.replaceWorksetRoots([`ideas:${idea.id}`, `defects:${defect.id}`, "goals:G1"]);
-    const fix = { defectId: defect.id, goal: { title: "fix", description: "owned fix" } };
-    await capture(() => guarded.bundles.bootstrapDefectToFixGoal(fix));
-    await capture(() => guarded.bundles.bootstrapDefectToFixGoal(fix));
-    expect(accesses.filter(({ mode }) => mode === "write")).toEqual([]);
-    await capture(() => guarded.bundles.bootstrapIdeaToGoal({ ideaId: idea.id, goal: { title: "idea goal", description: "owned idea" }, consumeIdea: true }));
-    await capture(() => guarded.owned.createOwned({
-      owner: { ledgerId: "goals", itemId: "G1" }, creationKind: "exact-gate-question",
-      child: { ledgerId: "questions", status: "open", fields: { question: "selected owner" } },
-    }));
-    return observed;
-  } finally { await fixture.dispose(); }
-}
 
 test("admitted intake, owned creation and coordination bundles retain exact access/write scopes with 20k active plus 20k archived rows [T5544]", async () => {
-  expect(await admittedOwnedScalingFixture(20_000)).toEqual(await admittedOwnedScalingFixture(0));
+  expect((await admittedOwnedScalingFixture(20_000)).observations).toEqual((await admittedOwnedScalingFixture(0)).observations);
 }, 30_000);
 
 test("native owned admission rejects substitution, extra changed rows, foreign ownership and stale epoch atomically [T5544]", async () => {
