@@ -10,20 +10,17 @@
  * reads from an in-memory MATERIALIZED CACHE of its OWN tenant's rows —
  * loaded on `init()`:
  *
- *  - Reads are answered synchronously from the cached `Ledger` objects
- *    (`this.ledgers`) + the archived-row maps (`this.archives` /
- *    `this.itemArchives`), exactly like InMemoryLedgerStore.
- *  - Mutations WRITE THROUGH to Postgres in a transaction (every row scoped by
- *    `project_key`), then update the cache POST-COMMIT and fire `onMutation`.
- *    Hub live frames are published from that hook (T726/T736). There is no
- *    PostgreSQL LISTEN/NOTIFY coherence path.
- *  - `invalidate(ledgerId)` re-reads that ledger's rows from Postgres under the
- *    per-ledger lock (async, matching the interface) so a caller that already
- *    observed a peer write can refresh this instance.
- *  - The derived `LedgerSearchIndex` (ftsSearch) is cold-built on `init()`,
- *    updated incrementally on single-item mutations (D147, parity with
- *    SqliteLedgerStore.indexUpsertActive), fully rebuilt on structural/
- *    archive ops and on `invalidate`.
+ *  - Synchronous reads materialize views from the tenant's keyed active and
+ *    archive cache. Ordinary committed changes patch only affected keys.
+ *  - Mutations record a durable coherence version and exact changed keys in
+ *    their domain transaction. A repeatable-read frame refreshes the cache
+ *    and awaits worker-owned search projection before notification.
+ *  - Invalidation and search reconcile versions newer than the acknowledged
+ *    cursor. Whole snapshots are confined to cold start, explicit gaps,
+ *    administrative replacement, and projection recovery.
+ *  - Projection failure preserves committed results and defers notification.
+ *    Search reports typed unavailability until recovery; synchronous reads
+ *    also refuse a cache that has not loaded this instance's committed rows.
  *
  * Like SqliteLedgerStore, this implements the interface directly over rows
  * without a Markdown serialization funnel (K102), and reuses the pure
@@ -51,6 +48,7 @@
  */
 
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import type {
   ArchivePointer,
@@ -59,7 +57,6 @@ import type {
   Item,
   Ledger,
   LedgerSchema,
-  Milestone,
 } from "../../types.js";
 import type { UsageStatsSnapshot } from "../../usageStats.js";
 import {
@@ -100,21 +97,28 @@ import { PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
 import type { PlanLifecycleRowRequest } from "../planLifecycleRowPlan.js";
 import { runPostgresKeyedOperation } from "./operationKernel.js";
 import { resolvePostgresPlanRows } from "./planRowOperation.js";
-import { persistPostgresPlanRows, type PostgresPublicRowPlan } from "./planRowPersistence.js";
+import { persistPostgresPlanRows } from "./planRowPersistence.js";
 import { resolvePostgresOwnedRows } from "./ownedRowOperation.js";
 import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import type { OwnedMutationContext } from "../directOwnedMutation.js";
 import { resolvePostgresDirectOwnedRows } from "./directOwnedRowOperation.js";
 import { resolvePostgresGuardedPlanRows } from "./guardedPlanRowOperation.js";
-import { resolvePostgresGenericRows, type PostgresGenericRowPlan } from "./genericRowOperation.js";
-import { persistPostgresGenericRows, type PostgresGenericRowChanges } from "./genericRowPersistence.js";
+import { resolvePostgresGenericRows } from "./genericRowOperation.js";
+import { recordPostgresCoherence, postgresCoherenceVersion, readPostgresCoherence, type PostgresCoherenceChange } from "./coherenceVector.js";
+import { PostgresReadCache } from "./readCache.js";
+import { POSTGRES_RESET_CONTROL_ID } from "./coherenceChanges.js";
+import { loadPostgresProjectionRows, loadPostgresProjectionSnapshot } from "./projectionRows.js";
+import { createWorkerSearchProjection } from "../../search/WorkerSearchProjection.js";
+import { SEARCH_PROJECTION_COMMAND_DEADLINE_MS, type SearchProjection, type SearchProjectionHealth } from "../../search/SearchProjection.js";
+import { SearchProjectionRecovery, ProjectionUnavailableError, type ProjectionChangeFrame } from "../../search/SearchProjectionRecovery.js";
+import { postgresPublicPlanChanges, postgresPrivatePlanChanges, postgresSelectedRowChanges, postgresArchivedRowChanges, POSTGRES_GROUP_CONTROL_PREFIX, POSTGRES_POINTER_CONTROL_PREFIX, POSTGRES_LEDGER_CONTROL_ID } from "./coherenceChanges.js";
+import { persistPostgresGenericRows } from "./genericRowPersistence.js";
 import type { AdmittedGenericMutation } from "../../worksetGenericMutation.js";
 import type { SqliteOperationAccessScope, SqliteOperationMeasurement } from "../sqlite/operationObservability.js";
 import { assertKeyedPlanMutationChanges } from "../keyedWorksetPlanAuthorization.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
-import type { PostgresAccessObserver } from "./operationAccess.js";
+import { PostgresOperationQueries, type PostgresAccessObserver } from "./operationAccess.js";
 import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
-import type { PostgresSelectedPublicRow } from "./selectedPublicRows.js";
 import type {
   InMemoryPlanLifecycleState,
   InMemoryPlanMutation,
@@ -163,7 +167,6 @@ import type { RefValidationContext, StatusChangePrecondition } from "../core.js"
 import { buildPrefixRegistry } from "../../refs.js";
 import { buildWorksetActiveState, closeWorkset } from "../../worksetGraph.js";
 import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
-import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { AsyncMutex } from "../mutex.js";
 import {
   CANONICAL_LEDGERS,
@@ -219,6 +222,7 @@ import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
 
 export interface PostgresLedgerStoreOpts {
   readonly accessObserver?: PostgresAccessObserver;
+  readonly searchProjectionFactory?: () => SearchProjection;
   /**
    * A `Bun.sql` connection pool (see {@link openPgPool}) whose database has
    * already had {@link ensureSchema} applied. The store OWNS this pool's
@@ -337,17 +341,7 @@ interface PlanRecordRow {
   record_json: string;
 }
 
-/**
- * Everything a plan-fenced write reads LIVE from its transaction — the whole
- * durable input of this store's THREE cache-backed read surfaces, kept in one
- * object so absorption can never publish part of it.
- *
- * `archived` carries the tenant's `archived_items` rows because
- * {@link PostgresLedgerStore.fetchArchive} is served from `this.archives` /
- * `this.itemArchives`, which the active-ledger read does not touch: absorbing
- * `ledgers` alone advertises archive POINTERS whose CONTENT the same instance
- * then denies having (review r2).
- */
+/** Authoritative transaction input for legacy raw guards and administrative operations. */
 interface LiveTenantState {
   readonly ledgers: Map<string, Ledger>;
   readonly archived: readonly ArchivedItemRow[];
@@ -396,6 +390,15 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
   private readonly accessObserver: PostgresAccessObserver | null;
+  private readonly coherenceOrigin = randomUUID();
+  private readonly readCache = new PostgresReadCache();
+  private readonly searchProjectionFactory: () => SearchProjection;
+  private searchProjection: SearchProjection | null = null;
+  private projectionRecovery: SearchProjectionRecovery | null = null;
+  private cachedVersion = 0;
+  private requiredCacheVersion = 0;
+  private readonly pendingNotifications = new Map<number, { ledgerId: string; op: LedgerMutationOp }[]>();
+  private readonly projectionListeners = new Set<(ledgerId: string) => void>();
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private readonly worksetAuthority: unknown;
   private readonly worksetOptions: Omit<
@@ -404,16 +407,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   >;
   private handle: SQL | null;
 
-  /** In-memory materialized cache of this tenant's ACTIVE state (K102 read model). */
-  private readonly ledgers = new Map<string, Ledger>();
-  /** Archived milestone-GROUPs, key `<ledger>/<pointerId>` (non-milestones ledgers). */
-  private readonly archives = new Map<string, Milestone>();
-  /** Archived milestone-ITEMs, key `milestones/<pointerId>`. */
-  private readonly itemArchives = new Map<string, Item>();
   private readonly mutexes = new Map<string, AsyncMutex>();
-  private readonly searchIndex = new LedgerSearchIndex();
   private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
+  private closing = false;
   /** Lazy T1958 workset roots/admission store for this tenant. */
   private workset: PostgresWorksetStore | null = null;
 
@@ -424,6 +421,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
     this.accessObserver = opts.accessObserver ?? null;
+    this.searchProjectionFactory = opts.searchProjectionFactory ?? (() => createWorkerSearchProjection(SEARCH_PROJECTION_COMMAND_DEADLINE_MS));
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
@@ -511,15 +509,16 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       const ideas = (await this.readActiveLedgers(tx)).get(IDEAS_LEDGER);
       if (ideas === undefined || !relocateActiveIdeasToAmbient(ideas)) return false;
       await this.persistLedgerState(tx, ideas);
+      await this.recordCoherence(tx, [{ ledger: IDEAS_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
       return true;
     });
-    await this.loadCache();
-    this.initialised = true;
-
-    for (const name of this.ledgers.keys()) {
-      this.rebuildLedgerIndexActive(name);
-      this.refreshLedgerIndexArchived(name);
-    }
+    this.searchProjection = this.searchProjectionFactory();
+    this.projectionRecovery = new SearchProjectionRecovery(this.searchProjection, {
+      load: (afterVersion, rebuild, signal) => this.loadProjectionFrame(afterVersion, rebuild, signal),
+      notify: (frame, signal) => this.notifyProjectionFrame(frame, signal),
+    }, SEARCH_PROJECTION_COMMAND_DEADLINE_MS);
+    try { await this.projectionRecovery.initialize(); this.initialised = true; }
+    catch (error) { await this.projectionRecovery.close(); this.projectionRecovery = null; this.searchProjection = null; throw error; }
   }
 
   /**
@@ -553,7 +552,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    * `project_key` (parity with SqliteLedgerStore.bootstrapCanonicalRows).
    */
   private async bootstrapCanonicalRows(missing: string[], widened: string[] = []): Promise<void> {
-    await writeTransaction(this.pool(), (tx) => this.runBootstrapWrites(tx, missing, widened));
+    await writeTransaction(this.pool(), async (tx) => { await this.recordCoherence(tx, await this.runBootstrapWrites(tx, missing, widened)); });
   }
 
   /**
@@ -562,9 +561,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    * its wipe (one atomic backup+wipe+reseed, rather than three separate
    * transactions with a window for a crash to leave the tenant half-wiped).
    */
-  private async runBootstrapWrites(tx: SQL, missing: string[], widened: string[]): Promise<void> {
+  private async runBootstrapWrites(tx: SQL, missing: string[], widened: string[]): Promise<PostgresCoherenceChange[]> {
     const canonSchema = new Map(CANONICAL_LEDGERS.map((c) => [c.name, c.schema]));
     const pk = this.projectKey;
+    const changes: PostgresCoherenceChange[] = [...missing, ...widened].map((ledger) => ({ ledger, documentId: POSTGRES_LEDGER_CONTROL_ID, scope: "registry", kind: "upsert" }));
     for (const name of missing) {
       await tx`
         INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
@@ -577,11 +577,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         WHERE project_key = ${pk} AND name = ${name}
       `;
     }
-    await tx`
+    const addedGroups = await tx<{ id: string }[]>`
       INSERT INTO groups (project_key, ledger, id, title, description)
       VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_ACTIVE_GROUP_ID}, ${MILESTONES_ACTIVE_GROUP_TITLE}, '')
-      ON CONFLICT DO NOTHING
+      ON CONFLICT DO NOTHING RETURNING id
     `;
+    for (const { id } of addedGroups) changes.push({ ledger: MILESTONES_LEDGER, documentId: POSTGRES_GROUP_CONTROL_PREFIX + id, scope: "control", kind: "upsert" });
     const ambient = await tx<Array<{ id: string }>>`
       SELECT id FROM items
       WHERE project_key = ${pk} AND ledger = ${MILESTONES_LEDGER} AND id = ${MILESTONES_AMBIENT_ID}
@@ -593,7 +594,9 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_AMBIENT_ID}, ${MILESTONES_ACTIVE_GROUP_ID}, 'open',
                 ${JSON.stringify({ title: "ambient" })}, ${now}, ${now}, ${null}, ${null})
       `;
+      changes.push({ ledger: MILESTONES_LEDGER, documentId: MILESTONES_AMBIENT_ID, scope: "active", kind: "upsert" });
     }
+    return changes;
   }
 
   /**
@@ -733,39 +736,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         CANONICAL_LEDGERS.map((c) => c.name),
         [],
       );
+      await this.recordCoherence(tx, [{ ledger: MILESTONES_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
     });
   }
 
-  /**
-   * Cold-load the whole tenant's rows into the in-memory cache.
-   *
-   * Row order: every query ORDERs BY the monotonic `seq` identity column
-   * (T573 review r1 — `ctid` is unstable across UPDATEs, whereas `seq` is
-   * assigned once at INSERT), giving sqlite-rowid / fs-document-order parity
-   * across restart/invalidate. One deliberate consequence, matching the sqlite
-   * backend's semantics exactly: `unarchiveItem` re-INSERTs the reattached
-   * item row, so it gets a FRESH seq and sorts to the END of its group on a
-   * later reload — the same end-of-group placement sqlite's rowid gives its
-   * unarchive re-insert, and the same position `applyReattachItem` pushes to
-   * in the live cache, so the cache and a reload agree.
-   */
-  private async loadCache(): Promise<void> {
-    const pool = this.pool();
-    this.ledgers.clear();
-    this.archives.clear();
-    this.itemArchives.clear();
-
-    // D149: one REPEATABLE READ snapshot for the five-statement tenant load so
-    // a concurrent archive/unarchive cannot tear active vs archived surfaces.
-    await readTransaction(pool, async (tx) => {
-      for (const [name, ledger] of await this.readActiveLedgers(tx)) {
-        this.ledgers.set(name, ledger);
-      }
-      for (const ar of await this.readArchivedRows(tx)) {
-        this.absorbArchivedRow(ar);
-      }
-    });
-  }
 
   /**
    * Materialise EVERY active ledger of this tenant (ledgers + groups + items,
@@ -775,7 +749,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    * `sql` is a parameter, not `this.pool()`, precisely so a caller inside a
    * write transaction can pass its `tx` handle and read the LIVE rows the
    * transaction's locks are protecting — the property the plan-lifecycle fence
-   * (T851) depends on, and the reason it never consults `this.ledgers`.
+   * (T851) depends on, and the reason it never consults the read cache.
    */
   private async readActiveLedgers(sql: SQL): Promise<Map<string, Ledger>> {
     const pk = this.projectKey;
@@ -853,102 +827,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     `;
   }
 
-  /**
-   * Read the WHOLE durable input of this store's read surfaces from `sql` —
-   * active ledgers plus the archived rows behind their pointers.
-   *
-   * The archived rows are read AFTER the active ones ON PURPOSE. A write
-   * transaction runs at READ COMMITTED, so these are separate snapshots, and
-   * only this order can leave archived content that is at least as new as the
-   * pointer list that advertises it; {@link PostgresLedgerStore.absorbLiveLedgers}
-   * then discards any content whose pointer the older snapshot did not carry,
-   * so the two surfaces move together even when a peer archives mid-read.
-   */
+  /** Read authoritative raw-guard input; post-commit coherence never absorbs this materialization. */
   private async readLiveTenant(sql: SQL): Promise<LiveTenantState> {
     const ledgers = await this.readActiveLedgers(sql);
     return { ledgers, archived: await this.readArchivedRows(sql) };
   }
 
-  /**
-   * Swap a transaction-local LIVE read into EVERY read surface POST-COMMIT.
-   *
-   * A plan-fenced write reads every ledger fresh under its locks, so its state
-   * is strictly newer than whatever this instance had cached — adopting it
-   * wholesale both publishes the write and repairs any drift a peer instance's
-   * earlier commit had left behind. `null` means the write took the unfenced
-   * path and read nothing live.
-   *
-   * The cache is not this store's only read surface, and there are THREE, not
-   * two. Absorbing into `this.ledgers` alone would advance:
-   *
-   *  - `fetchItem`/`search` for EVERY absorbed ledger while `afterCommit`
-   *    re-indexes only the MUTATED one, so a peer's committed item on some
-   *    third ledger becomes fetchable from an instance whose `ftsSearch` still
-   *    cannot see it (review r1); and
-   *  - `fetch(...).archivePointers` for every absorbed ledger while
-   *    `this.archives` / `this.itemArchives` — the ONLY source `fetchArchive`
-   *    reads — keep the pre-absorption content, so the same instance advertises
-   *    an archive pointer and then throws `not found` for its content
-   *    (review r2, reachable over MCP as `fetch_ledger_archive`).
-   *
-   * Before the fence all three were stale TOGETHER, so either divergence would
-   * be introduced by absorption itself. Absorption therefore repairs the active
-   * cache, the archive maps and BOTH search buckets for exactly the set of
-   * ledgers it absorbed — and, so a torn read cannot re-open the second gap the
-   * other way round, admits archived rows only for pointers the absorbed
-   * ledgers actually advertise.
-   *
-   * Cost, measured not assumed: a fenced `updateItem` against a tenant with
-   * 1500 archived items takes a median 40.6 ms vs 13.96 ms with none. The
-   * marginal ~27 ms splits into 3.9 ms for the `archived_items` SELECT and
-   * 18.4 ms for the MiniSearch archived-bucket rebuild — i.e. the dominant term
-   * is the whole-bucket index rebuild D147 already owns for the active side
-   * (40.92 ms @1500 there), and D147's remedy (incremental index upsert) is the
-   * remedy here too. Deferred to D147 rather than fixed in place.
-   */
-  private absorbLiveLedgers(live: LiveTenantState | null): void {
-    if (live === null) return;
-    const advertised = new Set<string>();
-    for (const [name, ledger] of live.ledgers) {
-      this.ledgers.set(name, ledger);
-      this.dropArchiveCacheOf(name);
-      for (const ptr of ledger.archivePointers) advertised.add(`${name}/${ptr.id}`);
-    }
-    for (const ar of live.archived) {
-      if (!advertised.has(`${ar.ledger}/${ar.pointer_id}`)) continue;
-      this.absorbArchivedRow(ar);
-    }
-    for (const name of live.ledgers.keys()) {
-      this.rebuildLedgerIndexActive(name);
-      this.refreshLedgerIndexArchived(name);
-    }
-  }
-
-  /** Drop one ledger's entries from BOTH archive-cache maps. */
-  private dropArchiveCacheOf(ledgerId: string): void {
-    const prefix = `${ledgerId}/`;
-    for (const key of [...this.archives.keys()]) {
-      if (key.startsWith(prefix)) this.archives.delete(key);
-    }
-    for (const key of [...this.itemArchives.keys()]) {
-      if (key.startsWith(prefix)) this.itemArchives.delete(key);
-    }
-  }
-
-  /** Place one archived_items row into the archive cache maps. */
-  private absorbArchivedRow(ar: ArchivedItemRow): void {
-    if (ar.ledger === MILESTONES_LEDGER) {
-      this.itemArchives.set(`${MILESTONES_LEDGER}/${ar.pointer_id}`, rowToItem(ar));
-      return;
-    }
-    const key = `${ar.ledger}/${ar.pointer_id}`;
-    let group = this.archives.get(key);
-    if (group === undefined) {
-      group = { id: ar.pointer_id, title: "", description: "", items: [] };
-      this.archives.set(key, group);
-    }
-    group.items.push(rowToItem(ar));
-  }
 
   /**
    * T1958 — tenant-scoped durable {@link PostgresWorksetStore}. Lazy; one
@@ -968,12 +852,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   replaceWorksetRoots(roots: readonly string[]) {
     const suppliedValidation = this.worksetOptions.validateReplacement;
-    let validatedLive: LiveTenantState | null = null;
     return this.worksetStore().setValidatedRoots(roots, async (canonical, tx) => {
       await this.lockAllGoalRows(tx);
       await this.lockTenantCounters(tx);
       const tenant = await this.readLiveTenant(tx);
-      validatedLive = tenant;
       const state = buildWorksetActiveState(
         [...tenant.ledgers].map(([ledger, value]) => ({
           ledger,
@@ -985,7 +867,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       );
       const closed = closeWorkset(canonical, state, { validateLiveRoots: true }).roots;
       return (await suppliedValidation?.(closed, tx)) ?? closed;
-    }, () => this.absorbLiveLedgers(validatedLive));
+    }, () => this.reconcileProjection());
   }
 
   /**
@@ -1007,14 +889,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }): Promise<void> {
     this.assertInit();
     const workset = this.worksetStore();
-    const staleLedgerIds = [...this.ledgers.keys()];
     await workset.runAdministrative({
       kind: "reset",
       authority: opts.authority,
       destructivePhase: async () => {
         // The store may have waited for an in-flight writer while acquiring
         // exclusivity; refresh so the backup observes that committed write.
-        await this.loadCache();
+        await this.recovery().rebuild();
         if (opts.beforeReset !== undefined) await opts.beforeReset();
         await writeTransaction(this.pool(), async (tx) => {
           await tx`
@@ -1036,6 +917,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             CANONICAL_LEDGERS.map(({ name }) => name),
             [],
           );
+          await this.recordCoherence(tx, [{ ledger: MILESTONES_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
           await tx`
             INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
             VALUES (${this.projectKey}, ${"[]"}, ${0}, ${0})
@@ -1044,24 +926,24 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       },
     });
 
-    await this.loadCache();
-    for (const ledgerId of new Set([...staleLedgerIds, ...this.ledgers.keys()])) {
-      this.searchIndex.removeLedger(ledgerId);
-    }
-    for (const ledgerId of this.ledgers.keys()) {
-      this.rebuildLedgerIndexActive(ledgerId);
-      this.refreshLedgerIndexArchived(ledgerId);
-    }
+    await this.reconcileProjection();
     // Exactly one peer invalidation, after both the reset transaction and the
     // surrounding administrative generation advance have committed.
   }
 
   async dispose(): Promise<void> {
+    this.closing = true;
     // D148: drain per-ledger mutexes BEFORE closing the pool so an in-flight
     // coherence invalidate/reloadLedger (parked on `await prior` or mid-query)
     // finishes against a still-open pool.
     const drains = Array.from(this.mutexes.values()).map((m) => m.run(async () => undefined));
     await Promise.all(drains);
+    if (this.projectionRecovery !== null) await this.projectionRecovery.close();
+    this.projectionRecovery = null;
+    this.searchProjection = null;
+    this.pendingNotifications.clear();
+    this.projectionListeners.clear();
+    this.readCache.clear();
     if (this.workset !== null) {
       this.workset.close();
       this.workset = null;
@@ -1070,9 +952,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       await this.handle.close();
       this.handle = null;
     }
-    this.ledgers.clear();
-    this.archives.clear();
-    this.itemArchives.clear();
     this.mutexes.clear();
     this.initialised = false;
   }
@@ -1182,11 +1061,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async reloadCommittedState(): Promise<void> {
     this.assertInit();
-    await this.loadCache();
-    for (const ledgerId of this.ledgers.keys()) {
-      this.rebuildLedgerIndexActive(ledgerId);
-      this.refreshLedgerIndexArchived(ledgerId);
-    }
+    await this.recovery().rebuild();
   }
 
   async eraseTenant(opts: { readonly authority: unknown }): Promise<void> {
@@ -1208,10 +1083,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await tx`DELETE FROM groups WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM ledgers WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM logs WHERE project_key = ${this.projectKey}`;
+          await this.recordCoherence(tx, [{ ledger: MILESTONES_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
           await tx`DELETE FROM projects WHERE project_key = ${this.projectKey}`;
         });
       },
     });
+    await this.reconcileProjection();
     this.fireHook("logs", "archive");
   }
 
@@ -1313,8 +1190,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
 
   enumerate(): string[] {
-    this.assertInit();
-    return Array.from(this.ledgers.keys()).sort();
+    this.assertCacheReadable();
+    return this.readCache.enumerate();
   }
 
   fetch(ledgerId: string): FetchedLedger {
@@ -1322,7 +1199,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
-    return cloneItem(findItem(this.getLedger(ledgerId), itemId).item);
+    this.assertCacheReadable();
+    return this.readCache.item(ledgerId, itemId);
   }
 
   search(ledgerId: string, query: string): Item[] {
@@ -1331,9 +1209,21 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
     this.assertInit();
-    return this.searchIndex
-      .searchQuery(query, opts)
-      .map((h) => ({ ...h, item: cloneItem(h.item) }));
+    await this.reconcileProjection();
+    if (this.searchProjection === null) throw new ProjectionUnavailableError("PostgreSQL search projection is not mounted");
+    const ack = await this.searchProjection.execute({ kind: "search", query, options: opts }).catch((error: unknown) => {
+      void this.reconcileProjection().catch(() => undefined);
+      throw new ProjectionUnavailableError(`Search projection unavailable: ${String(error)}`);
+    });
+    if (ack.result.kind !== "search") throw new LedgerError("Search projection returned a non-search acknowledgement");
+    return ack.result.hits.map((hit) => ({ ...hit, item: cloneItem(hit.item) }));
+  }
+
+  searchProjectionHealth(): SearchProjectionHealth { return this.recovery().health(); }
+  reconcileProjection(): Promise<void> { return this.recovery().reconcile(); }
+  subscribeProjectionChanges(listener: (ledgerId: string) => void): () => void {
+    this.projectionListeners.add(listener);
+    return () => { this.projectionListeners.delete(listener); };
   }
 
   fetchMilestone(milestoneId: string): FetchedMilestoneItem {
@@ -1347,15 +1237,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   listMilestoneItems(milestoneId: string): Record<string, Item[]> {
-    this.assertInit();
-    const out: Record<string, Item[]> = {};
-    for (const [name, ledger] of this.ledgers) {
-      if (name === MILESTONES_LEDGER) continue;
-      const group = ledger.milestones.find((m) => m.id === milestoneId);
-      if (group === undefined || group.items.length === 0) continue;
-      out[name] = group.items.map(cloneItem);
-    }
-    return out;
+    this.assertCacheReadable();
+    return this.readCache.milestoneItems(milestoneId);
   }
 
   snapshot(): LedgerSnapshot {
@@ -1364,26 +1247,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
-    this.assertInit();
-    const key = `${ledgerId}/${archiveId}`;
-    if (ledgerId === MILESTONES_LEDGER) {
-      const item = this.itemArchives.get(key);
-      if (item === undefined) {
-        throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
-      }
-      return { kind: "item", item: cloneItem(item) };
-    }
-    const m = this.archives.get(key);
-    if (m === undefined) {
-      throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
-    }
-    return { kind: "group", milestone: cloneMilestone(m) };
+    this.assertCacheReadable();
+    return this.readCache.archive(ledgerId, archiveId);
   }
 
   // ---------------------------------------------------------------------------
   // Mutations (async write-through: apply* against a clone → persist affected
-  // rows to PG in one transaction → swap clone into cache post-commit → rebuild
-  // index → fire onMutation). Every mutation runs under the same
+  // rows and coherence keys in one transaction → acknowledge exact projection
+  // deltas → fire onMutation). Raw mutations run under the same
   // per-ledger / global-milestones AsyncMutex discipline as InMemoryLedgerStore
   // so within-instance ordering (and the concurrency-parity suite) holds; the
   // PG transaction provides cross-process isolation.
@@ -1393,35 +1264,31 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
   ): Promise<Item> {
+    let committedVersion: number | null = null;
     const item = await this.withMilestonesLock(async () => {
       let out!: Item;
-      let mutated!: Ledger;
-      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
-        refreshed = null;
+        committedVersion = null;
         // D267/T1858: parent row lock FIRST, then the authoritative live read.
         await this.lockParentMilestoneRow(tx, milestoneId);
         const state = await this.readLiveTenant(tx);
         const msLive = requireLiveLedger(state.ledgers, MILESTONES_LEDGER);
+        const before = JSON.stringify(findItem(msLive, milestoneId).item);
         const x = applyUpdateMilestoneItem(
           msLive,
           milestoneId,
           patch,
           this.now(),
-          this.buildRefValidationContext(),
+          this.buildRefValidationContext(null),
           await this.nonTerminalChildren(tx, milestoneId),
         );
         await this.persistItemRow(tx, MILESTONES_LEDGER, x);
+        if (before !== JSON.stringify(x)) committedVersion = await this.recordCoherence(tx, [{ ledger: MILESTONES_LEDGER, documentId: x.id, scope: "active", kind: "upsert" }]);
         out = cloneItem(x);
-        mutated = msLive;
-        refreshed = state;
       });
-      this.absorbLiveLedgers(refreshed);
-      this.ledgers.set(MILESTONES_LEDGER, mutated);
       return out;
     });
-    // absorbLiveLedgers already rebuilt the active index for every absorbed ledger.
-    await this.afterCommit(MILESTONES_LEDGER, "update", { upsertItem: null });
+    await this.projectCommitted(committedVersion, [{ ledgerId: MILESTONES_LEDGER, op: "update" }]);
     return item;
   }
 
@@ -1469,20 +1336,19 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
+    let committedVersion: number | null = null;
     if (ledgerId === MILESTONES_LEDGER) {
       // Canonical disposition (D267/T1856): one delegated path.
       return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
     }
-    let absorbedLive = false;
     const item = await this.withLock(ledgerId, async () => {
       let out!: Item;
-      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
-        refreshed = null;
+        committedVersion = null;
         // T851 plan fence. For the two plan-managed ledgers the guard decision
         // and the mutation itself must both see LIVE rows, so the whole thing
         // runs behind this goal's row lock over a transaction-local read
-        // instead of over `this.ledgers` (which a peer instance's committed
+        // instead of over the read cache (which a peer instance's committed
         // lifecycle write may already have made stale).
         if (this.isPlanFenced(ledgerId)) {
           await this.lockGoalRows(
@@ -1499,6 +1365,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             itemId,
             patch,
           );
+          const before = JSON.stringify(findItem(source, itemId).item);
           const x = applyUpdateItem(
             source,
             itemId,
@@ -1508,40 +1375,30 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             this.buildRefValidationContext(live),
           );
           await this.persistItemRow(tx, ledgerId, x);
+          if (before !== JSON.stringify(x)) committedVersion = await this.recordCoherence(tx, [{ ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" }]);
           out = cloneItem(x);
-          refreshed = state;
           return;
         }
         // D147: single-item shim (O(1)) instead of structuredClone of the whole
         // ledger — parity with SqliteLedgerStore.singleItemShim / T538/D87.
-        const shim = this.singleItemShim(ledgerId, itemId);
-        const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
+        const shim = await this.singleItemShim(tx, ledgerId, itemId);
+        const before = JSON.stringify(findItem(shim, itemId).item);
+        const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch, null);
         const x = applyUpdateItem(
           shim,
           itemId,
           patch,
           this.now(),
           precondition,
-          this.buildRefValidationContext(),
+          this.buildRefValidationContext(null),
         );
         await this.persistItemRow(tx, ledgerId, x);
+        if (before !== JSON.stringify(x)) committedVersion = await this.recordCoherence(tx, [{ ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" }]);
         out = cloneItem(x);
       });
-      if (refreshed !== null) {
-        this.absorbLiveLedgers(refreshed);
-        // source was mutated in-place inside the live map absorb already published.
-        absorbedLive = true;
-      } else {
-        // Unfenced path: splice the one committed item into the live cache.
-        this.commitItemIntoCache(ledgerId, out);
-      }
       return out;
     });
-    // Fenced path already rebuilt indexes via absorbLiveLedgers; unfenced path
-    // upserts the one doc (D147) instead of rebuilding the whole bucket.
-    await this.afterCommit(ledgerId, "update", {
-      upsertItem: absorbedLive ? null : item,
-    });
+    await this.projectCommitted(committedVersion, [{ ledgerId: ledgerId, op: "update" }]);
     return item;
   }
 
@@ -1550,6 +1407,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     milestoneId: string,
     init: CreateItemInit,
   ): Promise<Item> {
+    let committedVersion: number | null = null;
     if (ledgerId === MILESTONES_LEDGER) {
       throw new BootstrapViolationError(
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
@@ -1563,10 +1421,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = await this.withMilestonesLock(async () => {
       return this.withLock(ledgerId, async () => {
         let out!: Item;
-        let mutated!: Ledger;
-        let refreshed: LiveTenantState | null = null;
         await writeTransaction(this.pool(), async (tx) => {
-          refreshed = null;
+          committedVersion = null;
           // D267/T1858: parent row lock FIRST, then the authoritative
           // liveness check against the LIVE milestones ledger.
           await this.lockParentMilestoneRow(tx, milestoneId);
@@ -1585,45 +1441,50 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             );
           }
           const base = requireLiveLedger(live, ledgerId);
+          const existingGroup = base.milestones.some(({ id }) => id === milestoneId);
           const refCtx = this.buildRefValidationContext(live);
           const x = await this.insertItemViaCore(tx, base, init.id, (l) =>
             applyCreateItem(l, milestoneId, init, this.now(), refCtx),
           );
+          committedVersion = await this.recordCoherence(tx, [
+            { ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" },
+            { ledger: ledgerId, documentId: POSTGRES_LEDGER_CONTROL_ID, scope: "registry", kind: "upsert" },
+            ...(existingGroup ? [] : [{ ledger: ledgerId, documentId: POSTGRES_GROUP_CONTROL_PREFIX + milestoneId, scope: "control", kind: "upsert" } as const]),
+          ]);
           out = cloneItem(x);
-          mutated = base;
-          refreshed = state;
         });
-        this.absorbLiveLedgers(refreshed);
-        this.ledgers.set(ledgerId, mutated);
         return out;
       });
     });
-    // absorbLiveLedgers already rebuilt indexes; skip a second full rebuild (D147).
-    await this.afterCommit(ledgerId, "create", { upsertItem: null });
+    await this.projectCommitted(committedVersion, [{ ledgerId: ledgerId, op: "create" }]);
     return item;
   }
 
   async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
+    let committedVersion: number | null = null;
     const item = await this.withMilestonesLock(async () => {
       let out!: Item;
-      let mutated!: Ledger;
       await writeTransaction(this.pool(), async (tx) => {
+        committedVersion = null;
         const clone = cloneLedger(this.getLedger(MILESTONES_LEDGER));
-        const refCtx = this.buildRefValidationContext();
+        const refCtx = this.buildRefValidationContext(null);
         const x = await this.insertItemViaCore(tx, clone, init.id, (l) =>
           applyCreateMilestoneItem(l, init, this.now(), refCtx),
         );
+        committedVersion = await this.recordCoherence(tx, [
+          { ledger: MILESTONES_LEDGER, documentId: x.id, scope: "active", kind: "upsert" },
+          { ledger: MILESTONES_LEDGER, documentId: POSTGRES_LEDGER_CONTROL_ID, scope: "registry", kind: "upsert" },
+        ]);
         out = cloneItem(x);
-        mutated = clone;
       });
-      this.ledgers.set(MILESTONES_LEDGER, mutated);
       return out;
     });
-    await this.afterCommit(MILESTONES_LEDGER, "create", { upsertItem: item });
+    await this.projectCommitted(committedVersion, [{ ledgerId: MILESTONES_LEDGER, op: "create" }]);
     return item;
   }
 
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
+    let committedVersion: number | null = null;
     this.assertInit();
     if (name === MILESTONES_LEDGER) {
       throw new BootstrapViolationError(`ledger name "${MILESTONES_LEDGER}" is reserved`);
@@ -1638,19 +1499,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     // INSERT + cache set, so two concurrent in-instance createLedger calls
     // cannot both pass validation against the pre-INSERT cache.
     const view = await this.mutexFor(REGISTRY_MUTEX_KEY).run(async () => {
-      if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
+      if (this.readCache.hasLedger(name)) throw new DuplicateIdError("ledger", name);
       // Prefix uniqueness gives global item-id uniqueness (Q-CANL-8).
       assertPrefixUnique(
         name,
         schema,
-        Array.from(this.ledgers.values(), (l) => ({ name: l.id, schema: l.schema })),
+        this.readCache.registry(),
       );
-      await writeTransaction(this.pool(), async (tx) => {
-        await tx`
-          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
-          VALUES (${pk}, ${name}, ${JSON.stringify(schema)}, 0, 0)
-        `;
-      });
       const ledger: Ledger = {
         id: name,
         schema,
@@ -1658,21 +1513,29 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         milestones: [],
         archivePointers: [],
       };
-      this.ledgers.set(name, ledger);
-      return materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
+      const createdView = materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
+      await writeTransaction(this.pool(), async (tx) => {
+        committedVersion = null;
+        await tx`
+          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+          VALUES (${pk}, ${name}, ${JSON.stringify(schema)}, 0, 0)
+        `;
+        committedVersion = await this.recordCoherence(tx, [{ ledger: name, documentId: POSTGRES_LEDGER_CONTROL_ID, scope: "registry", kind: "upsert" }]);
+      });
+
+      await this.projectCommitted(committedVersion, [{ ledgerId: name, op: "create" }]);
+      return createdView;
     });
-    await this.afterCommit(name, "create", {});
     return view;
   }
 
   async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
+    let committedVersion: number | null = null;
     const item = await this.withLock(ledgerId, async () => {
       const pk = this.projectKey;
       let out!: Item;
-      let mutated!: Ledger;
-      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
-        refreshed = null;
+        committedVersion = null;
         // D267/T1858: resolve the parent coordinate, take its row lock FIRST,
         // then run the authoritative liveness check and the mutation against
         // the post-lock live tenant — the resurrection guard serializes with
@@ -1689,6 +1552,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), parentId);
         const source = requireLiveLedger(live, ledgerId);
         const current = findItem(source, itemId).item;
+        const before = JSON.stringify(current);
         // T851 plan fence. `reopenItem` is a SEPARATE write path from
         // `updateItem`, so it needs its own transition guard — a backend that
         // fenced only `updateItem` would let a terminal managed task be
@@ -1713,16 +1577,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           this.buildRefValidationContext(live),
         );
         await this.persistItemRow(tx, ledgerId, x);
+        if (before !== JSON.stringify(x)) committedVersion = await this.recordCoherence(tx, [{ ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" }]);
         out = cloneItem(x);
-        mutated = source;
-        refreshed = state;
       });
-      this.absorbLiveLedgers(refreshed);
-      this.ledgers.set(ledgerId, mutated);
       return out;
     });
-    // absorbLiveLedgers already rebuilt indexes.
-    await this.afterCommit(ledgerId, "update", { upsertItem: null });
+    await this.projectCommitted(committedVersion, [{ ledgerId: ledgerId, op: "update" }]);
     return item;
   }
 
@@ -1731,15 +1591,16 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     milestoneId: string,
     itemId: string,
   ): Promise<Item> {
+    let committedVersion: number | null = null;
     const isMilestones = ledgerId === MILESTONES_LEDGER;
     const pk = this.projectKey;
     const reattached = await this.withLock(ledgerId, async () => {
       let out!: Item;
-      let mutated!: Ledger;
       // Prepared OUTSIDE the transaction body so the post-commit archive-map
       // update can apply the same delta; recomputed on the (rare) retry.
       let dropGroupArchive = false;
       await writeTransaction(this.pool(), async (tx) => {
+        committedVersion = null;
         dropGroupArchive = false;
         // D267/T1858: parent row lock FIRST, then the archived row read live
         // and locked, then the liveness check against the LIVE milestones
@@ -1808,34 +1669,22 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             WHERE project_key = ${pk} AND ledger = ${ledgerId} AND id = ${milestoneId}
           `;
         }
+        committedVersion = await this.recordCoherence(tx, [
+          { ledger: ledgerId, documentId: x.id, scope: "active", kind: "upsert" },
+          { ledger: ledgerId, documentId: JSON.stringify([milestoneId, x.id]), scope: "archived", kind: "delete" },
+          ...(!groupsBefore.has(x.milestoneId) ? [{ ledger: ledgerId, documentId: POSTGRES_GROUP_CONTROL_PREFIX + x.milestoneId, scope: "control", kind: "upsert" } as const] : []),
+          ...(isMilestones || dropGroupArchive ? [{ ledger: ledgerId, documentId: POSTGRES_POINTER_CONTROL_PREFIX + milestoneId, scope: "control", kind: "delete" } as const] : []),
+        ]);
         out = cloneItem(x);
-        mutated = clone;
       });
-      // Post-commit cache update: swap the ledger, drop the reattached item from
-      // the archive map, drop the pointer + group archive when emptied.
-      this.ledgers.set(ledgerId, mutated);
-      const key = `${ledgerId}/${milestoneId}`;
-      if (isMilestones) {
-        this.itemArchives.delete(key);
-        this.removeArchivePointer(ledgerId, milestoneId);
-      } else {
-        const group = this.archives.get(key);
-        if (group !== undefined) {
-          const idx = group.items.findIndex((i) => i.id === itemId);
-          if (idx >= 0) group.items.splice(idx, 1);
-          if (group.items.length === 0) {
-            this.archives.delete(key);
-            this.removeArchivePointer(ledgerId, milestoneId);
-          }
-        }
-      }
       return out;
     });
-    await this.afterCommit(ledgerId, "update", { alsoArchived: true });
+    await this.projectCommitted(committedVersion, [{ ledgerId: ledgerId, op: "update" }]);
     return reattached;
   }
 
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    let committedVersion: number | null = null;
     if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
       throw new BootstrapViolationError(
         `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
@@ -1851,20 +1700,16 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     let pointer!: ArchivePointer;
 
     await this.withMilestonesLock(async () => {
-      const otherIds = Array.from(this.ledgers.keys())
+      const otherIds = this.readCache.enumerate()
         .filter((n) => n !== MILESTONES_LEDGER)
         .sort();
       await this.withLocksInOrder(otherIds, async () => {
-        // Hoisted so the post-commit cache update sees the detached data;
-        // recomputed each (rare) transaction retry.
-        let msClone!: Ledger;
-        let detachedItem!: Item;
-        let detachedGroups!: Map<string, { clone: Ledger; items: Item[] }>;
         let localParticipating: string[] = [];
 
         await writeTransaction(this.pool(), async (tx) => {
+          committedVersion = null;
           localParticipating = [];
-          detachedGroups = new Map();
+          const detachedGroups = new Map<string, { clone: Ledger; items: Item[] }>();
           // D267/T1858: parent row lock FIRST — a concurrent create/reopen/
           // unarchive under this parent blocks on the same row, so the detach
           // scan and the deletes below see one serializable state.
@@ -1872,7 +1717,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           const state = await this.readLiveTenant(tx);
           const live = state.ledgers;
           assertArchiveDoesNotDropUnsatisfyingGates(live, milestoneId);
-          msClone = requireLiveLedger(live, MILESTONES_LEDGER);
+          const msClone = requireLiveLedger(live, MILESTONES_LEDGER);
 
           // D101: locate the milestone item in msClone's active group and
           // compute msTitle/msStatus BEFORE calling applyDetachMilestoneItem —
@@ -1900,7 +1745,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             msTitle,
             msStatus,
           );
-          detachedItem = msItem;
 
           // Detach each participating non-milestones group (verifies every item
           // terminal → NonTerminalItemsError before splice). Clones are
@@ -1943,6 +1787,17 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await this.insertArchivedRow(tx, MILESTONES_LEDGER, milestoneId, msItem);
           await tx`DELETE FROM items WHERE project_key = ${pk} AND ledger = ${MILESTONES_LEDGER} AND id = ${milestoneId}`;
 
+          const changes: PostgresCoherenceChange[] = [];
+          for (const [ledger, items] of [[MILESTONES_LEDGER, [msItem]], ...[...detachedGroups].map(([ledger, group]) => [ledger, group.items] as const)] as const) {
+            for (const item of items) changes.push(
+              { ledger, documentId: item.id, scope: "active", kind: "delete" },
+              { ledger, documentId: JSON.stringify([milestoneId, item.id]), scope: "archived", kind: "upsert" },
+            );
+            changes.push({ ledger, documentId: POSTGRES_POINTER_CONTROL_PREFIX + milestoneId, scope: "control", kind: "upsert" });
+            if (ledger !== MILESTONES_LEDGER) changes.push({ ledger, documentId: POSTGRES_GROUP_CONTROL_PREFIX + milestoneId, scope: "control", kind: "delete" });
+          }
+          committedVersion = await this.recordCoherence(tx, changes);
+
           pointer = {
             id: milestoneId,
             path: `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
@@ -1952,34 +1807,11 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           };
         });
 
-        // Post-commit cache update: swap detached clones in, populate archive maps.
         participating = localParticipating;
-        for (const name of participating) {
-          const entry = detachedGroups.get(name);
-          if (entry === undefined) continue;
-          this.ledgers.set(name, entry.clone);
-          this.archives.set(`${name}/${milestoneId}`, {
-            id: milestoneId,
-            title: "",
-            description: "",
-            items: entry.items.map(cloneItem),
-          });
-        }
-        this.ledgers.set(MILESTONES_LEDGER, msClone);
-        this.itemArchives.set(`${MILESTONES_LEDGER}/${milestoneId}`, cloneItem(detachedItem));
       });
     });
 
-    // Rebuild indices + fire hooks in D-COHERENCE order (participants
-    // alphabetic, then milestones).
-    for (const name of participating) {
-      this.rebuildLedgerIndexActive(name);
-      this.refreshLedgerIndexArchived(name);
-    }
-    this.rebuildLedgerIndexActive(MILESTONES_LEDGER);
-    this.refreshLedgerIndexArchived(MILESTONES_LEDGER);
-    for (const name of participating) this.fireHook(name, "archive");
-    this.fireHook(MILESTONES_LEDGER, "archive");
+    await this.projectCommitted(committedVersion, [...participating, MILESTONES_LEDGER].map((ledgerId) => ({ ledgerId, op: "archive" })));
     return pointer;
   }
 
@@ -2011,7 +1843,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         publish,
       );
     });
-    this.absorbLiveLedgers(live);
+    await this.reconcileProjection();
     return result;
   }
 
@@ -2050,23 +1882,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
-   * Re-read `ledgerId`'s rows from Postgres into the cache under its per-ledger
-   * lock. No-op for an unknown ledger
-   * id (graceful — drop any stale index docs), matching the interface contract.
+   * Reconcile the tenant's exact durable changes, including cross-ledger
+   * companions of the invalidated item. Unknown ledger ids remain harmless.
    */
-  async invalidate(ledgerId: string): Promise<void> {
+  async invalidate(_ledgerId: string): Promise<void> {
     // D148: a trailing invalidate after dispose must no-op, not throw
     // "not initialised" / "pool is closed" out of the detached IIFE.
-    if (!this.initialised || this.handle === null) return;
-    if (!this.ledgers.has(ledgerId)) {
-      this.searchIndex.removeLedger(ledgerId);
-      return;
-    }
-    await this.withLock(ledgerId, async () => {
-      // Re-check after the mutex wait — dispose may have won the race.
-      if (!this.initialised || this.handle === null) return;
-      await this.reloadLedger(ledgerId);
-    });
+    if (this.closing || !this.initialised || this.handle === null) return;
+    await this.reconcileProjection();
   }
 
   // ---------------------------------------------------------------------------
@@ -2075,7 +1898,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // SqliteLedgerStore runs the whole fence inside ONE immediate write
   // transaction whose reads are, by construction, LIVE rows. This backend
   // reproduces that property with a per-goal ROW LOCK plus transaction-local
-  // reads, NOT with its materialized cache: `this.ledgers` is a read model
+  // reads, NOT with its materialized cache: the cache is a read model
   // that a peer instance's committed write can already have invalidated, so no
   // fence decision is ever taken from it. D141 option B further narrowed the
   // raw managed-task fence to authority-only (manifest ownership); dependency
@@ -2174,41 +1997,17 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const plan = resolution.plan;
         const mutation = mutate(plan.state);
         const changed = await persistPostgresPlanRows(queries, plan, mutation.dirtyLedgers);
-        await persistPostgresPrivateRecords(queries, plan.privateChanges());
-        return { value: mutation.result, plan, dirty: changed.ledgers };
+        const privateChanges = plan.privateChanges();
+        await persistPostgresPrivateRecords(queries, privateChanges);
+        const version = await recordPostgresCoherence(queries, this.coherenceOrigin,
+          [...postgresPublicPlanChanges(plan, changed.ledgers), ...postgresPrivatePlanChanges(privateChanges)]);
+        return { value: mutation.result, plan, dirty: changed.ledgers, version };
       },
     });
-    this.absorbPlanRows(committed.plan);
-    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    await this.projectCommitted(committed.version, committed.dirty.map((ledgerId) => ({ ledgerId, op: "update" })));
     return committed.value;
   }
 
-  private absorbPlanRows(plan: PostgresPublicRowPlan): void {
-    for (const [ledgerId, selected] of plan.state.ledgers) {
-      let cached = this.ledgers.get(ledgerId);
-      if (cached === undefined) {
-        cached = { ...structuredClone(selected), milestones: [] };
-        this.ledgers.set(ledgerId, cached);
-      }
-      cached.counters = { ...selected.counters };
-      for (const group of selected.milestones) {
-        let cachedGroup = cached.milestones.find(({ id }) => id === group.id);
-        if (cachedGroup === undefined) {
-          cachedGroup = { ...group, items: [] };
-          cached.milestones.push(cachedGroup);
-        }
-        cachedGroup.title = group.title;
-        cachedGroup.description = group.description;
-        for (const item of group.items) {
-          const index = cachedGroup.items.findIndex(({ id }) => id === item.id);
-          if (index >= 0 && JSON.stringify(cachedGroup.items[index]) === JSON.stringify(item)) continue;
-          if (index < 0) cachedGroup.items.push(cloneItem(item));
-          else cachedGroup.items[index] = cloneItem(item);
-          this.indexUpsertActive(ledgerId, item);
-        }
-      }
-    }
-  }
 
   /** Run one tenant-scoped owned lifecycle operation and notify after commit. */
   async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: OwnedMutationContext): Promise<T> {
@@ -2227,11 +2026,11 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
         const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
         if ("admission" in context) assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);
-        return { value, plan, dirty: changed.ledgers };
+        const version = await recordPostgresCoherence(queries, this.coherenceOrigin, postgresPublicPlanChanges(plan, changed.ledgers));
+        return { value, plan, dirty: changed.ledgers, version };
       },
     });
-    this.absorbPlanRows(committed.plan);
-    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    await this.projectCommitted(committed.version, committed.dirty.map((ledgerId) => ({ ledgerId, op: "update" })));
     return committed.value;
   }
 
@@ -2254,12 +2053,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         assertKeyedPlanMutationChanges(plan, context.operation, selected,
           result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
         const changed = await persistPostgresPlanRows(queries, plan, [...lifecycle.dirtyLedgers]);
-        await persistPostgresPrivateRecords(queries, plan.privateChanges());
-        return { result, plan, dirty: changed.ledgers };
+        const privateChanges = plan.privateChanges();
+        await persistPostgresPrivateRecords(queries, privateChanges);
+        const version = await recordPostgresCoherence(queries, this.coherenceOrigin,
+          [...postgresPublicPlanChanges(plan, changed.ledgers), ...postgresPrivatePlanChanges(privateChanges)]);
+        return { result, plan, dirty: changed.ledgers, version };
       },
     });
-    this.absorbPlanRows(committed.plan);
-    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    await this.projectCommitted(committed.version, committed.dirty.map((ledgerId) => ({ ledgerId, op: "update" })));
     return committed.result;
   }
 
@@ -2284,74 +2085,17 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const transaction = createGenericMutationTransaction({ ...rows, now: this.now });
         const result = mutate(transaction.tx, { roots: context.admission.roots, epoch: context.admission.epoch });
         const changed = await persistPostgresGenericRows(queries, rows, transaction, this.now);
-        return { result, rows, changed, dirtyArchives: transaction.dirtyArchives };
+        const publicChanges = postgresPublicPlanChanges({ beforeLedgers: rows.beforeLedgers, state: { ledgers: rows.ledgers } }, changed.ledgers)
+          .filter((change) => change.kind !== "delete" || change.scope !== "control" || !change.documentId.startsWith(POSTGRES_GROUP_CONTROL_PREFIX) ||
+            changed.groupDeletes.some(({ ledgerId, groupId }) => ledgerId === change.ledger && change.documentId === POSTGRES_GROUP_CONTROL_PREFIX + groupId));
+        const version = await recordPostgresCoherence(queries, this.coherenceOrigin, [...publicChanges, ...postgresArchivedRowChanges(changed)]);
+        return { result, rows, changed, dirtyArchives: transaction.dirtyArchives, version };
       },
     });
-    this.absorbGenericRows(committed.rows, committed.changed, committed.dirtyArchives);
-    for (const ledgerId of committed.changed.ledgers) this.fireHook(ledgerId, committed.dirtyArchives.size > 0 ? "archive" : "update");
+    await this.projectCommitted(committed.version, committed.changed.ledgers.map((ledgerId) => ({ ledgerId, op: committed.dirtyArchives.size > 0 ? "archive" : "update" })));
     return committed.result;
   }
 
-  private absorbGenericRows(rows: PostgresGenericRowPlan, changed: PostgresGenericRowChanges, dirtyArchives: ReadonlySet<string>): void {
-    this.absorbPlanRows({ beforeLedgers: rows.beforeLedgers, state: { ledgers: rows.ledgers } });
-    for (const { ledgerId, itemId, groupId } of changed.activeDeletes) {
-      const group = this.getLedger(ledgerId).milestones.find(({ id }) => id === groupId);
-      if (group !== undefined) {
-        const index = group.items.findIndex(({ id }) => id === itemId);
-        if (index >= 0) group.items.splice(index, 1);
-      }
-      this.searchIndex.removeActiveDoc(ledgerId, itemId);
-    }
-    for (const { ledgerId, groupId } of changed.groupDeletes) {
-      const ledger = this.getLedger(ledgerId);
-      const index = ledger.milestones.findIndex(({ id }) => id === groupId);
-      if (index >= 0) ledger.milestones.splice(index, 1);
-    }
-    for (const { ledgerId, pointerId, itemId } of changed.archivedDeletes) {
-      const key = `${ledgerId}/${pointerId}`;
-      if (ledgerId === MILESTONES_LEDGER) this.itemArchives.delete(key);
-      else {
-        const group = this.archives.get(key);
-        if (group !== undefined) {
-          const index = group.items.findIndex(({ id }) => id === itemId);
-          if (index >= 0) group.items.splice(index, 1);
-        }
-      }
-      this.searchIndex.removeArchivedDoc(ledgerId, itemId);
-    }
-    for (const { ledgerId, pointerId, item } of changed.archivedUpserts) {
-      const key = `${ledgerId}/${pointerId}`;
-      if (ledgerId === MILESTONES_LEDGER) this.itemArchives.set(key, cloneItem(item));
-      else {
-        let group = this.archives.get(key);
-        if (group === undefined) { group = { id: pointerId, title: "", description: "", items: [] }; this.archives.set(key, group); }
-        const index = group.items.findIndex(({ id }) => id === item.id);
-        if (index < 0) group.items.push(cloneItem(item));
-        else group.items[index] = cloneItem(item);
-      }
-      this.searchIndex.upsertArchivedDoc(ledgerId, cloneItem(item));
-    }
-    for (const key of dirtyArchives) {
-      const slash = key.indexOf("/");
-      const ledgerId = key.slice(0, slash);
-      const pointerId = key.slice(slash + 1);
-      const ledger = this.getLedger(ledgerId);
-      const current = rows.archives.get(key);
-      const index = ledger.archivePointers.findIndex(({ id }) => id === pointerId);
-      if (current === undefined) {
-        if (index >= 0) ledger.archivePointers.splice(index, 1);
-        this.archives.delete(key);
-        this.itemArchives.delete(key);
-      } else {
-        const pointer = rows.ledgers.get(ledgerId)?.archivePointers.find(({ id }) => id === pointerId);
-        if (pointer === undefined) throw new LedgerError(`committed generic archive lost pointer ${key}`);
-        if (index < 0) ledger.archivePointers.push({ ...pointer });
-        else ledger.archivePointers[index] = { ...pointer };
-        const group = this.archives.get(key);
-        if (group !== undefined) { group.title = current.title; group.description = current.description; }
-      }
-    }
-  }
 
   private async runOperatorActionLifecycleMutation(
     mutation: OperatorActionLifecycleMutation,
@@ -2362,30 +2106,18 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     }, {
       name: `operator_action_${mutation.kind}`,
       resolve: (queries) => resolvePostgresOperatorRows(queries, mutation, this.now),
-      apply: async (_queries, resolution) => {
+      apply: async (queries, resolution) => {
         if (resolution.kind === "rejected") throw resolution.error;
         const outcome = resolution.apply();
         const dirty = await resolution.rows.persist(outcome.dirtyLedgers);
-        return { value: outcome.result, dirty, rows: [...resolution.rows.selected.values()] };
+        const version = await recordPostgresCoherence(queries, this.coherenceOrigin, postgresSelectedRowChanges(resolution.rows.selected.values()));
+        return { value: outcome.result, dirty, rows: [...resolution.rows.selected.values()], version };
       },
     });
-    this.absorbSelectedPublicRows(committed.rows);
-    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    await this.projectCommitted(committed.version, committed.dirty.map((ledgerId) => ({ ledgerId, op: "update" })));
     return committed.value;
   }
 
-  private absorbSelectedPublicRows(rows: readonly PostgresSelectedPublicRow[]): void {
-    for (const { ledgerId, item, group } of rows) {
-      const ledger = this.getLedger(ledgerId);
-      let cached = ledger.milestones.find(({ id }) => id === group.id);
-      if (cached === undefined) { cached = { ...group, items: [] }; ledger.milestones.push(cached); }
-      const index = cached.items.findIndex(({ id }) => id === item.id);
-      if (index >= 0 && JSON.stringify(cached.items[index]) === JSON.stringify(item)) continue;
-      if (index < 0) cached.items.push(cloneItem(item));
-      else cached.items[index] = cloneItem(item);
-      this.indexUpsertActive(ledgerId, item);
-    }
-  }
 
   /**
    * Persist a whole mutated `Ledger` DIFFERENTIALLY — drop the rows it no
@@ -2610,9 +2342,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     ledger: Ledger,
     itemId: string,
     patch: UpdateItemPatch,
-    source: ReadonlyMap<string, Ledger> = this.ledgers,
+    source: ReadonlyMap<string, Ledger> | null,
   ): StatusChangePrecondition | undefined {
     if (ledgerId === GOALS_LEDGER) {
+      if (source === null) throw new LedgerError("Raw goal transitions require live transaction inputs");
       return (from: string, to: string): void =>
         assertGoalPhasePreconditions(
           itemId,
@@ -2640,133 +2373,115 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    * (parity with InMemoryLedgerStore.buildRefValidationContext).
    */
   private buildRefValidationContext(
-    source: ReadonlyMap<string, Ledger> = this.ledgers,
+    source: ReadonlyMap<string, Ledger> | null,
   ): RefValidationContext {
     const registry = buildPrefixRegistry(
-      [...source].map(([name, l]) => ({ name, schema: l.schema })),
+      source === null ? this.readCache.registry() : [...source].map(([name, l]) => ({ name, schema: l.schema })),
     );
     return {
       registry,
       refExists: (ledger: string, id: string): boolean => {
-        const l = source.get(ledger);
+        if (source === null && this.readCache.hasItem(ledger, id)) return true;
+        const l = source === null ? undefined : source.get(ledger);
         if (l !== undefined) {
           for (const m of l.milestones) for (const it of m.items) if (it.id === id) return true;
         }
-        if (ledger === MILESTONES_LEDGER && this.itemArchives.has(`${MILESTONES_LEDGER}/${id}`)) {
-          return true;
-        }
-        for (const [key, group] of this.archives) {
-          if (!key.startsWith(`${ledger}/`)) continue;
-          for (const it of group.items) if (it.id === id) return true;
-        }
-        return false;
+        return this.readCache.archivedItemsById(ledger, id).length > 0;
       },
       archivedUnsatisfying: (ledger: string, id: string): boolean => {
-        const active = source.get(ledger);
+        if (source === null && this.readCache.hasItem(ledger, id)) return false;
+        const active = source === null ? undefined : source.get(ledger);
         if (active !== undefined) {
           for (const m of active.milestones) for (const it of m.items) if (it.id === id) return false;
         }
-        const schema = active?.schema;
+        const schema = source === null ? this.readCache.schema(ledger) : active?.schema;
         if (schema === undefined) return false;
-        if (ledger === MILESTONES_LEDGER && this.itemArchives.has(`${MILESTONES_LEDGER}/${id}`)) {
-          const archived = this.itemArchives.get(`${MILESTONES_LEDGER}/${id}`);
-          return archived !== undefined && !statusSatisfiesDependency(schema, archived.status);
-        }
-        for (const [key, group] of this.archives) {
-          if (!key.startsWith(`${ledger}/`)) continue;
-          for (const it of group.items) {
-            if (it.id === id) return !statusSatisfiesDependency(schema, it.status);
-          }
-        }
-        return false;
+        return this.readCache.archivedItemsById(ledger, id).some((item) => !statusSatisfiesDependency(schema, item.status));
       },
     };
   }
 
-  /**
-   * Post-commit tail shared by every mutation. Index update policy (D147):
-   *  - `upsertItem: Item` — incremental active-doc upsert (single-item writes);
-   *  - `upsertItem: null` — index already current (absorbLiveLedgers rebuilt it);
-   *  - omitted — full active-bucket rebuild (createLedger / structural ops);
-   *  - `alsoArchived: true` — always refresh both buckets (archive transitions).
-   * Then fire the guarded `onMutation` hook.
-   */
-  private async afterCommit(
-    ledgerId: string,
-    op: LedgerMutationOp,
-    opts: { alsoArchived?: boolean; upsertItem?: Item | null } = {},
-  ): Promise<void> {
-    const alsoArchived = opts.alsoArchived === true;
-    if (alsoArchived) {
-      this.rebuildLedgerIndexActive(ledgerId);
-      this.refreshLedgerIndexArchived(ledgerId);
-    } else if (opts.upsertItem === null) {
-      // Index already rebuilt by absorbLiveLedgers — hook only.
-    } else if (opts.upsertItem !== undefined) {
-      this.indexUpsertActive(ledgerId, opts.upsertItem);
-    } else {
-      this.rebuildLedgerIndexActive(ledgerId);
-    }
-    this.fireHook(ledgerId, op);
+  /** Record the exact durable delta inside its domain transaction. */
+  private recordCoherence(tx: SQL, changes: readonly PostgresCoherenceChange[]): Promise<number | null> {
+    return recordPostgresCoherence(new PostgresOperationQueries(tx, this.projectKey, "raw-coherence", this.accessObserver, () => performance.now(), null), this.coherenceOrigin, changes);
   }
 
-  /**
-   * D147: incremental FTS active-doc upsert — O(1) in ledger size, parity with
-   * SqliteLedgerStore.indexUpsertActive. GUARDED so an index error never
-   * unwinds a committed write.
-   */
-  private indexUpsertActive(ledgerId: string, item: Item): void {
-    try {
-      this.searchIndex.upsertActiveDoc(ledgerId, cloneItem(item));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `PostgresLedgerStore: FTS active-upsert threw for ${ledgerId}: ${msg}\n`,
-      );
-    }
+  private recovery(): SearchProjectionRecovery {
+    if (this.projectionRecovery === null) throw new ProjectionUnavailableError("PostgreSQL projection recovery is not mounted");
+    return this.projectionRecovery;
   }
 
-  /**
-   * D147: materialise a MINIMAL `Ledger` for single-item apply* helpers — the
-   * real schema + counters plus AT MOST the one target item (cloned) in a bare
-   * group. O(groups) scan for the item, never a structuredClone of the whole
-   * ledger. Absent item → empty milestones so findItem throws ItemNotFoundError.
-   */
-  private singleItemShim(ledgerId: string, itemId: string): Ledger {
-    const source = this.getLedger(ledgerId);
-    let found: Item | undefined;
-    for (const m of source.milestones) {
-      const hit = m.items.find((i) => i.id === itemId);
-      if (hit !== undefined) {
-        found = hit;
-        break;
+  private async loadProjectionFrame(afterVersion: number, rebuild: boolean, signal: AbortSignal): Promise<ProjectionChangeFrame> {
+    const loaded = await readTransaction(this.pool(), async (tx) => {
+      const queries = new PostgresOperationQueries(tx, this.projectKey, "coherence", this.accessObserver, () => performance.now(), null);
+      const version = await postgresCoherenceVersion(queries);
+      if (version < afterVersion) throw new LedgerError("PostgreSQL coherence version regressed");
+      const entries = await readPostgresCoherence(queries, afterVersion, version);
+      const foreignLedgers = [...new Set(entries.filter((entry) => entry.origin !== this.coherenceOrigin &&
+        !(entry.scope === "control" && (entry.documentId.startsWith("plan_claims:") || entry.documentId.startsWith("plan_operations:"))))
+        .map((entry) => entry.ledger))].sort();
+      const snapshotRequired = rebuild || entries.some((entry) => entry.scope === "control" && entry.documentId === POSTGRES_RESET_CONTROL_ID) ||
+        (version > afterVersion && !entries.some((entry) => entry.version === version));
+      if (snapshotRequired) {
+        const snapshot = await loadPostgresProjectionSnapshot(tx, this.projectKey);
+        return { rows: snapshot.rows, frame: { version, foreignLedgers, changes: [], snapshot: snapshot.buckets } };
       }
-    }
-    return {
-      id: source.id,
-      schema: source.schema,
-      counters: { milestone: source.counters.milestone, item: source.counters.item },
-      milestones:
-        found === undefined
-          ? []
-          : [
-              {
-                id: found.milestoneId,
-                title: "",
-                description: "",
-                items: [cloneItem(found)],
-              },
-            ],
-      archivePointers: [],
-    };
+      const rows = await loadPostgresProjectionRows(queries, entries, this.readCache);
+      return { rows, frame: { version, foreignLedgers, changes: rows.changes, snapshot: null } };
+    });
+    signal.throwIfAborted();
+    this.requiredCacheVersion = Math.max(this.requiredCacheVersion, loaded.frame.version);
+    if (loaded.frame.snapshot !== null) this.readCache.clear();
+    this.readCache.apply(loaded.rows);
+    this.cachedVersion = loaded.frame.version;
+    return loaded.frame;
   }
 
-  /** D147: replace ONE item in the live cache after an unfenced single-item write. */
-  private commitItemIntoCache(ledgerId: string, item: Item): void {
-    const { milestone, item: live } = findItem(this.getLedger(ledgerId), item.id);
-    const idx = milestone.items.indexOf(live);
-    if (idx < 0) throw new ItemNotFoundError(ledgerId, item.id);
-    milestone.items[idx] = cloneItem(item);
+  private async projectCommitted(version: number | null, notifications: readonly { ledgerId: string; op: LedgerMutationOp }[]): Promise<void> {
+    if (version === null) return;
+    this.requiredCacheVersion = Math.max(this.requiredCacheVersion, version);
+    if (notifications.length > 0) this.pendingNotifications.set(version, [...(this.pendingNotifications.get(version) ?? []), ...notifications]);
+    try { await this.reconcileProjection(); }
+    catch (error) { process.stderr.write(`PostgresLedgerStore: committed write awaits projection recovery: ${String(error)}\n`); }
+  }
+
+  private async notifyProjectionFrame(frame: ProjectionChangeFrame, signal: AbortSignal): Promise<void> {
+    const delivered: number[] = [];
+    const changed = new Set(frame.foreignLedgers);
+    for (const [version, notifications] of this.pendingNotifications) {
+      if (version > frame.version) continue;
+      for (const notification of notifications) {
+        signal.throwIfAborted();
+        this.fireHook(notification.ledgerId, notification.op);
+        changed.add(notification.ledgerId);
+      }
+      delivered.push(version);
+    }
+    for (const ledgerId of changed) for (const listener of this.projectionListeners) {
+      signal.throwIfAborted();
+      listener(ledgerId);
+    }
+    for (const version of delivered) this.pendingNotifications.delete(version);
+  }
+
+
+
+  /** Raw updates lock and read their item from SQL, independently of projection progress. */
+  private async singleItemShim(sql: SQL, ledgerId: string, itemId: string): Promise<Ledger> {
+    const metadata = await sql<LedgerRow[]>`
+      SELECT name, schema_json, milestone_counter, item_counter FROM ledgers
+      WHERE project_key = ${this.projectKey} AND name = ${ledgerId}
+    `;
+    const ledger = metadata[0];
+    if (ledger === undefined) throw new LedgerNotFoundError(ledgerId);
+    const rows = await sql<ItemRow[]>`
+      SELECT * FROM items WHERE project_key = ${this.projectKey} AND ledger = ${ledgerId} AND id = ${itemId} FOR UPDATE
+    `;
+    const row = rows[0];
+    return { id: ledgerId, schema: JSON.parse(ledger.schema_json) as LedgerSchema,
+      counters: { milestone: ledger.milestone_counter, item: ledger.item_counter }, archivePointers: [],
+      milestones: row === undefined ? [] : [{ id: row.milestone_id, title: "", description: "", items: [rowToItem(row)] }],
+    };
   }
 
   /** Guarded `onMutation` fire (a throw is logged, never unwinds the write). */
@@ -2782,118 +2497,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
-  /** Rebuild the ACTIVE index bucket for a ledger from the cache. Guarded. */
-  private rebuildLedgerIndexActive(ledgerId: string): void {
-    try {
-      const ledger = this.ledgers.get(ledgerId);
-      if (ledger === undefined) return;
-      const items: Item[] = [];
-      for (const m of ledger.milestones) for (const it of m.items) items.push(it);
-      this.searchIndex.rebuildLedgerActive(ledgerId, items);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`PostgresLedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`);
-    }
-  }
 
-  /** Rebuild the ARCHIVED index bucket for a ledger from the archive maps. Guarded. */
-  private refreshLedgerIndexArchived(ledgerId: string): void {
-    try {
-      const ledger = this.ledgers.get(ledgerId);
-      if (ledger === undefined) return;
-      const items: Item[] = [];
-      for (const ptr of ledger.archivePointers) {
-        const key = `${ledgerId}/${ptr.id}`;
-        if (ledgerId === MILESTONES_LEDGER) {
-          const it = this.itemArchives.get(key);
-          if (it !== undefined) items.push(it);
-        } else {
-          const group = this.archives.get(key);
-          if (group !== undefined) items.push(...group.items);
-        }
-      }
-      this.searchIndex.setLedgerArchived(ledgerId, items);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `PostgresLedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
-      );
-    }
-  }
-
-  /** Re-read one ledger's rows from PG into the cache (invalidate refresh path). */
-  private async reloadLedger(ledgerId: string): Promise<void> {
-    const pool = this.pool();
-    const pk = this.projectKey;
-    // D149: one REPEATABLE READ snapshot so the multi-statement per-ledger
-    // reload cannot tear against a concurrent archive/unarchive.
-    await readTransaction(pool, async (tx) => {
-      const lr = (
-        await tx<LedgerRow[]>`
-          SELECT name, schema_json, milestone_counter, item_counter
-          FROM ledgers WHERE project_key = ${pk} AND name = ${ledgerId}
-        `
-      )[0];
-      // Drop the ledger's stale archive-map entries either way.
-      this.dropArchiveCacheOf(ledgerId);
-      if (lr === undefined) {
-        this.ledgers.delete(ledgerId);
-        this.searchIndex.removeLedger(ledgerId);
-        return;
-      }
-      const ledger: Ledger = {
-        id: ledgerId,
-        schema: JSON.parse(lr.schema_json) as LedgerSchema,
-        counters: { milestone: lr.milestone_counter, item: lr.item_counter },
-        milestones: [],
-        archivePointers: [],
-      };
-      const groupIndex = new Map<string, Item[]>();
-      const groupRows = await tx<GroupRow[]>`
-        SELECT ledger, id, title, description
-        FROM groups WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
-      `;
-      for (const g of groupRows) {
-        const items: Item[] = [];
-        ledger.milestones.push({ id: g.id, title: g.title, description: g.description, items });
-        groupIndex.set(g.id, items);
-      }
-      const itemRows = await tx<ItemRow[]>`
-        SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-        FROM items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
-      `;
-      for (const ir of itemRows) {
-        const arr = groupIndex.get(ir.milestone_id);
-        if (arr === undefined) {
-          throw new LedgerError(
-            `ledger ${ledgerId}: item ${ir.id} references a milestone-group with no groups row`,
-          );
-        }
-        arr.push(rowToItem(ir));
-      }
-      const pointerRows = await tx<PointerRow[]>`
-        SELECT ledger, id, summary, title, status
-        FROM archive_pointers WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
-      `;
-      for (const p of pointerRows) {
-        ledger.archivePointers.push({
-          id: p.id,
-          path: `./archive/${ledgerId}/${p.id}.md`,
-          summary: p.summary,
-          title: p.title,
-          status: p.status,
-        });
-      }
-      this.ledgers.set(ledgerId, ledger);
-      const archivedRows = await tx<ArchivedItemRow[]>`
-        SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-        FROM archived_items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
-      `;
-      for (const ar of archivedRows) this.absorbArchivedRow(ar);
-    });
-    this.rebuildLedgerIndexActive(ledgerId);
-    this.refreshLedgerIndexArchived(ledgerId);
-  }
 
   // ---------------------------------------------------------------------------
   // Internals — cache + locks (parity with InMemoryLedgerStore)
@@ -2928,24 +2532,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private countReferences(milestoneId: string): Record<string, number> {
-    const out: Record<string, number> = {};
-    for (const [name, ledger] of this.ledgers) {
-      if (name === MILESTONES_LEDGER) continue;
-      const group = ledger.milestones.find((m) => m.id === milestoneId);
-      if (group !== undefined && group.items.length > 0) out[name] = group.items.length;
-    }
-    return out;
+    return Object.fromEntries(Object.entries(this.readCache.milestoneItems(milestoneId)).map(([ledgerId, items]) => [ledgerId, items.length]));
   }
 
-  private removeArchivePointer(ledgerId: string, archiveId: string): void {
-    const ledger = this.ledgers.get(ledgerId);
-    if (ledger === undefined) return;
-    const i = ledger.archivePointers.findIndex((p) => p.id === archiveId);
-    if (i >= 0) ledger.archivePointers.splice(i, 1);
-  }
 
   private async withLock<T>(ledgerId: string, fn: () => Promise<T>): Promise<T> {
-    if (!this.ledgers.has(ledgerId)) throw new LedgerNotFoundError(ledgerId);
+    if (!this.readCache.hasLedger(ledgerId)) throw new LedgerNotFoundError(ledgerId);
     return this.mutexFor(ledgerId).run(fn);
   }
 
@@ -2981,10 +2573,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private getLedger(ledgerId: string): Ledger {
+    this.assertCacheReadable();
+    return this.readCache.ledger(ledgerId);
+  }
+
+  private assertCacheReadable(): void {
     this.assertInit();
-    const l = this.ledgers.get(ledgerId);
-    if (l === undefined) throw new LedgerNotFoundError(ledgerId);
-    return l;
+    if (this.cachedVersion < this.requiredCacheVersion) throw new ProjectionUnavailableError("PostgreSQL synchronous cache awaits committed-row recovery");
   }
 
   private pool(): SQL {
@@ -2997,9 +2592,4 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private assertInit(): void {
     if (!this.initialised) throw new LedgerError("PostgresLedgerStore not initialised");
   }
-}
-
-/** Deep-clone a Milestone (archive read) — local mirror of InMemory's helper. */
-function cloneMilestone(m: Milestone): Milestone {
-  return { id: m.id, title: m.title, description: m.description, items: m.items.map(cloneItem) };
 }

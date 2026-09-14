@@ -3,7 +3,7 @@ import type { Item } from "../src/types.js";
 import { createDirectSearchProjection } from "../src/search/DirectSearchProjection.js";
 import { createWorkerSearchProjection } from "../src/search/WorkerSearchProjection.js";
 import type { SearchProjection } from "../src/search/SearchProjection.js";
-import { SearchProjectionRecovery } from "../src/search/SearchProjectionRecovery.js";
+import { SearchProjectionRecovery, PROJECTION_RETRY_MIN_MS } from "../src/search/SearchProjectionRecovery.js";
 import type {
   ProjectionChangeFrame,
   ProjectionRecoverySource,
@@ -69,6 +69,116 @@ class MemoryRecoverySource implements ProjectionRecoverySource {
 }
 
 function recoveryContract(makeProjection: () => SearchProjection): void {
+  test("a retry timer does not queue duplicate work behind an active reconciliation [Blackbox-Group]", async () => {
+    const source = new MemoryRecoverySource();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const duplicate = Promise.withResolvers<void>();
+    let held = false;
+    let loads = 0;
+    const recovery = new SearchProjectionRecovery(makeProjection(), {
+      load: async (version, rebuild) => {
+        if (held) {
+          loads += 1;
+          if (loads === 1) { entered.resolve(); await release.promise; }
+          else await duplicate.promise;
+        }
+        return source.load(version, rebuild);
+      }, notify: (frame, signal) => source.notify(frame, signal),
+    }, DEADLINE_MS);
+    try {
+      await recovery.initialize();
+      source.put("T1", "retry");
+      source.rejectNotification = true;
+      await expect(recovery.reconcile()).rejects.toThrow("injected notification rejection");
+      source.rejectNotification = false;
+      held = true;
+      const manual = recovery.reconcile();
+      await entered.promise;
+      await Bun.sleep(PROJECTION_RETRY_MIN_MS * 2);
+      release.resolve();
+      await manual;
+      expect(recovery.health().state).toBe("current");
+      expect(loads).toBe(1);
+    } finally { release.resolve(); duplicate.resolve(); await recovery.close(); }
+  });
+
+  test("close settles an asynchronous source read without allowing late acknowledgement [Blackbox-Group]", async () => {
+    const source = new MemoryRecoverySource();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let held = false;
+    const recovery = new SearchProjectionRecovery(makeProjection(), {
+      load: async (version, rebuild) => { if (held) { entered.resolve(); await release.promise; } return source.load(version, rebuild); },
+      notify: (frame, signal) => source.notify(frame, signal),
+    }, DEADLINE_MS);
+    let close: Promise<void> | null = null;
+    try {
+      await recovery.initialize();
+      source.put("T1", "late");
+      held = true;
+      const pending = recovery.reconcile().catch(() => undefined);
+      await entered.promise;
+      let closed = false;
+      close = recovery.close().then(() => { closed = true; });
+      await Promise.race([close, Bun.sleep(100)]);
+      expect(closed).toBe(true);
+      release.resolve();
+      await pending;
+      expect(recovery.acknowledgedVersion()).toBe(0);
+      expect(source.notified).toEqual([]);
+    } finally { release.resolve(); if (close !== null) await close; await recovery.close(); }
+  });
+
+  test("explicit snapshot recovery is serialized and acknowledged before later deltas [Blackbox-Group]", async () => {
+    const source = new MemoryRecoverySource();
+    const requests: boolean[] = [];
+    const recovery = new SearchProjectionRecovery(makeProjection(), {
+      load: (version, rebuild) => { requests.push(rebuild); return source.load(version, rebuild); },
+      notify: (frame, signal) => source.notify(frame, signal),
+    }, DEADLINE_MS);
+    try {
+      await recovery.initialize();
+      requests.length = 0;
+      await recovery.rebuild();
+      await recovery.reconcile();
+      expect(requests).toEqual([true, false]);
+    } finally { await recovery.close(); }
+  });
+
+  test("asynchronous durable reads finish before projection, notification and cursor acknowledgement [Blackbox-Group]", async () => {
+    const source = new MemoryRecoverySource();
+    const projection = makeProjection();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let held = false;
+    const asynchronous: ProjectionRecoverySource = {
+      load: async (version, rebuild) => {
+        if (held) { entered.resolve(); await release.promise; }
+        return source.load(version, rebuild);
+      },
+      notify: (frame, signal) => source.notify(frame, signal),
+    };
+    const recovery = new SearchProjectionRecovery(projection, asynchronous, DEADLINE_MS);
+    try {
+      await recovery.initialize();
+      source.put("T1", "asynchronouslyloaded");
+      held = true;
+      const pending = recovery.reconcile();
+      await entered.promise;
+      expect(recovery.acknowledgedVersion()).toBe(0);
+      expect(source.notified).toEqual([]);
+      held = false;
+      release.resolve();
+      await pending;
+      expect(recovery.acknowledgedVersion()).toBe(1);
+      expect(source.notified).toEqual([1]);
+      const ack = await projection.execute({ kind: "search", query: "asynchronouslyloaded", options: {} });
+      if (ack.result.kind !== "search") throw new Error("expected search acknowledgement");
+      expect(ack.result.hits.map(({ item }) => item.id)).toEqual(["T1"]);
+    } finally { release.resolve(); await recovery.close(); }
+  });
+
   test("notification failure retains the cursor and retry converges without overtaking [Blackbox-Group]", async () => {
     const source = new MemoryRecoverySource();
     const projection = makeProjection();

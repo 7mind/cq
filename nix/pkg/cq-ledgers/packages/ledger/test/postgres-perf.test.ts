@@ -70,7 +70,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         const milestone = await store.createMilestone({ title: "d147-perf-seed" });
 
         // Seed SEED_SIZE raw item rows via the setup pool (bypass store write path),
-        // then fold into the cache/index via invalidate.
+        // then explicitly reload the out-of-band fixture (no coherence events).
         const now = new Date().toISOString();
         await setupPool.begin(async (tx) => {
           await tx`
@@ -99,7 +99,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
             WHERE project_key = ${projectKey} AND name = ${HYPOTHESIS_LEDGER}
           `;
         });
-        await store.invalidate(HYPOTHESIS_LEDGER);
+        await store.reloadCommittedState();
 
         // Warmup (untimed).
         await store.updateItem(HYPOTHESIS_LEDGER, "H1", {

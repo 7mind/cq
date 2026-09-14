@@ -64,6 +64,7 @@ import {
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
   openPgPool,
+  PostgresLedgerStore,
   PLAN_REVIEW_DRAFT_FIELD,
   type PlanClaimAcknowledgement,
   type PlanDraftManifest,
@@ -259,6 +260,11 @@ const sqliteBackend: Backend = {
 };
 
 const pgTenantKeys = new WeakMap<LifecycleStore, string>();
+async function reloadPostgresFixture(store: LifecycleStore): Promise<void> {
+  if (!(store instanceof PostgresLedgerStore)) throw new Error("expected PostgreSQL fixture store");
+  await store.reloadCommittedState();
+}
+
 const postgresBackend: Backend = {
   name: "PostgresLedgerStore",
   skip: process.env["CQ_TEST_PG_URL"] === undefined || process.env["CQ_TEST_PG_URL"] === "",
@@ -279,7 +285,7 @@ const postgresBackend: Backend = {
     } finally {
       await admin.close();
     }
-    await store.invalidate(RESEARCHES_LEDGER);
+    await reloadPostgresFixture(store);
   },
   async removeTaskFromActiveView(store, taskId) {
     const key = pgTenantKeys.get(store);
@@ -292,7 +298,7 @@ const postgresBackend: Backend = {
     } finally {
       await admin.close();
     }
-    await store.invalidate(TASKS_LEDGER);
+    await reloadPostgresFixture(store);
   },
   async dispose(store) {
     const key = pgTenantKeys.get(store);
@@ -461,7 +467,7 @@ async function setTaskStatus(
     } finally {
       await admin.close();
     }
-    await store.invalidate(TASKS_LEDGER);
+    await reloadPostgresFixture(store);
     return;
   }
 

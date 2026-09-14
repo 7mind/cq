@@ -1,5 +1,6 @@
 import { SQL } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
+import { PostgresReadCache } from "../src/store/postgres/readCache.js";
 import { PostgresLedgerStore } from "../src/index.js";
 import { ownedLifecyclePostgresFixture } from "./ownedLifecyclePostgresFixture.js";
 import { seedPostgresUnrelatedRows } from "./postgresUnrelatedRows.js";
@@ -56,8 +57,27 @@ async function coherenceScope(unrelated: number) {
 }
 
 describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL coherence scope [T5924 Behavioral-Active Effectual-GoodCommunication]", () => {
-  // expected-failure: tasks:T5924
-  test.failing("postgres lifecycle projection is invariant to unrelated volume", async () => {
+  test("a raw single-item update does not materialize whole cached ledgers [Glassbox-Group]", async () => {
+    const fixture = await ownedLifecyclePostgresFixture();
+    let restore = () => {};
+    try {
+      await fixture.store.createItem("ideas", "M-AMBIENT", { id: "I1", status: "open", fields: { title: "before" } });
+      await seedPostgresUnrelatedRows(fixture.pool, fixture.projectKey, 20_000);
+      await fixture.store.reloadCommittedState();
+      const original = PostgresReadCache.prototype.ledger;
+      const materialized: string[] = [];
+      const spy = spyOn(PostgresReadCache.prototype, "ledger").mockImplementation(function (this: PostgresReadCache, ledgerId: string) {
+        materialized.push(ledgerId);
+        return original.call(this, ledgerId);
+      });
+      restore = () => spy.mockRestore();
+      await fixture.store.updateItem("ideas", "I1", { fields: { title: "after" } });
+      expect(fixture.store.fetchItem("ideas", "I1").fields.title).toBe("after");
+      expect(materialized).toEqual([]);
+    } finally { restore(); await fixture.dispose(); }
+  }, 30_000);
+
+  test("postgres lifecycle projection is invariant to unrelated volume", async () => {
     const small = await coherenceScope(0);
     const large = await coherenceScope(20_000);
     if (large !== small) console.info(`T5924 reproduced: peer invalidation reads ${small} documents in the small fixture and ${large} with unrelated volume`);

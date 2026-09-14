@@ -552,7 +552,7 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect(reader.fetchItem(TASKS_LEDGER, second).status).toBe("wip");
   }, 30_000);
 
-  test("a guarded raw write publishes EVERY absorbed ledger to the search index, not just the mutated one", async () => {
+  test("acknowledged search and guarded raw writes publish peer changes to both read surfaces", async () => {
     const h = await newHarness();
     const writer = await h.open();
     await seedGoal(writer, GOAL_ID);
@@ -570,13 +570,10 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
       ...PROVENANCE,
     });
     expect(() => writer.fetchItem(HYPOTHESIS_LEDGER, "H1")).toThrow();
-    expect(await writer.ftsSearch(FTS_MARKER)).toHaveLength(0);
+    expect((await writer.ftsSearch(FTS_MARKER)).map((hit) => hit.item.id)).toEqual(["H1"]);
 
-    // A guarded RAW write reads every ledger live under its locks and absorbs
-    // the whole map into the cache — including `hypothesis`, which it did not
-    // mutate. Absorbing into the cache alone leaves the two read surfaces of
-    // ONE instance contradicting each other: `fetchItem` finds H1 while
-    // `ftsSearch` cannot. Absorption must publish to both.
+    // Search acknowledges the durable delta before returning; the following
+    // raw write must preserve agreement between the two read surfaces.
     await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
 
     expect(writer.fetchItem(HYPOTHESIS_LEDGER, "H1").status).toBe("open");
@@ -642,7 +639,7 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect(await writer.ftsSearch(FTS_MARKER, { includeArchived: true })).toHaveLength(1);
   }, 30_000);
 
-  test("absorption publishes no archive CONTENT its own pointer snapshot does not advertise", async () => {
+  test("post-commit coherence publishes one consistent archive snapshot after a torn raw transaction read", async () => {
     const h = await newHarness();
     const setup = await h.open();
     await seedGoal(setup, GOAL_ID);
@@ -669,15 +666,15 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
     expect(interleaved).toBe(true);
 
-    // Absorbing every row read would publish content for a pointer this
-    // instance does not have — H2 both ACTIVE and ARCHIVED at once. Absorption
-    // publishes the older, self-consistent state instead: H2 active, no
-    // pointer, no content.
-    expect(writer.fetchItem(HYPOTHESIS_LEDGER, "H2").status).toBe("confirmed");
-    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers).toHaveLength(0);
-    await expect(writer.fetchArchive(HYPOTHESIS_LEDGER, archivedId)).rejects.toThrow(/not found/);
+    // The raw transaction's torn read is not the projection source. Its
+    // post-commit repeatable-read frame includes the peer's completed archive.
+    expect(() => writer.fetchItem(HYPOTHESIS_LEDGER, "H2")).toThrow();
+    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers.map((p) => p.id)).toEqual([archivedId]);
+    const committed = await writer.fetchArchive(HYPOTHESIS_LEDGER, archivedId);
+    if (committed.kind !== "group") throw new Error("hypothesis archive must be a group");
+    expect(committed.milestone.items.map((it) => it.id)).toEqual(["H2"]);
 
-    // Deferred, not lost: the next refresh publishes both halves together.
+    // A repeated invalidation preserves both halves without duplicate content.
     await writer.invalidate(HYPOTHESIS_LEDGER);
     expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers.map((p) => p.id)).toEqual([archivedId]);
     const archived = await writer.fetchArchive(HYPOTHESIS_LEDGER, archivedId);

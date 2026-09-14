@@ -37,6 +37,10 @@
  */
 
 import type { SQL } from "bun";
+import { randomUUID } from "node:crypto";
+import { PostgresOperationQueries } from "./operationAccess.js";
+import { recordPostgresCoherence } from "./coherenceVector.js";
+import { POSTGRES_RESET_CONTROL_ID } from "./coherenceChanges.js";
 import type { FieldValue, Item } from "../../types.js";
 import type { BackupDumpFile } from "../backupExporter.js";
 import {
@@ -324,6 +328,8 @@ export async function restoreDumpToPostgres(opts: {
             INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
             VALUES (${pk}, ${JSON.stringify(restoredRoots.roots.slice())}, ${restoredRoots.epoch}, ${0})
           `;
+          await recordPostgresCoherence(new PostgresOperationQueries(tx, pk, "restore", null, () => performance.now(), null), randomUUID(),
+            [{ ledger: MILESTONES_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
         });
       },
     });

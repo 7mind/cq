@@ -18,7 +18,7 @@ export interface ProjectionChangeFrame {
 }
 
 export interface ProjectionRecoverySource {
-  load(afterVersion: number, rebuild: boolean): ProjectionChangeFrame;
+  load(afterVersion: number, rebuild: boolean, signal: AbortSignal): ProjectionChangeFrame | Promise<ProjectionChangeFrame>;
   notify(frame: ProjectionChangeFrame, signal: AbortSignal): Promise<void>;
 }
 
@@ -29,6 +29,8 @@ export class ProjectionUnavailableError extends LedgerError {
 /** The cursor covers both projection acknowledgement and notification enqueue. */
 export class SearchProjectionRecovery {
   private cursor = 0;
+  private requestedSnapshot = 0;
+  private acknowledgedSnapshot = 0;
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
   private pending = 0;
@@ -64,12 +66,17 @@ export class SearchProjectionRecovery {
   }
 
   async initialize(): Promise<void> {
-    const frame = this.source.load(0, true);
+    const frame = await this.load(0, true);
     if (frame.snapshot === null)
       throw new LedgerError("Cold projection load did not return a snapshot");
     await this.projection.execute({ kind: "snapshot", buckets: frame.snapshot });
     this.cursor = frame.version;
     await this.reconcile();
+  }
+
+  rebuild(): Promise<void> {
+    this.requestedSnapshot += 1;
+    return this.reconcile();
   }
 
   reconcile(measurement?: SqliteOperationMeasurement): Promise<void> {
@@ -79,8 +86,9 @@ export class SearchProjectionRecovery {
     const run = this.tail
       .then(async () => {
         if (this.closed) throw new ProjectionUnavailableError("Search projection is closed");
-        const rebuild = this.projection.health().state === "recovering";
-        const frame = this.source.load(this.cursor, rebuild);
+        const snapshotRequest = this.requestedSnapshot;
+        const rebuild = this.projection.health().state === "recovering" || snapshotRequest > this.acknowledgedSnapshot;
+        const frame = await this.load(this.cursor, rebuild);
         if (frame.version < this.cursor)
           throw new LedgerError("Projection source version regressed");
         const project = async (): Promise<void> => {
@@ -100,6 +108,7 @@ export class SearchProjectionRecovery {
             "Search projection closed before cursor acknowledgement",
           );
         this.cursor = frame.version;
+        this.acknowledgedSnapshot = snapshotRequest;
         this.failure = null;
         this.retryMs = PROJECTION_RETRY_MIN_MS;
         if (this.retry !== null) {
@@ -158,10 +167,23 @@ export class SearchProjectionRecovery {
     }
   }
 
+  private async load(afterVersion: number, rebuild: boolean): Promise<ProjectionChangeFrame> {
+    const signal = this.shutdown.signal;
+    signal.throwIfAborted();
+    let onAbort: () => void = () => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try { return await Promise.race([this.source.load(afterVersion, rebuild, signal), aborted]); }
+    finally { signal.removeEventListener("abort", onAbort); }
+  }
+
   private scheduleRetry(): void {
     if (this.closed || this.retry !== null) return;
     this.retry = setTimeout(() => {
       this.retry = null;
+      if (this.pending > 0) return;
       void this.reconcile().catch(() => undefined);
     }, this.retryMs);
     this.retry.unref();

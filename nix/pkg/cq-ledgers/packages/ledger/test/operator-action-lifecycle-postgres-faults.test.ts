@@ -26,6 +26,7 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL operator faults [T5919 
       }
       expect(rolledBack).toBeGreaterThan(6);
       expect(completed).toBe(true);
+      await fixture.store.reconcileProjection();
       expect(fixture.fetch("operatorActions", "OA1").fields.revision).toBe("2");
     } finally { await fixture.dispose(); }
   });

@@ -351,7 +351,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
           author = ${item.author ?? null}, session = ${item.session ?? null}
       WHERE project_key = ${this.lease.projectKey} AND ledger = ${ledgerId} AND id = ${itemId}
     `;
-    for (const store of this.lease.stores) await store.invalidate(ledgerId);
+    for (const store of this.lease.stores) await store.reloadCommittedState();
   }
 
   override async seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void> {
@@ -376,7 +376,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
       SET milestone_id = ${milestoneId}
       WHERE project_key = ${this.lease.projectKey} AND ledger = ${GOALS_LEDGER} AND id = ${goalId}
     `;
-    for (const store of this.lease.stores) await store.invalidate(GOALS_LEDGER);
+    for (const store of this.lease.stores) await store.reloadCommittedState();
   }
 
   async corruptOperatorActionExpectedEvidence(actionId: string): Promise<void> {
