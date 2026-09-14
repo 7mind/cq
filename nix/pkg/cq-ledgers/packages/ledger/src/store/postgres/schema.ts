@@ -24,16 +24,14 @@
  * project stored in it — exactly like ../sqlite/schema.ts's meta table
  * (one row, no ledger/project dimension).
  *
- * ensureSchema is idempotent — every statement is `CREATE TABLE IF NOT
- * EXISTS`, and the schema-version marker row is `INSERT ... ON CONFLICT DO
- * NOTHING` — safe to call on every connecting instance's startup. The whole
- * DDL pass runs under a `pg_advisory_lock` (see connection.ts
- * `withAdvisoryLock`) so two instances connecting at once never race the
- * CREATE TABLE statements (Q271).
+ * ensureSchema is idempotent. The whole DDL/migration pass runs in one
+ * transaction under pg_advisory_xact_lock, so connecting instances never
+ * race schema creation and a failed migration leaves no partial DDL (Q271).
  */
 
 import type { SQL } from "bun";
-import { withAdvisoryLock } from "./connection.js";
+import { migrateKeyedMutationSchema } from "./keyedMutationSchema.js";
+import { LedgerError } from "../../types.js";
 
 /**
  * On-disk (per-database) schema version, recorded in meta('schema_version').
@@ -57,8 +55,11 @@ import { withAdvisoryLock } from "./connection.js";
  *   Amended again in T1958 (STILL v1): tenant-scoped `workset_roots` and
  *   durable `workset_admissions` tables. Admissions are durable rows (host +
  *   process identity + heartbeat), never connection-lifetime advisory locks.
+ *
+ * - v2 (T5916): keyed closure/reference indexes, normalized private plan
+ *   identities, and tenant-scoped coherence versions. Existing refs backfill once.
  */
-export const PG_SCHEMA_VERSION = 1;
+export const PG_SCHEMA_VERSION = 2;
 
 /**
  * Advisory-lock key guarding the DDL/migration pass (Q271). Arbitrary but
@@ -71,11 +72,12 @@ const SCHEMA_DDL_LOCK_KEY = 847_501_001;
 /**
  * Apply the multi-tenant normalized-row DDL to the database `pool` is
  * connected to. Idempotent and safe to call concurrently from multiple
- * connecting instances — the whole pass runs under a `pg_advisory_lock`
+ * connecting instances — the whole pass runs under a `pg_advisory_xact_lock`
  * (Q271).
  */
 export async function ensureSchema(pool: SQL): Promise<void> {
-  await withAdvisoryLock(pool, SCHEMA_DDL_LOCK_KEY, async (locked) => {
+  await pool.begin(async (locked) => {
+    await locked`SELECT pg_advisory_xact_lock(${SCHEMA_DDL_LOCK_KEY}::bigint)`;
     await locked`
       CREATE TABLE IF NOT EXISTS projects (
         project_key  TEXT PRIMARY KEY,
@@ -260,9 +262,17 @@ export async function ensureSchema(pool: SQL): Promise<void> {
         WHERE form IN ('exclusive-set', 'exclusive-administrative')
     `;
 
+    const versions = await locked<Array<{ value: string }>>`
+      SELECT value FROM meta WHERE key = 'schema_version'
+    `;
+    const previousVersion = versions.length === 0 ? 1 : Number(versions[0]!.value);
+    if (previousVersion === 1) await migrateKeyedMutationSchema(locked);
+    else if (previousVersion !== PG_SCHEMA_VERSION) {
+      throw new LedgerError(`unsupported PostgreSQL schema version: ${String(previousVersion)}`);
+    }
     await locked`
       INSERT INTO meta (key, value) VALUES ('schema_version', ${String(PG_SCHEMA_VERSION)})
-      ON CONFLICT (key) DO NOTHING
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     `;
   });
 }
