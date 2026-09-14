@@ -61,7 +61,7 @@ function credentialRuntime(
 }
 
 async function git(cwd: string, arguments_: readonly string[]): Promise<string> {
-  const child = Bun.spawn(["git", ...arguments_], { cwd, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["git", ...arguments_], { cwd, env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
   const [exit, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -185,7 +185,7 @@ async function guardedRebaseSource(root: string, candidate: string): Promise<{
     const child = Bun.spawn(
       [path.join(candidate, "bin", "cq"), "gate", "git-effect", "--operation", "rebase", "--cwd", root, "--task-id", taskId,
         "--commit", ontoCommit, "--operation-id", "T6411-probe-rebase"],
-      { cwd: root, stdout: "pipe", stderr: "pipe" },
+      { cwd: root, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
     );
     const [exit, stdout, stderr] = await Promise.all([
       child.exited,
@@ -299,6 +299,8 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
   installedCandidateTest("uses one immutable candidate through real stdio and Git without disclosing its credential [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const fixture = await mkdtemp(path.join(tmpdir(), "t6411-probe-"));
     const root = path.join(fixture, "repository");
+    const previousCacheHome = process.env["XDG_CACHE_HOME"];
+    process.env["XDG_CACHE_HOME"] = path.join(fixture, "cache");
     try {
       const candidateOutput = await installedCandidate();
       await Bun.write(path.join(fixture, "placeholder"), "");
@@ -341,7 +343,7 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
           "--recovery-ref",
           "HEAD",
         ],
-        { cwd: root, stdout: "pipe", stderr: "pipe" },
+        { cwd: root, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
       );
       const [exit, stdout, stderr] = await Promise.all([
         child.exited,
@@ -356,6 +358,8 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
       expect(await git(source.worktree, ["rev-parse", "HEAD"])).toBe(source.head);
       expect(await git(root, ["status", "--porcelain", "--untracked-files=all"])).toBe(statusBefore);
     } finally {
+      if (previousCacheHome === undefined) delete process.env["XDG_CACHE_HOME"];
+      else process.env["XDG_CACHE_HOME"] = previousCacheHome;
       await rm(fixture, { recursive: true, force: true });
     }
   }, 120_000);

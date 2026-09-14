@@ -105,7 +105,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "104090b51580dd165af2f1be1bffb396aed22e79833660ea5c32d27487ee2f1f",
+      "sha256": "db590ae4ee38e757de8a5fa4808ac3db4012a0fcad020c2427477153b58680c7",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"]
     },
     {
@@ -432,7 +432,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "104090b51580dd165af2f1be1bffb396aed22e79833660ea5c32d27487ee2f1f",
+      "sha256": "db590ae4ee38e757de8a5fa4808ac3db4012a0fcad020c2427477153b58680c7",
       "targets": []
     },
     {
@@ -1307,7 +1307,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "104090b51580dd165af2f1be1bffb396aed22e79833660ea5c32d27487ee2f1f",
+      "sha256": "db590ae4ee38e757de8a5fa4808ac3db4012a0fcad020c2427477153b58680c7",
       "targets": []
     },
     {
