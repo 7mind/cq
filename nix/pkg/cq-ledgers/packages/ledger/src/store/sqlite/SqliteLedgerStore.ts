@@ -222,6 +222,7 @@ import {
 import { createKeyedOwnedWriteTransaction } from "../keyedOwnedWriteTransaction.js";
 import { assertOwnedMutationAdmission, WorksetOwnedLifecycleError, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import { assertOwnedMutationRows } from "../ownedMutationRows.js";
+import type { OwnedMutationContext } from "../directOwnedMutation.js";
 import { assertPlanMutationAdmission, assertChangedPlanItemsSelected, assertPlanCreatedOwnership, WorksetPlanLifecycleError, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { authorizeKeyedWorksetPlan, guardedPlanRowRequest } from "../keyedWorksetPlanAuthorization.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
@@ -1840,12 +1841,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /** Run one owned lifecycle operation in one BEGIN IMMEDIATE transaction. */
-  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation | null): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: OwnedMutationContext): Promise<T> {
     this.assertInit();
-    const measurement = this.beginObservedOperation(context === null ? "direct_owned_mutation" : `owned_${context.operation.kind}`);
+    const admitted = context !== null && "admission" in context ? context : null;
+    const measurement = this.beginObservedOperation(admitted === null ? "direct_owned_mutation" : `owned_${admitted.operation.kind}`);
     try {
       const outcome = immediateWriteTransaction(this.db(), () => {
-        const initialState = context === null ? null : this.loadOwnedAdmissionState(context, measurement);
+        const initialState = admitted === null ? null : this.loadOwnedAdmissionState(admitted, measurement);
         const owned = createKeyedOwnedWriteTransaction(
           createSqliteLifecycleRowRepository(this.db(), measurement ?? null), initialState, this.now,
         );
@@ -1853,7 +1855,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         const delta = this.persistGenericMutationState({
           ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
         }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: new Set() }, measurement);
-        if (context !== null) this.assertOwnedMutationDelta(context, owned.beforeLedgers, delta);
+        if (admitted !== null) this.assertOwnedMutationDelta(admitted, owned.beforeLedgers, delta);
         const changes = this.coherenceChangesForDelta(delta);
         recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
         return { result, dirtyLedgers: changedCoherenceLedgers(changes) };

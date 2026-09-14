@@ -9,6 +9,7 @@ import type { LedgerStore } from "./store/LedgerStore.js";
 import type { Item } from "./types.js";
 import { ItemNotFoundError, LedgerError, SchemaValidationError } from "./types.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
+import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
 
 export { operatorActionRevision } from "./store/operatorActionLifecycle.js";
 
@@ -153,7 +154,7 @@ export async function materializeOperatorAction(
   assertNonEmpty(input.expectedOutputIdentity, "expectedOutputIdentity");
   assertExpectedEvidence(input.expectedEvidence);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: DirectOwnedMutation): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new LedgerError("operator-action materialization requires an atomic ledger adapter");
@@ -243,7 +244,7 @@ export async function materializeOperatorAction(
       });
     }
     return { state, action, handoff };
-  }, null);
+  }, { direct: { kind: "materialize-operator", input } });
 }
 
 export async function acknowledgeOperatorAction(
@@ -341,7 +342,7 @@ export async function supersedeOperatorAction(
     throw new SchemaValidationError("supersededAt must be an ISO timestamp");
   }
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: DirectOwnedMutation): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new LedgerError("operator-action supersession requires an atomic ledger adapter");
@@ -395,10 +396,10 @@ export async function supersedeOperatorAction(
     } as const;
     authorizedSupersessionPatches.add(patch);
     return { task: tx.updateItem(TASKS_LEDGER, task.id, patch) };
-  }, null);
+  }, { direct: { kind: "supersede-operator", input } });
 }
 
-function actionIdForTask(taskId: string): string {
+export function actionIdForTask(taskId: string): string {
   const match = /^T(\d+)$/.exec(taskId);
   if (match === null || match[1] === undefined) {
     throw new OperatorActionEnvelopeError(`task id ${taskId} cannot derive an action id`);
@@ -406,7 +407,7 @@ function actionIdForTask(taskId: string): string {
   return `OA${match[1]}`;
 }
 
-function taskIdForAction(actionId: string): string {
+export function taskIdForAction(actionId: string): string {
   const match = /^OA(\d+)$/.exec(actionId);
   if (match === null || match[1] === undefined) {
     throw new OperatorActionEnvelopeError(`action id ${actionId} cannot derive a task id`);
@@ -414,7 +415,7 @@ function taskIdForAction(actionId: string): string {
   return `T${match[1]}`;
 }
 
-function handoffIdForTask(taskId: string): string {
+export function handoffIdForTask(taskId: string): string {
   const match = /^T(\d+)$/.exec(taskId);
   if (match === null || match[1] === undefined) {
     throw new OperatorActionEnvelopeError(`task id ${taskId} cannot derive a handoff id`);

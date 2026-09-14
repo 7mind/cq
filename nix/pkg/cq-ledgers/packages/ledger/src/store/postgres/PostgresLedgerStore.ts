@@ -103,6 +103,8 @@ import { resolvePostgresPlanRows } from "./planRowOperation.js";
 import { persistPostgresPlanRows, type PostgresPublicRowPlan } from "./planRowPersistence.js";
 import { resolvePostgresOwnedRows } from "./ownedRowOperation.js";
 import { assertOwnedMutationRows } from "../ownedMutationRows.js";
+import type { OwnedMutationContext } from "../directOwnedMutation.js";
+import { resolvePostgresDirectOwnedRows } from "./directOwnedRowOperation.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import type { PostgresAccessObserver } from "./operationAccess.js";
 import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
@@ -201,8 +203,7 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
-import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
-import type { AdmittedOwnedMutation, WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
@@ -2207,59 +2208,28 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /** Run one tenant-scoped owned lifecycle operation and notify after commit. */
-  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation | null): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: OwnedMutationContext): Promise<T> {
     this.assertInit();
-    if (context !== null) {
-      const committed = await runPostgresKeyedOperation(this.pool(), {
-        projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
-      }, {
-        name: `owned_${context.operation.kind}`,
-        resolve: (queries) => resolvePostgresOwnedRows(queries, context, this.now),
-        apply: async (queries, resolution) => {
-          if (resolution.kind === "rejected") throw resolution.error;
-          const { owned } = resolution;
-          const value = mutate(owned.tx);
-          const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
-          const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
-          assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);
-          return { value, plan, dirty: changed.ledgers };
-        },
-      });
-      this.absorbPlanRows(committed.plan);
-      for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
-      return committed.value;
-    }
-    let result!: T;
-    let dirtyLedgers: readonly string[] = [];
-    let live!: LiveTenantState;
-    await writeTransaction(this.pool(), async (tx) => {
-      await this.lockTenantCounters(tx);
-      const tenant = await this.readLiveTenant(tx);
-      const archivedIds = new Map<string, Set<string>>();
-      for (const item of tenant.archived) {
-        let ids = archivedIds.get(item.ledger);
-        if (ids === undefined) {
-          ids = new Set();
-          archivedIds.set(item.ledger, ids);
-        }
-        ids.add(item.id);
-      }
-      const owned = createOwnedWriteTransaction({
-        ledgers: tenant.ledgers,
-        now: this.now,
-        archivedRefExists: (ledgerId, itemId) =>
-          archivedIds.get(ledgerId)?.has(itemId) ?? false,
-      });
-      result = mutate(owned.tx);
-      dirtyLedgers = [...owned.dirtyLedgers];
-      for (const ledgerId of dirtyLedgers) {
-        await this.persistLedgerState(tx, requireLiveLedger(tenant.ledgers, ledgerId));
-      }
-      live = tenant;
+    if (context === null) throw new LedgerError("PostgreSQL owned mutations require a closed operation descriptor");
+    const committed = await runPostgresKeyedOperation(this.pool(), {
+      projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+    }, {
+      name: "direct" in context ? `direct_${context.direct.kind}` : `owned_${context.operation.kind}`,
+      resolve: (queries) => "direct" in context ? resolvePostgresDirectOwnedRows(queries, context.direct, this.now)
+        : resolvePostgresOwnedRows(queries, context, this.now),
+      apply: async (queries, resolution) => {
+        if (resolution.kind === "rejected") throw resolution.error;
+        const { owned } = resolution;
+        const value = mutate(owned.tx);
+        const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
+        const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
+        if ("admission" in context) assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);
+        return { value, plan, dirty: changed.ledgers };
+      },
     });
-    this.absorbLiveLedgers(live);
-    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
-    return result;
+    this.absorbPlanRows(committed.plan);
+    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    return committed.value;
   }
 
   /** Run one tenant-scoped guarded plan operation and notify only after commit. */

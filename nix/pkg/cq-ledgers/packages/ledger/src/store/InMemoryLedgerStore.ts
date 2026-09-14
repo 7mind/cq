@@ -40,7 +40,8 @@ import {
   validateSchema,
 } from "./core.js";
 import { UsageTracker } from "../usageStats.js";
-import { assertOwnedMutationAdmission, type AdmittedOwnedMutation } from "../worksetOwnedLifecycle.js";
+import { assertOwnedMutationAdmission } from "../worksetOwnedLifecycle.js";
+import type { OwnedMutationContext } from "./directOwnedMutation.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
 import { statusSatisfiesDependency } from "./core.js";
@@ -666,14 +667,14 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * ledger lock. On throw, every ledger mutation performed inside `mutate` is
    * rolled back so no partial child/link becomes visible.
    */
-  async runAtomicOwnedMutation<T>(mutate: (tx: InMemoryOwnedWriteTx) => T | Promise<T>, context: AdmittedOwnedMutation | null): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: InMemoryOwnedWriteTx) => T | Promise<T>, context: OwnedMutationContext): Promise<T> {
     this.assertInit();
     const ledgerIds = [...this.ledgers.keys()]
       .filter((id) => id !== MILESTONES_LEDGER)
       .sort();
     const outcome = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
-        if (context !== null) assertOwnedMutationAdmission(context);
+        if (context !== null && "admission" in context) assertOwnedMutationAdmission(context);
         const beforeLedgers = cloneLedgerMap(this.ledgers);
         const dirty = new Set<string>();
         const tx: InMemoryOwnedWriteTx = {

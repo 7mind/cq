@@ -1,16 +1,18 @@
-import { DECISIONS_LEDGER, GOALS_LEDGER, IDEAS_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, QUESTIONS_LEDGER, TASKS_LEDGER } from "../constants.js";
+import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, OPERATOR_ACTIONS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "../constants.js";
 import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
 import { LedgerError, LedgerNotFoundError, type FieldValue, type Item, type Ledger } from "../types.js";
 import type { WorksetActiveState } from "../worksetGraph.js";
 import type { OwnedMutationOperation, WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import { readCanonicalOwnership } from "../worksetOwnerEdges.js";
-import type { CreateItemInit, CreateMilestoneItemInit } from "./LedgerStore.js";
+import type { CreateItemInit, CreateMilestoneItemInit, UpdateItemPatch } from "./LedgerStore.js";
 import type { LifecycleRowRepository } from "./lifecycleRowRepository.js";
-import { applyOperatorActionLifecycleRows } from "./operatorActionLifecycle.js";
+import { applyOperatorActionLifecycleRows, operatorActionReads } from "./operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "./ownedWriteTransaction.js";
 import type { AsyncLifecycleRowRepository } from "./asyncRowRepository.js";
 import type { GenericMutationLedgerMetadata } from "./genericMutationDataSource.js";
 import { repositoryRead, runRepositoryReads, runAsyncRepositoryReads, type RepositoryReadProgram } from "./readProgram.js";
+import type { DirectOwnedOperation } from "./directOwnedMutation.js";
+import { actionIdForTask, handoffIdForTask, taskIdForAction } from "../operatorActions.js";
 
 export interface KeyedOwnedWriteTransaction {
   readonly tx: WorksetOwnedWriteTx;
@@ -35,15 +37,24 @@ export async function createAsyncKeyedOwnedWriteTransaction(rows: AsyncLifecycle
   const plan = prepareOwnedRows(await rows.publicRows.listLedgers());
   await runAsyncRepositoryReads(rows, plan.includeState(admittedState));
   await runAsyncRepositoryReads(rows, plan.prepareOperation(operation, admittedState));
-  return plan.transaction((program) => {
-    const step = program.next();
-    if (!step.done) throw new LedgerError("owned transaction requested an unprepared row outside its declared operation");
-    return step.value;
-  }, admittedState, now);
+  return plan.transaction(requirePreparedRows, admittedState, now);
+}
+
+export async function createAsyncDirectOwnedWriteTransaction(rows: AsyncLifecycleRowRepository,
+  operation: DirectOwnedOperation, now: () => string): Promise<KeyedOwnedWriteTransaction> {
+  const plan = prepareOwnedRows(await rows.publicRows.listLedgers());
+  await runAsyncRepositoryReads(rows, plan.prepareDirectOperation(operation, now));
+  return plan.transaction(requirePreparedRows, null, now);
 }
 
 type OwnedReadSource = LifecycleRowRepository | AsyncLifecycleRowRepository;
 type OwnedReads<T> = RepositoryReadProgram<OwnedReadSource, T>;
+
+function requirePreparedRows<T>(program: OwnedReads<T>): T {
+  const step = program.next();
+  if (!step.done) throw new LedgerError("owned transaction requested an unprepared row outside its declared operation");
+  return step.value;
+}
 
 function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
   const rows = {
@@ -127,7 +138,7 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     let counter = ledger.counters.item;
     while ((yield* loadItem(ledgerId, `${prefix}${counter + 1}`)) !== undefined) counter += 1;
   }
-  function* prepareCreate(ledgerId: string, milestoneId: string, init: CreateItemInit): OwnedReads<void> {
+  function* prepareCreate(ledgerId: string, milestoneId: string, init: Pick<CreateItemInit, "id" | "fields">): OwnedReads<void> {
     yield* loadItem(MILESTONES_LEDGER, milestoneId);
     yield* loadGroup(ledgerId, milestoneId);
     yield* prepareFields(ledgerId, init.fields);
@@ -164,11 +175,62 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
       }
     }
     const { goal } = operation.input;
-    yield* prepareCreate(GOALS_LEDGER, MILESTONES_AMBIENT_ID, { status: goal.status ?? "clarifying",
+    yield* prepareCreate(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
       fields: { title: goal.title, description: goal.description, ...goal.fields } });
     if (operation.kind === "idea-to-goal" && operation.input.consumeIdea === true) {
       const idea = yield* loadItem(IDEAS_LEDGER, operation.input.ideaId);
       if (idea !== undefined && idea.status !== "planned" && idea.status !== "discarded") yield* prepareFields(IDEAS_LEDGER, idea.fields);
+    }
+  }
+  function* prepareUpdate(ledgerId: string, itemId: string, patch: UpdateItemPatch): OwnedReads<void> {
+    const item = yield* loadItem(ledgerId, itemId);
+    if (item !== undefined) yield* prepareFields(ledgerId, item.fields);
+    if (patch.fields !== undefined) yield* prepareFields(ledgerId, patch.fields);
+    if (ledgerId === GOALS_LEDGER && patch.status !== undefined) {
+      const ref = `${ledgerId}:${itemId}`;
+      for (const source of yield* rows.referenceSources(ref, ["worksetOwnerRef"])) yield* loadRef(source, false);
+      for (const source of yield* rows.referenceSources(ref, ["ledgerRefs"])) {
+        if (source.startsWith(`${QUESTIONS_LEDGER}:`) || source.startsWith(`${DECISIONS_LEDGER}:`)) yield* loadRef(source, false);
+      }
+    }
+  }
+  function* prepareDirectOperation(operation: DirectOwnedOperation, now: () => string): OwnedReads<void> {
+    if (operation.kind === "materialize-operator") {
+      const task = yield* loadItem(TASKS_LEDGER, operation.input.taskId);
+      if (task === undefined || task.status !== "planned") return;
+      const actionId = actionIdForTask(task.id);
+      const handoffId = handoffIdForTask(task.id);
+      const action = yield* loadItem(OPERATOR_ACTIONS_LEDGER, actionId);
+      if (action === undefined) yield* prepareCreate(OPERATOR_ACTIONS_LEDGER, task.milestoneId, { id: actionId, fields: {} });
+      const handoff = yield* loadItem(HANDOFFS_LEDGER, handoffId);
+      if (handoff === undefined) yield* prepareCreate(HANDOFFS_LEDGER, task.milestoneId, { id: handoffId, fields: {} });
+      return;
+    }
+    if (operation.kind === "supersede-operator") {
+      const { input } = operation;
+      const action = yield* loadItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
+      if (action !== undefined) {
+        const program = operatorActionReads({ kind: "supersede", ...input, provenance: {
+          author: input.author, ...(input.session === undefined ? {} : { session: input.session }),
+        } }, now);
+        let step = program.next();
+        while (!step.done) step = program.next(yield* loadItem(step.value.ledgerId, step.value.itemId));
+      } else {
+        const task = yield* loadItem(TASKS_LEDGER, taskIdForAction(input.actionId));
+        if (task !== undefined && task.status === "planned") yield* prepareFields(TASKS_LEDGER, task.fields);
+      }
+      return;
+    }
+    const task = yield* loadItem(TASKS_LEDGER, operation.taskId);
+    if (task === undefined) return;
+    const review = yield* loadItem(REVIEWS_LEDGER, operation.reviewId);
+    if (review === undefined) yield* prepareCreate(REVIEWS_LEDGER, task.milestoneId, operation.reviewInit);
+    if (task.status !== "done") yield* prepareUpdate(TASKS_LEDGER, task.id, operation.taskPatch);
+    const defectRefs = task.fields.ledgerRefs;
+    if (Array.isArray(defectRefs)) for (const ref of new Set(defectRefs)) {
+      if (!ref.startsWith(`${DEFECTS_LEDGER}:`)) continue;
+      const defect = yield* loadItem(DEFECTS_LEDGER, ref.slice(DEFECTS_LEDGER.length + 1));
+      if (defect !== undefined && defect.status === "root-caused") yield* prepareUpdate(DEFECTS_LEDGER, defect.id, operation.defectPatch);
     }
   }
   function transaction(run: <T>(program: OwnedReads<T>) => T, admittedState: WorksetActiveState | null,
@@ -201,16 +263,7 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
         },
         createMilestoneOwnerless: (init) => { run(prepareMilestone(init)); return owned.tx.createMilestoneOwnerless(init); },
         updateItem: (ledgerId, itemId, patch) => {
-          const item = run(loadItem(ledgerId, itemId));
-          if (item !== undefined) run(prepareFields(ledgerId, item.fields));
-          if (patch.fields !== undefined) run(prepareFields(ledgerId, patch.fields));
-          if (ledgerId === GOALS_LEDGER && patch.status !== undefined) {
-            const ref = `${ledgerId}:${itemId}`;
-            for (const source of run(rows.referenceSources(ref, ["worksetOwnerRef"]))) run(loadRef(source, false));
-            for (const source of run(rows.referenceSources(ref, ["ledgerRefs"]))) {
-              if (source.startsWith(`${QUESTIONS_LEDGER}:`) || source.startsWith(`${DECISIONS_LEDGER}:`)) run(loadRef(source, false));
-            }
-          }
+          run(prepareUpdate(ledgerId, itemId, patch));
           return owned.tx.updateItem(ledgerId, itemId, patch);
         },
         mutateOperatorAction: (mutation) => {
@@ -221,5 +274,5 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
       },
     };
   }
-  return { includeState, prepareOperation, transaction };
+  return { includeState, prepareOperation, prepareDirectOperation, transaction };
 }

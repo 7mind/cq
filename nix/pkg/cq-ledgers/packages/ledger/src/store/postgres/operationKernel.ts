@@ -2,7 +2,7 @@ import type { SQL } from "bun";
 import { LedgerError } from "../../types.js";
 import { WRITE_TXN_MAX_ATTEMPTS, writeTransaction } from "./connection.js";
 import { PostgresOperationQueries, type PostgresAccessObserver } from "./operationAccess.js";
-import { lockPostgresRows, postgresRowLocksCover, type PostgresRowLock } from "./rowLocks.js";
+import { lockPostgresRows, postgresRowLocksCover, postgresRowsRemainAbsent, type PostgresRowLock } from "./rowLocks.js";
 
 export interface PostgresOperationClosure<Plan> {
   readonly plan: Plan;
@@ -44,10 +44,13 @@ export async function runPostgresKeyedOperation<Plan, Result>(pool: SQL, options
           if (discovered.locks.length !== 0) throw new LedgerError("an exact PostgreSQL replay declared domain locks");
           return { result: await operation.apply(queries, discovered.plan) };
         }
-        await lockPostgresRows(queries, discovered.locks);
+        const absent = await lockPostgresRows(queries, discovered.locks);
         // READ COMMITTED gives this second resolution the state committed by a lock holder.
         const authoritative = await operation.resolve(queries);
-        if (!postgresRowLocksCover(discovered.locks, authoritative.locks)) throw new ClosureChangedAfterLock();
+        // A SELECT FOR UPDATE on a missing row acquired no lock; a parent waiter may now see that row created.
+        if (!postgresRowLocksCover(discovered.locks, authoritative.locks) || !(await postgresRowsRemainAbsent(queries, absent))) {
+          throw new ClosureChangedAfterLock();
+        }
         return { result: await operation.apply(queries, authoritative.plan) };
       });
       return committed.result;

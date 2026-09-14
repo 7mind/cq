@@ -8,6 +8,49 @@ import { postgresLifecycleRowFixture } from "./postgresLifecycleRowFixture.js";
 import { waitForPostgresLock } from "./postgresLockWait.js";
 
 describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL keyed transaction kernel [T5917 Behavioral-Active Blackbox-GoodCommunication]", () => {
+  test("a row created while waiting on its parent is actually locked before apply", async () => {
+    const fixture = await postgresLifecycleRowFixture();
+    const dsn = process.env.CQ_TEST_PG_URL;
+    if (dsn === undefined) throw new Error("PostgreSQL fixture DSN missing");
+    const application = `cq-kernel-absent-${randomUUID()}`;
+    const worker = new SQL({ url: dsn, connection: { search_path: fixture.schema, application_name: application, lock_timeout: "2s" } });
+    const probe = new SQL({ url: dsn, connection: { search_path: fixture.schema, lock_timeout: "250ms" } });
+    const retries: number[] = [];
+    let pending: Promise<unknown> | null = null;
+    try {
+      const held = await fixture.pool.begin(async (holder) => {
+        await holder`SELECT 1 FROM items WHERE project_key = ${fixture.projectKey} AND ledger = 'tasks' AND id = 'T1' FOR UPDATE`;
+        const contender = runPostgresKeyedOperation(worker, { projectKey: fixture.projectKey, observer: null,
+          monotonicNow: () => performance.now(), onClosureRetry: ({ attempt }) => { retries.push(attempt); } }, {
+          name: "child-created-during-parent-wait",
+          resolve: async (queries) => ({ plan: await createPostgresLifecycleRowRepository(queries).publicRows.fetchActiveItem("operatorActions:OA1"),
+            exactReplay: false, locks: [
+              { target: { table: "items", ledgerId: "operatorActions", id: "OA1" }, mode: "update" },
+              { target: { table: "items", ledgerId: "tasks", id: "T1" }, mode: "update" },
+            ] }),
+          apply: async (_queries, action) => {
+            expect(action).toBeDefined();
+            const attemptedWrite = (async () => await probe`UPDATE items SET fields_json = fields_json
+              WHERE project_key = ${fixture.projectKey} AND ledger = 'operatorActions' AND id = 'OA1'`)();
+            await expect(attemptedWrite).rejects.toMatchObject({ errno: "55P03" });
+          },
+        }).then(() => ({ kind: "result" as const }), (error: unknown) => ({ kind: "error" as const, error }));
+        pending = contender;
+        await waitForPostgresLock(fixture.pool, application, 1_000);
+        await holder`INSERT INTO groups (project_key, ledger, id, title, description) VALUES (${fixture.projectKey}, 'operatorActions', 'M1', '', '')`;
+        await holder`INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at)
+          VALUES (${fixture.projectKey}, 'operatorActions', 'OA1', 'M1', 'pending', '{"summary":"new action"}', 'now', 'now')`;
+        return { contender };
+      });
+      const settled = await held.contender;
+      if (settled.kind === "error") throw settled.error;
+      expect(retries).toEqual([1]);
+    } finally {
+      if (pending !== null) await Promise.allSettled([pending]);
+      await worker.close(); await probe.close(); await fixture.dispose();
+    }
+  });
+
   test("an unrelated goal proceeds while a same-row contender waits and then reads the committed state", async () => {
     const fixture = await postgresLifecycleRowFixture();
     const dsn = process.env.CQ_TEST_PG_URL;

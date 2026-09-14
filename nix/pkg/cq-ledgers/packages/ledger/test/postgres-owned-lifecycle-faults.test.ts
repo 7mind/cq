@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createTrustedWorksetManagementAuthority, createWorksetOwnedGuardedLedger } from "../src/index.js";
 import { ownedLifecyclePostgresFixtureWithPool } from "./ownedLifecyclePostgresFixture.js";
 import { PostgresStatementFaults } from "./postgresStatementFaults.js";
+import { snapshotPostgresLifecycleRows } from "./postgresLifecycleSnapshot.js";
 
 const INJECTED_STATEMENT = "T5920 injected owned statement failure";
 const INJECTED_COMMIT = "T5920 injected owned commit failure";
@@ -36,15 +37,7 @@ async function ownedFaultFixture(kind: OwnedCase) {
       await store.replaceWorksetRoots([`defects:${defect.id}`]);
       run = () => guarded.bundles.bootstrapDefectToFixGoal({ defectId: defect.id, goal: { title: "fix", description: "fix" } });
     }
-    const snapshot = async () => ({
-      items: [...await pool`SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM items WHERE project_key = ${projectKey} ORDER BY ledger, id`],
-      groups: [...await pool`SELECT ledger, id, title, description FROM groups WHERE project_key = ${projectKey} ORDER BY ledger, id`],
-      counters: [...await pool`SELECT name, item_counter, milestone_counter FROM ledgers WHERE project_key = ${projectKey} ORDER BY name`],
-      references: [...await pool`SELECT source_ledger, source_id, field_name, target_ledger, target_id FROM item_references
-        WHERE project_key = ${projectKey} ORDER BY source_ledger, source_id, field_name, target_ledger, target_id`],
-      claims: [...await pool`SELECT scope, record_json FROM plan_claims WHERE project_key = ${projectKey} ORDER BY scope`],
-      operations: [...await pool`SELECT scope, record_json FROM plan_operations WHERE project_key = ${projectKey} ORDER BY scope`],
-    });
+    const snapshot = () => snapshotPostgresLifecycleRows(pool, projectKey);
     return { ...fixture, run, snapshot, arm: (nth: number) => { failAt = nth; } };
   } catch (error) { await fixture.dispose(); throw error; }
 }

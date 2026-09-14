@@ -91,16 +91,33 @@ function lockSql(mode: PostgresRowLock["mode"]): string {
   }
 }
 
-export async function lockPostgresRows(queries: PostgresOperationQueries, requests: readonly PostgresRowLock[]): Promise<void> {
+export async function lockPostgresRows(queries: PostgresOperationQueries, requests: readonly PostgresRowLock[]): Promise<readonly PostgresLockTarget[]> {
+  const absent: PostgresLockTarget[] = [];
   for (const request of orderedPostgresRowLocks(requests)) {
     const { target, mode } = request;
     const location = coordinates(target);
     const conditions = ["project_key = $1", ...location.columns.map((column, index) => `${column} = $${index + 2}`)];
     const privateScope = target.table === "plan_claims" || target.table === "plan_operations";
-    await queries.execute<{ scope: string }>({ phase: "transaction", table: target.table, mode: "read",
+    const rows = await queries.execute<{ scope: string }>({ phase: "transaction", table: target.table, mode: "read",
       predicate: { kind: "primary-key", keys: [location.key] }, lockMode: mode }, {
       sql: `SELECT ${privateScope ? "scope" : "1"} FROM ${target.table} WHERE ${conditions.join(" AND ")} ${lockSql(mode)}`,
       parameters: [queries.projectKey, ...location.values],
     }, (row) => privateScope ? decodePostgresPlanScope(row.scope) : location.key);
+    if (rows.length === 0) absent.push(target);
   }
+  return absent;
+}
+
+export async function postgresRowsRemainAbsent(queries: PostgresOperationQueries, targets: readonly PostgresLockTarget[]): Promise<boolean> {
+  for (const target of targets) {
+    const location = coordinates(target);
+    const conditions = ["project_key = $1", ...location.columns.map((column, index) => `${column} = $${index + 2}`)];
+    const rows = await queries.execute<{ present: number }>({ phase: "transaction", table: target.table, mode: "read",
+      predicate: { kind: "primary-key", keys: [location.key] }, lockMode: "none" }, {
+      sql: `SELECT 1 AS present FROM ${target.table} WHERE ${conditions.join(" AND ")}`,
+      parameters: [queries.projectKey, ...location.values],
+    }, () => location.key);
+    if (rows.length > 0) return false;
+  }
+  return true;
 }

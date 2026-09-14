@@ -30,6 +30,7 @@ import type {
 } from "./store/sqlite/operationObservability.js";
 import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
+import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
 import { ItemNotFoundError, LedgerError } from "./types.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 1 as const;
@@ -5308,7 +5309,7 @@ export async function recordProtectedImplementationCompletion(
   authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: null): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new Error("protected implementation completion requires an atomic ledger adapter");
@@ -5350,7 +5351,7 @@ export async function recordProtectedImplementationCompletion(
       }
     }
     return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
-  }, null);
+  }, { direct: { kind: "implementation-completion", taskId, reviewId, reviewInit, taskPatch: patch, defectPatch } });
 }
 
 export function canonicalImplementationCompletionMergeLine(

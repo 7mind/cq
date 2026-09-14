@@ -3,6 +3,7 @@ import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.j
 import { postgresKeyedFixture } from "./postgresKeyedFixture.js";
 import { PostgresStatementFaults } from "./postgresStatementFaults.js";
 import type { PlanClaimInput, PlanPublishDraftInput } from "../src/planLifecycle.js";
+import { snapshotPostgresLifecycleRows } from "./postgresLifecycleSnapshot.js";
 
 type PlanFaultCase = "claim" | "publish" | "release" | "finalize";
 const INJECTED_STATEMENT = "T5918 injected plan statement failure";
@@ -41,15 +42,7 @@ async function planFaultFixture(kind: PlanFaultCase) {
         run = () => store.finalizePlan({ ...identity, operationId: "finalize", reviewId: "R1", draftRevision: 1, decision: { headline: "approved" } });
       }
     }
-    const snapshot = async () => ({
-      items: [...await fixture.pool`SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM items WHERE project_key = ${projectKey} ORDER BY ledger, id`],
-      groups: [...await fixture.pool`SELECT ledger, id, title, description FROM groups WHERE project_key = ${projectKey} ORDER BY ledger, id`],
-      counters: [...await fixture.pool`SELECT name, item_counter, milestone_counter FROM ledgers WHERE project_key = ${projectKey} ORDER BY name`],
-      claims: [...await fixture.pool`SELECT scope, record_json FROM plan_claims WHERE project_key = ${projectKey} ORDER BY scope`],
-      operations: [...await fixture.pool`SELECT scope, record_json FROM plan_operations WHERE project_key = ${projectKey} ORDER BY scope`],
-      references: [...await fixture.pool`SELECT source_ledger, source_id, field_name, target_ledger, target_id FROM item_references
-        WHERE project_key = ${projectKey} ORDER BY source_ledger, source_id, field_name, target_ledger, target_id`],
-    });
+    const snapshot = () => snapshotPostgresLifecycleRows(fixture.pool, projectKey);
     return { ...fixture, store, projectKey, faults, run, snapshot, dispose };
   } catch (error) { await dispose(); throw error; }
 }

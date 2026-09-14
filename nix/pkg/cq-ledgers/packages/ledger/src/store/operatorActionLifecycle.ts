@@ -147,7 +147,7 @@ export async function prepareAsyncOperatorActionLifecycleRows(
   return step.value;
 }
 
-function* operatorActionReads(mutation: OperatorActionLifecycleMutation, now: () => string): OperatorReadProgram<PreparedOperatorMutation> {
+export function* operatorActionReads(mutation: OperatorActionLifecycleMutation, now: () => string): OperatorReadProgram<PreparedOperatorMutation> {
   assertRevision(mutation.expectedRevision);
   const action = yield* findMutableItem(OPERATOR_ACTIONS_LEDGER, mutation.actionId);
   const revision = operatorActionRevision(action);
