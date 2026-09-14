@@ -411,6 +411,7 @@ async function fixtureWithDispatchBase(
   };
   return {
     capability,
+    repositoryRoot,
     managed,
     prepared: prepared.prepared,
     receipt,
@@ -428,6 +429,21 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
 }
 
 type GateFixture = Awaited<ReturnType<typeof fixture>>;
+
+async function resolveRecovery(subject: GateFixture) {
+  const binding = await resolveManagedWorktreeDispatchBinding(
+    {
+      repositoryRoot: subject.repositoryRoot,
+      taskId: subject.managed.handle.taskId,
+      worktreePath: subject.managed.handle.absolutePath,
+      branch: subject.managed.handle.branch,
+    },
+    { stateDir: subject.stateDir },
+  );
+  if (binding === null || subject.capability.resolveRecovery === undefined)
+    throw new Error("missing recovery binding");
+  return await subject.capability.resolveRecovery(binding, subject.receipt.newHead);
+}
 
 function parentGateInput(subject: GateFixture) {
   if (subject.prepared.parentGateCapability === undefined) {
@@ -1159,6 +1175,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         },
       });
       expect(await finalize(subject)).toEqual(rejected);
+      await expect(resolveRecovery(subject)).rejects.toThrow("no parent-lost dispatch recovery");
       expect(runner.requests).toHaveLength(1);
     }
   });
@@ -1205,6 +1222,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
           },
         },
       ]);
+      expect(await resolveRecovery(subject)).toMatchObject({ preparation: { kind: "legacy" } });
     }
   });
 

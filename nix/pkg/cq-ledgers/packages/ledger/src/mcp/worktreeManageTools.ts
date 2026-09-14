@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import type { DispatchRecoveryResolution } from "./dispatchCapability.js";
 import { validateManagedWorktreeHandle } from "@cq/config";
 import { TASKS_LEDGER } from "../constants.js";
 import {
@@ -210,7 +211,7 @@ export interface WorktreeManageCapability {
   readonly resolveDispatchRecovery?: (
     binding: ManagedWorktreeDispatchBinding,
     liveTip: string,
-  ) => Promise<object>;
+  ) => Promise<DispatchRecoveryResolution>;
   readonly resolveDispatchContinuation?: (
     binding: ManagedWorktreeDispatchBinding,
     liveTip: string,

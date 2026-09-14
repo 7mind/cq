@@ -63,19 +63,35 @@ the effect boundaries required by the shared contract.
   discard worker partial/WIP state. Consume the worker's required
   `actualWorktreePath` on output as the authoritative location; merge by
   `resultCommit` SHA.
-- **Parent-lost dispatch recovery.** After a manager-bound implement-worker is
-  terminally aborted `parent-lost`, retain its exact worktree handle and call
-  `worktree_manage({ operation: "resolve-dispatch-recovery", handle })`. Accept
-  only the server-returned opaque `recoveryReference`; persist that literal
-  reference with the task's recovery metadata and `cq log put` record. Re-read
-  the worktree `HEAD` and require it to equal the returned live tip, then call
-  `prepare_dispatch` with `recovery: <recoveryReference>` and without
-  `reprepareOf`. The server resolves the exact terminal generation and injects
+- **Managed dispatch recovery.** After a manager-bound implement-worker is
+  terminally aborted `missing-result` or `parent-lost`, retain its exact worktree
+  handle and call `worktree_manage({ operation: "resolve-dispatch-recovery", handle })`.
+  Accept only the server-returned discriminated preparation authority. For
+  `preparation.kind === "current"`, retain the returned opaque authority and use
+  `prepare_dispatch` with `recoveryPreparation: <preparation.recoveryPreparation>`;
+  omit `recovery`, `reprepareOf`, `continuation`, and `guardedRebase`. For
+  `preparation.kind === "legacy"`, take `recoveryReference` from `preparation.recovery`;
+  persist that literal reference with the task's recovery metadata and `cq log put`
+  record, then use `recovery: <recoveryReference>` and without `reprepareOf`.
+  Never copy preparation authority into child input or transcripts. Re-read the
+  worktree `HEAD` immediately before prepare and require it to equal the returned
+  live tip. Preserve dirty partial work and the original terminal cause. An absent,
+  ambiguous, stale, foreign, or already-used authority fails closed; never fall back
+  from a rejected current seal to legacy recovery. The server resolves the exact
+  terminal generation and injects
   only its verified durable Git receipt lineage. Never retry an advanced tip as
   a fresh lineage-free dispatch, never reconstruct a prior dispatch handle or
   recovery association from registry files, and never substitute raw
   attestation, repository, worktree, branch, base, tip, terminal, or receipt
   coordinates for the opaque reference.
+- **Deterministic gate failure.** `gate-rejected` is a completed deterministic gate
+  failure, not lost transport or parent interruption. Reconcile a lost store/finalize
+  acknowledgement against the durable terminal result and retain its bounded
+  command/exit/count/output diagnostics. Do not resolve recovery, reclassify it as
+  `parent-lost`, or redispatch the unchanged tip. Route the observed failure to
+  focused correction; another full gate requires a changed candidate. Genuine
+  interrupted or unclassified runner failure retains `parent-lost` recovery.
+  Other roles retain their existing first-loss retry and second-loss fail-closed rule.
 - **Consumed-worker continuation.** A consumed manager-bound implement-worker
   whose worktree remains live is continued only through its single-use opaque
   association. Before an ordinary criticism redispatch, or before parking a

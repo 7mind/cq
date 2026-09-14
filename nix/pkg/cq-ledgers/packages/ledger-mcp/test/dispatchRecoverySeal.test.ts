@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import {
   DISPATCH_OVERLAY_REGISTRY,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  abortDispatch,
   FakeDispatchClock,
   InMemoryAttestationStore,
   attestationRowDigest,
@@ -55,7 +57,7 @@ const coordinates = {
 
 function authenticatedConsumedResult(
   status: "pass" | "fail",
-  options: { readonly collapse?: boolean; readonly randomSeed?: number } = {},
+  options: { readonly collapse?: boolean; readonly randomSeed?: number; readonly rejectGate?: boolean } = {},
 ) {
   const namespace = { backend: "xdg" as const, projectKey: "project" };
   const clock = new FakeDispatchClock(RECOVERY_NOW);
@@ -146,6 +148,16 @@ function authenticatedConsumedResult(
     { store, now: clock.now },
   );
   if (claimed.state !== "gate-running") throw new Error("fixture parent gate did not stage");
+  if (options.rejectGate === true) {
+    abortDispatch({ namespace, actor: "trusted-parent", attestationId: handle.attestationId,
+      generation: handle.generation, reason: "gate-rejected", details: {
+        kind: "cq-supervised-gate-rejection", version: 1,
+        command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+        gateExitCode: 1, passCount: 1, failCount: 1, outputTail: "known red candidate",
+      } }, { store, now: clock.now });
+    const row = store.rows()[0]!;
+    return { receipts, row: rehydrateAttestationRow(namespace, JSON.stringify(row), attestationRowDigest(row)) };
+  }
   completeParentGate(
     {
       attestationId: handle.attestationId,
@@ -197,6 +209,20 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 }
 
 describe("protected current dispatch-recovery capture", () => {
+  // expected-failure: tasks:T6474
+  test.failing("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const rejected = authenticatedConsumedResult("pass", { rejectGate: true });
+    const earlier = abortedEnvelope({ generation: 2, reason: "missing-result" });
+    await expect(captureCurrentRecoverySeal(coordinates, {
+      journal, snapshot: async () => [earlier, rejected.row],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {}, observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    })).rejects.toThrow("gate-rejected");
+    expect(await journal.read(RECOVERY_TASK)).toBeNull();
+  });
+
   test("task evidence requires membership in the exact finalized manifest", () => {
     let manifestTaskId = RECOVERY_TASK;
     const task = {

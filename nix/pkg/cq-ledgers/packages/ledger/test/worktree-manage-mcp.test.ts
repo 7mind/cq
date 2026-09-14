@@ -680,7 +680,7 @@ describe("worktree_manage direct/stdio contract", () => {
         observed.push({ taskId: binding.taskId, liveTip });
         return {
           status: "dispatch-recovery-resolved",
-          recoveryReference: `cq-dispatch-recovery:v1:${"a".repeat(64)}`,
+          preparation: { kind: "legacy", recovery: `cq-dispatch-recovery:v1:${"a".repeat(64)}` },
           taskId: binding.taskId,
           liveTip,
           terminalAt: "2026-08-21T20:00:00.000Z",

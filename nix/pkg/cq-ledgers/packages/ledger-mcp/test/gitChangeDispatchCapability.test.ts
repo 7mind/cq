@@ -967,6 +967,7 @@ describe("dispatch-bound Git change capability", () => {
       throw new Error("managed recovery resolution was not wired");
     }
     const recovery = await capability.resolveRecovery(liveBinding, receipt.newHead);
+    if (recovery.preparation.kind !== "legacy") throw new Error("expected legacy recovery");
     expect(recovery).toMatchObject({
       status: "dispatch-recovery-resolved",
       taskId: "T2082",
@@ -1016,7 +1017,7 @@ describe("dispatch-bound Git change capability", () => {
       idempotencyKey: "T2082-lost-report-r1",
       timeoutMs: 600_000,
       expectedChild: { childId: "lost-r1", runId: "lost-r1" },
-      recovery: recovery.recoveryReference,
+      recovery: recovery.preparation.recovery,
     });
     if (!second.accepted) throw new Error(second.detail);
     if (second.prepared.parentGateCapability === undefined) {
@@ -1197,6 +1198,7 @@ describe("dispatch-bound Git change capability", () => {
       throw new Error("managed recovery resolution was not wired");
     }
     const recovery = await capability.resolveRecovery(liveBinding, receipt.newHead);
+    if (recovery.preparation.kind !== "legacy") throw new Error("expected legacy recovery");
 
     const lineageFree = await capability.prepare({
       roleId: "implement-worker",
@@ -1223,7 +1225,7 @@ describe("dispatch-bound Git change capability", () => {
     const recovered = await capability.prepare({
       roleId: "implement-worker",
       input: workerInput(1, receipt.newHead),
-      recovery: recovery.recoveryReference,
+      recovery: recovery.preparation.recovery,
       idempotencyKey: "T2896-bootstrap-parent-lost-r1",
       timeoutMs: 600_000,
       expectedChild: { childId: "t2896-lost-r1", runId: "t2896-lost-r1" },
@@ -2532,10 +2534,8 @@ describe("dispatch-bound Git change capability", () => {
       if (lostBinding === null || restarted.capability.resolveRecovery === undefined) {
         throw new Error("guarded parent-lost recovery binding disappeared");
       }
-      const recovery = await restarted.capability.resolveRecovery(
-        lostBinding,
-        second.resultCommit,
-      );
+      const recovery = await restarted.capability.resolveRecovery(lostBinding, second.resultCommit);
+      if (recovery.preparation.kind !== "legacy") throw new Error("expected legacy recovery");
       const recovered = await restarted.capability.prepare({
         roleId: "implement-worker",
         input: {
@@ -2556,7 +2556,7 @@ describe("dispatch-bound Git change capability", () => {
           childId: "d451-parent-lost-recovery",
           runId: "d451-parent-lost-recovery",
         },
-        recovery: recovery.recoveryReference,
+        recovery: recovery.preparation.recovery,
       });
       if (!recovered.accepted) {
         throw new Error(

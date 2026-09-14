@@ -17,6 +17,7 @@ import {
   resolveInheritedGitChangeReceipts,
   resolveManagedWorktreeDispatchBinding,
   type Item,
+  type DispatchRecoveryResolution,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -246,31 +247,68 @@ async function missingResultRecovery(journalKind: "memory" | "filesystem", dirty
     expect(receipts).toHaveLength(1);
     expect(receipts[0]!.newHead).toBe(f.liveTip);
     await f.capability.abort({ ...f.prepared.handle, reason: "missing-result" });
+    await expect(f.capability.resolveRecovery!(f.binding, f.input.baseCommit)).rejects.toThrow(
+      "tip changed",
+    );
+    expect(await f.journal.read(TASK_ID)).toBeNull();
     if (dirty)
       await fs.writeFile(join(f.binding.worktreePath, "state.txt"), "retained partial work\n");
     const before = await git(f.binding.worktreePath, ["status", "--porcelain"]);
     expect(before.length > 0).toBe(dirty);
-    const resolved = await f.resolveRecovery();
+    const wireResult = await f.resolveRecovery();
+    const resolved = wireResult as unknown as DispatchRecoveryResolution;
     expect(resolved).toMatchObject({
       status: "dispatch-recovery-resolved",
       taskId: TASK_ID,
       liveTip: f.liveTip,
       preparation: { kind: "current" },
     });
-    expect(await f.resolveRecovery()).toEqual(resolved);
+    expect(await f.resolveRecovery()).toEqual(wireResult);
     expect(await git(f.binding.worktreePath, ["status", "--porcelain"])).toBe(before);
     expect(await fs.readFile(join(f.binding.worktreePath, "state.txt"), "utf8")).toBe(
       dirty ? "retained partial work\n" : "after\n",
     );
-    expect((await f.capability.fetch(f.prepared.handle)).state).toBe("aborted");
+    expect(await f.capability.fetch(f.prepared.handle)).toMatchObject({
+      state: "aborted",
+      reason: "missing-result",
+    });
+    if (resolved.preparation.kind !== "current") throw new Error("expected current authority");
+    expect(
+      await f.capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          ...f.input,
+          round: 1,
+          startingCommit: f.liveTip,
+          priorResultCommit: f.liveTip,
+        },
+        idempotencyKey: "lineage-free",
+        timeoutMs: 600_000,
+        expectedChild: { childId: "lineage-free", runId: "lineage-free" },
+      }),
+    ).toMatchObject({ accepted: false });
+    const request = {
+      roleId: "implement-worker",
+      input: { ...f.input, round: 1, startingCommit: f.liveTip, priorResultCommit: f.liveTip },
+      idempotencyKey: "recovered-worker",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "recovered-worker", runId: "recovered-worker" },
+      recoveryPreparation: resolved.preparation.recoveryPreparation,
+    };
+    const next = await f.capability.prepare(request);
+    expect(next).toMatchObject({ accepted: true });
+    expect(await f.capability.prepare(request)).toEqual(next);
+    await expect(
+      f.capability.prepare({ ...request, idempotencyKey: "reused-authority" }),
+    ).rejects.toThrow("still live");
+    await expect(f.resolveRecovery()).rejects.toThrow();
   } finally {
     await f.dispose();
   }
 }
 
 describe("manager-bound dispatch recovery", () => {
-  // expected-failure: tasks:T6473
-  test.failing(
+  test(
     "clean receipt-backed missing-result returns current recovery authority [Behavioral-Progression Effectual-GoodCommunication]",
     async () => {
       await missingResultRecovery("memory", false);
@@ -278,8 +316,7 @@ describe("manager-bound dispatch recovery", () => {
     TEST_TIMEOUT_MS,
   );
 
-  // expected-failure: tasks:T6473
-  test.failing(
+  test(
     "dirty receipt-backed missing-result preserves partial work and returns current recovery authority [Behavioral-Progression Effectual-GoodCommunication]",
     async () => {
       await missingResultRecovery("filesystem", true);

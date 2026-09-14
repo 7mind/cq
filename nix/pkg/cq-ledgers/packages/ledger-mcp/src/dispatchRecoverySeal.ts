@@ -1181,6 +1181,62 @@ export function currentRecoveryTaskEvidence(
   };
 }
 
+/** Caller must hold the exact managed binding's effect lock. */
+export async function captureCurrentDispatchRecoverySealUnderLock(
+  options: CaptureCurrentDispatchRecoveryOptions,
+  binding: ManagedWorktreeDispatchBinding,
+  liveTip: string,
+  journal: CurrentRecoverySealJournalStore,
+): Promise<CurrentRecoverySeal> {
+  const evidence = currentRecoveryTaskEvidence(options.ledgerStore, options.taskId);
+  return await options.backend.transact(
+    { kind: "namespace" },
+    async (store) =>
+      await captureCurrentRecoverySeal(
+        { taskId: options.taskId, binding, liveTip, ...evidence },
+        {
+          journal,
+          now: options.now ?? (() => new Date().toISOString()),
+          snapshot: async () => store.rows().map((row) => structuredClone(row)),
+          resolveReceipts: async (row, tip) =>
+            await resolveInheritedGitChangeReceipts(
+              {
+                ...binding,
+                attestationId: row.attestationId,
+                generation: row.generation,
+                ...((isAttestationTombstone(row)
+                  ? row.dispatchContinuationBinding?.gitEffectBinding.inheritedGitReceipts
+                  : row.gitEffectBinding?.inheritedGitReceipts) === undefined
+                  ? {}
+                  : {
+                      inheritedGitReceipts: (isAttestationTombstone(row)
+                        ? row.dispatchContinuationBinding!.gitEffectBinding.inheritedGitReceipts
+                        : row.gitEffectBinding!
+                            .inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
+                    }),
+              },
+              tip,
+              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+            ),
+          revalidateBinding: async () =>
+            await assertManagedWorktreeDispatchBindingLive(
+              binding,
+              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+            ),
+          observeLiveTip: async () =>
+            await observeManagedWorktreeLiveTip(
+              binding,
+              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+            ),
+          ...(options.afterProvisional === undefined
+            ? {}
+            : { afterProvisional: options.afterProvisional }),
+          ...(options.beforeCommit === undefined ? {} : { beforeCommit: options.beforeCommit }),
+        },
+      ),
+  );
+}
+
 export async function captureCurrentDispatchRecoverySeal(
   options: CaptureCurrentDispatchRecoveryOptions,
 ): Promise<CurrentRecoverySeal> {
@@ -1204,53 +1260,7 @@ export async function captureCurrentDispatchRecoverySeal(
         binding,
         options.stateDir === undefined ? {} : { stateDir: options.stateDir },
       );
-      const evidence = currentRecoveryTaskEvidence(options.ledgerStore, options.taskId);
-      return await options.backend.transact(
-        { kind: "namespace" },
-        async (store) =>
-          await captureCurrentRecoverySeal(
-            { taskId: options.taskId, binding, liveTip, ...evidence },
-            {
-              journal,
-              now: options.now ?? (() => new Date().toISOString()),
-              snapshot: async () => store.rows().map((row) => structuredClone(row)),
-              resolveReceipts: async (row, tip) =>
-                await resolveInheritedGitChangeReceipts(
-                  {
-                    ...binding,
-                    attestationId: row.attestationId,
-                    generation: row.generation,
-                    ...((isAttestationTombstone(row)
-                      ? row.dispatchContinuationBinding?.gitEffectBinding.inheritedGitReceipts
-                      : row.gitEffectBinding?.inheritedGitReceipts) === undefined
-                      ? {}
-                      : {
-                          inheritedGitReceipts: (isAttestationTombstone(row)
-                            ? row.dispatchContinuationBinding!.gitEffectBinding.inheritedGitReceipts
-                            : row.gitEffectBinding!
-                                .inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
-                        }),
-                  },
-                  tip,
-                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-                ),
-              revalidateBinding: async () =>
-                await assertManagedWorktreeDispatchBindingLive(
-                  binding,
-                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-                ),
-              observeLiveTip: async () =>
-                await observeManagedWorktreeLiveTip(
-                  binding,
-                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-                ),
-              ...(options.afterProvisional === undefined
-                ? {}
-                : { afterProvisional: options.afterProvisional }),
-              ...(options.beforeCommit === undefined ? {} : { beforeCommit: options.beforeCommit }),
-            },
-          ),
-      );
+      return await captureCurrentDispatchRecoverySealUnderLock(options, binding, liveTip, journal);
     },
   );
 }

@@ -51,6 +51,7 @@ import type { SQL } from "bun";
 import { resolve } from "node:path";
 import {
   assertAttestationConstructionSupported,
+  assertManagedWorktreeDispatchBindingLive,
   assertImplementationEvidenceBootstrapDispatchAdmission,
   implementationEvidenceBootstrapAdmissionForTask,
   attestationNamespaceForTrustedHubProject,
@@ -95,6 +96,7 @@ import {
   type SingleProjectConstruction,
 } from "@cq/ledger";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
+import { captureCurrentDispatchRecoverySealUnderLock } from "./dispatchRecoverySeal.js";
 
 function stagingDeadlineAfter(durationMs: number, phase: string): number {
   const deadlineMs = Date.now() + durationMs;
@@ -2295,22 +2297,79 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return { liveDispatches, liveLeases };
       }),
     resolveRecovery: async (gitEffectBinding, liveTip) => {
-      const recovery = await discoverDispatchRecoveryOn(
-        options.backend,
-        {
-          namespace,
-          actor: "trusted-parent",
-          gitEffectBinding,
-          liveTip,
-        },
-        { now },
-      );
-      return Object.freeze({
-        status: "dispatch-recovery-resolved" as const,
-        recoveryReference: recovery.recoveryReference,
-        taskId: recovery.gitEffectBinding.taskId,
-        liveTip: recovery.liveTip,
-        terminalAt: recovery.terminalAt,
+      const deps =
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir };
+      return await withManagedWorktreeEffectLock(gitEffectBinding, deps, async () => {
+        await assertManagedWorktreeDispatchBindingLive(gitEffectBinding, deps);
+        if ((await observeManagedWorktreeLiveTip(gitEffectBinding, deps)) !== liveTip) {
+          throw new Error("managed recovery tip changed before the effect lock was acquired");
+        }
+        const existingJournal =
+          recoveryJournal === undefined
+            ? null
+            : await recoveryJournal.read(gitEffectBinding.taskId);
+        const task =
+          options.ledgerStore === undefined
+            ? undefined
+            : options.ledgerStore.fetchItem(TASKS_LEDGER, gitEffectBinding.taskId);
+        const goalRefs = task === undefined ? [] : task.fields["ledgerRefs"];
+        const hasGoal =
+          Array.isArray(goalRefs) &&
+          goalRefs.some((ref) => typeof ref === "string" && ref.startsWith("goals:"));
+        if (existingJournal !== null || hasGoal) {
+          if (
+            options.ledgerStore === undefined ||
+            recoveryJournal === undefined ||
+            options.repositoryRoot === undefined
+          ) {
+            throw new Error("current managed recovery requires the finalized task and its journal");
+          }
+          const seal = await captureCurrentDispatchRecoverySealUnderLock(
+            {
+              backend: options.backend,
+              ledgerStore: options.ledgerStore,
+              repositoryRoot: options.repositoryRoot,
+              taskId: gitEffectBinding.taskId,
+              ...deps,
+              now,
+            },
+            gitEffectBinding,
+            liveTip,
+            recoveryJournal,
+          );
+          return Object.freeze({
+            status: "dispatch-recovery-resolved" as const,
+            taskId: gitEffectBinding.taskId,
+            liveTip,
+            preparation: {
+              kind: "current" as const,
+              recoveryPreparation: {
+                recoverySeedRef: seal.sealReference,
+                fenceCapability: {
+                  scope: "dispatch-lineage-fence" as const,
+                  token: gitEffectBinding.handleToken,
+                },
+              },
+            },
+          });
+        }
+        const recovery = await discoverDispatchRecoveryOn(
+          options.backend,
+          {
+            namespace,
+            actor: "trusted-parent",
+            gitEffectBinding,
+            liveTip,
+          },
+          { now },
+        );
+        return Object.freeze({
+          status: "dispatch-recovery-resolved" as const,
+          taskId: recovery.gitEffectBinding.taskId,
+          liveTip: recovery.liveTip,
+          terminalAt: recovery.terminalAt,
+          preparation: { kind: "legacy" as const, recovery: recovery.recoveryReference },
+        });
       });
     },
     resolveContinuation: async (gitEffectBinding, liveTip) => {

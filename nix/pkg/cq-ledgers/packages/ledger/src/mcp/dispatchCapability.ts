@@ -47,13 +47,28 @@ export interface PrepareDispatchToolInput {
   readonly recoveryPreparation?: DispatchLineageFenceAuthority;
 }
 
-export interface DispatchRecoveryResolution {
+interface DispatchRecoveryResolutionBase {
   readonly status: "dispatch-recovery-resolved";
-  readonly recoveryReference: string;
   readonly taskId: string;
   readonly liveTip: string;
-  readonly terminalAt: string;
 }
+
+export type DispatchRecoveryResolution = DispatchRecoveryResolutionBase &
+  (
+    | {
+        readonly preparation: {
+          readonly kind: "current";
+          readonly recoveryPreparation: DispatchLineageFenceAuthority;
+        };
+      }
+    | {
+        readonly terminalAt: string;
+        readonly preparation: {
+          readonly kind: "legacy";
+          readonly recovery: string;
+        };
+      }
+  );
 
 export interface DispatchContinuationResolution {
   readonly status: "dispatch-continuation-resolved";

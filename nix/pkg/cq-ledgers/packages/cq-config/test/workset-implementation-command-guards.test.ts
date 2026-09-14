@@ -29,12 +29,23 @@ describe("T1987 implementation command workset guards", () => {
     expect(prose).toContain('operation: "resolve-dispatch-recovery"');
     expect(prose).toContain("persist that literal reference");
     expect(prose).toContain("recovery: <recoveryReference>");
+    expect(prose).toContain("`missing-result` or `parent-lost`");
+    expect(prose).toContain('`preparation.kind === "current"`');
+    expect(prose).toContain("recoveryPreparation: <preparation.recoveryPreparation>");
+    expect(prose).toContain('`preparation.kind === "legacy"`');
     expect(prose).toContain("without `reprepareOf`");
     expect(prose).toContain("injects only its verified durable Git receipt lineage");
     expect(prose).toContain("Never retry an advanced tip as a fresh lineage-free dispatch");
     expect(prose).not.toContain(
       "manager-bound implement-worker, retry once with a fresh prepared dispatch",
     );
+  });
+
+  test("deterministic gate rejection never enters automatic recovery or unchanged-tip redispatch [Blackbox-Atomic]", () => {
+    const prose = command("implement/advance.md").replace(/\s+/g, " ");
+    expect(prose).toContain("`gate-rejected` is a completed deterministic gate failure");
+    expect(prose).toContain("Do not resolve recovery, reclassify it as `parent-lost`, or redispatch the unchanged tip");
+    expect(prose).toContain("retain its bounded command/exit/count/output diagnostics");
   });
 
   test("implement advance uses single-use consumed continuation authority for ordinary redispatch", () => {
