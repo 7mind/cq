@@ -996,14 +996,14 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
       get(target, prop, receiver): unknown {
         if (prop === "runAtomicWorksetPlanLifecycleMutation") {
           const run = Reflect.get(target, prop, receiver) as (
-            goalId: string,
+            context: import("../src/worksetPlanLifecycle.js").AdmittedPlanMutation,
             mutate: (tx: WorksetPlanLifecycleTx) => unknown,
           ) => Promise<unknown>;
           return (
-            goalId: string,
+            context: import("../src/worksetPlanLifecycle.js").AdmittedPlanMutation,
             mutate: (tx: WorksetPlanLifecycleTx) => unknown,
           ): Promise<unknown> =>
-            run.call(target, goalId, (tx) =>
+            run.call(target, context, (tx) =>
               mutate(
                 new Proxy(tx, {
                   get(txTarget, txProp, txReceiver): unknown {

@@ -194,7 +194,7 @@ import {
 } from "../operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
 import { assertOwnedMutationAdmission, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
-import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
   createGenericMutationTransaction,
@@ -2218,7 +2218,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /** Run one tenant-scoped guarded plan operation and notify only after commit. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
-    goalId: string,
+    context: AdmittedPlanMutation,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
@@ -2226,12 +2226,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     let dirtyLedgers: readonly string[] = [];
     let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
-      await this.lockGoalRows(tx, [goalId]);
+      await this.lockGoalRows(tx, [context.operation.input.goalId]);
       await this.lockTenantCounters(tx);
       const tenant = await this.readLiveTenant(tx);
       const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
       const lifecycle = createWorksetPlanLifecycleTransaction(state);
-      result = mutate(lifecycle.tx);
+      result = runAuthorizedPlanLifecycleMutation(lifecycle.tx, context, mutate);
       dirtyLedgers = [...lifecycle.dirtyLedgers];
       for (const ledgerId of dirtyLedgers) {
         await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));

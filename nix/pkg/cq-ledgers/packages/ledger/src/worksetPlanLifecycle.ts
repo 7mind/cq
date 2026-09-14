@@ -3,7 +3,7 @@
  *
  * Each operation acquires one t3 ledger-mutation admission for its goal, then
  * validates every pre-existing item the operation can replace or update from a
- * fresh all-ledger snapshot inside the persistence transaction. Newly created
+ * fresh transaction-bound state inside the persistence transaction. Newly created
  * planning effects must carry the canonical t1 goal-owner edge before commit.
  */
 
@@ -69,11 +69,24 @@ import {
 } from "./store/InMemoryLedgerStore.js";
 import type { Item } from "./types.js";
 
-type WorksetPlanLifecycleOperation =
+export type WorksetPlanLifecycleOperation =
   | { readonly kind: "claim-plan"; readonly input: PlanClaimInput }
   | { readonly kind: "publish-plan-draft"; readonly input: PlanPublishDraftInput }
   | { readonly kind: "release-plan-claim"; readonly input: PlanReleaseInput }
   | { readonly kind: "finalize-plan"; readonly input: PlanFinalizeInput };
+
+export interface AdmittedPlanMutation {
+  readonly admission: WorksetLedgerMutationAdmission;
+  readonly operation: WorksetPlanLifecycleOperation;
+}
+
+export function assertPlanMutationAdmission(context: AdmittedPlanMutation): void {
+  const { admission, operation } = context;
+  if (!isLiveWorksetAdmission(admission) || admission.kind !== operation.kind ||
+    JSON.stringify(admission.targets) !== JSON.stringify([itemRef(GOALS_LEDGER, operation.input.goalId)])) {
+    throw new WorksetPlanLifecycleError("caller-minted-admission", "plan transaction requires its exact live operation/goal admission");
+  }
+}
 
 export type WorksetPlanLifecycleErrorCode =
   | "goal-excluded"
@@ -107,7 +120,7 @@ export interface WorksetPlanLifecycleTx {
 
 export interface WorksetPlanLifecycleHost extends WorksetOwnedWriteHost {
   runPlanLifecycleTransaction<T>(
-    goalId: string,
+    context: AdmittedPlanMutation,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T>;
   readonly afterPlanAdmit?: () => Promise<void> | void;
@@ -145,7 +158,7 @@ function addManifestRefs(refs: Set<string>, manifest: PlanPublishedManifest | nu
   for (const { id } of manifest.tasks) refs.add(itemRef(TASKS_LEDGER, id));
 }
 
-function affectedRefs(
+export function affectedPlanLifecycleRefs(
   state: WorksetActiveState,
   operation: WorksetPlanLifecycleOperation,
 ): ReadonlySet<string> {
@@ -191,7 +204,7 @@ function affectedRefs(
   return refs;
 }
 
-function selectedMembersForOperation(
+export function selectedPlanLifecycleMembers(
   state: WorksetActiveState,
   roots: readonly string[],
   refs: ReadonlySet<string>,
@@ -225,15 +238,12 @@ function itemBytesByRef(state: WorksetActiveState): ReadonlyMap<string, string> 
   );
 }
 
-function assertChangedExistingItemsSelected(
-  before: ReadonlyMap<string, string>,
-  after: WorksetActiveState,
+export function assertChangedPlanItemsSelected(
+  changedExistingRefs: readonly string[],
   selectedMembers: ReadonlySet<string> | null,
 ): void {
   if (selectedMembers === null) return;
-  for (const [ref, bytes] of before) {
-    const current = after.byRef.get(ref);
-    if (current !== undefined && JSON.stringify(current) === bytes) continue;
+  for (const ref of changedExistingRefs) {
     if (!selectedMembers.has(ref)) {
       throw new WorksetPlanLifecycleError(
         "affected-item-excluded",
@@ -245,14 +255,14 @@ function assertChangedExistingItemsSelected(
 }
 
 function assertCanonicalOwnership(
-  state: WorksetActiveState,
+  fetchItem: (ref: string) => Item | undefined,
   ledgerId: string,
   itemId: string,
   goalId: string,
   edgeKind: WorksetOwnerEdgeKind,
 ): void {
   const ref = itemRef(ledgerId, itemId);
-  const item = state.byRef.get(ref);
+  const item = fetchItem(ref);
   const ownership = item === undefined ? null : readCanonicalOwnership(item);
   if (ownership?.ownerRef !== itemRef(GOALS_LEDGER, goalId) || ownership.edgeKind !== edgeKind) {
     throw new WorksetPlanLifecycleError(
@@ -263,51 +273,68 @@ function assertCanonicalOwnership(
   }
 }
 
-function assertCreatedOwnership(
-  tx: WorksetPlanLifecycleTx,
+export function assertPlanCreatedOwnership(
+  fetchItem: (ref: string) => Item | undefined,
   kind: WorksetPlanLifecycleMutationKind,
   goalId: string,
   result: PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult,
 ): void {
   if (!result.ok || result.replayed || kind === "claim-plan") return;
-  const state = tx.activeState();
   if (kind === "publish-plan-draft") {
     const acknowledgement = (result as PlanPublishDraftResult & { readonly ok: true }).acknowledgement;
     for (const { id } of acknowledgement.manifest.milestones) {
-      assertCanonicalOwnership(state, MILESTONES_LEDGER, id, goalId, "active-current-draft");
+      assertCanonicalOwnership(fetchItem, MILESTONES_LEDGER, id, goalId, "active-current-draft");
     }
     for (const { id } of acknowledgement.manifest.tasks) {
-      assertCanonicalOwnership(state, TASKS_LEDGER, id, goalId, "active-current-draft");
+      assertCanonicalOwnership(fetchItem, TASKS_LEDGER, id, goalId, "active-current-draft");
     }
     for (const { id } of acknowledgement.reviewDefects) {
-      assertCanonicalOwnership(state, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
+      assertCanonicalOwnership(fetchItem, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
     }
     return;
   }
   if (kind === "release-plan-claim") {
     const acknowledgement = (result as PlanReleaseResult & { readonly ok: true }).acknowledgement;
     for (const { id } of acknowledgement.questions) {
-      assertCanonicalOwnership(state, QUESTIONS_LEDGER, id, goalId, "exact-gate-question");
+      assertCanonicalOwnership(fetchItem, QUESTIONS_LEDGER, id, goalId, "exact-gate-question");
     }
     for (const { id } of acknowledgement.researches) {
-      assertCanonicalOwnership(state, RESEARCHES_LEDGER, id, goalId, "research");
+      assertCanonicalOwnership(fetchItem, RESEARCHES_LEDGER, id, goalId, "research");
     }
     for (const { id } of acknowledgement.reviewDefects) {
-      assertCanonicalOwnership(state, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
+      assertCanonicalOwnership(fetchItem, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
     }
     return;
   }
   const acknowledgement = (result as PlanFinalizeResult & { readonly ok: true }).acknowledgement;
-  assertCanonicalOwnership(state, DECISIONS_LEDGER, acknowledgement.decisionId, goalId, "decision");
+  assertCanonicalOwnership(fetchItem, DECISIONS_LEDGER, acknowledgement.decisionId, goalId, "decision");
   for (const { id } of acknowledgement.manifest.milestones) {
-    assertCanonicalOwnership(state, MILESTONES_LEDGER, id, goalId, "finalized-manifest");
+    assertCanonicalOwnership(fetchItem, MILESTONES_LEDGER, id, goalId, "finalized-manifest");
   }
   for (const { id } of acknowledgement.manifest.tasks) {
-    assertCanonicalOwnership(state, TASKS_LEDGER, id, goalId, "finalized-manifest");
+    assertCanonicalOwnership(fetchItem, TASKS_LEDGER, id, goalId, "finalized-manifest");
   }
   for (const { id } of acknowledgement.reviewDefects) {
-    assertCanonicalOwnership(state, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
+    assertCanonicalOwnership(fetchItem, DEFECTS_LEDGER, id, goalId, "review-filed-defect");
   }
+}
+
+export function runAuthorizedPlanLifecycleMutation<T>(
+  tx: WorksetPlanLifecycleTx,
+  context: AdmittedPlanMutation,
+  mutate: (tx: WorksetPlanLifecycleTx) => T,
+): T {
+  assertPlanMutationAdmission(context);
+  const beforeState = tx.activeState();
+  const selected = selectedPlanLifecycleMembers(beforeState, context.admission.roots, affectedPlanLifecycleRefs(beforeState, context.operation));
+  const beforeItems = itemBytesByRef(beforeState);
+  const result = mutate(tx);
+  const afterState = tx.activeState();
+  const changed = [...beforeItems].filter(([ref, bytes]) => JSON.stringify(afterState.byRef.get(ref)) !== bytes).map(([ref]) => ref);
+  assertChangedPlanItemsSelected(changed, selected);
+  assertPlanCreatedOwnership((ref) => afterState.byRef.get(ref), context.operation.kind, context.operation.input.goalId,
+    result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
+  return result;
 }
 
 export function createWorksetGuardedPlanLifecycleStore(
@@ -403,20 +430,7 @@ export function createWorksetGuardedPlanLifecycleStore(
         );
       }
       try {
-        return await host.runPlanLifecycleTransaction(input.goalId, (tx) => {
-          const beforeState = tx.activeState();
-          const selectedMembers = selectedMembersForOperation(
-            beforeState,
-            admission.roots,
-            affectedRefs(beforeState, { kind, input } as WorksetPlanLifecycleOperation),
-          );
-          const beforeItems = itemBytesByRef(beforeState);
-          const result = mutate(tx);
-          const afterState = tx.activeState();
-          assertChangedExistingItemsSelected(beforeItems, afterState, selectedMembers);
-          assertCreatedOwnership(tx, kind, input.goalId, result);
-          return result;
-        });
+        return await host.runPlanLifecycleTransaction({ admission, operation: { kind, input } as WorksetPlanLifecycleOperation }, mutate);
       } catch (error) {
         if (error instanceof WorksetPlanLifecycleError) {
           const reason = errorReason(error);
@@ -433,12 +447,10 @@ export function createWorksetGuardedPlanLifecycleStore(
 
   const surface: WorksetGuardedPlanLifecycleStore = {
     ...base,
-    claimPlan: (input) => run("claim-plan", input, (tx) => tx.claimPlan(input)),
-    publishPlanDraft: (input) =>
-      run("publish-plan-draft", input, (tx) => tx.publishPlanDraft(input)),
-    releasePlanClaim: (input) =>
-      run("release-plan-claim", input, (tx) => tx.releasePlanClaim(input)),
-    finalizePlan: (input) => run("finalize-plan", input, (tx) => tx.finalizePlan(input)),
+    claimPlan: (input) => { const request = structuredClone(input); return run("claim-plan", request, (tx) => tx.claimPlan(request)); },
+    publishPlanDraft: (input) => { const request = structuredClone(input); return run("publish-plan-draft", request, (tx) => tx.publishPlanDraft(request)); },
+    releasePlanClaim: (input) => { const request = structuredClone(input); return run("release-plan-claim", request, (tx) => tx.releasePlanClaim(request)); },
+    finalizePlan: (input) => { const request = structuredClone(input); return run("finalize-plan", request, (tx) => tx.finalizePlan(request)); },
   };
   return surface;
 }
@@ -486,9 +498,9 @@ export function createInMemoryWorksetGuardedPlanLifecycleStore(
       : {}),
     runOwnedTransaction: (mutate, context) =>
       rawStore.runAtomicOwnedMutation((tx: InMemoryOwnedWriteTx) => mutate(tx), context),
-    runPlanLifecycleTransaction: (goalId, mutate) =>
+    runPlanLifecycleTransaction: (context, mutate) =>
       rawStore.runAtomicWorksetPlanLifecycleMutation(
-        goalId,
+        context,
         (tx: InMemoryWorksetPlanLifecycleTx) => mutate(tx),
       ),
   };

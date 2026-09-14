@@ -54,8 +54,8 @@ describe("workset owner backup/restore [T1976]", () => {
       worksetStore,
       invocationAuthority: authority,
       runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
-      runPlanLifecycleTransaction: (goalId, mutate) =>
-        rawStore.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+      runPlanLifecycleTransaction: (context, mutate) =>
+        rawStore.runAtomicWorksetPlanLifecycleMutation(context, mutate),
     });
 
     try {

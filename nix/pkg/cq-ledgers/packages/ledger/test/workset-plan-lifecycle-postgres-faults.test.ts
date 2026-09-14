@@ -90,8 +90,8 @@ if (dsn === undefined || dsn.length === 0) {
       worksetStore: raw.worksetStore(),
       invocationAuthority: createTrustedWorksetManagementAuthority(),
       runOwnedTransaction: (mutate, context) => raw.runAtomicOwnedMutation(mutate, context),
-      runPlanLifecycleTransaction: (goalId, mutate) =>
-        raw.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+      runPlanLifecycleTransaction: (context, mutate) =>
+        raw.runAtomicWorksetPlanLifecycleMutation(context, mutate),
     });
     stores.push(store);
     return { raw, store, pool };

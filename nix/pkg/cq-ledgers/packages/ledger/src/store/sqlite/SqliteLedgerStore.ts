@@ -218,7 +218,8 @@ import {
 } from "../operatorActionLifecycle.js";
 import { createKeyedOwnedWriteTransaction } from "../keyedOwnedWriteTransaction.js";
 import { assertOwnedMutationAdmission, WorksetOwnedLifecycleError, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
-import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { assertPlanMutationAdmission, assertChangedPlanItemsSelected, assertPlanCreatedOwnership, WorksetPlanLifecycleError, type AdmittedPlanMutation, type WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { authorizeKeyedWorksetPlan, guardedPlanRowRequest } from "../keyedWorksetPlanAuthorization.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
   createGenericMutationTransaction,
@@ -1903,31 +1904,59 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /** Run one guarded plan operation inside one BEGIN IMMEDIATE transaction. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
-    _goalId: string,
+    context: AdmittedPlanMutation,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
-    const outcome = immediateWriteTransaction(this.db(), () => {
-      const state = this.loadPlanLifecycleState();
-      const lifecycle = createWorksetPlanLifecycleTransaction(state);
-      const result = mutate(lifecycle.tx);
-      const dirtyLedgers = [...lifecycle.dirtyLedgers];
-      for (const ledgerId of dirtyLedgers) {
-        const ledger = state.ledgers.get(ledgerId);
-        if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
-        this.replaceActiveLedger(ledger);
-      }
-      if (dirtyLedgers.length > 0) {
-        this.persistPlanRecords("plan_claims", state.claims);
-        this.persistPlanRecords("plan_operations", state.operations);
-      }
-      recordSqliteCoherence(this.db(), this.coherenceOrigin, ledgerControlChanges(dirtyLedgers));
-      return { result, dirtyLedgers };
-    });
-    await this.projectCommitted(
-      outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })),
-    );
-    return outcome.result;
+    const measurement = this.beginObservedOperation(`guarded_${context.operation.kind}`);
+    try {
+      const outcome = immediateWriteTransaction(this.db(), () => {
+        this.assertDurablePlanAdmission(context, measurement);
+        const rows = createSqliteLifecycleRowRepository(this.db(), measurement ?? null);
+        const plan = loadPlanLifecycleRowPlan(rows, guardedPlanRowRequest(context.operation), this.now);
+        const selected = authorizeKeyedWorksetPlan(createSqliteGenericMutationDataSource(this.db(), measurement), rows, context, plan);
+        const lifecycle = createWorksetPlanLifecycleTransaction(plan.state);
+        const result = mutate(lifecycle.tx);
+        const delta = this.persistGenericMutationState({
+          ledgers: plan.state.ledgers, beforeLedgers: plan.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
+        }, { dirtyLedgers: lifecycle.dirtyLedgers, dirtyArchives: new Set() }, measurement);
+        const existing = new Set([...plan.beforeLedgers].flatMap(([ledgerId, ledger]) =>
+          ledger.milestones.flatMap(({ items }) => items.map(({ id }) => `${ledgerId}:${id}`))));
+        const changedExisting = delta.activeUpserts.map(({ ledgerId, item }) => `${ledgerId}:${item.id}`).filter((ref) => existing.has(ref));
+        changedExisting.push(...delta.activeDeletes.map(({ ledgerId, itemId }) => `${ledgerId}:${itemId}`));
+        assertChangedPlanItemsSelected(changedExisting, selected);
+        const afterItems = new Map<string, Item>([...plan.state.ledgers].flatMap(([ledgerId, ledger]) =>
+          ledger.milestones.flatMap(({ items }) => items.map((item) => [`${ledgerId}:${item.id}`, item] as const))));
+        assertPlanCreatedOwnership((ref) => afterItems.get(ref), context.operation.kind, context.operation.input.goalId,
+          result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
+        rows.persistPrivateRecords(plan.privateChanges());
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
+        return { result, dirtyLedgers: [...lifecycle.dirtyLedgers] };
+      }, WRITE_TXN_MAX_ATTEMPTS, measurement);
+      await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
+      measurement?.finish("success");
+      return outcome.result;
+    } catch (error) {
+      measurement?.finish("error");
+      throw error;
+    }
+  }
+
+  private assertDurablePlanAdmission(context: AdmittedPlanMutation, measurement: SqliteOperationMeasurement | undefined): void {
+    assertPlanMutationAdmission(context);
+    const { admission } = context;
+    const durable = this.db().query("SELECT form, kind, epoch, roots_json, targets_json FROM workset_admissions WHERE id = ?")
+      .get(admission.id) as { form: string; kind: string; epoch: number; roots_json: string; targets_json: string } | null;
+    this.recordGenericAccess(measurement, "workset_admissions", "read", { kind: "primary-key", keys: [admission.id] }, durable === null ? [] : [admission.id]);
+    const roots = this.db().query("SELECT epoch, roots_json FROM workset_state WHERE id = 1")
+      .get() as { epoch: number; roots_json: string } | null;
+    this.recordGenericAccess(measurement, "workset_state", "read", { kind: "singleton", keys: ["1"] }, roots === null ? [] : ["1"]);
+    if (durable === null || roots === null || durable.form !== "ledger-mutation" || durable.kind !== context.operation.kind ||
+      durable.epoch !== admission.epoch || roots.epoch !== admission.epoch ||
+      durable.roots_json !== JSON.stringify(admission.roots) || roots.roots_json !== JSON.stringify(admission.roots) ||
+      durable.targets_json !== JSON.stringify(admission.targets)) {
+      throw new WorksetPlanLifecycleError("stale-epoch", "plan transaction admission is no longer the exact durable operation/goal/roots epoch", admission.targets);
+    }
   }
 
   /** Run one generic mutation in one BEGIN IMMEDIATE transaction. */

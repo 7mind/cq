@@ -9,6 +9,7 @@
  */
 
 import type { ArchivePointer, Item, Ledger, LedgerSchema, Milestone } from "../types.js";
+import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation } from "../worksetPlanLifecycle.js";
 import {
   BootstrapViolationError,
   DuplicateIdError,
@@ -891,7 +892,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * holding the same all-ledger lock that protects the plan state transition.
    */
   async runAtomicWorksetPlanLifecycleMutation<T>(
-    _goalId: string,
+    context: AdmittedPlanMutation,
     mutate: (tx: InMemoryWorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
@@ -936,7 +937,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           finalizePlan: (input) => apply((state) => finalizeInMemoryPlan(state, input)),
         };
         try {
-          const result = mutate(tx);
+          const result = runAuthorizedPlanLifecycleMutation(tx, context, mutate);
           return { result, dirtyLedgers: [...dirty] };
         } catch (error) {
           replaceMap(this.ledgers, beforeLedgers);

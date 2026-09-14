@@ -37,7 +37,7 @@ import {
 type AtomicOwnedStore = LedgerStore & {
   runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: import("../src/worksetOwnedLifecycle.js").AdmittedOwnedMutation | null): Promise<T>;
   runAtomicWorksetPlanLifecycleMutation<T>(
-    goalId: string,
+    context: import("../src/worksetPlanLifecycle.js").AdmittedPlanMutation,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T>;
 };
@@ -67,8 +67,8 @@ function bindGuarded(store: AtomicOwnedStore): WorksetGuardedPlanLifecycleStore 
     worksetStore: requireWorksetStore(store),
     invocationAuthority: createTrustedWorksetManagementAuthority(),
     runOwnedTransaction: (mutate, context) => store.runAtomicOwnedMutation(mutate, context),
-    runPlanLifecycleTransaction: (goalId, mutate) =>
-      store.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+    runPlanLifecycleTransaction: (context, mutate) =>
+      store.runAtomicWorksetPlanLifecycleMutation(context, mutate),
   });
 }
 

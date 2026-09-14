@@ -1613,7 +1613,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "c548d4589960015f46e5010b06b0287a2760f6ea71445711afa086e252a77d8b",
+      "sha256": "a7d30965e7abf222ba15bd4c2ffe50439d1f57649d69ff1037cc49acf1965f1d",
       "targets": []
     },
     {
@@ -1979,7 +1979,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-owner-backup-restore.test.ts",
-      "sha256": "301f4e2430fa3283e197a10f15f4dbe8641a58abe017a9eb2ca9726ec6f08de2",
+      "sha256": "0ceed80d636cd2bf98875f1112fe3f3bad05648a5a6c07c55d91dfd86b98bde3",
       "targets": []
     },
     {

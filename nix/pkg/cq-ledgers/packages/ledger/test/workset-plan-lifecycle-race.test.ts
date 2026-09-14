@@ -103,12 +103,12 @@ describe("workset-guarded plan lifecycle — public MCP races [Behavioral-Active
     Object.defineProperty(store, "runAtomicWorksetPlanLifecycleMutation", {
       configurable: true,
       value: async <T>(
-        goalId: string,
+        context: import("../src/worksetPlanLifecycle.js").AdmittedPlanMutation,
         mutate: (tx: InMemoryWorksetPlanLifecycleTx) => T,
       ): Promise<T> => {
         reachedTransaction();
         await continueTransaction;
-        return await runTransaction(goalId, mutate);
+        return await runTransaction(context, mutate);
       },
     });
 

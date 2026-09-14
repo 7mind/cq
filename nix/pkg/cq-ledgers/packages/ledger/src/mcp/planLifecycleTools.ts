@@ -161,7 +161,7 @@ function requireLifecycle(store: LedgerStore, toolName: PlanLifecycleToolName): 
   const capable = candidate as LedgerStore & {
     runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation): Promise<T>;
     runAtomicWorksetPlanLifecycleMutation<T>(
-      goalId: string,
+      context: import("../worksetPlanLifecycle.js").AdmittedPlanMutation,
       mutate: (tx: WorksetPlanLifecycleTx) => T,
     ): Promise<T>;
   };
@@ -169,8 +169,8 @@ function requireLifecycle(store: LedgerStore, toolName: PlanLifecycleToolName): 
     rawStore: store,
     worksetStore,
     runOwnedTransaction: (mutate, context) => capable.runAtomicOwnedMutation(mutate, context),
-    runPlanLifecycleTransaction: (goalId, mutate) =>
-      capable.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+    runPlanLifecycleTransaction: (context, mutate) =>
+      capable.runAtomicWorksetPlanLifecycleMutation(context, mutate),
   });
 }
 
