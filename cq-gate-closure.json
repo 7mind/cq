@@ -6,8 +6,8 @@
     "scriptDagSha256": "e61ab397845e24c5c11b6c8d3add2173fd955847d071c8c0713652b02ea12d48"
   },
   "opaqueEdges": [
-    { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "6994b85e14a76358044bb9f6a0e8a6f22e15c0846d2e8210a72f526c3f013401", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "6994b85e14a76358044bb9f6a0e8a6f22e15c0846d2e8210a72f526c3f013401", "targets": [] },
+    { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",

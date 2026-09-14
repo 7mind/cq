@@ -302,6 +302,17 @@ async function missingResultRecovery(journalKind: "memory" | "filesystem", dirty
       f.capability.prepare({ ...request, idempotencyKey: "reused-authority" }),
     ).rejects.toThrow("still live");
     await expect(f.resolveRecovery()).rejects.toThrow();
+    if (!next.accepted) throw new Error("recovery successor was not prepared");
+    await f.capability.abort({ ...next.handle, reason: "missing-result" });
+    await expect(f.capability.prepare({ ...request, idempotencyKey: "reused-after-terminal" }))
+      .rejects.toThrow("already allocated a successor");
+    const renewed = await f.resolveRecovery() as unknown as DispatchRecoveryResolution;
+    if (renewed.preparation.kind !== "current") throw new Error("expected promoted authority");
+    expect(renewed.preparation.recoveryPreparation.recoverySeedRef)
+      .not.toBe(resolved.preparation.recoveryPreparation.recoverySeedRef);
+    expect(await f.capability.prepare({ ...request, idempotencyKey: "promoted-recovery",
+      recoveryPreparation: renewed.preparation.recoveryPreparation,
+    })).toMatchObject({ accepted: true });
   } finally {
     await f.dispose();
   }

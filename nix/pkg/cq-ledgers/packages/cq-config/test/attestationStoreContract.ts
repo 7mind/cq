@@ -542,6 +542,38 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(fetched.nativeCompletion.childId).toBe(CHILD.childId);
       }));
 
+    test("journal recovery authority remains single-use after restart, terminalization, and expiry", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const source = await driver.prepare();
+        await driver.abort(source, { reason: "missing-result" });
+        const request = {
+          idempotencyKey: "journal-successor",
+          reprepareOf: handleOf(source),
+          journalRecoveryReservation: {
+            fenceRef: `cq-dispatch-lineage-cutover-fence:v1:${"a".repeat(64)}`,
+            sourceAttestationId: source.attestationId,
+            selectedSourceGeneration: source.generation,
+            lineageMaximumGeneration: source.generation,
+          },
+        };
+        const successor = await driver.prepare(request);
+        const restarted = new AttestationDriver(await fixture.restart(), clock);
+        expect((await restarted.fetch(handleOf(successor))).state).toBe("prepared");
+        await restarted.abort(successor, { reason: "missing-result" });
+        const terminalMs = clock.epochMs;
+        const stale = { ...request, idempotencyKey: "reused-journal-authority" };
+        await expect(restarted.prepare(stale)).rejects.toThrow("already allocated a successor");
+        clock.set(new Date(terminalMs + TERMINAL_ENVELOPE_RETENTION_MS).toISOString());
+        await restarted.sweep();
+        const compacted = new AttestationDriver(await fixture.restart(), clock);
+        await expect(compacted.prepare(stale)).rejects.toThrow("already allocated a successor");
+        clock.set(new Date(terminalMs + IDEMPOTENCY_HORIZON_MS).toISOString());
+        await compacted.sweep();
+        const expired = new AttestationDriver(await fixture.restart(), clock);
+        await expect(expired.prepare(stale)).rejects.toThrow(AttestationNotFoundError);
+        expect(await fixture.rows()).toHaveLength(0);
+      }));
+
     test("parent-owned gate staging, reclaim, stale-epoch refusal, and exact replay survive restarts", () =>
       withCase(async ({ fixture, driver, clock }) => {
         const p = await driver.prepare({

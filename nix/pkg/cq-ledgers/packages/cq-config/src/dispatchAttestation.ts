@@ -2386,6 +2386,7 @@ function resolveGeneration(
     const lineageRows = deps.store
       .rows()
       .filter((row) => row.attestationId === reservation.sourceAttestationId);
+    requireRow(reprepareOf, deps);
     const active = lineageRows.find(
       (row): row is AttestationEnvelope =>
         !isAttestationTombstone(row) && !TERMINAL_STATE_SET.has(row.state),
@@ -2397,11 +2398,17 @@ function resolveGeneration(
         `journal recovery lineage generation ${String(active.generation)} is still live`,
       );
     }
-    const observedMaximum = lineageRows.reduce(
-      (maximum, row) => Math.max(maximum, row.generation),
-      reservation.lineageMaximumGeneration,
+    const successor = lineageRows.find(
+      (row) => row.generation > reservation.lineageMaximumGeneration,
     );
-    return observedMaximum + 1;
+    if (successor !== undefined) {
+      throw new DispatchStateConflictError(
+        "prepare_dispatch",
+        isAttestationTombstone(successor) ? successor.terminalKind : successor.state,
+        "journal recovery authority already allocated a successor; capture a new terminal epoch",
+      );
+    }
+    return reservation.lineageMaximumGeneration + 1;
   }
   if (reprepareOf === undefined) {
     if (request.continuationClaim !== undefined) {
