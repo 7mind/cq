@@ -38,6 +38,12 @@
     },
     {
       "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/sqliteLifecycleBoundsProcesses.ts",
+      "sha256": "d3d32e63b2b95d770e183e25d5d213d10ff88471f32d7ee1ad5ffb1c73031bf1",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger/bench/sqliteLifecycleBoundsPeer.ts"]
+    },
+    {
+      "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/direct-owned-lifecycle-sqlite.test.ts",
       "sha256": "ef3998d28a3e16016bb3a9c60458a610144e31bbd25ef1d7e96f45e9b62946e8",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger/test/directOwnedLifecyclePeer.ts"]
@@ -93,7 +99,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "4aa7b4ef828c9d61999d64590d77de74e3143e44089e68328ed5e1aee73708c2",
+      "sha256": "15bdb08481d3594f741ab98ccc806a3168bb252195d5522927c9b2d4078addb1",
       "targets": []
     },
     {
@@ -1931,7 +1937,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/sqlite-write-txn.test.ts",
-      "sha256": "7d155ab240e980202bec0065bd5a5555c88a7da699e7c4d45597c1ace7f2c391",
+      "sha256": "9e96387d3ada0c18a12f23a5ee2ac8f258de6ffbe14b5102034e83193d6bf8b7",
       "targets": []
     },
     {

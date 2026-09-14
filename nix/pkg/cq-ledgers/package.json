@@ -19,6 +19,7 @@
     "check:sqlite-responsiveness": "bun run packages/ledger-web/test/sqliteResponsivenessGate.ts",
     "check:postgres-required": "bun run packages/ledger/bench/checkPostgresRequired.ts",
     "check:postgres-lifecycle-bounds": "bun run packages/ledger/bench/checkPostgresLifecycleBounds.ts",
+    "check:sqlite-lifecycle-bounds": "bun run packages/ledger/bench/sqliteLifecycleBoundsGate.ts",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
