@@ -237,6 +237,7 @@ test("operator-action materialization commits only the complete action/handoff p
     const atomicStore = store as InMemoryLedgerStore & {
       runAtomicOwnedMutation<T>(
         mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
+        context: null,
       ): Promise<T>;
     };
     const injectedFailure = new Error("injected handoff create failure");
@@ -249,7 +250,7 @@ test("operator-action materialization commits only the complete action/handoff p
           };
         }
         if (property === "runAtomicOwnedMutation") {
-          return async <T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>): Promise<T> =>
+          return async <T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: null): Promise<T> =>
             await target.runAtomicOwnedMutation((tx) =>
               mutate(
                 new Proxy(tx, {
@@ -267,6 +268,7 @@ test("operator-action materialization commits only the complete action/handoff p
                   },
                 }),
               ),
+              context,
             );
         }
         const value = Reflect.get(target, property, target) as unknown;
@@ -508,7 +510,7 @@ for (const factory of factories) {
           fields: { title: "goal", description: "goal" },
         });
         const atomic = store as LedgerStore & {
-          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
         };
         await atomic.runAtomicOwnedMutation((tx) =>
           tx.createItemWithSealedOwnership(
@@ -517,6 +519,7 @@ for (const factory of factories) {
             { status: "planned", fields: { headline: "unfinished" } },
             { ownerRef: `goals:${goal.id}`, edgeKind: "finalized-manifest" },
           ),
+          null,
         );
 
         await expect(store.updateItem("goals", goal.id, { status: "done" })).rejects.toThrow(
@@ -537,7 +540,7 @@ for (const factory of factories) {
           fields: { title: "historical goal", description: "goal" },
         });
         const atomic = store as LedgerStore & {
-          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
         };
         await atomic.runAtomicOwnedMutation((tx) =>
           tx.createItemWithSealedOwnership(
@@ -546,6 +549,7 @@ for (const factory of factories) {
             { status: "planned", fields: { headline: "unfinished historical child" } },
             { ownerRef: `goals:${goal.id}`, edgeKind: "finalized-manifest" },
           ),
+          null,
         );
 
         const mutations = createWorksetGenericMutationGateway({

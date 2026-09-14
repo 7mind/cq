@@ -39,6 +39,7 @@ import {
   validateSchema,
 } from "./core.js";
 import { UsageTracker } from "../usageStats.js";
+import { assertOwnedMutationAdmission, type AdmittedOwnedMutation } from "../worksetOwnedLifecycle.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
 import { statusSatisfiesDependency } from "./core.js";
@@ -157,6 +158,7 @@ export interface InMemoryOwnedWriteTx {
   ): Item;
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
+  mutateOperatorAction(mutation: OperatorActionLifecycleMutation): OperatorActionLifecycleMutationResult;
 }
 
 /**
@@ -663,16 +665,22 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * ledger lock. On throw, every ledger mutation performed inside `mutate` is
    * rolled back so no partial child/link becomes visible.
    */
-  async runAtomicOwnedMutation<T>(mutate: (tx: InMemoryOwnedWriteTx) => T | Promise<T>): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: InMemoryOwnedWriteTx) => T | Promise<T>, context: AdmittedOwnedMutation | null): Promise<T> {
     this.assertInit();
     const ledgerIds = [...this.ledgers.keys()]
       .filter((id) => id !== MILESTONES_LEDGER)
       .sort();
     const outcome = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
+        if (context !== null) assertOwnedMutationAdmission(context);
         const beforeLedgers = cloneLedgerMap(this.ledgers);
         const dirty = new Set<string>();
         const tx: InMemoryOwnedWriteTx = {
+          mutateOperatorAction: (mutation) => {
+            const outcome = applyOperatorActionLifecycleMutation(this.ledgers, mutation, this.now);
+            for (const ledgerId of outcome.dirtyLedgers) dirty.add(ledgerId);
+            return outcome.result;
+          },
           activeState: () =>
             buildWorksetActiveState(
               [...this.ledgers].map(([ledger, value]) => ({

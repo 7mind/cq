@@ -53,7 +53,7 @@ describe("workset owner backup/restore [T1976]", () => {
       rawStore,
       worksetStore,
       invocationAuthority: authority,
-      runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
+      runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
       runPlanLifecycleTransaction: (goalId, mutate) =>
         rawStore.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
     });
@@ -221,7 +221,7 @@ describe("workset owner backup/restore [T1976]", () => {
         milestone.id,
         { status: "done", fields: { headline: "sealed archive bytes" } },
         { ownerRef: "goals:G1", edgeKind: "finalized-manifest" },
-      ));
+      ), null);
       await store.updateMilestone(milestone.id, { status: "done" });
       await store.archiveMilestone(milestone.id, "sealed archive");
     } finally {

@@ -120,7 +120,7 @@ describe("guarded bootstrap repair", () => {
       const guarded = createWorksetOwnedGuardedLedger({
         rawStore: store,
         worksetStore,
-        runOwnedTransaction: async (mutate) => await store.runAtomicOwnedMutation(mutate),
+        runOwnedTransaction: async (mutate, context) => await store.runAtomicOwnedMutation(mutate, context),
       });
       const { goal: repairGoal } = await guarded.bundles.bootstrapDefectToFixGoal({
         defectId: defect.id,

@@ -5308,7 +5308,7 @@ export async function recordProtectedImplementationCompletion(
   authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: null): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new Error("protected implementation completion requires an atomic ledger adapter");
@@ -5350,7 +5350,7 @@ export async function recordProtectedImplementationCompletion(
       }
     }
     return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
-  });
+  }, null);
 }
 
 export function canonicalImplementationCompletionMergeLine(

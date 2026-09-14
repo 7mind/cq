@@ -216,8 +216,8 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
-import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
-import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import { createKeyedOwnedWriteTransaction } from "../keyedOwnedWriteTransaction.js";
+import { assertOwnedMutationAdmission, WorksetOwnedLifecycleError, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
@@ -1832,30 +1832,73 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /** Run one owned lifecycle operation in one BEGIN IMMEDIATE transaction. */
-  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation | null): Promise<T> {
     this.assertInit();
-    const outcome = immediateWriteTransaction(this.db(), () => {
-      const state = this.loadPlanLifecycleState();
-      const archivedIds = state.archivedIds ?? new Map<string, Set<string>>();
-      const owned = createOwnedWriteTransaction({
-        ledgers: state.ledgers,
-        now: this.now,
-        archivedRefExists: (ledgerId, itemId) => archivedIds.get(ledgerId)?.has(itemId) ?? false,
-      });
-      const result = mutate(owned.tx);
-      const dirtyLedgers = [...owned.dirtyLedgers];
-      for (const ledgerId of dirtyLedgers) {
-        const ledger = state.ledgers.get(ledgerId);
-        if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
-        this.replaceActiveLedger(ledger);
+    const measurement = this.beginObservedOperation(context === null ? "direct_owned_mutation" : `owned_${context.operation.kind}`);
+    try {
+      const outcome = immediateWriteTransaction(this.db(), () => {
+        const initialState = context === null ? null : this.loadOwnedAdmissionState(context, measurement);
+        const owned = createKeyedOwnedWriteTransaction(
+          createSqliteLifecycleRowRepository(this.db(), measurement ?? null), initialState, this.now,
+        );
+        const result = mutate(owned.tx);
+        const dirtyLedgers = [...owned.dirtyLedgers];
+        const delta = this.persistGenericMutationState({
+          ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
+        }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: new Set() }, measurement);
+        if (context !== null) this.assertOwnedMutationDelta(context, owned.beforeLedgers, delta);
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
+        return { result, dirtyLedgers };
+      }, WRITE_TXN_MAX_ATTEMPTS, measurement);
+      await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
+      measurement?.finish("success");
+      return outcome.result;
+    } catch (error) {
+      measurement?.finish("error");
+      throw error;
+    }
+  }
+
+  private loadOwnedAdmissionState(context: AdmittedOwnedMutation, measurement: SqliteOperationMeasurement | undefined) {
+    assertOwnedMutationAdmission(context);
+    const admission = context.admission;
+    const durable = this.db().query("SELECT form, kind, epoch, roots_json, targets_json FROM workset_admissions WHERE id = ?")
+      .get(admission.id) as { form: string; kind: string; epoch: number; roots_json: string; targets_json: string } | null;
+    this.recordGenericAccess(measurement, "workset_admissions", "read", { kind: "primary-key", keys: [admission.id] }, durable === null ? [] : [admission.id]);
+    const roots = this.db().query("SELECT epoch, roots_json FROM workset_state WHERE id = 1")
+      .get() as { epoch: number; roots_json: string } | null;
+    this.recordGenericAccess(measurement, "workset_state", "read", { kind: "singleton", keys: ["1"] }, roots === null ? [] : ["1"]);
+    if (durable === null || roots === null || durable.form !== "ledger-mutation" || durable.kind !== "owned-write" ||
+      durable.epoch !== admission.epoch || roots.epoch !== admission.epoch ||
+      durable.roots_json !== JSON.stringify(admission.roots) || roots.roots_json !== JSON.stringify(admission.roots) ||
+      durable.targets_json !== JSON.stringify(admission.targets)) {
+      throw new WorksetOwnedLifecycleError("stale-epoch", "owned transaction admission is no longer the exact durable owner/roots epoch");
+    }
+    return resolveGenericMutationClosure(createSqliteGenericMutationDataSource(this.db(), measurement), admission.roots, {
+      candidateRefs: admission.targets, incidentReferenceFields: [],
+    }).activeState;
+  }
+
+  private assertOwnedMutationDelta(context: AdmittedOwnedMutation, before: ReadonlyMap<string, Ledger>, delta: GenericProjectionDelta): void {
+    const operation = context.operation;
+    const ledgerId = operation.kind === "create-owned" ? operation.childLedgerId
+      : operation.kind === "create-ownerless" ? operation.ledgerId : GOALS_LEDGER;
+    const ownerRef = context.admission.targets[0];
+    let created = 0;
+    for (const row of delta.activeUpserts) {
+      const prior = before.get(row.ledgerId)?.milestones.flatMap(({ items }) => items).find(({ id }) => id === row.item.id);
+      if (prior === undefined) {
+        created += 1;
+        if (row.ledgerId !== ledgerId || row.item.fields.worksetOwnerRef !== ownerRef) {
+          throw new WorksetOwnedLifecycleError("forged-ownership", "owned transaction created a row outside its requested owner/ledger");
+        }
+      } else if (operation.kind !== "idea-to-goal" || !operation.consumeIdea || `${row.ledgerId}:${row.item.id}` !== ownerRef) {
+        throw new WorksetOwnedLifecycleError("owner-excluded", "owned transaction changed an existing row outside its declared operation");
       }
-      recordSqliteCoherence(this.db(), this.coherenceOrigin, ledgerControlChanges(dirtyLedgers));
-      return { result, dirtyLedgers };
-    });
-    await this.projectCommitted(
-      outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })),
-    );
-    return outcome.result;
+    }
+    if (created > 1 || delta.activeDeletes.length > 0 || delta.archivedUpserts.length > 0 || delta.archivedDeletes.length > 0) {
+      throw new WorksetOwnedLifecycleError("bundle-incomplete", "owned transaction exceeded its declared single-child operation");
+    }
   }
 
   /** Run one guarded plan operation inside one BEGIN IMMEDIATE transaction. */

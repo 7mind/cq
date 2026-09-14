@@ -153,7 +153,7 @@ export async function materializeOperatorAction(
   assertNonEmpty(input.expectedOutputIdentity, "expectedOutputIdentity");
   assertExpectedEvidence(input.expectedEvidence);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new LedgerError("operator-action materialization requires an atomic ledger adapter");
@@ -243,7 +243,7 @@ export async function materializeOperatorAction(
       });
     }
     return { state, action, handoff };
-  });
+  }, null);
 }
 
 export async function acknowledgeOperatorAction(
@@ -340,55 +340,32 @@ export async function supersedeOperatorAction(
   if (!isIsoTimestamp(input.supersededAt)) {
     throw new SchemaValidationError("supersededAt must be an ISO timestamp");
   }
-  try {
-    store.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
-  } catch (error) {
-    if (!(error instanceof ItemNotFoundError)) throw error;
-    return await supersedeUnmaterializedOperatorAction(store, input);
-  }
-  const result = await store.mutateOperatorAction({
-    kind: "supersede",
-    actionId: input.actionId,
-    expectedRevision: input.expectedRevision,
-    reason: input.reason,
-    supersededAt: input.supersededAt,
-    provenance: {
-      author: input.author,
-      ...(input.session === undefined ? {} : { session: input.session }),
-    },
-  });
-  if (result.kind !== "supersede") throw new LedgerError("unexpected lifecycle result");
-  return {
-    action: result.action,
-    ...(result.task === undefined ? {} : { task: result.task }),
-  };
-}
-
-async function supersedeUnmaterializedOperatorAction(
-  store: LedgerStore,
-  input: SupersedeOperatorActionInput,
-): Promise<SupersededOperatorAction> {
-  if (input.expectedRevision !== 1) {
-    throw new LedgerError(
-      `Unmaterialized operator action ${input.actionId} has revision 1, not ${String(input.expectedRevision)}`,
-    );
-  }
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: null): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new LedgerError("operator-action supersession requires an atomic ledger adapter");
   }
   return await atomic.runAtomicOwnedMutation((tx) => {
+    let materialized = false;
     try {
       tx.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
-      throw new LedgerError(
-        `Operator action ${input.actionId} materialized concurrently; retry supersession`,
-      );
+      materialized = true;
     } catch (error) {
       if (!(error instanceof ItemNotFoundError)) throw error;
     }
-
+    if (materialized) {
+      const result = tx.mutateOperatorAction({
+        kind: "supersede", actionId: input.actionId, expectedRevision: input.expectedRevision,
+        reason: input.reason, supersededAt: input.supersededAt,
+        provenance: { author: input.author, ...(input.session === undefined ? {} : { session: input.session }) },
+      });
+      if (result.kind !== "supersede") throw new LedgerError("unexpected lifecycle result");
+      return { action: result.action, ...(result.task === undefined ? {} : { task: result.task }) };
+    }
+    if (input.expectedRevision !== 1) {
+      throw new LedgerError(`Unmaterialized operator action ${input.actionId} has revision 1, not ${String(input.expectedRevision)}`);
+    }
     const task = tx.fetchItem(TASKS_LEDGER, taskIdForAction(input.actionId));
     if (operatorActionDirectiveForTask(task) === null) {
       throw new OperatorActionEnvelopeError(`task ${task.id} has no envelope`);
@@ -418,7 +395,7 @@ async function supersedeUnmaterializedOperatorAction(
     } as const;
     authorizedSupersessionPatches.add(patch);
     return { task: tx.updateItem(TASKS_LEDGER, task.id, patch) };
-  });
+  }, null);
 }
 
 function actionIdForTask(taskId: string): string {

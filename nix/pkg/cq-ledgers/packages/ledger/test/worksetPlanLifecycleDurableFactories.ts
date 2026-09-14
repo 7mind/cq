@@ -62,7 +62,7 @@ async function freshRoot(prefix: string): Promise<string> {
 
 
 type DurablePlanStore = LedgerStore & {
-  runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+  runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: import("../src/worksetOwnedLifecycle.js").AdmittedOwnedMutation | null): Promise<T>;
   runAtomicWorksetPlanLifecycleMutation<T>(
     goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
@@ -82,7 +82,7 @@ function surface(
       ...(options?.afterPlanAdmit !== undefined
         ? { afterPlanAdmit: options.afterPlanAdmit }
         : {}),
-      runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
+      runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
       runPlanLifecycleTransaction: (goalId, mutate) =>
         rawStore.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
     }),

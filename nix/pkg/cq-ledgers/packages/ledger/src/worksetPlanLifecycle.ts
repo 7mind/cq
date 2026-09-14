@@ -484,8 +484,8 @@ export function createInMemoryWorksetGuardedPlanLifecycleStore(
     ...(options.afterPlanAdmit !== undefined
       ? { afterPlanAdmit: options.afterPlanAdmit }
       : {}),
-    runOwnedTransaction: (mutate) =>
-      rawStore.runAtomicOwnedMutation((tx: InMemoryOwnedWriteTx) => mutate(tx)),
+    runOwnedTransaction: (mutate, context) =>
+      rawStore.runAtomicOwnedMutation((tx: InMemoryOwnedWriteTx) => mutate(tx), context),
     runPlanLifecycleTransaction: (goalId, mutate) =>
       rawStore.runAtomicWorksetPlanLifecycleMutation(
         goalId,

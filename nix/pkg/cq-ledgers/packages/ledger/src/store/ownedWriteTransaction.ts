@@ -28,6 +28,7 @@ import {
   assertRawPlanCreateAllowed,
   assertRawPlanUpdateAllowed,
 } from "./planLifecycleGuards.js";
+import { applyOperatorActionLifecycleMutation } from "./operatorActionLifecycle.js";
 
 export interface OwnedWriteTransaction {
   readonly tx: WorksetOwnedWriteTx;
@@ -114,6 +115,11 @@ export function createOwnedWriteTransaction(
   const getLedger = (ledgerId: string): Ledger => requireLedger(ledgers, ledgerId);
 
   const tx: WorksetOwnedWriteTx = {
+    mutateOperatorAction: (mutation) => {
+      const outcome = applyOperatorActionLifecycleMutation(ledgers, mutation, now);
+      for (const ledgerId of outcome.dirtyLedgers) dirtyLedgers.add(ledgerId);
+      return outcome.result;
+    },
     activeState: () =>
       buildWorksetActiveState(
         [...ledgers].map(([ledger, value]) => ({

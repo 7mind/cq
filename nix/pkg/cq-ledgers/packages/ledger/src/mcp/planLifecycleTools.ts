@@ -49,7 +49,7 @@ import {
   type PlanLifecycleStore,
 } from "../planLifecycle.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
-import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
+import type { AdmittedOwnedMutation, WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import {
   createWorksetGuardedPlanLifecycleStore,
   type WorksetPlanLifecycleTx,
@@ -159,7 +159,7 @@ function requireLifecycle(store: LedgerStore, toolName: PlanLifecycleToolName): 
   }
   const worksetStore = (candidate.worksetStore as () => WorksetStore).call(store);
   const capable = candidate as LedgerStore & {
-    runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+    runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation): Promise<T>;
     runAtomicWorksetPlanLifecycleMutation<T>(
       goalId: string,
       mutate: (tx: WorksetPlanLifecycleTx) => T,
@@ -168,7 +168,7 @@ function requireLifecycle(store: LedgerStore, toolName: PlanLifecycleToolName): 
   return createWorksetGuardedPlanLifecycleStore({
     rawStore: store,
     worksetStore,
-    runOwnedTransaction: (mutate) => capable.runAtomicOwnedMutation(mutate),
+    runOwnedTransaction: (mutate, context) => capable.runAtomicOwnedMutation(mutate, context),
     runPlanLifecycleTransaction: (goalId, mutate) =>
       capable.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
   });

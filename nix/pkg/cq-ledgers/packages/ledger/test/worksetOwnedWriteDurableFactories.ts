@@ -79,7 +79,7 @@ export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
         ...(options?.afterOwnedAdmit !== undefined
           ? { afterOwnedAdmit: options.afterOwnedAdmit }
           : {}),
-        runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
+        runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
       }),
     );
   },
@@ -137,7 +137,7 @@ export function postgresOwnedWriteFactory(
           ...(options?.afterOwnedAdmit !== undefined
             ? { afterOwnedAdmit: options.afterOwnedAdmit }
             : {}),
-          runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
+          runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
         }),
       );
     },

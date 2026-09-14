@@ -66,6 +66,7 @@ import type {
 } from "./store/LedgerStore.js";
 import type { FieldValue, Item, LedgerSchema } from "./types.js";
 import { LedgerError } from "./types.js";
+import type { OperatorActionLifecycleMutation, OperatorActionLifecycleMutationResult } from "./store/operatorActionLifecycle.js";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -215,8 +216,32 @@ export interface WorksetOwnedGuardedLedger extends WorksetGuardedLedger {
  * transaction; durable adapters will bind the same surface to real TX/CAS.
  */
 export interface WorksetOwnedWriteHost extends WorksetGenericMutationGatewayHost {
-  runOwnedTransaction<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+  runOwnedTransaction<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation): Promise<T>;
   readonly afterOwnedAdmit?: () => Promise<void> | void;
+}
+
+export type OwnedMutationOperation =
+  | { readonly kind: "create-owned"; readonly owner: OwnedOwnerRef; readonly childLedgerId: string }
+  | { readonly kind: "create-ownerless"; readonly ledgerId: string }
+  | { readonly kind: "idea-to-goal"; readonly ideaId: string; readonly consumeIdea: boolean }
+  | { readonly kind: "defect-to-fix-goal"; readonly defectId: string };
+
+export interface AdmittedOwnedMutation {
+  readonly admission: WorksetLedgerMutationAdmission;
+  readonly operation: OwnedMutationOperation;
+}
+
+export function assertOwnedMutationAdmission(context: AdmittedOwnedMutation): void {
+  const { admission, operation } = context;
+  const targets = operation.kind === "create-owned" ? [itemRef(operation.owner.ledgerId, operation.owner.itemId)]
+    : operation.kind === "idea-to-goal" ? [itemRef(IDEAS_LEDGER, operation.ideaId)]
+    : operation.kind === "defect-to-fix-goal" ? [itemRef(DEFECTS_LEDGER, operation.defectId)] : [];
+  if (!isLiveWorksetAdmission(admission) || admission.kind !== "owned-write" || JSON.stringify(admission.targets) !== JSON.stringify(targets)) {
+    throw new WorksetOwnedLifecycleError("caller-minted-admission", "owned transaction requires its exact live owner admission");
+  }
+  if (operation.kind === "create-ownerless" && admission.roots.length !== 0) {
+    throw new WorksetOwnedLifecycleError("ownerless-denied", "ownerless intake requires empty admitted roots");
+  }
 }
 
 export interface WorksetOwnedWriteTx {
@@ -237,6 +262,7 @@ export interface WorksetOwnedWriteTx {
   createItemOwnerless(ledgerId: string, milestoneId: string, init: CreateItemInit): Item;
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
+  mutateOperatorAction(mutation: OperatorActionLifecycleMutation): OperatorActionLifecycleMutationResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +400,7 @@ export function createWorksetOwnedWriteGateway(
     form: "workset-owned-write-gateway",
 
     async createOwned(input) {
+      input = structuredClone(input);
       assertNoForgedOwnership(input.child.fields);
       const creationKind = input.creationKind as LifecycleCreationKind;
       if (creationKind === "active-current-draft" || creationKind === "finalized-manifest") {
@@ -447,11 +474,12 @@ export function createWorksetOwnedWriteGateway(
             );
           }
           return { child, ownership, ownerRef };
-        });
+        }, { admission, operation: { kind: "create-owned", owner: input.owner, childLedgerId: input.child.ledgerId } });
       });
     },
 
     async createOwnerless(input) {
+      input = structuredClone(input);
       assertNoForgedOwnership(input.fields);
       return withOwnedAdmission([], async (adm) => {
         if (adm.roots.length > 0) {
@@ -484,7 +512,7 @@ export function createWorksetOwnedWriteGateway(
             return tx.createMilestoneOwnerless(mInit);
           }
           return tx.createItemOwnerless(input.ledgerId, milestoneId, init);
-        });
+        }, { admission: adm, operation: { kind: "create-ownerless", ledgerId: input.ledgerId } });
       });
     },
   };
@@ -541,6 +569,7 @@ export function createWorksetCoordinationBundleGateway(
     form: "workset-coordination-bundle-gateway",
 
     async bootstrapIdeaToGoal(input) {
+      input = structuredClone(input);
       assertNoForgedOwnership(input.goal.fields);
       const ownerRef = itemRef(IDEAS_LEDGER, input.ideaId);
       return withOwnedAdmission([ownerRef], async (admission) => {
@@ -589,11 +618,12 @@ export function createWorksetCoordinationBundleGateway(
             finalIdea = tx.updateItem(IDEAS_LEDGER, idea.id, { status: "planned" });
           }
           return { idea: finalIdea, goal, ownership };
-        });
+        }, { admission, operation: { kind: "idea-to-goal", ideaId: input.ideaId, consumeIdea: input.consumeIdea === true } });
       });
     },
 
     async bootstrapDefectToFixGoal(input) {
+      input = structuredClone(input);
       assertNoForgedOwnership(input.goal.fields);
       const ownerRef = itemRef(DEFECTS_LEDGER, input.defectId);
       return withOwnedAdmission([ownerRef], async (admission) => {
@@ -645,7 +675,7 @@ export function createWorksetCoordinationBundleGateway(
             ownership,
           );
           return { defect, goal, ownership };
-        });
+        }, { admission, operation: { kind: "defect-to-fix-goal", defectId: input.defectId } });
       });
     },
   };
@@ -738,8 +768,8 @@ export function createInMemoryWorksetOwnedGuardedLedger(
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
     ...(options.afterOwnedAdmit !== undefined ? { afterOwnedAdmit: options.afterOwnedAdmit } : {}),
-    runOwnedTransaction: async (mutate) =>
-      rawStore.runAtomicOwnedMutation((baseTx: InMemoryOwnedWriteTx) => mutate(baseTx)),
+    runOwnedTransaction: async (mutate, context) =>
+      rawStore.runAtomicOwnedMutation((baseTx: InMemoryOwnedWriteTx) => mutate(baseTx), context),
   };
 
   return createWorksetOwnedGuardedLedger(host);

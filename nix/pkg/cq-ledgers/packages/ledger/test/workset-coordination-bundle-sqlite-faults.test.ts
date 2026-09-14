@@ -48,7 +48,7 @@ async function open(
     rawStore: raw,
     worksetStore: raw.worksetStore(),
     invocationAuthority: createTrustedWorksetManagementAuthority(),
-    runOwnedTransaction: (mutate) => raw.runAtomicOwnedMutation(mutate),
+    runOwnedTransaction: (mutate, context) => raw.runAtomicOwnedMutation(mutate, context),
   });
   ledgers.push(ledger);
   return { raw, ledger };

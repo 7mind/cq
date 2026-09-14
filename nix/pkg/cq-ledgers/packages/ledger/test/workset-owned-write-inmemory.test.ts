@@ -140,9 +140,9 @@ describe("workset owned-write in-memory focused [T1962]", () => {
     const owned = createWorksetOwnedWriteGateway({
       rawStore,
       worksetStore: staleStore,
-      runOwnedTransaction: async (mutate) => {
+      runOwnedTransaction: async (mutate, context) => {
         transactionRuns += 1;
-        return rawStore.runAtomicOwnedMutation(mutate);
+        return rawStore.runAtomicOwnedMutation(mutate, context);
       },
     });
 
@@ -183,10 +183,11 @@ describe("workset owned-write in-memory focused [T1962]", () => {
       worksetStore,
       runOwnedTransaction: async <T>(
         mutate: Parameters<InMemoryLedgerStore["runAtomicOwnedMutation"]>[0],
+        context: Parameters<InMemoryLedgerStore["runAtomicOwnedMutation"]>[1],
       ): Promise<T> => {
         transactionReached.resolve();
         await releaseTransaction.promise;
-        return rawStore.runAtomicOwnedMutation(mutate) as Promise<T>;
+        return rawStore.runAtomicOwnedMutation(mutate, context) as Promise<T>;
       },
     };
     const owned = createWorksetOwnedWriteGateway(host);
@@ -219,7 +220,7 @@ describe("workset owned-write in-memory focused [T1962]", () => {
       rawStore.runAtomicOwnedMutation((tx) => {
         tx.updateItem(IDEAS_LEDGER, item.id, { fields: { title: "rolledbackterm" } });
         throw new Error("rollback-probe");
-      }),
+      }, null),
     ).rejects.toThrow("rollback-probe");
 
     expect(rawStore.fetchItem(IDEAS_LEDGER, item.id).fields.title).toBe("preimageterm");

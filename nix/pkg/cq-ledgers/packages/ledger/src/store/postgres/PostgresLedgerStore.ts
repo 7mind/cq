@@ -193,7 +193,7 @@ import {
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
-import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import { assertOwnedMutationAdmission, type AdmittedOwnedMutation, type WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
@@ -2180,13 +2180,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /** Run one tenant-scoped owned lifecycle operation and notify after commit. */
-  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> {
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation | null): Promise<T> {
     this.assertInit();
     let result!: T;
     let dirtyLedgers: readonly string[] = [];
     let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
       await this.lockTenantCounters(tx);
+      if (context !== null) assertOwnedMutationAdmission(context);
       const tenant = await this.readLiveTenant(tx);
       const archivedIds = new Map<string, Set<string>>();
       for (const item of tenant.archived) {

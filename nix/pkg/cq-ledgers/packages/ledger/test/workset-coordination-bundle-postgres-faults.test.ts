@@ -70,7 +70,7 @@ if (dsn === undefined || dsn.length === 0) {
       rawStore: raw,
       worksetStore: raw.worksetStore(),
       invocationAuthority: createTrustedWorksetManagementAuthority(),
-      runOwnedTransaction: (mutate) => raw.runAtomicOwnedMutation(mutate),
+      runOwnedTransaction: (mutate, context) => raw.runAtomicOwnedMutation(mutate, context),
     });
     ledgers.push(ledger);
     return { raw, ledger, pool };

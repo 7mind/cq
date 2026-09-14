@@ -138,6 +138,7 @@ import {
   type WorksetCoordinationBundleGateway,
   type WorksetOwnedWriteGateway,
   type WorksetOwnedWriteTx,
+  type AdmittedOwnedMutation,
 } from "../worksetOwnedLifecycle.js";
 import { parseRef } from "../refs.js";
 import type { WorksetStore } from "../worksetStore.js";
@@ -593,10 +594,10 @@ function requireOwnedLifecycleMutations(
   const host = {
     rawStore: store,
     worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
-    runOwnedTransaction: <T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> =>
+    runOwnedTransaction: <T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation): Promise<T> =>
       (
-        candidate.runAtomicOwnedMutation as (mutate: (tx: WorksetOwnedWriteTx) => T) => Promise<T>
-      ).call(store, mutate),
+        candidate.runAtomicOwnedMutation as (mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation) => Promise<T>
+      ).call(store, mutate, context),
   };
   return {
     owned: createWorksetOwnedWriteGateway(host),
