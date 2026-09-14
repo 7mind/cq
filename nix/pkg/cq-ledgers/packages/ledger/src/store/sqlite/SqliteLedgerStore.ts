@@ -212,7 +212,7 @@ import {
   type TaskAdoptionPublicationResult,
 } from "../../taskAdoptionEligibility.js";
 import {
-  applyOperatorActionLifecycleMutation,
+  applyOperatorActionLifecycleRows,
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
@@ -1723,10 +1723,50 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   async mutateOperatorAction(
     mutation: OperatorActionLifecycleMutation,
   ): Promise<OperatorActionLifecycleMutationResult> {
-    return this.runPlanLifecycleMutation(
-      (state) => applyOperatorActionLifecycleMutation(state.ledgers, mutation, state.now),
-      null,
-    );
+    this.assertInit();
+    const measurement = this.beginObservedOperation(`operator_action_${mutation.kind}`);
+    try {
+      const outcome = immediateWriteTransaction(this.db(), () => {
+        const rows = createSqliteLifecycleRowRepository(this.db(), measurement ?? null);
+        const selected = new Map<string, { ledgerId: string; item: Item; before: string }>();
+        const result = applyOperatorActionLifecycleRows({
+          fetchItem: (ledgerId, itemId) => {
+            const ref = `${ledgerId}:${itemId}`;
+            const loaded = selected.get(ref);
+            if (loaded !== undefined) return loaded.item;
+            const item = rows.publicRows.fetchActiveItem(ref);
+            if (item === undefined) {
+              const exists = this.db().query("SELECT name FROM ledgers WHERE name = ?").get(ledgerId);
+              this.recordGenericAccess(measurement, "ledgers", "read", { kind: "primary-key", keys: [ledgerId] }, exists === null ? [] : [ledgerId]);
+              if (exists === null) throw new LedgerError(`ledger not found: ${ledgerId}`);
+              return undefined;
+            }
+            if (rows.fetchGroup(ledgerId, item.milestoneId) === undefined) {
+              throw new LedgerError(`ledger ${ledgerId}: item ${item.id} references a milestone-group with no groups row`);
+            }
+            selected.set(ref, { ledgerId, item, before: JSON.stringify(item) });
+            return item;
+          },
+        }, mutation, this.now);
+        const activeUpserts: Array<{ ledgerId: string; item: Item }> = [];
+        for (const { ledgerId, item, before } of selected.values()) {
+          if (before === JSON.stringify(item)) continue;
+          if (!result.dirtyLedgers.includes(ledgerId)) throw new LedgerError(`operator action changed undeclared ledger ${ledgerId}`);
+          this.persistActiveItem(ledgerId, item, measurement);
+          activeUpserts.push({ ledgerId, item: cloneItem(item) });
+        }
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta({
+          activeUpserts, activeDeletes: [], archivedUpserts: [], archivedDeletes: [],
+        }));
+        return result;
+      }, WRITE_TXN_MAX_ATTEMPTS, measurement);
+      await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
+      measurement?.finish("success");
+      return outcome.result;
+    } catch (error) {
+      measurement?.finish("error");
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1789,36 +1829,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       measurement?.finish("error");
       throw error;
     }
-  }
-
-  private async runPlanLifecycleMutation<T>(
-    mutate: (state: InMemoryPlanLifecycleState) => InMemoryPlanMutation<T>,
-    contender: PlanLifecycleSerializationContender | null,
-  ): Promise<T> {
-    const mutation = immediateWriteTransaction(this.db(), () => {
-      if (contender !== null) this.reachPlanSerializationBoundary(contender);
-      const state = this.loadPlanLifecycleState();
-      const result = mutate(state);
-      for (const ledgerId of new Set(result.dirtyLedgers)) {
-        const ledger = state.ledgers.get(ledgerId);
-        if (ledger === undefined) {
-          throw new LedgerError(`ledger not found: ${ledgerId}`);
-        }
-        this.replaceActiveLedger(ledger);
-      }
-      this.persistPlanRecords("plan_claims", state.claims);
-      this.persistPlanRecords("plan_operations", state.operations);
-      recordSqliteCoherence(
-        this.db(),
-        this.coherenceOrigin,
-        ledgerControlChanges(result.dirtyLedgers),
-      );
-      return result;
-    });
-    await this.projectCommitted(
-      [...new Set(mutation.dirtyLedgers)].map((ledgerId) => ({ ledgerId, op: "update" })),
-    );
-    return mutation.result;
   }
 
   /** Run one owned lifecycle operation in one BEGIN IMMEDIATE transaction. */
@@ -2142,6 +2152,28 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     };
   }
 
+  private persistActiveItem(ledgerId: string, item: Item, measurement: SqliteOperationMeasurement | undefined): void {
+    this.db().query(
+      `INSERT INTO items (
+         ledger, id, milestone_id, status, fields_json,
+         created_at, updated_at, author, session
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ledger, id) DO UPDATE SET
+         milestone_id = excluded.milestone_id,
+         status = excluded.status,
+         fields_json = excluded.fields_json,
+         created_at = excluded.created_at,
+         updated_at = excluded.updated_at,
+         author = excluded.author,
+         session = excluded.session`,
+    ).run(
+      ledgerId, item.id, item.milestoneId, item.status, JSON.stringify(item.fields),
+      item.createdAt, item.updatedAt, item.author ?? null, item.session ?? null,
+    );
+    this.recordGenericAccess(measurement, "items", "write",
+      { kind: "primary-key", keys: [`${ledgerId}:${item.id}`] }, [`${ledgerId}:${item.id}`]);
+  }
+
   private persistGenericMutationState(
     state: GenericMutationLoadedState,
     transaction: Pick<ReturnType<typeof createGenericMutationTransaction>, "dirtyLedgers" | "dirtyArchives">,
@@ -2243,38 +2275,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const [itemId, item] of afterItems) {
         const prior = beforeItems.get(itemId);
         if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(item)) continue;
-        db.query(
-          `INSERT INTO items (
-             ledger, id, milestone_id, status, fields_json,
-             created_at, updated_at, author, session
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(ledger, id) DO UPDATE SET
-             milestone_id = excluded.milestone_id,
-             status = excluded.status,
-             fields_json = excluded.fields_json,
-             created_at = excluded.created_at,
-             updated_at = excluded.updated_at,
-             author = excluded.author,
-             session = excluded.session`,
-        ).run(
-          ledgerId,
-          item.id,
-          item.milestoneId,
-          item.status,
-          JSON.stringify(item.fields),
-          item.createdAt,
-          item.updatedAt,
-          item.author ?? null,
-          item.session ?? null,
-        );
+        this.persistActiveItem(ledgerId, item, measurement);
         activeUpserts.push({ ledgerId, item: cloneItem(item) });
-        this.recordGenericAccess(
-          measurement,
-          "items",
-          "write",
-          { kind: "primary-key", keys: [`${ledgerId}:${itemId}`] },
-          [`${ledgerId}:${itemId}`],
-        );
       }
       for (const [groupId] of beforeGroups) {
         if (afterGroups.has(groupId)) continue;

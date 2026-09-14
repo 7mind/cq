@@ -98,13 +98,35 @@ export interface OperatorActionLifecycleMutationOutcome {
   readonly dirtyLedgers: readonly string[];
 }
 
+export interface OperatorActionLifecycleRows {
+  fetchItem(ledgerId: string, itemId: string): Item | undefined;
+}
+
 export function applyOperatorActionLifecycleMutation(
   ledgers: Map<string, Ledger>,
   mutation: OperatorActionLifecycleMutation,
   now: () => string,
 ): OperatorActionLifecycleMutationOutcome {
+  return applyOperatorActionLifecycleRows({
+    fetchItem(ledgerId, itemId) {
+      const ledger = ledgers.get(ledgerId);
+      if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
+      for (const milestone of ledger.milestones) {
+        const item = milestone.items.find((candidate) => candidate.id === itemId);
+        if (item !== undefined) return item;
+      }
+      return undefined;
+    },
+  }, mutation, now);
+}
+
+export function applyOperatorActionLifecycleRows(
+  rows: OperatorActionLifecycleRows,
+  mutation: OperatorActionLifecycleMutation,
+  now: () => string,
+): OperatorActionLifecycleMutationOutcome {
   assertRevision(mutation.expectedRevision);
-  const action = findMutableItem(ledgers, OPERATOR_ACTIONS_LEDGER, mutation.actionId);
+  const action = findMutableItem(rows, OPERATOR_ACTIONS_LEDGER, mutation.actionId);
   const revision = operatorActionRevision(action);
   if (revision !== mutation.expectedRevision) {
     throw new LedgerError(
@@ -117,11 +139,11 @@ export function applyOperatorActionLifecycleMutation(
     case "record-evidence":
       return recordEvidence(action, revision, mutation, now);
     case "revise":
-      return revise(ledgers, action, revision, mutation, now);
+      return revise(rows, action, revision, mutation, now);
     case "complete":
-      return complete(ledgers, action, revision, mutation, now);
+      return complete(rows, action, revision, mutation, now);
     case "supersede":
-      return supersede(ledgers, action, mutation);
+      return supersede(rows, action, mutation);
   }
 }
 
@@ -268,7 +290,7 @@ function recordEvidence(
 }
 
 function revise(
-  ledgers: Map<string, Ledger>,
+  rows: OperatorActionLifecycleRows,
   action: Item,
   revision: number,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "revise" }>,
@@ -281,8 +303,8 @@ function revise(
   }
   assertRevisionEvidenceState(action, revision);
   const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-  const task = findMutableItem(ledgers, TASKS_LEDGER, taskId);
-  const handoff = findMutableItem(ledgers, HANDOFFS_LEDGER, handoffIdForTask(taskId));
+  const task = findMutableItem(rows, TASKS_LEDGER, taskId);
+  const handoff = findMutableItem(rows, HANDOFFS_LEDGER, handoffIdForTask(taskId));
   if (task.status !== "planned" && task.status !== "abandoned") {
     throw new LedgerError(
       `Operator-action task ${task.id} may be revised only from planned or abandoned`,
@@ -353,7 +375,7 @@ function revise(
 }
 
 function complete(
-  ledgers: Map<string, Ledger>,
+  rows: OperatorActionLifecycleRows,
   action: Item,
   revision: number,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "complete" }>,
@@ -367,7 +389,7 @@ function complete(
     throw new LedgerError(`Operator action ${action.id} verification belongs to another revision`);
   }
   const task = findMutableItem(
-    ledgers,
+    rows,
     TASKS_LEDGER,
     referencedId(action, "taskRef", TASKS_LEDGER),
   );
@@ -386,7 +408,7 @@ function complete(
 }
 
 function supersede(
-  ledgers: Map<string, Ledger>,
+  rows: OperatorActionLifecycleRows,
   action: Item,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "supersede" }>,
 ): OperatorActionLifecycleMutationOutcome {
@@ -398,7 +420,7 @@ function supersede(
       throw new LedgerError(`Operator action ${action.id} was superseded with different evidence`);
     }
     const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-    const task = findOptionalMutableItem(ledgers, TASKS_LEDGER, taskId);
+    const task = rows.fetchItem(TASKS_LEDGER, taskId);
     return {
       result: {
         kind: "supersede",
@@ -415,7 +437,7 @@ function supersede(
   }
 
   const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-  const task = findOptionalMutableItem(ledgers, TASKS_LEDGER, taskId);
+  const task = rows.fetchItem(TASKS_LEDGER, taskId);
   if (
     task !== undefined &&
     task.status !== "planned" &&
@@ -449,28 +471,10 @@ function supersede(
   };
 }
 
-function findMutableItem(ledgers: Map<string, Ledger>, ledgerId: string, itemId: string): Item {
-  const ledger = ledgers.get(ledgerId);
-  if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
-  for (const milestone of ledger.milestones) {
-    const item = milestone.items.find((candidate) => candidate.id === itemId);
-    if (item !== undefined) return item;
-  }
+function findMutableItem(rows: OperatorActionLifecycleRows, ledgerId: string, itemId: string): Item {
+  const item = rows.fetchItem(ledgerId, itemId);
+  if (item !== undefined) return item;
   throw new ItemNotFoundError(ledgerId, itemId);
-}
-
-function findOptionalMutableItem(
-  ledgers: Map<string, Ledger>,
-  ledgerId: string,
-  itemId: string,
-): Item | undefined {
-  const ledger = ledgers.get(ledgerId);
-  if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
-  for (const milestone of ledger.milestones) {
-    const item = milestone.items.find((candidate) => candidate.id === itemId);
-    if (item !== undefined) return item;
-  }
-  return undefined;
 }
 
 function referencedId(action: Item, field: string, ledgerId: string): string {
