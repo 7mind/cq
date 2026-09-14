@@ -23,6 +23,7 @@ const EXPECTED_OPERATIONS = [
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
+  "record_implementation_adoption",
 ] as const;
 
 function serviceStatus() {
@@ -140,6 +141,16 @@ describe("implementation evidence status CLI [BA]", () => {
     [
       "missing operation",
       (status: ReturnType<typeof serviceStatus>) => ({ ...status, operationInventory: [] }),
+      "operation inventory",
+    ],
+    [
+      "missing operator adoption",
+      (status: ReturnType<typeof serviceStatus>) => ({
+        ...status,
+        operationInventory: status.operationInventory.filter(
+          (operation) => operation !== "record_implementation_adoption",
+        ),
+      }),
       "operation inventory",
     ],
     [
