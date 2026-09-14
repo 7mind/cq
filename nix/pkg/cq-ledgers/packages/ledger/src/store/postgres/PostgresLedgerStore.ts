@@ -97,6 +97,12 @@ import type {
   PlanReleaseResult,
 } from "../../planLifecycle.js";
 import { PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
+import type { PlanLifecycleRowRequest, PlanLifecycleRowPlan } from "../planLifecycleRowPlan.js";
+import { runPostgresKeyedOperation } from "./operationKernel.js";
+import { resolvePostgresPlanRows } from "./planRowOperation.js";
+import { persistPostgresPlanRows } from "./planRowPersistence.js";
+import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
+import type { PostgresAccessObserver } from "./operationAccess.js";
 import type {
   InMemoryPlanLifecycleState,
   InMemoryPlanMutation,
@@ -205,6 +211,7 @@ import {
 import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
 
 export interface PostgresLedgerStoreOpts {
+  readonly accessObserver?: PostgresAccessObserver;
   /**
    * A `Bun.sql` connection pool (see {@link openPgPool}) whose database has
    * already had {@link ensureSchema} applied. The store OWNS this pool's
@@ -381,6 +388,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly displayName: string;
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
+  private readonly accessObserver: PostgresAccessObserver | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private readonly worksetAuthority: unknown;
   private readonly worksetOptions: Omit<
@@ -408,6 +416,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.displayName = opts.displayName;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
+    this.accessObserver = opts.accessObserver ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
@@ -2004,25 +2013,25 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.runPlanLifecycleMutation(input.goalId, (state) =>
+    return this.runPlanLifecycleMutation({ operation: "claim", input }, (state) =>
       claimInMemoryPlan(state, input),
     );
   }
 
   async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
-    return this.runPlanLifecycleMutation(input.goalId, (state) =>
+    return this.runPlanLifecycleMutation({ operation: "publish-draft", input }, (state) =>
       publishInMemoryPlanDraft(state, input),
     );
   }
 
   async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
-    return this.runPlanLifecycleMutation(input.goalId, (state) =>
+    return this.runPlanLifecycleMutation({ operation: "release", input }, (state) =>
       releaseInMemoryPlanClaim(state, input),
     );
   }
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
-    return this.runPlanLifecycleMutation(input.goalId, (state) =>
+    return this.runPlanLifecycleMutation({ operation: "finalize", input }, (state) =>
       finalizeInMemoryPlan(state, input),
     );
   }
@@ -2141,42 +2150,59 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
-   * Run one plan-lifecycle mutation: lock, read live, apply the SHARED
-   * in-memory lifecycle logic, and persist every effect — dirty ledgers, the
-   * claim record, and the operation replay record — inside the SAME
-   * transaction. Nothing is written outside it, so the acknowledgement a caller
-   * receives and the rows a later reader sees can never disagree: either the
-   * whole mutation committed, or none of it exists.
+   * Resolve and lock the native plan's keyed closure, re-read live state, then
+   * apply the shared lifecycle logic and persist only its public/private delta
+   * in the same transaction. Cache and search adoption follow commit.
    */
   private async runPlanLifecycleMutation<T>(
-    goalId: string,
+    request: PlanLifecycleRowRequest,
     mutate: (state: InMemoryPlanLifecycleState) => InMemoryPlanMutation<T>,
   ): Promise<T> {
     this.assertInit();
-    let value!: T;
-    let dirty: readonly string[] = [];
-    let live!: LiveTenantState;
-    await writeTransaction(this.pool(), async (tx) => {
-      await this.lockGoalRows(tx, [goalId]);
-      await this.lockTenantCounters(tx);
-      const tenant = await this.readLiveTenant(tx);
-      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
-      const mutation = mutate(state);
-      for (const ledgerId of new Set(mutation.dirtyLedgers)) {
-        await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
-      }
-      await this.persistPlanRecords(tx, "plan_claims", state.claims);
-      await this.persistPlanRecords(tx, "plan_operations", state.operations);
-      value = mutation.result;
-      dirty = [...new Set(mutation.dirtyLedgers)];
-      live = tenant;
+    const committed = await runPostgresKeyedOperation(this.pool(), {
+      projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+    }, {
+      name: `plan_${request.operation}`,
+      resolve: (queries) => resolvePostgresPlanRows(queries, request, this.now),
+      apply: async (queries, resolution) => {
+        if (resolution.kind === "rejected") throw resolution.error;
+        const plan = resolution.plan;
+        const mutation = mutate(plan.state);
+        const changed = await persistPostgresPlanRows(queries, plan, mutation.dirtyLedgers);
+        await persistPostgresPrivateRecords(queries, plan.privateChanges());
+        return { value: mutation.result, plan, dirty: changed.ledgers };
+      },
     });
-    // Post-commit only: both read surfaces adopt the live map the transaction
-    // read and mutated, so this instance publishes its own write AND picks up
-    // whatever a peer had committed since its last refresh.
-    this.absorbLiveLedgers(live);
-    for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
-    return value;
+    this.absorbPlanRows(committed.plan);
+    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    return committed.value;
+  }
+
+  private absorbPlanRows(plan: PlanLifecycleRowPlan): void {
+    for (const [ledgerId, selected] of plan.state.ledgers) {
+      let cached = this.ledgers.get(ledgerId);
+      if (cached === undefined) {
+        cached = { ...structuredClone(selected), milestones: [] };
+        this.ledgers.set(ledgerId, cached);
+      }
+      cached.counters = { ...selected.counters };
+      for (const group of selected.milestones) {
+        let cachedGroup = cached.milestones.find(({ id }) => id === group.id);
+        if (cachedGroup === undefined) {
+          cachedGroup = { ...group, items: [] };
+          cached.milestones.push(cachedGroup);
+        }
+        cachedGroup.title = group.title;
+        cachedGroup.description = group.description;
+        for (const item of group.items) {
+          const index = cachedGroup.items.findIndex(({ id }) => id === item.id);
+          if (index >= 0 && JSON.stringify(cachedGroup.items[index]) === JSON.stringify(item)) continue;
+          if (index < 0) cachedGroup.items.push(cloneItem(item));
+          else cachedGroup.items[index] = cloneItem(item);
+          this.indexUpsertActive(ledgerId, item);
+        }
+      }
+    }
   }
 
   /** Run one tenant-scoped owned lifecycle operation and notify after commit. */

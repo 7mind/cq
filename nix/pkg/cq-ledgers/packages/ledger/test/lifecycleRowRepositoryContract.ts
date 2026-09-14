@@ -4,6 +4,7 @@ import type { PlanPrivateClaimRecord } from "../src/planLifecycle.js";
 import type { Item } from "../src/types.js";
 import type { InMemoryPlanOperationRecord } from "../src/store/inMemoryPlanLifecycle.js";
 import type { LifecycleRowRepository } from "../src/store/lifecycleRowRepository.js";
+import type { AsyncLifecycleRowRepository } from "../src/store/asyncRowRepository.js";
 
 export function lifecycleClaim(goalId: string): PlanPrivateClaimRecord {
   return {
@@ -59,28 +60,28 @@ export interface LifecycleRowsFixture {
   dispose(): Promise<void>;
 }
 
-export function runLifecycleRowRepositoryContract(
+export function runLifecycleRowReadContract(
   name: string,
-  build: () => Promise<LifecycleRowsFixture>,
+  build: () => Promise<{ rows: LifecycleRowRepository | AsyncLifecycleRowRepository; dispose(): Promise<void> }>,
 ): void {
   describe(`keyed lifecycle row repository — ${name} [Behavioral-Active Blackbox]`, () => {
     test("reads only the requested public identities, membership, archive and incident refs", async () => {
       const fixture = await build();
       try {
         const rows = fixture.rows;
-        expect(rows.publicRows.fetchActiveItem("goals:G1")).toEqual(LIFECYCLE_PUBLIC_ITEMS[0]!.item);
-        expect(rows.publicRows.fetchActiveItem("goals:G-missing")).toBeUndefined();
-        expect(rows.publicRows.fetchArchivedItem("tasks:T2")?.item).toEqual(LIFECYCLE_ARCHIVED_ITEM);
-        expect(rows.publicRows.fetchArchivedItem("tasks:T-missing")).toBeUndefined();
-        expect(rows.fetchGroup("tasks", "M1")).toEqual({ id: "M1", title: "members", description: "selected" });
-        expect(rows.fetchGroup("goals", "M1")).toBeUndefined();
-        expect(rows.taskRefsByMilestones(["M1"])).toEqual(["tasks:T1"]);
-        expect(rows.taskRefsByMilestones(["M-missing"])).toEqual([]);
-        expect(rows.taskRefsByMilestones([])).toEqual([]);
-        expect(rows.taskRefsByMilestones(["M3", "M4", "M4"])).toEqual(["tasks:T10", "tasks:T2", "tasks:T3"]);
-        expect(rows.publicRows.referenceSources("goals:G1", ["worksetOwnerRef"])).toEqual(["tasks:T1"]);
-        expect(rows.publicRows.referenceTargets("tasks:T1", ["dependsOn"])).toEqual(["tasks:T2"]);
-        expect(rows.publicRows.listLedgers().find(({ id }) => id === "tasks")?.counters).toEqual({ milestone: 2, item: 2 });
+        expect(await rows.publicRows.fetchActiveItem("goals:G1")).toEqual(LIFECYCLE_PUBLIC_ITEMS[0]!.item);
+        expect(await rows.publicRows.fetchActiveItem("goals:G-missing")).toBeUndefined();
+        expect((await rows.publicRows.fetchArchivedItem("tasks:T2"))?.item).toEqual(LIFECYCLE_ARCHIVED_ITEM);
+        expect(await rows.publicRows.fetchArchivedItem("tasks:T-missing")).toBeUndefined();
+        expect(await rows.fetchGroup("tasks", "M1")).toEqual({ id: "M1", title: "members", description: "selected" });
+        expect(await rows.fetchGroup("goals", "M1")).toBeUndefined();
+        expect(await rows.taskRefsByMilestones(["M1"])).toEqual(["tasks:T1"]);
+        expect(await rows.taskRefsByMilestones(["M-missing"])).toEqual([]);
+        expect(await rows.taskRefsByMilestones([])).toEqual([]);
+        expect(await rows.taskRefsByMilestones(["M3", "M4", "M4"])).toEqual(["tasks:T10", "tasks:T2", "tasks:T3"]);
+        expect(await rows.publicRows.referenceSources("goals:G1", ["worksetOwnerRef"])).toEqual(["tasks:T1"]);
+        expect(await rows.publicRows.referenceTargets("tasks:T1", ["dependsOn"])).toEqual(["tasks:T2"]);
+        expect((await rows.publicRows.listLedgers()).find(({ id }) => id === "tasks")?.counters).toEqual({ milestone: 2, item: 2 });
       } finally { await fixture.dispose(); }
     });
 
@@ -89,27 +90,32 @@ export function runLifecycleRowRepositoryContract(
       try {
         const rows = fixture.rows;
         const claim = lifecycleClaim("G1");
-        expect(rows.fetchClaimByRequest(claim)).toEqual(claim);
-        expect(rows.fetchClaimByIdentity(claim)).toEqual(claim);
-        expect(rows.fetchActiveClaim("G1")).toEqual(claim);
-        expect(rows.fetchClaimByRequest({ ...claim, claimRequestId: "other" })).toBeUndefined();
-        expect(rows.fetchClaimByRequest({ ...claim, goalId: "G2" })).toBeUndefined();
-        expect(rows.fetchClaimByIdentity({ ...claim, goalId: "G2" })).toBeUndefined();
-        expect(rows.fetchClaimByIdentity({ ...claim, claimId: "other" })).toBeUndefined();
-        expect(rows.fetchClaimByIdentity({ ...claim, generation: 2 })).toBeUndefined();
-        expect(rows.fetchActiveClaim("G-missing")).toBeUndefined();
+        expect(await rows.fetchClaimByRequest(claim)).toEqual(claim);
+        expect(await rows.fetchClaimByIdentity(claim)).toEqual(claim);
+        expect(await rows.fetchActiveClaim("G1")).toEqual(claim);
+        expect(await rows.fetchClaimByRequest({ ...claim, claimRequestId: "other" })).toBeUndefined();
+        expect(await rows.fetchClaimByRequest({ ...claim, goalId: "G2" })).toBeUndefined();
+        expect(await rows.fetchClaimByIdentity({ ...claim, goalId: "G2" })).toBeUndefined();
+        expect(await rows.fetchClaimByIdentity({ ...claim, claimId: "other" })).toBeUndefined();
+        expect(await rows.fetchClaimByIdentity({ ...claim, generation: 2 })).toBeUndefined();
+        expect(await rows.fetchActiveClaim("G-missing")).toBeUndefined();
         const operation = lifecycleOperation("existing");
-        expect(rows.fetchOperation(operation.replay)).toEqual(operation);
+        expect(await rows.fetchOperation(operation.replay)).toEqual(operation);
         for (const key of [
           { ...operation.replay, goalId: "G2" },
           { ...operation.replay, claimId: "other" },
           { ...operation.replay, generation: 2 },
           { ...operation.replay, operation: "publish-draft" as const },
           { ...operation.replay, operationId: "other" },
-        ]) expect(rows.fetchOperation(key)).toBeUndefined();
+        ]) expect(await rows.fetchOperation(key)).toBeUndefined();
       } finally { await fixture.dispose(); }
     });
+  });
+}
 
+export function runLifecycleRowRepositoryContract(name: string, build: () => Promise<LifecycleRowsFixture>): void {
+  runLifecycleRowReadContract(name, build);
+  describe(`keyed lifecycle row persistence — ${name} [Behavioral-Active Blackbox]`, () => {
     test("persists the selected claim and immutable operation without modifying a sibling", async () => {
       const fixture = await build();
       try {

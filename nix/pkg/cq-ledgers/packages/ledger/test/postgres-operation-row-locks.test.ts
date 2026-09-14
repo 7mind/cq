@@ -4,8 +4,7 @@ import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.j
 import { postgresKeyedFixture } from "./postgresKeyedFixture.js";
 
 describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL operation row locks [T5917 Behavioral-Active Blackbox-GoodCommunication]", () => {
-  // expected-failure: tasks:T5917
-  test.failing("postgres operation kernel locks only its declared closure", async () => {
+  test("postgres operation kernel locks only its declared closure", async () => {
     const fixture = await postgresKeyedFixture();
     const dsn = process.env.CQ_TEST_PG_URL;
     if (dsn === undefined) throw new Error("PostgreSQL fixture DSN missing");

@@ -54,6 +54,7 @@ import {
   type PlanLifecycleStore,
 } from "../src/index.js";
 import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
+import { postgresGoalRowLockHook } from "./postgresGoalRowLockHook.js";
 import {
   cloneTenant,
   dropTenant,
@@ -235,6 +236,10 @@ function injectingPool(dsn: string): { pool: SQL; injector: Injector } {
       },
       get(target, prop, receiver): unknown {
         const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop === "unsafe" && typeof value === "function") return (...args: unknown[]) => {
+          countOrThrow();
+          return Reflect.apply(value, target, args);
+        };
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as unknown as SQL;
@@ -250,6 +255,10 @@ function injectingPool(dsn: string): { pool: SQL; injector: Injector } {
           (target as unknown as SQL).begin((tx) => fn(counting(tx as unknown as SQL)));
       }
       const value = Reflect.get(target, prop, receiver) as unknown;
+      if (prop === "unsafe" && typeof value === "function") return (...args: unknown[]) => {
+        countOrThrow();
+        return Reflect.apply(value, target, args);
+      };
       return typeof value === "function" ? value.bind(target) : value;
     },
   }) as unknown as SQL;
@@ -367,40 +376,10 @@ class GoalRowLockBarrier {
   }
 
   wrapPool(pool: SQL): SQL {
-    return this.proxySql(pool, true);
-  }
-
-  private proxySql<Sql extends SQL>(sql: Sql, wrapBegin: boolean): Sql {
-    return new Proxy(sql, {
-      apply: (target, _thisArgument, argumentsList) => {
-        const query = Reflect.apply(
-          target as unknown as (...args: unknown[]) => unknown,
-          target,
-          argumentsList,
-        );
-        if (!this.isGoalRowLock(argumentsList[0])) return query;
-        const contender = this.contender.getStore();
-        if (contender === undefined) return query;
-        return Promise.resolve(query).then(async (result) => {
-          await this.boundary.hook(contender);
-          return result;
-        });
-      },
-      get: (target, property) => {
-        if (wrapBegin && property === "begin") {
-          return <Result>(callback: SQL.TransactionContextCallback<Result>) =>
-            target.begin((transaction) => callback(this.proxySql(transaction, false)));
-        }
-        const value = Reflect.get(target, property, target) as unknown;
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as Sql;
-  }
-
-  private isGoalRowLock(template: unknown): boolean {
-    if (!Array.isArray(template)) return false;
-    const sql = template.join("?");
-    return /SELECT\s+1\s+FROM\s+items[\s\S]*FOR\s+UPDATE/i.test(sql);
+    return postgresGoalRowLockHook(pool, async () => {
+      const contender = this.contender.getStore();
+      if (contender !== undefined) await this.boundary.hook(contender);
+    });
   }
 }
 

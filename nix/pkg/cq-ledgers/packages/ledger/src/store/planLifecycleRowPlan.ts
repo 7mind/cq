@@ -17,6 +17,8 @@ import {
 } from "./inMemoryPlanLifecycle.js";
 import type { LifecyclePrivateRecordChanges, LifecycleRowRepository } from "./lifecycleRowRepository.js";
 import { claimScopeKey, operationScopeKey } from "./planLifecycleDump.js";
+import type { AsyncLifecycleRowRepository } from "./asyncRowRepository.js";
+import { createLifecycleReadRequests, runLifecycleReads, runAsyncLifecycleReads, type LifecycleReadProgram } from "./lifecycleReadProgram.js";
 
 export type PlanLifecycleRowRequest =
   | { readonly operation: "claim"; readonly input: PlanClaimInput }
@@ -49,6 +51,19 @@ export function loadPlanLifecycleRowPlan(
   rawRequest: PlanLifecycleRowRequest,
   now: () => string,
 ): PlanLifecycleRowPlan {
+  return runLifecycleReads(rows, planLifecycleReads(rawRequest, now));
+}
+
+export function loadAsyncPlanLifecycleRowPlan(
+  rows: AsyncLifecycleRowRepository,
+  request: PlanLifecycleRowRequest,
+  now: () => string,
+): Promise<PlanLifecycleRowPlan> {
+  return runAsyncLifecycleReads(rows, planLifecycleReads(request, now));
+}
+
+function* planLifecycleReads(rawRequest: PlanLifecycleRowRequest, now: () => string): LifecycleReadProgram<PlanLifecycleRowPlan> {
+  const rows = createLifecycleReadRequests();
   const request = parseRequest(rawRequest);
   const ledgers = new Map<string, Ledger>();
   const claims = new Map<string, PlanPrivateClaimRecord>();
@@ -72,20 +87,20 @@ export function loadPlanLifecycleRowPlan(
 
   // Replay precedes goal lookup, including after archival or a later generation.
   if (request.operation === "claim") {
-    const existing = rows.fetchClaimByRequest(request.input);
+    const existing = yield* rows.fetchClaimByRequest(request.input);
     includeClaim(existing);
     if (existing !== undefined) return finish();
   } else {
-    const operation = rows.fetchOperation({ ...request.input, operation: request.operation });
+    const operation = yield* rows.fetchOperation({ ...request.input, operation: request.operation });
     if (operation !== undefined) {
-      includeClaim(rows.fetchClaimByIdentity(request.input));
+      includeClaim(yield* rows.fetchClaimByIdentity(request.input));
       const key = operation.replay;
       operations.set(operationScopeKey(key.goalId, key.claimId, key.generation, key.operation, key.operationId), operation);
       return finish();
     }
   }
 
-  const metadata = rows.publicRows.listLedgers();
+  const metadata = yield* rows.publicRows.listLedgers();
   for (const { id, schema, counters } of metadata) {
     ledgers.set(id, { id, schema: structuredClone(schema), counters: { ...counters }, milestones: [], archivePointers: [] });
   }
@@ -97,20 +112,20 @@ export function loadPlanLifecycleRowPlan(
     if (ledger === undefined) throw new LedgerError(`ledger not found: ${id}`);
     return ledger;
   };
-  const includeGroup = (ledgerId: string, groupId: string): void => {
+  const includeGroup = function* (ledgerId: string, groupId: string): LifecycleReadProgram<void> {
     const key = `${ledgerId}:${groupId}`;
     if (groups.has(key)) return;
     groups.add(key);
-    const group = rows.fetchGroup(ledgerId, groupId);
+    const group = yield* rows.fetchGroup(ledgerId, groupId);
     if (group !== undefined) requireLedger(ledgerId).milestones.push({ ...group, items: [] });
   };
-  const includeActive = (ledgerId: string, id: string): Item | undefined => {
+  const includeActive = function* (ledgerId: string, id: string): LifecycleReadProgram<Item | undefined> {
     const ref = `${ledgerId}:${id}`;
     if (items.has(ref)) return items.get(ref);
-    const item = rows.publicRows.fetchActiveItem(ref);
+    const item = yield* rows.publicRows.fetchActiveItem(ref);
     items.set(ref, item);
     if (item === undefined) return undefined;
-    includeGroup(ledgerId, item.milestoneId);
+    yield* includeGroup(ledgerId, item.milestoneId);
     const ledger = requireLedger(ledgerId);
     const group = ledger.milestones.find(({ id }) => id === item.milestoneId);
     if (group === undefined) {
@@ -119,7 +134,7 @@ export function loadPlanLifecycleRowPlan(
     group.items.push(item);
     return item;
   };
-  const includeRef = (raw: string, archived: boolean): void => {
+  const includeRef = function* (raw: string, archived: boolean): LifecycleReadProgram<void> {
     let ref: string;
     try { ref = canonicalizeRef(raw, registry); } catch (error) {
       // Reference validation belongs to the operation, after its fencing checks.
@@ -129,67 +144,67 @@ export function loadPlanLifecycleRowPlan(
     const colon = ref.indexOf(":");
     const ledgerId = ref.slice(0, colon);
     const id = ref.slice(colon + 1);
-    if (includeActive(ledgerId, id) !== undefined || !archived) return;
-    const target = rows.publicRows.fetchArchivedItem(ref);
+    if ((yield* includeActive(ledgerId, id)) !== undefined || !archived) return;
+    const target = yield* rows.publicRows.fetchArchivedItem(ref);
     if (target === undefined) return;
     let ids = archivedIds.get(ledgerId);
     if (ids === undefined) { ids = new Set(); archivedIds.set(ledgerId, ids); }
     ids.add(id);
   };
-  const includeIncident = (refs: readonly string[], fields: readonly string[], allowed: readonly string[]): void => {
+  const includeIncident = function* (refs: readonly string[], fields: readonly string[], allowed: readonly string[]): LifecycleReadProgram<void> {
     for (const ref of refs) {
-      for (const source of rows.publicRows.referenceSources(ref, fields)) {
-        if (allowed.includes(source.slice(0, source.indexOf(":")))) includeRef(source, false);
+      for (const source of yield* rows.publicRows.referenceSources(ref, fields)) {
+        if (allowed.includes(source.slice(0, source.indexOf(":")))) yield* includeRef(source, false);
       }
     }
   };
-  const includeManifest = (manifest: PlanPublishedManifest): string[] => {
+  const includeManifest = function* (manifest: PlanPublishedManifest): LifecycleReadProgram<string[]> {
     const refs = [
       ...manifest.milestones.map(({ id }) => `${MILESTONES_LEDGER}:${id}`),
       ...manifest.tasks.map(({ id }) => `${TASKS_LEDGER}:${id}`),
     ];
-    for (const ref of refs) includeRef(ref, false);
+    for (const ref of refs) yield* includeRef(ref, false);
     return refs;
   };
-  const prepareAllocation = (ledgerId: string, count: number): string[] => {
+  const prepareAllocation = function* (ledgerId: string, count: number): LifecycleReadProgram<string[]> {
     const ledger = requireLedger(ledgerId);
     const prefix = ledger.schema.idPrefix ?? ledgerId.slice(0, 1).toUpperCase();
     const ids: string[] = [];
     let counter = ledger.counters.item;
     while (ids.length < count) {
       const id = `${prefix}${++counter}`;
-      if (includeActive(ledgerId, id) === undefined) ids.push(id);
+      if ((yield* includeActive(ledgerId, id)) === undefined) ids.push(id);
     }
     return ids;
   };
 
-  const goal = includeActive(GOALS_LEDGER, request.input.goalId);
+  const goal = yield* includeActive(GOALS_LEDGER, request.input.goalId);
   if (goal === undefined) return finish();
-  includeClaim(rows.fetchActiveClaim(goal.id));
+  includeClaim(yield* rows.fetchActiveClaim(goal.id));
   if (request.operation === "claim" || request.operation === "publish-draft") {
-    includeActive(MILESTONES_LEDGER, goal.milestoneId);
+    yield* includeActive(MILESTONES_LEDGER, goal.milestoneId);
   }
 
   if (request.operation === "claim") {
     const milestoneIds = fieldRefs(goal, "milestones");
     if (request.input.purpose === "follow-up" || typeof goal.fields[PLAN_GENERATION_FIELD] !== "string") {
-      for (const ref of rows.taskRefsByMilestones(milestoneIds)) includeRef(ref, false);
+      for (const ref of yield* rows.taskRefsByMilestones(milestoneIds)) yield* includeRef(ref, false);
     }
     for (const ref of fieldRefs(goal, PLAN_WAITING_RESEARCHES_FIELD)) {
-      includeActive(RESEARCHES_LEDGER, ref.replace(/^researches:/, ""));
+      yield* includeActive(RESEARCHES_LEDGER, ref.replace(/^researches:/, ""));
     }
     for (const ref of fieldRefs(goal, PLAN_WAITING_TASKS_FIELD)) {
-      includeActive(TASKS_LEDGER, ref.replace(/^tasks:/, ""));
+      yield* includeActive(TASKS_LEDGER, ref.replace(/^tasks:/, ""));
     }
     if (request.input.purpose === "follow-up") {
       const superseded = milestoneIds.map((id) => `${MILESTONES_LEDGER}:${id}`);
-      for (const id of milestoneIds) includeActive(MILESTONES_LEDGER, id);
+      for (const id of milestoneIds) yield* includeActive(MILESTONES_LEDGER, id);
       for (const group of requireLedger(TASKS_LEDGER).milestones) {
         if (!milestoneIds.includes(group.id)) continue;
         for (const task of group.items) if (task.status === "planned") superseded.push(`${TASKS_LEDGER}:${task.id}`);
       }
-      includeIncident(superseded, ["dependsOn", "blockedBy"], [MILESTONES_LEDGER, TASKS_LEDGER]);
-      includeIncident([`${GOALS_LEDGER}:${goal.id}`, ...superseded], ["ledgerRefs"], [QUESTIONS_LEDGER]);
+      yield* includeIncident(superseded, ["dependsOn", "blockedBy"], [MILESTONES_LEDGER, TASKS_LEDGER]);
+      yield* includeIncident([`${GOALS_LEDGER}:${goal.id}`, ...superseded], ["ledgerRefs"], [QUESTIONS_LEDGER]);
     }
     return finish();
   }
@@ -202,46 +217,46 @@ export function loadPlanLifecycleRowPlan(
 
   if (request.operation === "publish-draft") {
     if (coordinationMilestoneConflict(state, goal) !== null || goal.status !== "planning") return finish();
-    const milestoneIds = prepareAllocation(MILESTONES_LEDGER, request.input.manifest.milestones.length);
-    prepareAllocation(TASKS_LEDGER, request.input.manifest.tasks.length);
-    includeGroup(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID);
-    for (const id of milestoneIds) includeGroup(TASKS_LEDGER, id);
+    const milestoneIds = yield* prepareAllocation(MILESTONES_LEDGER, request.input.manifest.milestones.length);
+    yield* prepareAllocation(TASKS_LEDGER, request.input.manifest.tasks.length);
+    yield* includeGroup(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID);
+    for (const id of milestoneIds) yield* includeGroup(TASKS_LEDGER, id);
     for (const draft of [...request.input.manifest.milestones, ...request.input.manifest.tasks]) {
       for (const ref of [...(draft.dependsOn ?? []), ...(draft.blockedBy ?? [])]) {
-        if (ref.kind === "ledger") includeRef(ref.ref, true);
+        if (ref.kind === "ledger") yield* includeRef(ref.ref, true);
       }
     }
     preflightManifestReferences(state, request.input);
     const prior = currentDraft(goal);
     if (prior !== null && !sameDraft(finalizedDraft(goal), prior.identity)) {
-      includeIncident(includeManifest(prior.manifest), ["dependsOn", "blockedBy"], [MILESTONES_LEDGER, TASKS_LEDGER]);
+      yield* includeIncident(yield* includeManifest(prior.manifest), ["dependsOn", "blockedBy"], [MILESTONES_LEDGER, TASKS_LEDGER]);
     }
   } else if (request.operation === "release") {
     if (request.input.kind === "pause") {
       if (goal.status !== "planning") return finish();
       const effect = request.input.effect;
       if (effect.kind === "tasks") {
-        for (const ref of effect.tasks) includeRef(ref, false);
+        for (const ref of effect.tasks) yield* includeRef(ref, false);
       } else {
         const ledgerId = effect.kind === "questions" ? QUESTIONS_LEDGER : RESEARCHES_LEDGER;
         const count = effect.kind === "questions" ? effect.questions.length : effect.researches.length;
-        prepareAllocation(ledgerId, count);
-        includeGroup(ledgerId, "M-AMBIENT");
+        yield* prepareAllocation(ledgerId, count);
+        yield* includeGroup(ledgerId, "M-AMBIENT");
       }
     }
   } else {
     const draft = currentDraft(goal);
     if (draft === null) return finish();
-    includeManifest(draft.manifest);
-    includeActive(REVIEWS_LEDGER, request.input.reviewId);
-    prepareAllocation(DECISIONS_LEDGER, 1);
-    includeGroup(DECISIONS_LEDGER, "M-AMBIENT");
+    yield* includeManifest(draft.manifest);
+    yield* includeActive(REVIEWS_LEDGER, request.input.reviewId);
+    yield* prepareAllocation(DECISIONS_LEDGER, 1);
+    yield* includeGroup(DECISIONS_LEDGER, "M-AMBIENT");
   }
   const reviewDefects = request.input.reviewDefects;
   if (reviewDefects !== undefined) {
-    includeActive(REVIEWS_LEDGER, reviewDefects.reviewId);
-    prepareAllocation(DEFECTS_LEDGER, reviewDefects.defects.length);
-    includeGroup(DEFECTS_LEDGER, "M-AMBIENT");
+    yield* includeActive(REVIEWS_LEDGER, reviewDefects.reviewId);
+    yield* prepareAllocation(DEFECTS_LEDGER, reviewDefects.defects.length);
+    yield* includeGroup(DEFECTS_LEDGER, "M-AMBIENT");
   }
   return finish();
 }
