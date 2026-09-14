@@ -112,10 +112,9 @@ export function loadPlanLifecycleRowPlan(
     if (item === undefined) return undefined;
     includeGroup(ledgerId, item.milestoneId);
     const ledger = requireLedger(ledgerId);
-    let group = ledger.milestones.find(({ id }) => id === item.milestoneId);
+    const group = ledger.milestones.find(({ id }) => id === item.milestoneId);
     if (group === undefined) {
-      group = { id: item.milestoneId, title: "", description: "", items: [] };
-      ledger.milestones.push(group);
+      throw new LedgerError(`ledger ${ledgerId}: item ${item.id} references a milestone-group with no groups row`);
     }
     group.items.push(item);
     return item;

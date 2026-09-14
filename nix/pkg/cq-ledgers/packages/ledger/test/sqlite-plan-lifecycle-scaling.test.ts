@@ -212,3 +212,14 @@ test("prospective allocation skips occupied ids and preserves pre-existing empty
       .toEqual({ title: "retained", description: "retained description" });
   } finally { await fixture.dispose(); }
 });
+
+test("keyed plan loading rejects a selected orphan row without repairing its missing group [T5542]", async () => {
+  const fixture = await sqlitePlanLifecycleFixture();
+  const { store, db } = fixture;
+  try {
+    db.query("DELETE FROM groups WHERE ledger = 'goals' AND id = 'M-AMBIENT'").run();
+    await expect(store.claimPlan(LIFECYCLE_CLAIM_INPUT)).rejects.toThrow("no groups row");
+    expect(db.query("SELECT scope FROM plan_claims").all()).toEqual([]);
+    expect(db.query("SELECT id FROM groups WHERE ledger = 'goals' AND id = 'M-AMBIENT'").all()).toEqual([]);
+  } finally { await fixture.dispose(); }
+});

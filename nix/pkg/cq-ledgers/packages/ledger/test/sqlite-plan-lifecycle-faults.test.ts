@@ -28,6 +28,7 @@ for (const operation of ["claim", "publish", "release", "finalize"] as const) {
       if (operation !== "claim") expect((await store.claimPlan(LIFECYCLE_CLAIM_INPUT)).ok).toBe(true);
       if (operation === "finalize") {
         expect((await store.publishPlanDraft(publish)).ok).toBe(true);
+        db.query("INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES ('reviews', 'M-AMBIENT', '', '')").run();
         db.query(`INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at)
           VALUES ('reviews', 'R1', 'M-AMBIENT', 'go-ahead', ?, ?, ?)`).run(JSON.stringify({
           headline: "approved", planDraft: JSON.stringify({ goalId: "G1", claimId: identity.claimId, generation: 1, revision: 1 }),
