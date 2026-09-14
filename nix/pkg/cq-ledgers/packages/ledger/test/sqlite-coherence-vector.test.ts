@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { coherenceVersion, openLedgerDb } from "../src/store/sqlite/connection.js";
+import { SCHEMA_VERSION } from "../src/store/sqlite/schema.js";
 
 test("sqlite coherence records exact scoped keys once per domain transaction", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "sqlite-coherence-vector-"));
@@ -117,7 +118,7 @@ test("coalesced keys remain cursor-safe; a failed vector write rolls back domain
 });
 
 for (const legacyVersion of [5, 6]) {
-  test(`v${legacyVersion} to v7 preserves domain, archive, workset and plan state [Effectual-GoodCommunication]`, async () => {
+  test(`v${legacyVersion} to current preserves domain, archive, workset and plan state [Effectual-GoodCommunication]`, async () => {
     const root = mkdtempSync(path.join(tmpdir(), `sqlite-coherence-v${legacyVersion}-`));
     const dbPath = path.join(root, "ledger.db");
     const store = new SqliteLedgerStore({ dbPath });
@@ -132,15 +133,25 @@ for (const legacyVersion of [5, 6]) {
       const archived = await store.createMilestone({ title: "archived" });
       await store.updateMilestone(archived.id, { status: "done" });
       await store.archiveMilestone(archived.id, "retained archive");
+      await store.createItem("goals", "M-AMBIENT", {
+        id: "G1", status: "clarifying", fields: { title: "retained lifecycle", description: "migration fixture" },
+      });
+      const ownerFenceToken = "A".repeat(43);
+      const claimed = await store.claimPlan({
+        goalId: "G1", purpose: "initial", claimRequestId: "retained-claim",
+        ownerFenceToken, expectedGeneration: null, author: "T5541", session: "coherence-migration",
+      });
+      if (!claimed.ok) throw new Error("retained claim failed");
+      const released = await store.releasePlanClaim({
+        kind: "pause", goalId: "G1", claimId: claimed.acknowledgement.claimId,
+        generation: claimed.acknowledgement.generation, operationId: "retained-operation",
+        ownerFenceToken, author: "T5541", session: "coherence-migration",
+        effect: { kind: "questions", questions: [{ key: "retain", question: "Retain this question?" }] },
+      });
+      if (!released.ok) throw new Error("retained release failed");
+      const claims = probe.query("SELECT scope, record_json FROM plan_claims").all();
+      const operations = probe.query("SELECT scope, record_json FROM plan_operations").all();
       await store.replaceWorksetRoots([`tasks:${task.id}`]);
-      probe
-        .query("INSERT INTO plan_claims (scope, record_json) VALUES ('retained-claim', '{}')")
-        .run();
-      probe
-        .query(
-          "INSERT INTO plan_operations (scope, record_json) VALUES ('retained-operation', '{}')",
-        )
-        .run();
       const snapshot = store.snapshot();
       const archive = await store.fetchArchive("milestones", archived.id);
       const version = coherenceVersion(probe);
@@ -154,14 +165,10 @@ for (const legacyVersion of [5, 6]) {
       expect(store.snapshot()).toEqual(snapshot);
       expect(await store.fetchArchive("milestones", archived.id)).toEqual(archive);
       expect((await store.worksetStore().snapshot()).roots).toEqual([`tasks:${task.id}`]);
-      expect(probe.query("SELECT scope, record_json FROM plan_claims").all()).toEqual([
-        { scope: "retained-claim", record_json: "{}" },
-      ]);
-      expect(probe.query("SELECT scope, record_json FROM plan_operations").all()).toEqual([
-        { scope: "retained-operation", record_json: "{}" },
-      ]);
+      expect(probe.query("SELECT scope, record_json FROM plan_claims").all()).toEqual(claims);
+      expect(probe.query("SELECT scope, record_json FROM plan_operations").all()).toEqual(operations);
       expect(probe.query("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({
-        value: 7,
+        value: SCHEMA_VERSION,
       });
       expect(coherenceVersion(probe)).toBe(version);
       await store.updateItem("tasks", task.id, { fields: { headline: "v7" } });

@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { ensurePlanRecordTables } from "./planRecordSchema.js";
 
 /**
  * On-disk normalized-row schema version, recorded in meta('schema_version').
@@ -32,8 +33,9 @@ import type { Database } from "bun:sqlite";
  * - v5: a coherence counter whose triggers exclude MCP usage telemetry.
  * - v6: normalized active-item reference edges for keyed closure/incident reads.
  * - v7: one domain-transaction version and a cursor-safe latest-version vector.
+ * - v8: stored private lifecycle identities and unique keyed replay/claim indexes.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const COHERENCE_TABLES = [
   "ledgers",
@@ -50,9 +52,8 @@ const COHERENCE_TABLES = [
 const COHERENCE_OPERATIONS = ["INSERT", "UPDATE", "DELETE"] as const;
 
 /**
- * Apply the normalized-row DDL to `db`. Idempotent: every statement is
- * `CREATE TABLE IF NOT EXISTS`, and the schema-version marker row is inserted
- * with `INSERT OR IGNORE` — safe to call on every `openLedgerDb()`.
+ * Apply idempotent DDL and backfill legacy private-record identities once.
+ * Preserve an existing version marker for the store's remaining migrations.
  */
 export function ensureSchema(db: Database): void {
   db.exec(`
@@ -130,16 +131,6 @@ export function ensureSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS item_references_target
       ON item_references (target_ledger, target_id, field_name, source_ledger, source_id);
-
-    CREATE TABLE IF NOT EXISTS plan_claims (
-      scope       TEXT PRIMARY KEY,
-      record_json TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS plan_operations (
-      scope       TEXT PRIMARY KEY,
-      record_json TEXT NOT NULL
-    );
 
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
@@ -279,6 +270,7 @@ export function ensureSchema(db: Database): void {
       db.exec(`DROP TRIGGER IF EXISTS coherence_${table}_${operation.toLowerCase()}`);
     }
   }
+  ensurePlanRecordTables(db);
   db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(
     SCHEMA_VERSION,
   );

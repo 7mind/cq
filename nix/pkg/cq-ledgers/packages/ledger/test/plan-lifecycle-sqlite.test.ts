@@ -18,7 +18,8 @@ import {
   type PlanReleaseInput,
   createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
-import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { dataVersion, openLedgerDb } from "../src/store/sqlite/connection.js";
+import { SCHEMA_VERSION } from "../src/store/sqlite/schema.js";
 
 const roots: string[] = [];
 const OWNER_A = "A".repeat(22);
@@ -78,6 +79,54 @@ afterEach(async () => {
 });
 
 describe("T850 SQLite lifecycle persistence", () => {
+  for (const legacyVersion of [1, 7]) {
+    test(`v${legacyVersion} private records migrate once without changing payloads or replay [T5541]`, async () => {
+      const fixture = await stores();
+      const probe = openLedgerDb(fixture.dbPath);
+      try {
+        const input = claimInput("migration-claim", OWNER_A);
+        const claimed = await fixture.first.claimPlan(input);
+        if (!claimed.ok) throw new Error("migration claim failed");
+        const releaseInput: PlanReleaseInput = {
+          kind: "pause", goalId: "G1", claimId: claimed.acknowledgement.claimId,
+          generation: claimed.acknowledgement.generation, operationId: "migration-release",
+          ownerFenceToken: OWNER_A, ...PROVENANCE,
+          effect: { kind: "questions", questions: [{ key: "migration", question: "Retain the acknowledgement?" }] },
+        };
+        const released = await fixture.first.releasePlanClaim(releaseInput);
+        if (!released.ok) throw new Error("migration release failed");
+        await fixture.first.dispose();
+        await fixture.second.dispose();
+        const claims = probe.query("SELECT scope, record_json FROM plan_claims").all();
+        const operations = probe.query("SELECT scope, record_json FROM plan_operations").all();
+        for (const table of ["plan_claims", "plan_operations"]) {
+          probe.exec(`ALTER TABLE ${table} RENAME TO ${table}_modern;
+            CREATE TABLE ${table} (scope TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+            INSERT INTO ${table} SELECT scope, record_json FROM ${table}_modern;
+            DROP TABLE ${table}_modern;`);
+        }
+        probe.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(legacyVersion);
+        await fixture.first.init();
+        expect(probe.query("SELECT scope, record_json FROM plan_claims").all()).toEqual(claims);
+        expect(probe.query("SELECT scope, record_json FROM plan_operations").all()).toEqual(operations);
+        expect(probe.query("SELECT goal_id, state FROM plan_claims").get()).toEqual({ goal_id: "G1", state: "released" });
+        expect(probe.query("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: SCHEMA_VERSION });
+        expect(await fixture.first.claimPlan(input)).toEqual({ ...claimed, replayed: true });
+        expect(await fixture.first.releasePlanClaim(releaseInput)).toEqual({ ...released, replayed: true });
+        await fixture.first.dispose();
+        const versionBefore = dataVersion(probe);
+        await fixture.first.init();
+        expect(dataVersion(probe)).toBe(versionBefore);
+        expect(probe.query("SELECT scope, record_json FROM plan_claims").all()).toEqual(claims);
+        expect(probe.query("SELECT scope, record_json FROM plan_operations").all()).toEqual(operations);
+      } finally {
+        probe.close();
+        await fixture.first.dispose();
+        await fixture.second.dispose();
+      }
+    });
+  }
+
   test("adds lifecycle tables to an old database without disturbing ledger rows", async () => {
     const file = await dbPath();
     const seed = new SqliteLedgerStore({ dbPath: file });
