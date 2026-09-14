@@ -30,6 +30,9 @@ import { useIsolatedXdgSuite } from "../../cq-config/test/xdgSuiteFixture.js";
 
 useIsolatedXdgSuite(async () => {});
 
+const INSTALLED_CANDIDATE = process.env["CQ_TEST_GUARDED_REBASE_CANDIDATE"];
+const installedCandidateTest = INSTALLED_CANDIDATE === undefined ? test.skip : test;
+
 function status(overrides: Partial<{ mode: number; uid: number; dev: number; ino: number }> = {}) {
   return {
     mode: overrides.mode ?? 0o100600,
@@ -68,21 +71,11 @@ async function git(cwd: string, arguments_: readonly string[]): Promise<string> 
   return stdout.trim();
 }
 
-async function buildCandidate(): Promise<string> {
-  const repository = await git(process.cwd(), ["rev-parse", "--show-toplevel"]);
-  const child = Bun.spawn(["nix", "build", "--no-link", "--print-out-paths", ".#cq"], {
-    cwd: repository,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [exit, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  const candidate = stdout.trim();
-  if (exit !== 0 || !/^\/nix\/store\/[a-z0-9]{32}-[^/]+$/u.test(candidate)) {
-    throw new Error(`cq candidate build failed: ${stderr}`);
+async function installedCandidate(): Promise<string> {
+  if (INSTALLED_CANDIDATE === undefined) throw new Error("installed candidate is required");
+  const candidate = await realpath(INSTALLED_CANDIDATE);
+  if (!/^\/nix\/store\/[a-z0-9]{32}-[^/]+$/u.test(candidate)) {
+    throw new Error("guarded-rebase probe requires an immutable Nix store candidate");
   }
   return candidate;
 }
@@ -303,11 +296,11 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
     ).toThrow("unrelated typed rejection");
   });
 
-  test("uses one immutable candidate through real stdio and Git without disclosing its credential [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  installedCandidateTest("uses one immutable candidate through real stdio and Git without disclosing its credential [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const fixture = await mkdtemp(path.join(tmpdir(), "t6411-probe-"));
     const root = path.join(fixture, "repository");
     try {
-      const candidateOutput = await buildCandidate();
+      const candidateOutput = await installedCandidate();
       await Bun.write(path.join(fixture, "placeholder"), "");
       await git(fixture, ["init", "-q", "-b", "main", root]);
       await git(root, ["config", "user.name", "T6411"]);

@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import {
   buildBackupDump,
   createManagementLedgerStore,
+  createTrustedWorksetManagementAuthority,
+  requireWorksetStore,
   resolveLedgerBackend,
   RemoteLedgerClient,
 } from "@cq/ledger";
@@ -161,20 +163,27 @@ async function runMigrateXdgToRemote(args: MigrateArgs, io: MigrateIo): Promise<
     throw new Error("cq migrate --to remote: xdg store resolved without projectKey/logsDir");
   }
   try {
-    const dump = await buildBackupDump(resolved.store, logsDir);
-    const operationId = `migrate-${randomUUID()}`;
-    const adminToken = resolveRemoteAdminToken(process.env);
-    const client = await RemoteLedgerClient.connectAdmin({
-      serverUrl,
-      projectKey,
-      adminToken,
+    const workset = requireWorksetStore(resolved.store);
+    await workset.runAdministrative({
+      kind: "backend-migration",
+      authority: createTrustedWorksetManagementAuthority(),
+      destructivePhase: async () => {
+        const dump = await buildBackupDump(resolved.store, logsDir);
+        const operationId = `migrate-${randomUUID()}`;
+        const adminToken = resolveRemoteAdminToken(process.env);
+        const client = await RemoteLedgerClient.connectAdmin({
+          serverUrl,
+          projectKey,
+          adminToken,
+        });
+        try {
+          await client.importDump(operationId, "migrate-empty", dump);
+        } finally {
+          await client.close();
+        }
+        await setLedgerBackend(args.cwd, "remote", { serverUrl });
+      },
     });
-    try {
-      await client.importDump(operationId, "migrate-empty", dump);
-    } finally {
-      await client.close();
-    }
-    await setLedgerBackend(args.cwd, "remote", { serverUrl });
     io.out(`cq migrate: uploaded the xdg primary at ${args.cwd} to remote tenant ${projectKey}`);
     io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "remote"`);
     io.out("  xdg primary data left INTACT — delete it manually once confident.");

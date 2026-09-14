@@ -979,10 +979,12 @@ EOF
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
+              CQ_TEST_GUARDED_REBASE_CANDIDATE=$out \
               ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid "}${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts" \
                 "$WORKSPACE/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts" \
-                "$WORKSPACE/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts"
+                "$WORKSPACE/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts" \
+                "$WORKSPACE/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts"
             runHook postInstallCheck
           '';
 

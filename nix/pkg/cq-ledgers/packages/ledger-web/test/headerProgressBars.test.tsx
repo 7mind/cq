@@ -14,6 +14,7 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
+import { HeartbeatWebSocket } from "./helpers/heartbeatWebSocket";
 import type {
   AgentModelsResult,
   ArchiveContent,
@@ -90,26 +91,11 @@ afterEach(() => {
 // Minimal fake WebSocket for live-refresh tests.
 // ---------------------------------------------------------------------------
 
-class FakeWS {
+class FakeWS extends HeartbeatWebSocket {
   static instances: FakeWS[] = [];
-  readyState = 0;
-  onopen: ((e: unknown) => void) | null = null;
-  onmessage: ((e: unknown) => void) | null = null;
-  onclose: ((e: unknown) => void) | null = null;
-  onerror: ((e: unknown) => void) | null = null;
-  constructor(public url: string) {
+  constructor(url: string) {
+    super(url);
     FakeWS.instances.push(this);
-  }
-  send(): void {}
-  close(): void {
-    this.readyState = 3;
-  }
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.({});
-  }
-  push(obj: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(obj) });
   }
 }
 
@@ -354,13 +340,18 @@ describe("header progress bars (T3)", () => {
     // Verify initial state.
     expect(fillWidth(testid("progress-questions"))).toBeCloseTo(3 / 12);
 
+    const ws = FakeWS.instances[0]!;
+    act(() => {
+      ws.open();
+      ws.acknowledgeHeartbeat();
+    });
+    await flush();
+    expect(fillWidth(testid("progress-questions"))).toBeCloseTo(3 / 12);
+
     // Simulate server updating: now questions has 6 answered out of 12.
     client["overrides"][0] = { name: "questions", itemCount: 12, completedCount: 6 };
 
     // Trigger a 'changed' WS push → App re-enumerates.
-    const ws = FakeWS.instances[0]!;
-    act(() => ws.open());
-    await flush();
     act(() => ws.push({ type: "changed", ledger: "questions" }));
     await flush();
 

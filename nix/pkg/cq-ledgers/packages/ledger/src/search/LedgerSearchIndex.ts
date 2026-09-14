@@ -317,12 +317,8 @@ export class LedgerSearchIndex {
 
   /**
    * True iff an ARCHIVED item with `itemId` is currently indexed under
-   * `ledgerId` (G80/M245 write-side dangling-ref check). The fs/git store has
-   * no other synchronous in-memory item-level archive view — its archive files
-   * are read only at init/on-archive into this bucket — so the dependency-ref
-   * validator consults it to distinguish a legal ref to an ARCHIVED item from a
-   * dangling ref to a never-existent one. (Active items are checked directly
-   * against the in-memory ledgers, not here.)
+   * `ledgerId`. This probes the derived archive bucket, not authoritative
+   * storage or the active-item bucket.
    */
   hasArchivedItem(ledgerId: string, itemId: string): boolean {
     return this.archivedDocIds.get(ledgerId)?.has(docIdFor(ledgerId, itemId, true)) === true;

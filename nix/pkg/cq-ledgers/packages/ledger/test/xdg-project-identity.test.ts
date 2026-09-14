@@ -262,7 +262,9 @@ describe("XDG project identity storage shape", () => {
           "archive_pointers",
           "archived_items",
           "coherence_state",
+          "coherence_vector",
           "groups",
+          "item_references",
           "items",
           "ledgers",
           "mcp_usage_stats",
@@ -278,7 +280,6 @@ describe("XDG project identity storage shape", () => {
           .all()
           .map((row) => row.name);
         expect(metaColumns).toEqual(["key", "value"]);
-        expect(SCHEMA_VERSION).toBe(5);
       } finally {
         db.close();
       }

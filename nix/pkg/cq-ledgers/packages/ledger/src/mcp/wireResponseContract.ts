@@ -294,8 +294,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   mint_plan_claim_authority: purposeBuiltSmall(
-    "Exactly `{ claimRequestId, ownerFenceToken }`: an unpadded 22-character " +
-      "base64url request id and an independent unpadded 43-character base64url token.",
+    "Exactly `{ claimRequestId, ownerFenceToken }` (public request id, secret fence token).",
   ),
   claim_plan: purposeBuiltSmall(
     "`{ ok: true, replayed, acknowledgement }` — echoes the minted " +

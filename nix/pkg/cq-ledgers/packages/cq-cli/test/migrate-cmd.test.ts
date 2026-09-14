@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLedgerStore, resolveLedgerBackend } from "@cq/ledger";
+import { createLedgerStore, requireWorksetStore, resolveLedgerBackend } from "@cq/ledger";
 import { dispatch, EXIT_USAGE, type DispatchIo } from "../src/main.js";
-import { setLedgerBackend } from "../src/migrate.js";
+import { runMigrate, setLedgerBackend } from "../src/migrate.js";
 import { useIsolatedXdgState, writeXdgConfig } from "./xdgFixture.js";
 
 useIsolatedXdgState();
@@ -100,5 +100,43 @@ describe("cq migrate explicit remote destination [Behavioral-Progression Blackbo
       '[ledger]\nbackend = "remote"\n  serverUrl = "https://cq.example.com"\nprojectId = "retained"\n[project]\nname = "unchanged"\n',
     );
     expect(resolveLedgerBackend(root).backend).toBe("remote");
+  });
+
+  it("waits for an admitted mutation before accessing remote administration [D470]", async () => {
+    const root = await fixture();
+    const source = await createLedgerStore(root);
+    const workset = requireWorksetStore(source.store);
+    const admission = await workset.admitLedgerMutation({ kind: "generic-write", targets: ["tasks:T1"] });
+    const previousUrl = process.env["CQ_LEDGER_SERVER_URL"];
+    const previousToken = process.env["CQ_LEDGER_REMOTE_ADMIN_TOKEN"];
+    process.env["CQ_LEDGER_SERVER_URL"] = "http://127.0.0.1:1";
+    delete process.env["CQ_LEDGER_REMOTE_ADMIN_TOKEN"];
+    let completed = false;
+    const migration = runMigrate({ cwd: root, yes: false, to: "remote" }, recordingIo()).then(
+      () => { completed = true; return null; },
+      (error: unknown) => { completed = true; return error; },
+    );
+    try {
+      const admissionDeadlineMs = Date.now() + 1000;
+      while (!completed && !workset.exclusiveHeld() && Date.now() < admissionDeadlineMs) {
+        await Bun.sleep(5);
+      }
+      expect(workset.exclusiveHeld()).toBe(true);
+      expect(completed).toBe(false);
+      expect(resolveLedgerBackend(root).backend).toBe("xdg");
+    } finally {
+      await admission.acknowledge();
+      const error = await migration;
+      const exclusiveHeld = workset.exclusiveHeld();
+      if (previousUrl === undefined) delete process.env["CQ_LEDGER_SERVER_URL"];
+      else process.env["CQ_LEDGER_SERVER_URL"] = previousUrl;
+      if (previousToken === undefined) delete process.env["CQ_LEDGER_REMOTE_ADMIN_TOKEN"];
+      else process.env["CQ_LEDGER_REMOTE_ADMIN_TOKEN"] = previousToken;
+      await source.store.dispose();
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("CQ_LEDGER_REMOTE_ADMIN_TOKEN");
+      expect(exclusiveHeld).toBe(false);
+      expect(resolveLedgerBackend(root).backend).toBe("xdg");
+    }
   });
 });

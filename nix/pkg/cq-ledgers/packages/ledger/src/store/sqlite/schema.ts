@@ -2,8 +2,7 @@
  * schema.ts — idempotent DDL for the normalized SQLite ledger store (G67-C1).
  *
  * Per K102, rows are NORMALIZED (one row per item/group/pointer) — there is
- * no serialized ledger blob column, unlike the fs/git backends' whole-file
- * markdown. This extends the T492 prototype shape
+ * no serialized ledger blob column. This extends the T492 prototype shape
  * (bench/proto/sqliteProtoStore.ts) to the full domain model in ../../types.ts:
  * ledgers, groups (milestone-groups), items, archive_pointers, archived_items,
  * plus a `meta` table carrying the on-disk schema version.

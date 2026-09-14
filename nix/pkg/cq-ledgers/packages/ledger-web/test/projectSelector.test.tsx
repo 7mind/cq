@@ -20,6 +20,7 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
+import { HeartbeatWebSocket } from "./helpers/heartbeatWebSocket";
 import type { LedgerClient } from "../src/types.js";
 
 let container: HTMLElement;
@@ -61,26 +62,11 @@ function projectLabels(): string[] {
 }
 
 /** Minimal fake WebSocket the tests drive (mirrors app.test.tsx's FakeWS). */
-class FakeWS {
+class FakeWS extends HeartbeatWebSocket {
   static instances: FakeWS[] = [];
-  readyState = 0;
-  onopen: ((e: unknown) => void) | null = null;
-  onmessage: ((e: unknown) => void) | null = null;
-  onclose: ((e: unknown) => void) | null = null;
-  onerror: ((e: unknown) => void) | null = null;
-  constructor(public url: string) {
+  constructor(url: string) {
+    super(url);
     FakeWS.instances.push(this);
-  }
-  send(): void {}
-  close(): void {
-    this.readyState = 3;
-  }
-  open(): void {
-    this.readyState = 1;
-    this.onopen?.({});
-  }
-  push(obj: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(obj) });
   }
 }
 
@@ -172,7 +158,10 @@ describe("project selector — multi-project hub", () => {
     click(testid("app-title")); // close menu
     expect(FakeWS.instances).toHaveLength(1);
     expect(FakeWS.instances[0]!.url).toBe("ws://x/p/p1/ws");
-    act(() => FakeWS.instances[0]!.open());
+    act(() => {
+      FakeWS.instances[0]!.open();
+      FakeWS.instances[0]!.acknowledgeHeartbeat();
+    });
     await flush();
 
     // p1's bugs ledger does NOT have the p2-only item.
@@ -202,7 +191,10 @@ describe("project selector — multi-project hub", () => {
     expect(text()).toContain("only in project two");
 
     // A changedFrame over the ACTIVE (p2) ws drives the same onChanged refresh.
-    act(() => FakeWS.instances[1]!.open());
+    act(() => {
+      FakeWS.instances[1]!.open();
+      FakeWS.instances[1]!.acknowledgeHeartbeat();
+    });
     await flush();
     await p2.createItem("bugs", "M1", { status: "open", fields: { headline: "pushed after switch" } });
     act(() => FakeWS.instances[1]!.push({ type: "changed", ledger: "bugs" }));

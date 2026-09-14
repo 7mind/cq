@@ -30,6 +30,7 @@ import {
 } from "../src/constants.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { SCHEMA_VERSION } from "../src/store/sqlite/schema.js";
 import { buildBackupDump, type BackupDumpFile } from "../src/store/backupExporter.js";
 import { restoreDumpToXdg } from "../src/store/restoreImporter.js";
 import { createTrustedWorksetManagementAuthority } from "../src/index.js";
@@ -179,7 +180,7 @@ describe("SqliteLedgerStore v1->v2 dependency-ref migration (T553)", () => {
       DEFECTS_SCHEMA.satisfiesDependencyStatuses,
     );
     // (d) Version bumped to the current on-disk version.
-    expect(readSchemaVersion(dbPath)).toBe(5);
+    expect(readSchemaVersion(dbPath)).toBe(SCHEMA_VERSION);
   });
 
   test("second open is a strict no-op — fields_json byte-identical, no new snapshot", async () => {

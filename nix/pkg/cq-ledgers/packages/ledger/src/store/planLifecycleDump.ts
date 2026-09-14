@@ -1,10 +1,8 @@
 /**
  * planLifecycleDump — first-class plan-lifecycle payload inside a BackupDump
- * (D139). Serializes the private claim/operation verifier state into the same
- * `plan-lifecycle.json` shape the fs/git persistence seams already write, so a
- * dump is backend-agnostic: buildBackupDump emits one file; restore rewrites
- * either that file (fs) or the plan_claims/plan_operations rows (sqlite/xdg/
- * postgres) from the same bytes.
+ * (D139). Serializes private claim/operation verifier state into a portable
+ * `plan-lifecycle.json` document. buildBackupDump emits one file; restore
+ * populates SQLite/PostgreSQL plan_claims/plan_operations from the same bytes.
  */
 
 import {

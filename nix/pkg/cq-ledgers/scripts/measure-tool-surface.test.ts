@@ -142,7 +142,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // purpose-built acknowledgement while remaining below the corpus median.
     // 1619 -> 1590 under D394/D395: atomic finalization adds one acknowledgement;
     // existing operator-action acknowledgements shed redundant state enumerations.
-    maximumRemainingG93AttributableTokens: 1590,
+    // 1590 -> 1614 under G199/D468: mint authority adds a compact result contract;
+    // its encoding and secret-handling rules remain in the tool description.
+    maximumRemainingG93AttributableTokens: 1614,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
