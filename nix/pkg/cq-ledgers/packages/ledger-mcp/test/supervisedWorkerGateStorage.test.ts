@@ -1144,12 +1144,12 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     ).rejects.toThrow("caller-minted");
   });
 
-  test("terminalizes and replays deterministic gate rejection without rerunning the gate", async () => {
-    for (const result of [
-      { gateExitCode: 1, passCount: 16, failCount: 1 },
-      { gateExitCode: 0, passCount: 0, failCount: 0 },
-      { gateExitCode: 0, passCount: 17, failCount: 1 },
-    ]) {
+  for (const [reason, result] of [
+    ["nonzero exit", { gateExitCode: 1, passCount: 16, failCount: 1 }],
+    ["no passing tests", { gateExitCode: 0, passCount: 0, failCount: 0 }],
+    ["failing tests", { gateExitCode: 0, passCount: 17, failCount: 1 }],
+  ] as const) {
+    test(`terminalizes and replays deterministic gate rejection without rerunning the gate (${reason})`, async () => {
       const runner = new GateDummy({
         ...result,
         gateDurationMs: 1,
@@ -1177,8 +1177,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       expect(await finalize(subject)).toEqual(rejected);
       await expect(resolveRecovery(subject)).rejects.toThrow("gate-rejected");
       expect(runner.requests).toHaveLength(1);
-    }
-  });
+    });
+  }
 
   test("rejects dirty or moving tips and does not run the gate on replay", async () => {
     const dirtyRunner = new GateDummy();

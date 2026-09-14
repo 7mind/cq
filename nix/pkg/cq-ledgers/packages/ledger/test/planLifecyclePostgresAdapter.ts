@@ -15,7 +15,7 @@
  *    original handle must still observe the claim it captured.
  *
  * Coherence between the two same-tenant stores is the job of
- * {@link AlternatingPostgresLifecycle}, which invalidates the peer store after
+ * {@link AlternatingPostgresLifecycle}, which reconciles the peer store after
  * each dispatched call so the contract's assertions are deterministic.
  *
  * Env-gated on CQ_TEST_PG_URL (Q286) by the conformance test that registers
@@ -189,7 +189,7 @@ export async function dropTenant(admin: SQL, projectKey: string): Promise<void> 
 
 /**
  * Round-robins the lifecycle surface across independent connections and then
- * plays the T578 watcher's part, invalidating the store(s) that did not run the
+ * plays the T578 watcher's part, reconciling the store(s) that did not run the
  * call so the fixture's read store never serves a cache a peer just superseded.
  */
 class AlternatingPostgresLifecycle implements PlanLifecycleStore {
@@ -213,7 +213,7 @@ class AlternatingPostgresLifecycle implements PlanLifecycleStore {
       return await op(store);
     } finally {
       for (const peer of this.stores) {
-        if (peer !== store) await refreshStore(peer);
+        if (peer !== store) await peer.reconcileProjection();
       }
     }
   }
@@ -238,10 +238,6 @@ class AlternatingPostgresLifecycle implements PlanLifecycleStore {
   finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
     return this.dispatch((store) => store.finalizePlan(input));
   }
-}
-
-async function refreshStore(store: PostgresLifecycleStore): Promise<void> {
-  for (const ledgerId of store.enumerate()) await store.invalidate(ledgerId);
 }
 
 /** One throwaway tenant plus the stores opened over it. */
