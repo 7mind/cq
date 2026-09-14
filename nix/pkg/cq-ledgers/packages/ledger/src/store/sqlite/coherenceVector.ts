@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
+import { GOALS_LEDGER } from "../../constants.js";
 import { LedgerError } from "../../types.js";
+import type { LifecyclePrivateRecordChanges } from "../lifecycleRowRepository.js";
+import { claimScopeKey, operationScopeKey } from "../planLifecycleDump.js";
 import { coherenceVersion } from "./connection.js";
 
 export type SqliteCoherenceScope = "active" | "archived" | "registry" | "control";
@@ -14,6 +17,31 @@ export interface SqliteCoherenceChange {
 export interface SqliteCoherenceEntry extends SqliteCoherenceChange {
   readonly version: number;
   readonly origin: string;
+}
+
+const CLAIM_CONTROL_PREFIX = "plan_claims:";
+const OPERATION_CONTROL_PREFIX = "plan_operations:";
+
+export function planControlChanges(changes: LifecyclePrivateRecordChanges): SqliteCoherenceChange[] {
+  return [
+    ...changes.claims.map((claim): SqliteCoherenceChange => ({
+      ledger: GOALS_LEDGER, scope: "control", kind: "upsert",
+      documentId: CLAIM_CONTROL_PREFIX + claimScopeKey(claim.goalId, claim.claimRequestId),
+    })),
+    ...changes.operations.map(({ replay }): SqliteCoherenceChange => ({
+      ledger: GOALS_LEDGER, scope: "control", kind: "upsert",
+      documentId: OPERATION_CONTROL_PREFIX + operationScopeKey(replay.goalId, replay.claimId, replay.generation, replay.operation, replay.operationId),
+    })),
+  ];
+}
+
+export function isPlanControlChange(change: SqliteCoherenceChange): boolean {
+  return change.ledger === GOALS_LEDGER && change.scope === "control" && change.kind === "upsert" &&
+    (change.documentId.startsWith(CLAIM_CONTROL_PREFIX) || change.documentId.startsWith(OPERATION_CONTROL_PREFIX));
+}
+
+export function changedCoherenceLedgers(changes: readonly SqliteCoherenceChange[]): string[] {
+  return [...new Set(changes.map(({ ledger }) => ledger))];
 }
 
 /** Called once inside the domain transaction, after its authoritative row writes. */

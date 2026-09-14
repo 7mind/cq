@@ -154,7 +154,10 @@ import {
 } from "./connection.js";
 import {
   captureSqliteCoherenceSnapshot,
+  changedCoherenceLedgers,
   ledgerControlChanges,
+  isPlanControlChange,
+  planControlChanges,
   recordSqliteCoherence,
   readSqliteCoherence,
 } from "./coherenceVector.js";
@@ -1756,10 +1759,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           this.persistActiveItem(ledgerId, item, measurement);
           activeUpserts.push({ ledgerId, item: cloneItem(item) });
         }
-        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta({
+        const changes = this.coherenceChangesForDelta({
           activeUpserts, activeDeletes: [], archivedUpserts: [], archivedDeletes: [],
-        }));
-        return result;
+        });
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
+        return { ...result, dirtyLedgers: changedCoherenceLedgers(changes) };
       }, WRITE_TXN_MAX_ATTEMPTS, measurement);
       await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
       measurement?.finish("success");
@@ -1817,9 +1821,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           dirtyLedgers: new Set(mutation.dirtyLedgers),
           dirtyArchives: new Set(),
         }, measurement);
-        rows.persistPrivateRecords(plan.privateChanges());
-        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
-        return mutation;
+        const privateChanges = plan.privateChanges();
+        rows.persistPrivateRecords(privateChanges);
+        const changes = [...this.coherenceChangesForDelta(delta), ...planControlChanges(privateChanges)];
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
+        return { ...mutation, dirtyLedgers: changedCoherenceLedgers(changes) };
       }, WRITE_TXN_MAX_ATTEMPTS, measurement);
       await this.projectCommitted(
         [...new Set(outcome.dirtyLedgers)].map((ledgerId) => ({ ledgerId, op: "update" })), measurement,
@@ -1843,13 +1849,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           createSqliteLifecycleRowRepository(this.db(), measurement ?? null), initialState, this.now,
         );
         const result = mutate(owned.tx);
-        const dirtyLedgers = [...owned.dirtyLedgers];
         const delta = this.persistGenericMutationState({
           ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
         }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: new Set() }, measurement);
         if (context !== null) this.assertOwnedMutationDelta(context, owned.beforeLedgers, delta);
-        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
-        return { result, dirtyLedgers };
+        const changes = this.coherenceChangesForDelta(delta);
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
+        return { result, dirtyLedgers: changedCoherenceLedgers(changes) };
       }, WRITE_TXN_MAX_ATTEMPTS, measurement);
       await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
       measurement?.finish("success");
@@ -1929,9 +1935,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           ledger.milestones.flatMap(({ items }) => items.map((item) => [`${ledgerId}:${item.id}`, item] as const))));
         assertPlanCreatedOwnership((ref) => afterItems.get(ref), context.operation.kind, context.operation.input.goalId,
           result as PlanClaimResult | PlanPublishDraftResult | PlanReleaseResult | PlanFinalizeResult);
-        rows.persistPrivateRecords(plan.privateChanges());
-        recordSqliteCoherence(this.db(), this.coherenceOrigin, this.coherenceChangesForDelta(delta));
-        return { result, dirtyLedgers: [...lifecycle.dirtyLedgers] };
+        const privateChanges = plan.privateChanges();
+        rows.persistPrivateRecords(privateChanges);
+        const changes = [...this.coherenceChangesForDelta(delta), ...planControlChanges(privateChanges)];
+        recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);
+        return { result, dirtyLedgers: changedCoherenceLedgers(changes) };
       }, WRITE_TXN_MAX_ATTEMPTS, measurement);
       await this.projectCommitted(outcome.dirtyLedgers.map((ledgerId) => ({ ledgerId, op: "update" })), measurement);
       measurement?.finish("success");
@@ -2755,7 +2763,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       const changes: SearchProjectionChange[] = [];
       const refresh = new Set(
         entries
-          .filter((entry) => entry.scope === "registry" || entry.scope === "control")
+          .filter((entry) => entry.scope === "registry" || (entry.scope === "control" && !isPlanControlChange(entry)))
           .map((entry) => entry.ledger),
       );
       for (const ledgerId of refresh) {
@@ -2768,6 +2776,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           );
       }
       for (const entry of entries) {
+        // Private lifecycle records are read directly by key, never indexed or cached in the worker.
+        if (isPlanControlChange(entry)) continue;
         if (refresh.has(entry.ledger)) continue;
         const archived = entry.scope === "archived";
         const table = archived ? "archived_items" : "items";
