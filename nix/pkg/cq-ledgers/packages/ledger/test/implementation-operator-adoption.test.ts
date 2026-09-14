@@ -7,6 +7,7 @@ import {
   ImplementationEvidenceService,
   createInMemoryImplementationEvidenceStore,
   createFsImplementationEvidenceStore,
+  createInMemoryWorksetStore,
   type ImplementationEvidenceStore,
   type ImplementationAdoptionRecord,
   type RecordImplementationAdoptionInput,
@@ -48,6 +49,8 @@ async function adoptionFixture(store: ImplementationEvidenceStore) {
   let writes = 0;
   let failWrite = false;
   let recorded: ImplementationAdoptionRecord | null = null;
+  const workset = createInMemoryWorksetStore();
+  let beforeWrite: () => Promise<void> = async () => {};
   const input: RecordImplementationAdoptionInput = {
     taskRef: "tasks:T2345", expectedTaskUpdatedAt: TASK_VERSION,
     expectedTaskDigest: taskDigest,
@@ -65,12 +68,14 @@ async function adoptionFixture(store: ImplementationEvidenceStore) {
     fetchWorker: async () => { throw new Error("adoption must not request worker evidence"); },
     fetchNativeReview: async () => { throw new Error("adoption must not request reviewer evidence"); },
     operatorAdoption: {
+      admit: async (taskRef) => await workset.admitLedgerMutation({ kind: "owned-write", targets: [taskRef] }),
       verify: async (request) => {
         if (request.approval.answer !== input.approval.answer) throw new Error("approval changed");
         if (request.validation.logSha256 !== input.validation.logSha256) throw new Error("log changed");
       },
       taskRevision: async () => ({ updatedAt: taskUpdatedAt, digest: taskDigest }),
       recordLedger: async (_task, adoption) => {
+        await beforeWrite();
         if (failWrite) throw new Error("injected ledger write failure");
         if (recorded !== null) {
           expect(recorded.adoptionRef).toBe(adoption.adoptionRef);
@@ -83,7 +88,8 @@ async function adoptionFixture(store: ImplementationEvidenceStore) {
       },
     },
   });
-  return { fixture, input, service, completion,
+  return { fixture, input, service, completion, workset,
+    beforeWrites: (callback: () => Promise<void>) => { beforeWrite = callback; },
     getWrites: () => writes, getRecorded: () => recorded,
     changeTask: () => { taskUpdatedAt = "2026-09-14T09:01:00.000Z"; },
     changeTaskContent: () => { taskDigest = "b".repeat(64); },
@@ -105,6 +111,29 @@ async function evidenceBackend(backend: "memory" | "filesystem") {
 
 for (const backend of ["memory", "filesystem"] as const) {
   describe(`operator adoption durable record — ${backend} [Behavioral-Active Blackbox-${backend === "memory" ? "Atomic" : "GoodCommunication"}]`, () => {
+    test("holds root replacement until the durable adoption outcome is acknowledged", async () => {
+      const durable = await evidenceBackend(backend);
+      const release = Promise.withResolvers<void>();
+      try {
+        const f = await adoptionFixture(durable.store);
+        const entered = Promise.withResolvers<void>();
+        f.beforeWrites(async () => { entered.resolve(); await release.promise; });
+        const recording = f.service(durable.store).recordAdoption(f.input);
+        await entered.promise;
+        let replaced = false;
+        const replacement = f.workset.setRoots(["goals:G999"]).then(() => { replaced = true; });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(replaced).toBe(false);
+        expect(f.workset.activeAdmissionCount()).toBe(1);
+        expect(Object.values((await durable.store.snapshot()).adoptions)[0]?.state).toBe("recording");
+        release.resolve();
+        await recording;
+        await replacement;
+        expect(Object.values((await durable.store.snapshot()).adoptions)[0]?.state).toBe("recorded");
+        expect(f.workset.activeAdmissionCount()).toBe(0);
+      } finally { release.resolve(); await durable.dispose(); }
+    });
+
     test("records exact evidence, supersedes old authority, and replays after restart without a review", async () => {
       const durable = await evidenceBackend(backend);
       try {

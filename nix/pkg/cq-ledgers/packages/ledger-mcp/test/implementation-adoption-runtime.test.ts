@@ -85,6 +85,14 @@ test("production operator adoption verifies Git, approval and retained log bytes
       expected_repository_head: head, result_commit: head, supersedes_completion_refs: [],
       approval: input.approval, authority_loss_reason: input.authorityLossReason, completion: input.completion,
       validation: input.validation, operation_id: input.operationId, author: input.author, session: input.session };
+    await ledger.createItem("goals", "M-AMBIENT", { id: "G2", status: "clarifying",
+      fields: { title: "Unrelated selected goal", description: "Unrelated selected goal" } });
+    await ledger.worksetStore().setRoots(["goals:G2"]);
+    await expect(tool.handler(args, null)).rejects.toThrow(/workset/i);
+    expect(ledger.fetchItem("tasks", "T1").status).toBe("planned");
+    expect(Object.keys((await evidence.snapshot()).adoptions)).toEqual([]);
+    expect(ledger.worksetStore().activeAdmissionCount()).toBe(0);
+    await ledger.worksetStore().setRoots(["goals:G1"]);
     const result = await tool.handler(args, null);
     const first = result.content[0];
     if (first === undefined || first.type !== "text") throw new Error("adoption result omitted text");

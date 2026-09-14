@@ -7,6 +7,7 @@ import { exposedLedgerToolsForRole } from "@cq/config";
 import {
   createLedgerMcpTools,
   createInMemoryImplementationEvidenceStore,
+  createInMemoryWorksetStore,
   createLedgerSdkMcpServer,
   createManagementLedgerMcpTools,
   GOALS_LEDGER,
@@ -412,9 +413,11 @@ async function buildImplementationEvidenceFixture() {
     },
   };
   const nativeAuditPanels = new Map<string, ImplementationAuditPanelRecord>();
+  const adoptionWorkset = createInMemoryWorksetStore();
   const implementationEvidence = new ImplementationEvidenceService({
     store: createInMemoryImplementationEvidenceStore(),
     operatorAdoption: {
+      admit: async (taskRef) => await adoptionWorkset.admitLedgerMutation({ kind: "owned-write", targets: [taskRef] }),
       verify: async (input) => {
         expect(input.approval.answer).toBe("Allow explicit operator adoption");
       },

@@ -28,7 +28,7 @@ import type {
   SqliteOperationAccessScope,
   SqliteOperationMeasurement,
 } from "./store/sqlite/operationObservability.js";
-import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
+import { isLiveWorksetAdmission, type WorksetLedgerMutationAdmission, type WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
 import { ItemNotFoundError, LedgerError, type Item } from "./types.js";
@@ -1526,13 +1526,16 @@ export type ImplementationEvidenceFaultInjector = (
   context: ImplementationEvidenceFaultContext,
 ) => void | Promise<void>;
 
+export interface ImplementationOperatorAdoptionCapability {
+  readonly admit: (taskRef: string) => Promise<WorksetLedgerMutationAdmission>;
+  readonly verify: (input: RecordImplementationAdoptionInput) => Promise<void>;
+  readonly taskRevision: (taskRef: string) => Promise<{ readonly updatedAt: string; readonly digest: string }>;
+  readonly recordLedger: (task: ImplementationTaskAuthority, adoption: ImplementationAdoptionRecord) => Promise<void>;
+}
+
 export interface ImplementationEvidenceServiceDependencies {
   readonly store: ImplementationEvidenceStore;
-  readonly operatorAdoption?: {
-    readonly verify: (input: RecordImplementationAdoptionInput) => Promise<void>;
-    readonly taskRevision: (taskRef: string) => Promise<{ readonly updatedAt: string; readonly digest: string }>;
-    readonly recordLedger: (task: ImplementationTaskAuthority, adoption: ImplementationAdoptionRecord) => Promise<void>;
-  };
+  readonly operatorAdoption?: ImplementationOperatorAdoptionCapability;
   readonly resolveReviewerRoster: () => readonly ImplementationReviewerIdentity[];
   readonly nativeFallback: ImplementationReviewerIdentity;
   readonly now?: () => string;
@@ -5063,6 +5066,22 @@ export class ImplementationEvidenceService {
     ) throw new Error("operator adoption requires explicit approval, exact coordinates, and successful validation evidence");
     const capability = this.deps.operatorAdoption;
     if (capability === undefined) throw new Error("operator adoption capability is unavailable");
+    const admission = await capability.admit(input.taskRef);
+    if (!isLiveWorksetAdmission(admission))
+      throw new Error("operator adoption requires an authentic workset admission");
+    try {
+      if (admission.kind !== "owned-write" || admission.targets.length !== 1 || admission.targets[0] !== input.taskRef)
+        throw new Error("operator adoption workset admission targets a different mutation");
+      return await this.recordAdoptionAdmitted(input, capability);
+    } finally {
+      await admission.acknowledge();
+    }
+  }
+
+  private async recordAdoptionAdmitted(
+    input: RecordImplementationAdoptionInput,
+    capability: ImplementationOperatorAdoptionCapability,
+  ) {
     if (await this.deps.repositoryHead() !== input.expectedRepositoryHead)
       throw new Error("expected_repository_head does not match the integration ref");
     await capability.verify(input);

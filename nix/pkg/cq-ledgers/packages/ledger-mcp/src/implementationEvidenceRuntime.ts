@@ -36,6 +36,7 @@ import {
   recordProtectedImplementationCompletion,
   recordProtectedImplementationAdoption,
   implementationAdoptionTaskDigest,
+  requireWorksetStore,
   type DispatchCapability,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationReviewerIdentity,
@@ -623,6 +624,7 @@ export function createProductionImplementationEvidenceService(
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
     operatorAdoption: {
+      admit: async (taskRef) => await requireWorksetStore(store).admitLedgerMutation({ kind: "owned-write", targets: [taskRef] }),
       taskRevision: async (taskRef) => {
         const task = await resolveUniqueTaskState(store, taskRef.slice(`${TASKS_LEDGER}:`.length));
         return { updatedAt: task.updatedAt, digest: implementationAdoptionTaskDigest(task) };
