@@ -106,6 +106,10 @@ import { assertOwnedMutationRows } from "../ownedMutationRows.js";
 import type { OwnedMutationContext } from "../directOwnedMutation.js";
 import { resolvePostgresDirectOwnedRows } from "./directOwnedRowOperation.js";
 import { resolvePostgresGuardedPlanRows } from "./guardedPlanRowOperation.js";
+import { resolvePostgresGenericRows, type PostgresGenericRowPlan } from "./genericRowOperation.js";
+import { persistPostgresGenericRows, type PostgresGenericRowChanges } from "./genericRowPersistence.js";
+import type { AdmittedGenericMutation } from "../../worksetGenericMutation.js";
+import type { SqliteOperationAccessScope, SqliteOperationMeasurement } from "../sqlite/operationObservability.js";
 import { assertKeyedPlanMutationChanges } from "../keyedWorksetPlanAuthorization.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import type { PostgresAccessObserver } from "./operationAccess.js";
@@ -209,8 +213,6 @@ import type { AdmittedPlanMutation, WorksetPlanLifecycleTx } from "../../workset
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 import {
   createGenericMutationTransaction,
-  genericArchiveKey,
-  type GenericArchiveEntry,
   type WorksetGenericMutationTx,
 } from "../genericMutationTransaction.js";
 import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
@@ -2264,95 +2266,91 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   /** Run one generic mutation in one tenant-scoped PostgreSQL transaction. */
   async runAtomicGenericMutation<T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+    _readRoots?: () => Promise<WorksetRootsEpoch>,
+    _measurement?: SqliteOperationMeasurement,
+    _scope?: SqliteOperationAccessScope,
+    context?: AdmittedGenericMutation,
   ): Promise<T> {
     this.assertInit();
-    let result!: T;
-    let dirtyLedgers: readonly string[] = [];
-    let archivedChanged = false;
-    let live!: LiveTenantState;
-    await writeTransaction(this.pool(), async (tx) => {
-      await this.lockAllGoalRows(tx);
-      await this.lockTenantCounters(tx);
-      const rootsRows = await tx<Array<{ roots_json: string; epoch: number }>>`
-        SELECT roots_json, epoch FROM workset_roots
-        WHERE project_key = ${this.projectKey}
-        FOR UPDATE
-      `;
-      const roots: WorksetRootsEpoch = {
-        roots: JSON.parse(rootsRows[0]?.roots_json ?? "[]") as string[],
-        epoch: Number(rootsRows[0]?.epoch ?? 0),
-      };
-      const tenant = await this.readLiveTenant(tx);
-      const archives = new Map<string, GenericArchiveEntry>();
-      for (const row of tenant.archived) {
-        const key = genericArchiveKey(row.ledger, row.pointer_id);
-        let entry = archives.get(key);
-        if (entry === undefined) {
-          const pointer = tenant.ledgers
-            .get(row.ledger)
-            ?.archivePointers.find((candidate) => candidate.id === row.pointer_id);
-          entry = {
-            ledgerId: row.ledger,
-            pointerId: row.pointer_id,
-            title: pointer?.title ?? "",
-            description: "",
-            items: [],
-          };
-          archives.set(key, entry);
-        }
-        entry.items.push(rowToItem(row));
-      }
-      const transaction = createGenericMutationTransaction({
-        ledgers: tenant.ledgers,
-        archives,
-        now: this.now,
-      });
-      result = mutate(transaction.tx, roots);
-      dirtyLedgers = [...transaction.dirtyLedgers];
-      for (const ledgerId of dirtyLedgers) {
-        const ledger = requireLiveLedger(tenant.ledgers, ledgerId);
-        await tx`
-          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
-          VALUES (${this.projectKey}, ${ledgerId}, ${JSON.stringify(ledger.schema)}, ${ledger.counters.milestone}, ${ledger.counters.item})
-          ON CONFLICT (project_key, name) DO NOTHING
-        `;
-        await this.persistLedgerState(tx, ledger);
-      }
-      for (const key of transaction.dirtyArchives) {
-        archivedChanged = true;
-        const current = archives.get(key);
-        const slash = key.indexOf("/");
-        const ledgerId = current?.ledgerId ?? key.slice(0, slash);
-        const pointerId = current?.pointerId ?? key.slice(slash + 1);
-        await tx`
-          DELETE FROM archived_items
-          WHERE project_key = ${this.projectKey} AND ledger = ${ledgerId} AND pointer_id = ${pointerId}
-        `;
-        await tx`
-          DELETE FROM archive_pointers
-          WHERE project_key = ${this.projectKey} AND ledger = ${ledgerId} AND id = ${pointerId}
-        `;
-        if (current === undefined) continue;
-        const pointer = requireLiveLedger(tenant.ledgers, ledgerId).archivePointers.find(
-          (candidate) => candidate.id === pointerId,
-        );
-        if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
-        await tx`
-          INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
-          VALUES (${this.projectKey}, ${ledgerId}, ${pointerId}, ${pointer.summary}, ${pointer.title}, ${pointer.status}, ${this.now()})
-        `;
-        for (const item of current.items) {
-          await this.insertArchivedRow(tx, ledgerId, pointerId, item);
-        }
-      }
-      live = {
-        ledgers: tenant.ledgers,
-        archived: await this.readArchivedRows(tx),
-      };
+    if (context === undefined) throw new LedgerError("PostgreSQL generic mutations require an admitted operation descriptor");
+    const committed = await runPostgresKeyedOperation(this.pool(), {
+      projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+    }, {
+      name: `generic_${context.scope.operation}`,
+      resolve: (queries) => resolvePostgresGenericRows(queries, context),
+      apply: async (queries, resolution) => {
+        if (resolution.kind === "rejected") throw resolution.error;
+        const { rows } = resolution;
+        const transaction = createGenericMutationTransaction({ ...rows, now: this.now });
+        const result = mutate(transaction.tx, { roots: context.admission.roots, epoch: context.admission.epoch });
+        const changed = await persistPostgresGenericRows(queries, rows, transaction, this.now);
+        return { result, rows, changed, dirtyArchives: transaction.dirtyArchives };
+      },
     });
-    this.absorbLiveLedgers(live);
-    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, archivedChanged ? "archive" : "update");
-    return result;
+    this.absorbGenericRows(committed.rows, committed.changed, committed.dirtyArchives);
+    for (const ledgerId of committed.changed.ledgers) this.fireHook(ledgerId, committed.dirtyArchives.size > 0 ? "archive" : "update");
+    return committed.result;
+  }
+
+  private absorbGenericRows(rows: PostgresGenericRowPlan, changed: PostgresGenericRowChanges, dirtyArchives: ReadonlySet<string>): void {
+    this.absorbPlanRows({ beforeLedgers: rows.beforeLedgers, state: { ledgers: rows.ledgers } });
+    for (const { ledgerId, itemId, groupId } of changed.activeDeletes) {
+      const group = this.getLedger(ledgerId).milestones.find(({ id }) => id === groupId);
+      if (group !== undefined) {
+        const index = group.items.findIndex(({ id }) => id === itemId);
+        if (index >= 0) group.items.splice(index, 1);
+      }
+      this.searchIndex.removeActiveDoc(ledgerId, itemId);
+    }
+    for (const { ledgerId, groupId } of changed.groupDeletes) {
+      const ledger = this.getLedger(ledgerId);
+      const index = ledger.milestones.findIndex(({ id }) => id === groupId);
+      if (index >= 0) ledger.milestones.splice(index, 1);
+    }
+    for (const { ledgerId, pointerId, itemId } of changed.archivedDeletes) {
+      const key = `${ledgerId}/${pointerId}`;
+      if (ledgerId === MILESTONES_LEDGER) this.itemArchives.delete(key);
+      else {
+        const group = this.archives.get(key);
+        if (group !== undefined) {
+          const index = group.items.findIndex(({ id }) => id === itemId);
+          if (index >= 0) group.items.splice(index, 1);
+        }
+      }
+      this.searchIndex.removeArchivedDoc(ledgerId, itemId);
+    }
+    for (const { ledgerId, pointerId, item } of changed.archivedUpserts) {
+      const key = `${ledgerId}/${pointerId}`;
+      if (ledgerId === MILESTONES_LEDGER) this.itemArchives.set(key, cloneItem(item));
+      else {
+        let group = this.archives.get(key);
+        if (group === undefined) { group = { id: pointerId, title: "", description: "", items: [] }; this.archives.set(key, group); }
+        const index = group.items.findIndex(({ id }) => id === item.id);
+        if (index < 0) group.items.push(cloneItem(item));
+        else group.items[index] = cloneItem(item);
+      }
+      this.searchIndex.upsertArchivedDoc(ledgerId, cloneItem(item));
+    }
+    for (const key of dirtyArchives) {
+      const slash = key.indexOf("/");
+      const ledgerId = key.slice(0, slash);
+      const pointerId = key.slice(slash + 1);
+      const ledger = this.getLedger(ledgerId);
+      const current = rows.archives.get(key);
+      const index = ledger.archivePointers.findIndex(({ id }) => id === pointerId);
+      if (current === undefined) {
+        if (index >= 0) ledger.archivePointers.splice(index, 1);
+        this.archives.delete(key);
+        this.itemArchives.delete(key);
+      } else {
+        const pointer = rows.ledgers.get(ledgerId)?.archivePointers.find(({ id }) => id === pointerId);
+        if (pointer === undefined) throw new LedgerError(`committed generic archive lost pointer ${key}`);
+        if (index < 0) ledger.archivePointers.push({ ...pointer });
+        else ledger.archivePointers[index] = { ...pointer };
+        const group = this.archives.get(key);
+        if (group !== undefined) { group.title = current.title; group.description = current.description; }
+      }
+    }
   }
 
   private async runOperatorActionLifecycleMutation(

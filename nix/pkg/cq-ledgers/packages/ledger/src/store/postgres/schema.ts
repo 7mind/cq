@@ -58,8 +58,9 @@ import { LedgerError } from "../../types.js";
  *
  * - v2 (T5916): keyed closure/reference indexes, normalized private plan
  *   identities, and tenant-scoped coherence versions. Existing refs backfill once.
+ * - v3 (T5923): named-milestone archive pointer lookup without per-ledger probes.
  */
-export const PG_SCHEMA_VERSION = 2;
+export const PG_SCHEMA_VERSION = 3;
 
 /**
  * Advisory-lock key guarding the DDL/migration pass (Q271). Arbitrary but
@@ -266,9 +267,12 @@ export async function ensureSchema(pool: SQL): Promise<void> {
       SELECT value FROM meta WHERE key = 'schema_version'
     `;
     const previousVersion = versions.length === 0 ? 1 : Number(versions[0]!.value);
-    if (previousVersion === 1) await migrateKeyedMutationSchema(locked);
-    else if (previousVersion !== PG_SCHEMA_VERSION) {
+    if (!Number.isInteger(previousVersion) || previousVersion < 1 || previousVersion > PG_SCHEMA_VERSION) {
       throw new LedgerError(`unsupported PostgreSQL schema version: ${String(previousVersion)}`);
+    }
+    if (previousVersion === 1) await migrateKeyedMutationSchema(locked);
+    if (previousVersion < 3) {
+      await locked`CREATE INDEX archive_pointers_milestone ON archive_pointers (project_key, id, ledger)`;
     }
     await locked`
       INSERT INTO meta (key, value) VALUES ('schema_version', ${String(PG_SCHEMA_VERSION)})

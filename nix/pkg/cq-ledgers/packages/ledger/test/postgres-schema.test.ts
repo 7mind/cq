@@ -46,6 +46,7 @@ describe.skipIf(!PG_URL)("postgres schema (T572)", () => {
         ["items_milestone", "project_key, milestone_id, ledger, id"],
         ["archived_items_target", "project_key, ledger, id, pointer_id"],
         ["archived_items_milestone", "project_key, milestone_id, ledger, id"],
+        ["archive_pointers_milestone", "project_key, id, ledger"],
         ["item_references_pkey", "project_key, source_ledger, source_id, field_name, target_ledger, target_id"],
         ["item_references_target", "project_key, target_ledger, target_id, field_name, source_ledger, source_id"],
         ["plan_claims_request", "project_key, goal_id, claim_request_id"],
@@ -77,7 +78,7 @@ describe.skipIf(!PG_URL)("postgres schema (T572)", () => {
       `;
       expect(metaRows).toHaveLength(1);
       expect(metaRows[0]?.value).toBe(String(PG_SCHEMA_VERSION));
-      expect(PG_SCHEMA_VERSION).toBe(2);
+      expect(PG_SCHEMA_VERSION).toBe(3);
     } finally {
       await pool.close();
     }

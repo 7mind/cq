@@ -592,6 +592,12 @@ function assertSealedOwnershipAbsent(
 // Gateway implementation over a raw LedgerStore + WorksetStore
 // ---------------------------------------------------------------------------
 
+export interface AdmittedGenericMutation {
+  readonly admission: WorksetLedgerMutationAdmission;
+  readonly scope: SqliteOperationAccessScope;
+  readonly allocation: { readonly ledgerId: string; readonly requestedId: string | null } | null;
+}
+
 export interface WorksetGenericMutationGatewayHost {
   /** Raw persistence adapter — never exposed on the public surface. */
   readonly rawStore: LedgerStore;
@@ -603,6 +609,7 @@ export interface WorksetGenericMutationGatewayHost {
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
     measurement?: SqliteOperationMeasurement,
     accessScope?: SqliteOperationAccessScope,
+    context?: AdmittedGenericMutation,
   ) => Promise<T>;
   /**
    * Test/instrumentation latch: runs after admit and before validation/write,
@@ -626,6 +633,7 @@ export function createWorksetGenericMutationGateway(
       readRoots?: () => Promise<WorksetRootsEpoch>,
       measurement?: SqliteOperationMeasurement,
       accessScope?: SqliteOperationAccessScope,
+      context?: AdmittedGenericMutation,
     ): Promise<T>;
   };
   const runGenericTransaction =
@@ -634,12 +642,14 @@ export function createWorksetGenericMutationGateway(
       mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
       measurement?: SqliteOperationMeasurement,
       accessScope?: SqliteOperationAccessScope,
+      context?: AdmittedGenericMutation,
     ) =>
       atomicStore.runAtomicGenericMutation(
         mutate,
         () => readWorksetRootsEpoch(worksetStore),
         measurement,
         accessScope,
+        context,
       ));
 
   async function withGenericAdmission<T>(
@@ -655,6 +665,7 @@ export function createWorksetGenericMutationGateway(
     options: {
       /** Map coordinator target-excluded into a gateway-specific code. */
       readonly onTargetExcluded?: (cause: WorksetAdmissionError) => WorksetGenericMutationError;
+      readonly allocation?: NonNullable<AdmittedGenericMutation["allocation"]>;
       readonly accessScope?: Omit<
         SqliteOperationAccessScope,
         "operation" | "accessClass" | "targetRefs"
@@ -739,6 +750,7 @@ export function createWorksetGenericMutationGateway(
         },
         measurement,
         accessScope,
+        { admission, scope: accessScope, allocation: options.allocation ?? null },
       );
     } catch (error) {
       failed = true;
@@ -873,6 +885,7 @@ export function createWorksetGenericMutationGateway(
           return tx.createItem(ledgerId, milestoneId, init);
         },
         {
+          allocation: { ledgerId, requestedId: init.id ?? null },
           accessScope: {
             ledgerIds: [ledgerId, MILESTONES_LEDGER],
             milestoneIds: [milestoneId],
@@ -906,6 +919,7 @@ export function createWorksetGenericMutationGateway(
           return tx.createMilestone(init);
         },
         {
+          allocation: { ledgerId: MILESTONES_LEDGER, requestedId: init.id ?? null },
           accessScope: {
             ledgerIds: [MILESTONES_LEDGER],
             milestoneIds: [MILESTONES_ACTIVE_GROUP_ID],

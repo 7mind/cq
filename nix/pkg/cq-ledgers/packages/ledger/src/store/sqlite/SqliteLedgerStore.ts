@@ -2505,6 +2505,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         const transaction = createGenericMutationTransaction({
           ledgers: state.ledgers,
           archives: state.archives,
+          unloadedArchiveKeys: new Set(),
           now: this.now,
         });
         const result = mutate(transaction.tx, roots);

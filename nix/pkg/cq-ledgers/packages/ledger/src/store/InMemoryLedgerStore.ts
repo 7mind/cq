@@ -849,6 +849,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           const transaction = createGenericMutationTransaction({
             ledgers: this.ledgers,
             archives,
+            unloadedArchiveKeys: new Set(),
             now: this.now,
           });
           const roots = await readRoots();

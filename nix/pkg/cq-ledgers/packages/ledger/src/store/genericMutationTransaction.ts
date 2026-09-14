@@ -74,6 +74,7 @@ export interface GenericArchiveEntry {
 export interface GenericMutationTransactionState {
   readonly ledgers: Map<string, Ledger>;
   readonly archives: Map<string, GenericArchiveEntry>;
+  readonly unloadedArchiveKeys: ReadonlySet<string>;
   readonly now: () => string;
 }
 
@@ -337,7 +338,7 @@ export function createGenericMutationTransaction(
         state.now(),
       );
       entry.items.splice(index, 1);
-      if (entry.items.length === 0) {
+      if (entry.items.length === 0 && !state.unloadedArchiveKeys.has(key)) {
         state.archives.delete(key);
         const pointer = ledger.archivePointers.findIndex((candidate) => candidate.id === milestoneId);
         if (pointer >= 0) ledger.archivePointers.splice(pointer, 1);
