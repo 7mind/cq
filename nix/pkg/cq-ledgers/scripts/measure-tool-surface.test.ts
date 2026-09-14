@@ -144,7 +144,8 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // existing operator-action acknowledgements shed redundant state enumerations.
     // 1590 -> 1614 under G199/D468: mint authority adds a compact result contract;
     // its encoding and secret-handling rules remain in the tool description.
-    maximumRemainingG93AttributableTokens: 1614,
+    // D461 adds adoption; concise completion/adoption acknowledgements retain the budget.
+    maximumRemainingG93AttributableTokens: 1619,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

@@ -378,10 +378,10 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
   ),
   record_implementation_completion: purposeBuiltSmall(
-    "One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement.",
+    "Completion acknowledgement: merge-required, reprepare-required, recorded, or existing.",
   ),
   record_implementation_adoption: purposeBuiltSmall(
-    "One `recorded` or `existing` operator-adoption acknowledgement, with adoptionRef, taskRef, resultCommit and repositoryHead; no worker or review receipt.",
+    "Operator-adoption acknowledgement.",
   ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 

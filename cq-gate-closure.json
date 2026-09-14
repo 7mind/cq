@@ -170,7 +170,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
-      "sha256": "e766618ae305c21709b0a9d8feba823aae929880a36cc73163faa0f229b375c5",
+      "sha256": "0daf51cb3c34f3a862590194286247b89f6b7ea396a6d6a976a8945206fb61de",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/package.json"]
     },
     {
@@ -2191,13 +2191,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.test.ts",
-      "sha256": "2849d7a61823c8fcadbc1f239a30508e0f3e57144717a7b3718fa7ca95037ade",
+      "sha256": "f8766a7801a10487d6b02dab85988dbddf74b6e3013a8a48be1390c8cb19f29b",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
-      "sha256": "e766618ae305c21709b0a9d8feba823aae929880a36cc73163faa0f229b375c5",
+      "sha256": "0daf51cb3c34f3a862590194286247b89f6b7ea396a6d6a976a8945206fb61de",
       "targets": []
     },
     {

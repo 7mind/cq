@@ -36,6 +36,7 @@ const MANAGEMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "continue_implementation_evidence_activation",
   "prepare_implementation_completion",
   "record_implementation_completion",
+  "record_implementation_adoption",
 ]);
 const ROLE_PROFILE_NAMES = Object.keys(ROLE_TOOL_CAPABILITY_MATRIX).sort();
 export const PROFILE_NAMES: readonly string[] = Object.freeze([
