@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { strict as assert } from "node:assert";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema, PG_SCHEMA_VERSION } from "../src/store/postgres/schema.js";
 
@@ -33,7 +34,34 @@ async function catalogSnapshot(pool: ReturnType<typeof openPgPool>): Promise<Col
 }
 
 describe.skipIf(!PG_URL)("postgres schema (T572)", () => {
-  test("ensureSchema is idempotent: identical catalog state across two runs + meta schema_version=1", async () => {
+  test("keyed mutation schema exposes tenant-prefixed closure and private-identity indexes [T5916]", async () => {
+    const pool = openPgPool(PG_URL!);
+    try {
+      await ensureSchema(pool);
+      const indexes = await pool<Array<{ indexname: string; indexdef: string }>>`
+        SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()
+      `;
+      for (const [name, columns] of [
+        ["items_ledger_status", "project_key, ledger, status, id"],
+        ["items_milestone", "project_key, milestone_id, ledger, id"],
+        ["archived_items_target", "project_key, ledger, id, pointer_id"],
+        ["archived_items_milestone", "project_key, milestone_id, ledger, id"],
+        ["item_references_pkey", "project_key, source_ledger, source_id, field_name, target_ledger, target_id"],
+        ["item_references_target", "project_key, target_ledger, target_id, field_name, source_ledger, source_id"],
+        ["plan_claims_request", "project_key, goal_id, claim_request_id"],
+        ["plan_claims_identity", "project_key, goal_id, claim_id, generation"],
+        ["plan_claims_active_goal", "project_key, goal_id"],
+        ["plan_operations_identity", "project_key, goal_id, claim_id, generation, operation_kind, operation_id"],
+        ["coherence_vector_version", "project_key, version"],
+      ]) {
+        const index = indexes.find(({ indexname }) => indexname === name);
+        assert(index !== undefined, `missing keyed mutation index: ${name}`);
+        expect(index.indexdef).toContain(`(${columns})`);
+      }
+    } finally { await pool.close(); }
+  });
+
+  test("ensureSchema is idempotent: identical catalog state across two runs + current meta schema_version", async () => {
     const pool = openPgPool(PG_URL!);
     try {
       await ensureSchema(pool);
@@ -49,7 +77,7 @@ describe.skipIf(!PG_URL)("postgres schema (T572)", () => {
       `;
       expect(metaRows).toHaveLength(1);
       expect(metaRows[0]?.value).toBe(String(PG_SCHEMA_VERSION));
-      expect(PG_SCHEMA_VERSION).toBe(1);
+      expect(PG_SCHEMA_VERSION).toBe(2);
     } finally {
       await pool.close();
     }
