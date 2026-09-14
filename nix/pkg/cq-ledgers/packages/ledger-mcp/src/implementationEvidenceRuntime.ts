@@ -13,6 +13,7 @@ import {
 } from "@cq/config";
 import {
   GOALS_LEDGER,
+  QUESTIONS_LEDGER,
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
   IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
   ImplementationEvidenceService,
@@ -33,16 +34,23 @@ import {
   resolveUniqueTaskState,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
+  recordProtectedImplementationAdoption,
+  implementationAdoptionTaskDigest,
   type DispatchCapability,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationReviewerIdentity,
   type PackagedImplementationAuditManifest,
   type ExternalReviewProcessObservation,
   type ResolvedLedgerStore,
+  type ReadLogCapability,
 } from "@cq/ledger";
 import { computeReviewers } from "./configCapability.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
+
+interface LedgerStoreWithAdoptionLogs {
+  readonly readLog?: ReadLogCapability;
+}
 
 const PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS =
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS + IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS;
@@ -614,6 +622,29 @@ export function createProductionImplementationEvidenceService(
       }));
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
+    operatorAdoption: {
+      taskRevision: async (taskRef) => {
+        const task = await resolveUniqueTaskState(store, taskRef.slice(`${TASKS_LEDGER}:`.length));
+        return { updatedAt: task.updatedAt, digest: implementationAdoptionTaskDigest(task) };
+      },
+      verify: async (input) => {
+        const question = store.fetchItem(QUESTIONS_LEDGER, input.approval.questionRef.slice(`${QUESTIONS_LEDGER}:`.length));
+        if (question.status !== "answered" || question.fields["answer"] !== input.approval.answer)
+          throw new Error("operator adoption approval does not match the answered question");
+        const runner = nodeGitRunner(options.repositoryRoot);
+        const status = await runner(["status", "--porcelain", "--untracked-files=all"]);
+        if (status.code !== 0 || status.stdout.trim().length !== 0)
+          throw new Error("operator adoption requires a clean integration worktree");
+        const ancestry = await runner(["merge-base", "--is-ancestor", input.resultCommit, input.expectedRepositoryHead]);
+        if (ancestry.code !== 0) throw new Error("operator adoption result commit is not retained at integration HEAD");
+        const reader = (store as LedgerStoreWithAdoptionLogs).readLog;
+        if (typeof reader !== "function") throw new Error("operator adoption validation log reader is unavailable");
+        const log = await reader.call(store, input.validation.logPath);
+        if (log.truncated === true || new Bun.CryptoHasher("sha256").update(log.content).digest("hex") !== input.validation.logSha256)
+          throw new Error("operator adoption validation log is truncated or its digest changed");
+      },
+      recordLedger: async (task, adoption) => await recordProtectedImplementationAdoption(store, task, adoption),
+    },
     ...(serviceBuildCommit === undefined ? {} : { startupBuildCommit: serviceBuildCommit }),
     implementationEvidenceProtocolVersion: IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
     packagedManifestInventory: PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY,

@@ -2386,7 +2386,6 @@ function resolveGeneration(
     const lineageRows = deps.store
       .rows()
       .filter((row) => row.attestationId === reservation.sourceAttestationId);
-    requireRow(reprepareOf, deps);
     const active = lineageRows.find(
       (row): row is AttestationEnvelope =>
         !isAttestationTombstone(row) && !TERMINAL_STATE_SET.has(row.state),

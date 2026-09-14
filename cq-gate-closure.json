@@ -194,7 +194,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/migrate-postgres.test.ts",
-      "sha256": "557ceb58d56fee48c0f9260073c91a711fc39b978e1acfb1c34f23d2102caff5",
+      "sha256": "589137a47280e1c9436771aada76baa81bdca2fc43daa96cb70f889e57d2a61f",
       "targets": []
     },
     {
@@ -482,7 +482,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/implementationEvidenceRuntime.ts",
-      "sha256": "e25a9605cc4c87ecd305b475e6857636f981c65191fe2fed61370cc085c5b964",
+      "sha256": "0767cd9951cf7e86a86672b5e412e45eebc801450c83240e4d158094e70f4ce4",
       "targets": []
     },
     {
@@ -577,7 +577,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "101b45da0cf682fe4e9fd6fc9b5c53b2329e332a202af70cf8a709e7d385af30",
+      "sha256": "5638c3624347aaaa14af3ae4bfcc7bdf63993d755175a73c8c93cd48534fd0ec",
       "targets": []
     },
     {
@@ -1279,7 +1279,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-implementation-command-guards.test.ts",
-      "sha256": "063da7faf9f13e812a3231b5c50f3bd15146c8bbfb3d569900500981fcbc359a",
+      "sha256": "1649427bf591a7d8ba696b24ad5bc84ee4a56dbaf20914c3c6205808553669ab",
       "targets": []
     },
     {
@@ -1327,7 +1327,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workspaceScriptContract.test.ts",
-      "sha256": "effa0fb429c884cd3243a6546fda1375fba2b35309d30ac2b0dd8ee95962fade",
+      "sha256": "60243b7f818e0878bd24d1fd7d9027ede7ade6f4c8c9f8efb5f3d1048434ceb3",
       "targets": []
     },
     {
@@ -1405,7 +1405,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "101b45da0cf682fe4e9fd6fc9b5c53b2329e332a202af70cf8a709e7d385af30",
+      "sha256": "5638c3624347aaaa14af3ae4bfcc7bdf63993d755175a73c8c93cd48534fd0ec",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts"]
     },
     {
@@ -1579,7 +1579,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "2110671878cf8158a5ca062438239ac274bd4212dba41e64d8e009cc3bddc002",
+      "sha256": "834ada2ddabdd113d9c3c3502fae6f85addc0acc8dc18f5816372119ef160ced",
       "targets": []
     },
     {

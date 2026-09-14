@@ -21,7 +21,7 @@ import type {
   WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
-import { DEFECTS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import type {
@@ -31,9 +31,9 @@ import type {
 import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
-import { ItemNotFoundError, LedgerError } from "./types.js";
+import { ItemNotFoundError, LedgerError, type Item } from "./types.js";
 
-export const IMPLEMENTATION_EVIDENCE_VERSION = 1 as const;
+export const IMPLEMENTATION_EVIDENCE_VERSION = 2 as const;
 export const IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION = 2 as const;
 
 export const IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY = [
@@ -55,6 +55,7 @@ export const IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY = [
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
+  "record_implementation_adoption",
 ] as const;
 
 export const FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT = {
@@ -194,6 +195,44 @@ export interface ImplementationCompletionRecord {
   readonly mergedAt: string | null;
   readonly recordedAt: string | null;
   readonly recordOperationId: string | null;
+}
+
+export interface ImplementationOperatorValidation {
+  readonly kind: "operator-reported-validation";
+  readonly validatedCommit: string;
+  readonly command: string;
+  readonly exitCode: 0;
+  readonly logPath: string;
+  readonly logSha256: string;
+}
+
+export interface RecordImplementationAdoptionInput extends OperationProvenance {
+  readonly taskRef: string;
+  readonly expectedTaskUpdatedAt: string;
+  readonly expectedTaskDigest: string;
+  readonly expectedRepositoryHead: string;
+  readonly resultCommit: string;
+  readonly supersedesCompletionRefs: readonly string[];
+  readonly approval: {
+    readonly kind: "explicit-operator-approval";
+    readonly questionRef: string;
+    readonly answer: string;
+  };
+  readonly authorityLossReason: string;
+  readonly completion: string;
+  readonly validation: ImplementationOperatorValidation;
+}
+
+export interface ImplementationAdoptionRecord extends RecordImplementationAdoptionInput {
+  readonly kind: "operator-adoption";
+  readonly version: 1;
+  readonly adoptionRef: string;
+  readonly ownerGoalRef: string;
+  readonly finalizedManifest: string;
+  readonly requestDigest: string;
+  readonly state: "recording" | "recorded";
+  readonly preparedAt: string;
+  readonly recordedAt: string | null;
 }
 
 export interface PackagedImplementationAuditRecord {
@@ -446,10 +485,11 @@ export interface ImplementationAuditManifestApplicationRecord {
 }
 
 export interface ImplementationEvidenceSnapshot {
-  readonly version: 1;
+  readonly version: 2;
   readonly panels: Readonly<Record<string, ImplementationReviewPanelRecord>>;
   readonly attempts: Readonly<Record<string, ImplementationReviewAttemptRecord>>;
   readonly completions: Readonly<Record<string, ImplementationCompletionRecord>>;
+  readonly adoptions: Readonly<Record<string, ImplementationAdoptionRecord>>;
   readonly auditPanels: Readonly<Record<string, ImplementationAuditPanelRecord>>;
   readonly auditAttempts: Readonly<Record<string, ImplementationAuditAttemptRecord>>;
   readonly implementationAudits: Readonly<Record<string, ImplementationAuditRecord>>;
@@ -467,10 +507,11 @@ export interface ImplementationEvidenceSnapshot {
 }
 
 interface MutableImplementationEvidenceSnapshot {
-  version: 1;
+  version: 2;
   panels: Record<string, ImplementationReviewPanelRecord>;
   attempts: Record<string, ImplementationReviewAttemptRecord>;
   completions: Record<string, ImplementationCompletionRecord>;
+  adoptions: Record<string, ImplementationAdoptionRecord>;
   auditPanels: Record<string, ImplementationAuditPanelRecord>;
   auditAttempts: Record<string, ImplementationAuditAttemptRecord>;
   implementationAudits: Record<string, ImplementationAuditRecord>;
@@ -513,6 +554,7 @@ function implementationTaskIsActivated(
   return (
     Object.values(snapshot.panels).some((panel) => panel.taskRef === taskRef) ||
     Object.values(snapshot.completions).some((completion) => completion.taskRef === taskRef) ||
+    Object.values(snapshot.adoptions).some((adoption) => adoption.taskRef === taskRef) ||
     Object.values(snapshot.auditPanels).some((panel) => panel.taskRef === taskRef) ||
     Object.values(snapshot.implementationAudits).some((audit) => audit.taskRef === taskRef) ||
     Object.values(snapshot.activationRequirements).some((requirement) =>
@@ -621,6 +663,7 @@ function emptyState(): MutableImplementationEvidenceSnapshot {
     panels: {},
     attempts: {},
     completions: {},
+    adoptions: {},
     auditPanels: {},
     auditAttempts: {},
     implementationAudits: {},
@@ -680,10 +723,12 @@ export function createInMemoryImplementationEvidenceStore(
 function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot {
   if (!object(value)) throw new Error("implementation evidence store root must be an object");
   if (
-    value["version"] !== 1 ||
+    (value["version"] !== 1 && value["version"] !== IMPLEMENTATION_EVIDENCE_VERSION) ||
     !object(value["panels"]) ||
     !object(value["attempts"]) ||
     !object(value["completions"]) ||
+    (value["version"] === IMPLEMENTATION_EVIDENCE_VERSION && !object(value["adoptions"])) ||
+    (value["version"] === 1 && value["adoptions"] !== undefined) ||
     (value["auditPanels"] !== undefined && !object(value["auditPanels"])) ||
     (value["auditAttempts"] !== undefined && !object(value["auditAttempts"])) ||
     (value["implementationAudits"] !== undefined && !object(value["implementationAudits"])) ||
@@ -700,10 +745,11 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     value,
   ) as unknown as Partial<MutableImplementationEvidenceSnapshot>;
   return {
-    version: 1,
+    version: IMPLEMENTATION_EVIDENCE_VERSION,
     panels: stored.panels ?? {},
     attempts: stored.attempts ?? {},
     completions: stored.completions ?? {},
+    adoptions: stored.adoptions ?? {},
     auditPanels: stored.auditPanels ?? {},
     auditAttempts: stored.auditAttempts ?? {},
     implementationAudits: stored.implementationAudits ?? {},
@@ -899,6 +945,10 @@ function canonical(value: unknown): string {
 
 function digest(value: unknown): string {
   return createHash("sha256").update(canonical(value)).digest("hex");
+}
+
+export function implementationAdoptionTaskDigest(task: Item): string {
+  return digest(task);
 }
 
 function opaqueRef(prefix: string, value: unknown): string {
@@ -1478,6 +1528,11 @@ export type ImplementationEvidenceFaultInjector = (
 
 export interface ImplementationEvidenceServiceDependencies {
   readonly store: ImplementationEvidenceStore;
+  readonly operatorAdoption?: {
+    readonly verify: (input: RecordImplementationAdoptionInput) => Promise<void>;
+    readonly taskRevision: (taskRef: string) => Promise<{ readonly updatedAt: string; readonly digest: string }>;
+    readonly recordLedger: (task: ImplementationTaskAuthority, adoption: ImplementationAdoptionRecord) => Promise<void>;
+  };
   readonly resolveReviewerRoster: () => readonly ImplementationReviewerIdentity[];
   readonly nativeFallback: ImplementationReviewerIdentity;
   readonly now?: () => string;
@@ -4703,6 +4758,8 @@ export class ImplementationEvidenceService {
       evidenceFingerprint,
     });
     return await this.deps.store[mutateEvidence](async (state) => {
+      if (Object.values(state.adoptions).some((entry) => entry.taskRef === input.taskRef))
+        throw new Error("task is reserved by explicit operator adoption");
       for (const existing of Object.values(state.completions)) {
         if (existing.operationId !== input.operationId) continue;
         if (existing.requestDigest !== requestDigest)
@@ -4985,6 +5042,79 @@ export class ImplementationEvidenceService {
     return task;
   }
 
+  async recordAdoption(input: RecordImplementationAdoptionInput) {
+    assertOperationId(input.operationId);
+    taskIdFromRef(input.taskRef);
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    assertFullSha(input.resultCommit, "result_commit");
+    if (
+      input.approval.kind !== "explicit-operator-approval" ||
+      !/^questions:Q[0-9]+$/u.test(input.approval.questionRef) ||
+      input.approval.answer.trim().length === 0 ||
+      input.authorityLossReason.trim().length === 0 || input.completion.trim().length === 0 ||
+      input.author.trim().length === 0 || !Number.isFinite(Date.parse(input.expectedTaskUpdatedAt)) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedTaskDigest) ||
+      input.validation.kind !== "operator-reported-validation" ||
+      input.validation.validatedCommit !== input.expectedRepositoryHead ||
+      input.validation.exitCode !== 0 || input.validation.command.trim().length === 0 ||
+      input.validation.logPath.trim().length === 0 || !/^[0-9a-f]{64}$/u.test(input.validation.logSha256) ||
+      input.supersedesCompletionRefs.some((ref) => !COMPLETION_REF.test(ref)) ||
+      new Set(input.supersedesCompletionRefs).size !== input.supersedesCompletionRefs.length
+    ) throw new Error("operator adoption requires explicit approval, exact coordinates, and successful validation evidence");
+    const capability = this.deps.operatorAdoption;
+    if (capability === undefined) throw new Error("operator adoption capability is unavailable");
+    if (await this.deps.repositoryHead() !== input.expectedRepositoryHead)
+      throw new Error("expected_repository_head does not match the integration ref");
+    await capability.verify(input);
+    const task = await this.deps.readTaskAuthority(input.taskRef);
+    const requestDigest = digest(input);
+    const adoptionRef = opaqueRef("cq-implementation-adoption", { taskRef: input.taskRef, operationId: input.operationId });
+    const record = await this.deps.store[mutateEvidence](async (state) => {
+      const prior = Object.values(state.adoptions).find((entry) =>
+        entry.operationId === input.operationId || entry.taskRef === input.taskRef);
+      if (prior !== undefined) {
+        if (prior.requestDigest !== requestDigest || prior.adoptionRef !== adoptionRef)
+          throw new Error("operator adoption operation or task already binds different evidence");
+        return prior;
+      }
+      if (task.status === "done" || task.status === "abandoned")
+        throw new Error("operator adoption requires a nonterminal task");
+      const revision = await capability.taskRevision(input.taskRef);
+      if (revision.updatedAt !== input.expectedTaskUpdatedAt || revision.digest !== input.expectedTaskDigest)
+        throw new Error("operator adoption task revision changed");
+      const active = Object.values(state.completions).filter((entry) =>
+        entry.taskRef === input.taskRef && entry.state !== "superseded" && entry.state !== "recorded");
+      if (active.some((entry) => entry.state === "recording") ||
+        digest(active.map((entry) => entry.completionRef).sort()) !== digest([...input.supersedesCompletionRefs].sort()))
+        throw new Error("operator adoption active completion journal set changed or is recording");
+      const adoption: ImplementationAdoptionRecord = {
+        ...structuredClone(input), kind: "operator-adoption", version: 1,
+        adoptionRef, ownerGoalRef: task.ownerGoalRef, finalizedManifest: task.finalizedManifest,
+        requestDigest, state: "recording", preparedAt: this.now(), recordedAt: null,
+      };
+      state.adoptions[adoptionRef] = adoption;
+      for (const entry of active) state.completions[entry.completionRef] = { ...entry, state: "superseded" };
+      return adoption;
+    });
+    if (task.ownerGoalRef !== record.ownerGoalRef || task.finalizedManifest !== record.finalizedManifest)
+      throw new Error("operator adoption task authority changed");
+    if (await this.deps.repositoryHead() !== record.expectedRepositoryHead)
+      throw new Error("repository head changed before operator adoption recording");
+    await capability.recordLedger(task, record);
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.adoptions[adoptionRef];
+      if (current === undefined || current.requestDigest !== requestDigest)
+        throw new Error("operator adoption reservation changed during recording");
+      const existing = current.state === "recorded";
+      state.adoptions[adoptionRef] = existing ? current : { ...current, state: "recorded", recordedAt: this.now() };
+      return {
+        status: existing ? "existing" as const : "recorded" as const,
+        kind: "operator-adoption" as const, adoptionRef, taskRef: record.taskRef,
+        resultCommit: record.resultCommit, repositoryHead: record.expectedRepositoryHead,
+      };
+    });
+  }
+
   async recordCompletion(input: RecordImplementationCompletionInput) {
     assertOperationId(input.operationId);
     taskIdFromRef(input.taskRef);
@@ -5247,6 +5377,64 @@ export async function implementationCompletionMergeAcknowledgement(
     mergeOperationId: completion.mergeOperationId,
     evidenceFingerprint: completion.evidenceFingerprint,
   };
+}
+
+export async function recordProtectedImplementationAdoption(
+  store: LedgerStore,
+  task: ImplementationTaskAuthority,
+  adoption: ImplementationAdoptionRecord,
+): Promise<void> {
+  if (adoption.kind !== "operator-adoption" || adoption.version !== 1 ||
+    (adoption.state !== "recording" && adoption.state !== "recorded"))
+    throw new Error("protected operator adoption requires a durable adoption reservation");
+  if (adoption.taskRef !== task.taskRef || adoption.ownerGoalRef !== task.ownerGoalRef ||
+    adoption.finalizedManifest !== task.finalizedManifest)
+    throw new Error("operator adoption task authority mismatch");
+  const taskId = taskIdFromRef(task.taskRef);
+  const approvalQuestionId = adoption.approval.questionRef.slice(`${QUESTIONS_LEDGER}:`.length);
+  const patch: UpdateItemPatch = {
+    status: "done",
+    fields: { resultCommit: adoption.resultCommit, completion: adoption.completion },
+    author: adoption.author,
+    ...(adoption.session === undefined ? {} : { session: adoption.session }),
+  };
+  authorizedImplementationEvidenceMutations.add(patch);
+  const atomic = store as LedgerStore & {
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
+  };
+  if (atomic.runAtomicOwnedMutation === undefined)
+    throw new Error("operator adoption requires an atomic ledger adapter");
+  await atomic.runAtomicOwnedMutation((tx) => {
+    const current = tx.fetchItem(TASKS_LEDGER, taskId);
+    const goal = tx.fetchItem(GOALS_LEDGER, task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length));
+    const approval = tx.fetchItem(QUESTIONS_LEDGER, approvalQuestionId);
+    if (approval.status !== "answered" || approval.fields["answer"] !== adoption.approval.answer)
+      throw new Error("operator adoption approval changed before task recording");
+    if (current.fields["worksetOwnerRef"] !== task.ownerGoalRef ||
+      current.fields["worksetOwnerEdgeKind"] !== "finalized-manifest" ||
+      goal.fields["planFinalizedManifest"] !== task.finalizedManifest)
+      throw new Error("operator adoption sealed task authority changed");
+    const sources = current.fields["sourceRefs"];
+    const logs = current.fields["sessionLogs"];
+    if (current.status === "done") {
+      if (current.fields["resultCommit"] !== adoption.resultCommit ||
+        current.fields["completion"] !== adoption.completion ||
+        !Array.isArray(sources) || !sources.includes(adoption.adoptionRef) ||
+        !Array.isArray(logs) || !logs.includes(adoption.validation.logPath))
+        throw new Error("done task carries different operator adoption evidence");
+      return;
+    }
+    if (current.updatedAt !== adoption.expectedTaskUpdatedAt ||
+      implementationAdoptionTaskDigest(current) !== adoption.expectedTaskDigest || current.status === "abandoned")
+      throw new Error("operator adoption task revision changed");
+    patch.fields = {
+      ...patch.fields,
+      sourceRefs: [...new Set([...(Array.isArray(sources) ? sources : []), adoption.adoptionRef])],
+      sessionLogs: [...new Set([...(Array.isArray(logs) ? logs : []), adoption.validation.logPath])],
+    };
+    tx.updateItem(TASKS_LEDGER, taskId, patch);
+  }, { direct: { kind: "implementation-adoption", taskId,
+    ownerGoalId: task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length), approvalQuestionId, taskPatch: patch } });
 }
 
 /**

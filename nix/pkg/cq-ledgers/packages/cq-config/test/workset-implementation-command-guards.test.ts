@@ -10,6 +10,13 @@ function command(relativePath: string): string {
 }
 
 describe("T1987 implementation command workset guards", () => {
+  test("operator adoption requires explicit approval and never fabricates reviewed completion [Blackbox-Atomic]", () => {
+    const prose = command("implement/advance.md").replace(/\s+/g, " ");
+    expect(prose).toContain("`record_implementation_adoption` only after the user approves adoption");
+    expect(prose).toContain("successful operator-reported validation of that exact HEAD");
+    expect(prose).toContain("without a synthetic review or worker/reviewer receipts");
+    expect(prose).toContain("Never substitute `adoptionRef` for `completionRef`");
+  });
   test("start and advance bind the shared boundary and scope implicit selection to manifests", () => {
     const start = command("implement/start.md");
     const advance = command("implement/advance.md");

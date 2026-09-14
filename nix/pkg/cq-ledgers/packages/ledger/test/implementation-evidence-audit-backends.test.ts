@@ -309,6 +309,8 @@ describe("implementation audit store backend contract [Blackbox]", () => {
     );
 
     await expect(createFsImplementationEvidenceStore({ path }).snapshot()).resolves.toMatchObject({
+      version: 2,
+      adoptions: {},
       auditPanels: {},
       auditAttempts: {},
       implementationAudits: {},

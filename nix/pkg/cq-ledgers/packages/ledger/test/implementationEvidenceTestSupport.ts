@@ -187,6 +187,7 @@ export async function createImplementationEvidenceFixture(
   });
   return {
     service,
+    dependencies,
     store,
     panel,
     attemptRef,

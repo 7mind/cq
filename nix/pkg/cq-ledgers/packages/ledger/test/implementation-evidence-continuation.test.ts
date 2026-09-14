@@ -239,7 +239,8 @@ function snapshot(): ImplementationEvidenceSnapshot {
     recordOperationId: "record-t3003",
   };
   return {
-    version: 1,
+    version: 2,
+    adoptions: {},
     panels: {},
     attempts: {},
     completions: { [COMPLETION_REF]: completion },

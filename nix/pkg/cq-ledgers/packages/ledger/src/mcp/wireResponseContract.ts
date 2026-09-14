@@ -380,6 +380,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   record_implementation_completion: purposeBuiltSmall(
     "One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement.",
   ),
+  record_implementation_adoption: purposeBuiltSmall(
+    "One `recorded` or `existing` operator-adoption acknowledgement, with adoptionRef, taskRef, resultCommit and repositoryHead; no worker or review receipt.",
+  ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

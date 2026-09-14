@@ -280,6 +280,26 @@ authenticated panel before a new prepare naming `supersedes_completion_ref`;
 merge until this recovery records it. Never fall back to generic task/review
 writes or an unjournaled merge.
 
+Explicit operator adoption is a separate recovery path for already-integrated
+work whose dispatch authority is unavailable, not an automatic fallback from
+`reprepare-required`. Use `record_implementation_adoption` only after the user
+approves adoption and that approval is retained in an answered question. Bind
+the exact task `updatedAt` and SHA-256 of its full item JSON (recursively sorted
+object keys, compact encoding, as `implementationAdoptionTaskDigest` computes),
+current clean integration HEAD, retained adopted
+commit, complete active completion-reference set, verbatim approval answer,
+authority-loss reason, and successful operator-reported validation of that
+exact HEAD with its retained log path and SHA-256. Reuse qualifying validation;
+do not rerun it merely to record adoption. Keep one stable operation id for
+exact retry. Accept only `kind=operator-adoption`, `status=recorded|existing`
+with the requested task/result/head. This records adoption, supersedes the
+named stale journals, and closes the task without a synthetic review or
+worker/reviewer receipts. Never substitute `adoptionRef` for `completionRef`
+in activation continuation or another reviewed-completion operation. The
+management service must advertise this operation; an older service must not
+write the version-2 private evidence store. No generic terminal write bypass
+is authorized by this path.
+
 Read each target milestone and its full task items, linked questions, milestone
 dependencies, and referenced dependency items.
 

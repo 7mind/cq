@@ -307,7 +307,8 @@ describe("protected historical implementation evidence [BA]", () => {
     const snapshot = await createInMemoryImplementationEvidenceStore().snapshot();
 
     expect(snapshot).toMatchObject({
-      version: 1,
+      version: 2,
+      adoptions: {},
       auditPanels: {},
       auditAttempts: {},
       implementationAudits: {},

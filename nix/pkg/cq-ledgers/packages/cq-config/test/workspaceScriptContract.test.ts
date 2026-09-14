@@ -26,7 +26,7 @@ describe("workspace script contract", () => {
 
   test("composes the aggregate check from named scripts", () => {
     expect(workspacePackage.scripts.check).toBe(
-      "tsc -b && bun run lint && bun test --only-failures && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+      'tsc -b && bun run lint && bun test --only-failures --reporter=junit --reporter-outfile="${CQ_TEST_JUNIT_PATH:-/dev/null}" && bun run check:codex-installed-gate && bun run check:flake-enumeration',
     );
     expect(workspacePackage.scripts["check:codex-installed-gate"]).toBe(
       "cd ../../.. && nix build --no-link .#cq",

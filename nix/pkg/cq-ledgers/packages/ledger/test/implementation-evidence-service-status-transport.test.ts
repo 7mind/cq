@@ -87,6 +87,7 @@ describe("implementation evidence service status transport [BA]", () => {
       "get_implementation_evidence_service_status",
       "prepare_implementation_completion",
       "record_implementation_completion",
+      "record_implementation_adoption",
     ]);
     expect(payload["finalizedReviewOutcomeContract"]).toEqual({
       version: 1,

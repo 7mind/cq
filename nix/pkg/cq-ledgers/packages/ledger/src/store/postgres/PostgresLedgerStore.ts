@@ -1088,8 +1088,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         });
       },
     });
-    await this.reconcileProjection();
     this.fireHook("logs", "archive");
+    // Erasure deletes the coherence epoch itself; this tenant instance cannot reconcile again.
+    await this.recovery().close();
+    this.readCache.clear();
+    this.closing = true;
+    this.initialised = false;
   }
 
   /**

@@ -1,4 +1,5 @@
 import { directCompletionRecord } from "../test/directOwnedLifecycleContract.js";
+import { postgresAdoptionBounds } from "../test/postgresAdoptionBounds.js";
 import { postgresPlanBounds, postgresOperatorBounds, postgresOwnedBounds, postgresDirectBounds, postgresGenericBounds } from "../test/postgresLifecycleBoundsScenarios.js";
 import { postgresIndependentProgressBounds, postgresReleaseBounds } from "../test/postgresLifecycleBoundsControls.js";
 import { strict as assert } from "node:assert";
@@ -16,6 +17,7 @@ export async function runPostgresLifecycleBoundsGate(emit: (record: unknown) => 
     { name: "operator-actions", run: postgresOperatorBounds },
     { name: "owned-intake", run: postgresOwnedBounds },
     { name: "direct-owned", run: (size) => postgresDirectBounds(size, completion) },
+    { name: "operator-adoption", run: postgresAdoptionBounds },
     { name: "generic-and-archive", run: postgresGenericBounds },
     { name: "release-rollback-refusal", run: postgresReleaseBounds },
   ];

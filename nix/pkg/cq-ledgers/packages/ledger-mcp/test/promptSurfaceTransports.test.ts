@@ -20,6 +20,7 @@ import { assertDispatchConstructionConformance } from "./dispatchConstructionCon
 const here = new URL(".", import.meta.url).pathname;
 const mainPath = path.resolve(here, "..", "src", "main.ts");
 const SURFACES = ["claude", "codex", "pi"] as const;
+const MULTI_PROCESS_CONTRACT_TIMEOUT_MS = 15_000;
 type PromptSurface = (typeof SURFACES)[number];
 const DISPATCHED_ROLE_ID = "plan-advance";
 const WORKER_ROLE_ID = "implement-worker";
@@ -586,7 +587,7 @@ describe("standalone prompt-surface transports", () => {
       }
     }
     expect(new Set(schemaBytes).size).toBe(1);
-  });
+  }, MULTI_PROCESS_CONTRACT_TIMEOUT_MS);
 
   test("HTTP rejects a selected surface that does not match the built root", async () => {
     const port = await freePort();

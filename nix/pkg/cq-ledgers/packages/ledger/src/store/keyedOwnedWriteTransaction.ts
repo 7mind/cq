@@ -195,6 +195,12 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
   }
   function* prepareDirectOperation(operation: DirectOwnedOperation, now: () => string): OwnedReads<void> {
+    if (operation.kind === "implementation-adoption") {
+      yield* loadItem(GOALS_LEDGER, operation.ownerGoalId);
+      yield* loadItem(QUESTIONS_LEDGER, operation.approvalQuestionId);
+      yield* prepareUpdate(TASKS_LEDGER, operation.taskId, operation.taskPatch);
+      return;
+    }
     if (operation.kind === "materialize-operator") {
       const task = yield* loadItem(TASKS_LEDGER, operation.input.taskId);
       if (task === undefined || task.status !== "planned") return;

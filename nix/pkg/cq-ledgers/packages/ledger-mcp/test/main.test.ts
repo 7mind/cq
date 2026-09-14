@@ -36,6 +36,7 @@ import {
 import { buildServer, projectInstructionLine } from "../src/main.js";
 
 const BOOTSTRAPPED = CANONICAL_LEDGERS.map((c) => c.name);
+const DISPATCH_PROCESS_CONTRACT_TIMEOUT_MS = 15_000;
 
 /** Resolve the binary path against this package's src/main.ts. */
 function resolveBinPath(): { command: string; args: string[] } {
@@ -350,7 +351,7 @@ describe("ledger-mcp stdio binary", () => {
       },
       { CQ_PROMPT_ROOT: dispatchPromptRoot },
     );
-  });
+  }, DISPATCH_PROCESS_CONTRACT_TIMEOUT_MS);
 
   it("supports ack, compact, and full round-trips that persist", async () => {
     let ideaId = "";

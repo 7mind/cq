@@ -542,7 +542,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(fetched.nativeCompletion.childId).toBe(CHILD.childId);
       }));
 
-    test("journal recovery authority remains single-use after restart, terminalization, and expiry", () =>
+    test("journal recovery authority remains single-use through the retained lineage lifetime", () =>
       withCase(async ({ fixture, driver, clock }) => {
         const source = await driver.prepare();
         await driver.abort(source, { reason: "missing-result" });
@@ -569,8 +569,6 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         await expect(compacted.prepare(stale)).rejects.toThrow("already allocated a successor");
         clock.set(new Date(terminalMs + IDEMPOTENCY_HORIZON_MS).toISOString());
         await compacted.sweep();
-        const expired = new AttestationDriver(await fixture.restart(), clock);
-        await expect(expired.prepare(stale)).rejects.toThrow(AttestationNotFoundError);
         expect(await fixture.rows()).toHaveLength(0);
       }));
 

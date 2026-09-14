@@ -111,6 +111,7 @@ import type {
   PrepareImplementationReviewFallbackInput,
   PrepareImplementationReviewPanelInput,
   RecordImplementationCompletionInput,
+  RecordImplementationAdoptionInput,
 } from "../../implementationEvidence.js";
 
 /**
@@ -792,6 +793,21 @@ export class RemoteLedgerClient {
       expected_repository_head: input.expectedRepositoryHead,
       operation_id: input.operationId,
       author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async recordImplementationAdoption(
+    input: RecordImplementationAdoptionInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["recordAdoption"]>>> {
+    this.requireManagement("record_implementation_adoption");
+    return await this.call("record_implementation_adoption", {
+      task_ref: input.taskRef, expected_task_updated_at: input.expectedTaskUpdatedAt,
+      expected_task_digest: input.expectedTaskDigest,
+      expected_repository_head: input.expectedRepositoryHead, result_commit: input.resultCommit,
+      supersedes_completion_refs: input.supersedesCompletionRefs, approval: input.approval,
+      authority_loss_reason: input.authorityLossReason, completion: input.completion,
+      validation: input.validation, operation_id: input.operationId, author: input.author,
       ...(input.session === undefined ? {} : { session: input.session }),
     });
   }

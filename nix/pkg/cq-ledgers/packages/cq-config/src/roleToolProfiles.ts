@@ -70,6 +70,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
+  "record_implementation_adoption",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];

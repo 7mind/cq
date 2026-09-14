@@ -225,8 +225,8 @@ describe.skipIf(PG_URL === undefined || PG_URL.trim() === "")(
         await ordinary.close();
         ordinary = null;
         const eraseIo = io();
-        expect((await dispatch(["erase", "--cwd", root, "--yes"], eraseIo)).exitCode).toBe(0);
-        expect(eraseIo.errs).toEqual([]);
+        const erased = await dispatch(["erase", "--cwd", root, "--yes"], eraseIo);
+        expect({ exitCode: erased.exitCode, errors: eraseIo.errs }).toEqual({ exitCode: 0, errors: [] });
         const projectsResponse = await fetch(`${serverUrl}/api/projects`, {
           headers: { authorization: `Bearer ${ORDINARY_TOKEN}` },
         });

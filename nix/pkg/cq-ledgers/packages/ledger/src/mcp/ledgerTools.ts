@@ -209,6 +209,7 @@ export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
+  "record_implementation_adoption",
 ] as const satisfies readonly LedgerToolName[];
 
 const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
@@ -1828,6 +1829,48 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const recordImplementationAdoptionTool = tool(
+    "record_implementation_adoption",
+    "Record explicitly operator-approved, already-integrated work without worker or reviewer receipts. Binds exact task, journal, Git, approval and validation evidence; never creates a synthetic review.",
+    {
+      task_ref: z.string().regex(/^tasks:T[0-9]+$/),
+      expected_task_updated_at: z.string().datetime(),
+      expected_task_digest: z.string().regex(/^[0-9a-f]{64}$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      result_commit: z.string().regex(/^[0-9a-f]{40}$/),
+      supersedes_completion_refs: z.array(z.string().regex(/^cq-implementation-completion:v1:[0-9a-f]{64}$/)),
+      approval: z.object({
+        kind: z.literal("explicit-operator-approval"),
+        questionRef: z.string().regex(/^questions:Q[0-9]+$/),
+        answer: z.string().min(1),
+      }).strict(),
+      authority_loss_reason: z.string().min(1),
+      completion: z.string().min(1),
+      validation: z.object({
+        kind: z.literal("operator-reported-validation"),
+        validatedCommit: z.string().regex(/^[0-9a-f]{40}$/),
+        command: z.string().min(1),
+        exitCode: z.literal(0),
+        logPath: z.string().min(1),
+        logSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      }).strict(),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(await implementationEvidence.recordAdoption({
+        taskRef: args.task_ref, expectedTaskUpdatedAt: args.expected_task_updated_at,
+        expectedTaskDigest: args.expected_task_digest,
+        expectedRepositoryHead: args.expected_repository_head, resultCommit: args.result_commit,
+        supersedesCompletionRefs: args.supersedes_completion_refs, approval: args.approval,
+        authorityLossReason: args.authority_loss_reason, completion: args.completion,
+        validation: args.validation, operationId: args.operation_id, author: args.author,
+        ...(args.session === undefined ? {} : { session: args.session }),
+      }));
+    },
+  );
+
   // ---- Filesystem read (1) -----------------------------------------------
 
   const readLogTool = tool(
@@ -2106,6 +2149,7 @@ export function createLedgerMcpToolSpecifications(
           getImplementationEvidenceServiceStatusTool,
           prepareImplementationCompletionTool,
           recordImplementationCompletionTool,
+          recordImplementationAdoptionTool,
         ]
       : []),
   ] as unknown as AnyTool[];
