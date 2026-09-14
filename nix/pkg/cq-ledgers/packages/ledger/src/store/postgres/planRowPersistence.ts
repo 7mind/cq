@@ -1,6 +1,7 @@
 import { LedgerError, type Item, type Ledger } from "../../types.js";
 import type { PlanLifecycleRowPlan } from "../planLifecycleRowPlan.js";
 import type { PostgresOperationQueries } from "./operationAccess.js";
+import { persistPostgresActiveItem } from "./keyedRows.js";
 
 export interface PostgresPlanRowChanges {
   readonly items: readonly { readonly ledgerId: string; readonly item: Item }[];
@@ -45,15 +46,7 @@ export async function persistPostgresPlanRows(queries: PostgresOperationQueries,
     for (const [id, item] of afterItems) {
       const prior = beforeItems.get(id);
       if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(item)) continue;
-      const values = [ledgerId, item.id, item.milestoneId, item.status, JSON.stringify(item.fields), item.createdAt, item.updatedAt,
-        item.author ?? null, item.session ?? null];
-      const sql = prior === undefined
-        ? `INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
-        : `UPDATE items SET milestone_id = $4, status = $5, fields_json = $6, created_at = $7, updated_at = $8, author = $9, session = $10
-          WHERE project_key = $1 AND ledger = $2 AND id = $3 RETURNING id`;
-      const count = await write("items", `${ledgerId}:${id}`, sql, values);
-      if (count !== 1) throw new LedgerError(`plan write lost its locked row ${ledgerId}:${id}`);
+      await persistPostgresActiveItem(queries, ledgerId, item, prior === undefined ? "insert" : "update");
       changedItems.push({ ledgerId, item: structuredClone(item) });
       changedLedgers.add(ledgerId);
     }

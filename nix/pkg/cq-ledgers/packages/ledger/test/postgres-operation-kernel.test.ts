@@ -5,6 +5,7 @@ import { runPostgresKeyedOperation, type PostgresKeyedOperation, type PostgresOp
 import { createPostgresLifecycleRowRepository } from "../src/store/postgres/lifecycleRowRepository.js";
 import type { Item } from "../src/types.js";
 import { postgresLifecycleRowFixture } from "./postgresLifecycleRowFixture.js";
+import { waitForPostgresLock } from "./postgresLockWait.js";
 
 describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL keyed transaction kernel [T5917 Behavioral-Active Blackbox-GoodCommunication]", () => {
   test("an unrelated goal proceeds while a same-row contender waits and then reads the committed state", async () => {
@@ -31,13 +32,7 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL keyed transaction kerne
         expect(await runPostgresKeyedOperation(worker, options, operation("G2"))).toBe("selected");
         const pending = runPostgresKeyedOperation(worker, options, operation("G1"));
         contender = pending;
-        const deadline = performance.now() + 1_000;
-        for (;;) {
-          const waiting = await fixture.pool`SELECT pid FROM pg_stat_activity WHERE application_name = ${application} AND wait_event_type = 'Lock'`;
-          if (waiting.length > 0) break;
-          if (performance.now() >= deadline) throw new Error("same-row contender did not reach the PostgreSQL lock wait");
-          await Bun.sleep(5);
-        }
+        await waitForPostgresLock(fixture.pool, application, 1_000);
         await holder`UPDATE items SET fields_json = '{"title":"after-holder-commit"}'
           WHERE project_key = ${fixture.projectKey} AND ledger = 'goals' AND id = 'G1'`;
         return { pending };

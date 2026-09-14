@@ -6,6 +6,7 @@ import {
 } from "../constants.js";
 import type { Item, Ledger } from "../types.js";
 import { ItemNotFoundError, LedgerError, SchemaValidationError } from "../types.js";
+import type { AsyncRepository } from "./asyncRowRepository.js";
 import {
   LINEAGE_CUTOVER_FENCE_ACTION_KEY,
   parseCommittedCurrentRecoveryStatusOutput,
@@ -102,6 +103,10 @@ export interface OperatorActionLifecycleRows {
   fetchItem(ledgerId: string, itemId: string): Item | undefined;
 }
 
+interface OperatorItemRead { readonly ledgerId: string; readonly itemId: string }
+type PreparedOperatorMutation = () => OperatorActionLifecycleMutationOutcome;
+type OperatorReadProgram<Result> = Generator<OperatorItemRead, Result, Item | undefined>;
+
 export function applyOperatorActionLifecycleMutation(
   ledgers: Map<string, Ledger>,
   mutation: OperatorActionLifecycleMutation,
@@ -125,8 +130,26 @@ export function applyOperatorActionLifecycleRows(
   mutation: OperatorActionLifecycleMutation,
   now: () => string,
 ): OperatorActionLifecycleMutationOutcome {
+  const program = operatorActionReads(mutation, now);
+  let step = program.next();
+  while (!step.done) step = program.next(rows.fetchItem(step.value.ledgerId, step.value.itemId));
+  return step.value();
+}
+
+export async function prepareAsyncOperatorActionLifecycleRows(
+  rows: AsyncRepository<OperatorActionLifecycleRows>,
+  mutation: OperatorActionLifecycleMutation,
+  now: () => string,
+): Promise<PreparedOperatorMutation> {
+  const program = operatorActionReads(mutation, now);
+  let step = program.next();
+  while (!step.done) step = program.next(await rows.fetchItem(step.value.ledgerId, step.value.itemId));
+  return step.value;
+}
+
+function* operatorActionReads(mutation: OperatorActionLifecycleMutation, now: () => string): OperatorReadProgram<PreparedOperatorMutation> {
   assertRevision(mutation.expectedRevision);
-  const action = findMutableItem(rows, OPERATOR_ACTIONS_LEDGER, mutation.actionId);
+  const action = yield* findMutableItem(OPERATOR_ACTIONS_LEDGER, mutation.actionId);
   const revision = operatorActionRevision(action);
   if (revision !== mutation.expectedRevision) {
     throw new LedgerError(
@@ -135,15 +158,39 @@ export function applyOperatorActionLifecycleRows(
   }
   switch (mutation.kind) {
     case "acknowledge":
-      return acknowledge(action, revision, mutation, now);
+      return () => acknowledge(action, revision, mutation, now);
     case "record-evidence":
-      return recordEvidence(action, revision, mutation, now);
-    case "revise":
-      return revise(rows, action, revision, mutation, now);
-    case "complete":
-      return complete(rows, action, revision, mutation, now);
-    case "supersede":
-      return supersede(rows, action, mutation);
+      return () => recordEvidence(action, revision, mutation, now);
+    case "revise": {
+      if (action.status !== "pending" && action.status !== "acknowledged") {
+        throw new LedgerError(`Operator action ${action.id} may be revised only while pending or acknowledged`);
+      }
+      assertRevisionEvidenceState(action, revision);
+      const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
+      const task = yield* findMutableItem(TASKS_LEDGER, taskId);
+      const handoff = yield* findMutableItem(HANDOFFS_LEDGER, handoffIdForTask(taskId));
+      return () => revise(action, task, handoff, revision, mutation, now);
+    }
+    case "complete": {
+      if (action.status !== "verified") throw new LedgerError(`Operator action ${action.id} is not verified`);
+      const verifiedRevision = action.fields["verifiedRevision"];
+      if (verifiedRevision !== undefined && verifiedRevision !== String(revision)) {
+        throw new LedgerError(`Operator action ${action.id} verification belongs to another revision`);
+      }
+      const task = yield* findMutableItem(TASKS_LEDGER, referencedId(action, "taskRef", TASKS_LEDGER));
+      return () => complete(action, task, mutation, now);
+    }
+    case "supersede": {
+      if (action.status === "superseded") {
+        if (action.fields["supersededReason"] !== mutation.reason || action.fields["supersededAt"] !== mutation.supersededAt) {
+          throw new LedgerError(`Operator action ${action.id} was superseded with different evidence`);
+        }
+      } else if (action.status !== "pending" && action.status !== "acknowledged") {
+        throw new LedgerError(`Operator action ${action.id} may be superseded only while pending or acknowledged`);
+      }
+      const task = yield { ledgerId: TASKS_LEDGER, itemId: referencedId(action, "taskRef", TASKS_LEDGER) };
+      return () => supersede(action, task, mutation);
+    }
   }
 }
 
@@ -290,21 +337,13 @@ function recordEvidence(
 }
 
 function revise(
-  rows: OperatorActionLifecycleRows,
   action: Item,
+  task: Item,
+  handoff: Item,
   revision: number,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "revise" }>,
   now: () => string,
 ): OperatorActionLifecycleMutationOutcome {
-  if (action.status !== "pending" && action.status !== "acknowledged") {
-    throw new LedgerError(
-      `Operator action ${action.id} may be revised only while pending or acknowledged`,
-    );
-  }
-  assertRevisionEvidenceState(action, revision);
-  const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-  const task = findMutableItem(rows, TASKS_LEDGER, taskId);
-  const handoff = findMutableItem(rows, HANDOFFS_LEDGER, handoffIdForTask(taskId));
   if (task.status !== "planned" && task.status !== "abandoned") {
     throw new LedgerError(
       `Operator-action task ${task.id} may be revised only from planned or abandoned`,
@@ -375,24 +414,11 @@ function revise(
 }
 
 function complete(
-  rows: OperatorActionLifecycleRows,
   action: Item,
-  revision: number,
+  task: Item,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "complete" }>,
   now: () => string,
 ): OperatorActionLifecycleMutationOutcome {
-  if (action.status !== "verified") {
-    throw new LedgerError(`Operator action ${action.id} is not verified`);
-  }
-  const verifiedRevision = action.fields["verifiedRevision"];
-  if (verifiedRevision !== undefined && verifiedRevision !== String(revision)) {
-    throw new LedgerError(`Operator action ${action.id} verification belongs to another revision`);
-  }
-  const task = findMutableItem(
-    rows,
-    TASKS_LEDGER,
-    referencedId(action, "taskRef", TASKS_LEDGER),
-  );
   if (task.status !== "planned") {
     throw new LedgerError(`Operator-action task ${task.id} is not planned`);
   }
@@ -408,19 +434,11 @@ function complete(
 }
 
 function supersede(
-  rows: OperatorActionLifecycleRows,
   action: Item,
+  task: Item | undefined,
   mutation: Extract<OperatorActionLifecycleMutation, { kind: "supersede" }>,
 ): OperatorActionLifecycleMutationOutcome {
   if (action.status === "superseded") {
-    if (
-      action.fields["supersededReason"] !== mutation.reason ||
-      action.fields["supersededAt"] !== mutation.supersededAt
-    ) {
-      throw new LedgerError(`Operator action ${action.id} was superseded with different evidence`);
-    }
-    const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-    const task = rows.fetchItem(TASKS_LEDGER, taskId);
     return {
       result: {
         kind: "supersede",
@@ -430,14 +448,6 @@ function supersede(
       dirtyLedgers: [],
     };
   }
-  if (action.status !== "pending" && action.status !== "acknowledged") {
-    throw new LedgerError(
-      `Operator action ${action.id} may be superseded only while pending or acknowledged`,
-    );
-  }
-
-  const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
-  const task = rows.fetchItem(TASKS_LEDGER, taskId);
   if (
     task !== undefined &&
     task.status !== "planned" &&
@@ -471,8 +481,8 @@ function supersede(
   };
 }
 
-function findMutableItem(rows: OperatorActionLifecycleRows, ledgerId: string, itemId: string): Item {
-  const item = rows.fetchItem(ledgerId, itemId);
+function* findMutableItem(ledgerId: string, itemId: string): OperatorReadProgram<Item> {
+  const item = yield { ledgerId, itemId };
   if (item !== undefined) return item;
   throw new ItemNotFoundError(ledgerId, itemId);
 }

@@ -103,6 +103,8 @@ import { resolvePostgresPlanRows } from "./planRowOperation.js";
 import { persistPostgresPlanRows } from "./planRowPersistence.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import type { PostgresAccessObserver } from "./operationAccess.js";
+import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
+import type { PostgresSelectedPublicRow } from "./selectedPublicRows.js";
 import type {
   InMemoryPlanLifecycleState,
   InMemoryPlanMutation,
@@ -194,7 +196,6 @@ import {
   type TaskAdoptionPublicationResult,
 } from "../../taskAdoptionEligibility.js";
 import {
-  applyOperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
@@ -2039,9 +2040,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   async mutateOperatorAction(
     mutation: OperatorActionLifecycleMutation,
   ): Promise<OperatorActionLifecycleMutationResult> {
-    return this.runOperatorActionLifecycleMutation((state) =>
-      applyOperatorActionLifecycleMutation(state.ledgers, mutation, state.now),
-    );
+    return this.runOperatorActionLifecycleMutation(mutation);
   }
 
   /**
@@ -2368,31 +2367,37 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private async runOperatorActionLifecycleMutation(
-    mutate: (
-      state: InMemoryPlanLifecycleState,
-    ) => InMemoryPlanMutation<OperatorActionLifecycleMutationResult>,
+    mutation: OperatorActionLifecycleMutation,
   ): Promise<OperatorActionLifecycleMutationResult> {
     this.assertInit();
-    let value!: OperatorActionLifecycleMutationResult;
-    let dirty: readonly string[] = [];
-    let live!: LiveTenantState;
-    await writeTransaction(this.pool(), async (tx) => {
-      // The counters lock serializes this lifecycle with every plan lifecycle
-      // mutation before any authoritative action/task/handoff read.
-      await this.lockTenantCounters(tx);
-      const tenant = await this.readLiveTenant(tx);
-      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
-      const mutation = mutate(state);
-      for (const ledgerId of new Set(mutation.dirtyLedgers)) {
-        await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
-      }
-      value = mutation.result;
-      dirty = [...new Set(mutation.dirtyLedgers)];
-      live = tenant;
+    const committed = await runPostgresKeyedOperation(this.pool(), {
+      projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
+    }, {
+      name: `operator_action_${mutation.kind}`,
+      resolve: (queries) => resolvePostgresOperatorRows(queries, mutation, this.now),
+      apply: async (_queries, resolution) => {
+        if (resolution.kind === "rejected") throw resolution.error;
+        const outcome = resolution.apply();
+        const dirty = await resolution.rows.persist(outcome.dirtyLedgers);
+        return { value: outcome.result, dirty, rows: [...resolution.rows.selected.values()] };
+      },
     });
-    this.absorbLiveLedgers(live);
-    for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
-    return value;
+    this.absorbSelectedPublicRows(committed.rows);
+    for (const ledgerId of committed.dirty) this.fireHook(ledgerId, "update");
+    return committed.value;
+  }
+
+  private absorbSelectedPublicRows(rows: readonly PostgresSelectedPublicRow[]): void {
+    for (const { ledgerId, item, group } of rows) {
+      const ledger = this.getLedger(ledgerId);
+      let cached = ledger.milestones.find(({ id }) => id === group.id);
+      if (cached === undefined) { cached = { ...group, items: [] }; ledger.milestones.push(cached); }
+      const index = cached.items.findIndex(({ id }) => id === item.id);
+      if (index >= 0 && JSON.stringify(cached.items[index]) === JSON.stringify(item)) continue;
+      if (index < 0) cached.items.push(cloneItem(item));
+      else cached.items[index] = cloneItem(item);
+      this.indexUpsertActive(ledgerId, item);
+    }
   }
 
   /**

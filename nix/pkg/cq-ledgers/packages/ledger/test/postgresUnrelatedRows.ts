@@ -11,7 +11,8 @@ export async function seedPostgresUnrelatedRows(pool: SQL, projectKey: string, c
     // Bulk fixture setup uses the migration's set-based reference backfill, not one trigger invocation per row.
     await tx.unsafe("ALTER TABLE items DISABLE TRIGGER item_references_items_write");
     await tx`INSERT INTO groups (project_key, ledger, id, title, description)
-      VALUES (${projectKey}, 'tasks', 'M900000', 'unrelated', 'unrelated') ON CONFLICT DO NOTHING`;
+      VALUES (${projectKey}, 'tasks', 'M900000', 'unrelated', 'unrelated'),
+        (${projectKey}, 'goals', 'M-AMBIENT', '', '') ON CONFLICT DO NOTHING`;
     await tx`INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at)
       VALUES (${projectKey}, 'goals', 'G900000', 'M-AMBIENT', 'clarifying', '{"title":"unrelated owner","description":"unrelated"}', 'now', 'now')`;
     await tx`INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at)
