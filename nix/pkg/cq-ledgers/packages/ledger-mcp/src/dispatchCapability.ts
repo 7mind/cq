@@ -16,7 +16,7 @@ import {
   claimParentGateOn,
   completeParentGateOn,
   discoverDispatchContinuationOn,
-  discoverDispatchRecoveryOn,
+  discoverDispatchRecovery,
   authorizeDispatchGitConflictOn,
   authorizeDispatchGitEffectOn,
   assembleDispatchInput,
@@ -96,7 +96,10 @@ import {
   type SingleProjectConstruction,
 } from "@cq/ledger";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
-import { captureCurrentDispatchRecoverySealUnderLock } from "./dispatchRecoverySeal.js";
+import {
+  assertManagedRecoveryTipEligible,
+  captureCurrentDispatchRecoverySealUnderLock,
+} from "./dispatchRecoverySeal.js";
 
 function stagingDeadlineAfter(durationMs: number, phase: string): number {
   const deadlineMs = Date.now() + durationMs;
@@ -2353,16 +2356,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             },
           });
         }
-        const recovery = await discoverDispatchRecoveryOn(
-          options.backend,
-          {
-            namespace,
-            actor: "trusted-parent",
-            gitEffectBinding,
-            liveTip,
-          },
-          { now },
-        );
+        const recovery = await options.backend.transact({ kind: "namespace" }, (store) => {
+          assertManagedRecoveryTipEligible(store.rows(), gitEffectBinding, liveTip);
+          return discoverDispatchRecovery(
+            { namespace, actor: "trusted-parent", gitEffectBinding, liveTip }, { store, now },
+          );
+        });
         return Object.freeze({
           status: "dispatch-recovery-resolved" as const,
           taskId: recovery.gitEffectBinding.taskId,

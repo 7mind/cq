@@ -123,6 +123,34 @@ function bindingMatches(
   );
 }
 
+export function assertManagedRecoveryTipEligible(
+  rows: readonly AttestationRow[],
+  binding: ManagedWorktreeDispatchBinding,
+  liveTip: string,
+): void {
+  for (const row of rows) {
+    if (
+      isAttestationTombstone(row) || row.state !== "aborted" ||
+      row.abortReason !== "gate-rejected" || !bindingMatches(row.gitEffectBinding, binding)
+    ) continue;
+    const output = row.output;
+    if (
+      output === undefined || output === null || typeof output !== "object" ||
+      Array.isArray(output) || !("resultCommit" in output) || typeof output.resultCommit !== "string"
+    ) {
+      throw new CurrentRecoverySealError(
+        "invalid", "gate-rejected row lacks its staged candidate tip",
+      );
+    }
+    if (output.resultCommit === liveTip) {
+      throw new CurrentRecoverySealError(
+        "source-not-found",
+        "gate-rejected candidate cannot mint recovery authority for the unchanged tip",
+      );
+    }
+  }
+}
+
 function lineageSnapshot(
   rows: readonly AttestationRow[],
   binding: ManagedWorktreeDispatchBinding,
@@ -203,6 +231,7 @@ async function sourceCandidates(
   coordinates: CurrentRecoveryCaptureCoordinates,
   deps: CurrentRecoveryCaptureDeps,
 ): Promise<readonly CurrentRecoverySourceCandidate[]> {
+  assertManagedRecoveryTipEligible(snapshot.rows, coordinates.binding, coordinates.liveTip);
   const candidates: CurrentRecoverySourceCandidate[] = [];
   for (const row of snapshot.rows) {
     const continuation = row.dispatchContinuationBinding;
@@ -834,6 +863,7 @@ export async function captureCurrentRecoverySeal(
   for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
     const existing = await deps.journal.read(coordinates.taskId);
     const rows = await deps.snapshot();
+    assertManagedRecoveryTipEligible(rows, coordinates.binding, coordinates.liveTip);
     let includeContinuationTombstones =
       existing?.state === "committed" ? existing.version !== 1 : true;
     let snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);

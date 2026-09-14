@@ -1175,7 +1175,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         },
       });
       expect(await finalize(subject)).toEqual(rejected);
-      await expect(resolveRecovery(subject)).rejects.toThrow("no parent-lost dispatch recovery");
+      await expect(resolveRecovery(subject)).rejects.toThrow("gate-rejected");
       expect(runner.requests).toHaveLength(1);
     }
   });

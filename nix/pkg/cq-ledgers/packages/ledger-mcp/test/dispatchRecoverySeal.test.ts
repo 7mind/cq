@@ -209,8 +209,7 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 }
 
 describe("protected current dispatch-recovery capture", () => {
-  // expected-failure: tasks:T6474
-  test.failing("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
+  test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
     const rejected = authenticatedConsumedResult("pass", { rejectGate: true });
     const earlier = abortedEnvelope({ generation: 2, reason: "missing-result" });
