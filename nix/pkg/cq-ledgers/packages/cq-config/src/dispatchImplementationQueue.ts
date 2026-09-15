@@ -229,6 +229,15 @@ export interface EnqueueImplementationCandidateRequest extends DispatchHandle {
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly stagedOutputDigest: string;
+  /** Required when this attempt succeeds one staged-rebase-retired enrollment. */
+  readonly stagedRebaseSource?: {
+    readonly sourceReference: string;
+    readonly source: DispatchHandle;
+    readonly leaseGeneration: number;
+    readonly guardedRebase: string;
+    readonly ontoCommit: string;
+    readonly guardedRebaseJournalDigest: string;
+  };
 }
 
 export interface QualifyDispatchStagedCompletionRequest extends DispatchHandle {
@@ -588,6 +597,61 @@ export function enqueueImplementationCandidate(
       `enrollment is already active on ${activePrior.attestationId}#${String(activePrior.generation)}`,
     );
   }
+  const retiredSourceRows = priorEnrollment.filter(
+    (candidate) =>
+      candidate.implementationQueue!.state === "staged-rebase-retired" &&
+      candidate.implementationQueue!.stagedRebaseSource !== undefined,
+  );
+  const successorSource = request.stagedRebaseSource;
+  if (retiredSourceRows.length > 0 && successorSource === undefined) {
+    throw new DispatchStagedRebaseSourceError(
+      "ineligible-source",
+      "a retired enrollment requires its exact staged-rebase source authority",
+    );
+  }
+  let retiredSourceRow: AttestationEnvelope | undefined;
+  let retiredSourceBinding: DispatchStagedRebaseSourceBinding | undefined;
+  if (successorSource !== undefined) {
+    if (retiredSourceRows.length !== 1) {
+      throw new DispatchStagedRebaseSourceError(
+        "ineligible-source",
+        "staged-rebase successor requires exactly one retired source enrollment",
+      );
+    }
+    retiredSourceRow = retiredSourceRows[0]!;
+    retiredSourceBinding = retiredSourceRow.implementationQueue!.stagedRebaseSource!;
+    if (
+      retiredSourceBinding.sourceReference !== successorSource.sourceReference ||
+      retiredSourceBinding.source.attestationId !== successorSource.source.attestationId ||
+      retiredSourceBinding.source.generation !== successorSource.source.generation ||
+      retiredSourceBinding.leaseGeneration !== successorSource.leaseGeneration ||
+      retiredSourceBinding.guardedRebase !== successorSource.guardedRebase ||
+      retiredSourceBinding.ontoCommit !== successorSource.ontoCommit ||
+      retiredSourceBinding.guardedRebaseJournalDigest !==
+        successorSource.guardedRebaseJournalDigest ||
+      retiredSourceBinding.sourceResultCommit !==
+        request.gitEffectBinding.guardedRebaseBridge?.oldResultCommit ||
+      retiredSourceBinding.ontoCommit !==
+        request.gitEffectBinding.guardedRebaseBridge?.ontoCommit ||
+      retiredSourceBinding.guardedRebase !==
+        request.gitEffectBinding.guardedRebaseBridge?.guardedRebase
+    ) {
+      throw new DispatchStagedRebaseSourceError(
+        "binding-mismatch",
+        "successor attempt does not match the retired source and finalized guarded-rebase journal",
+      );
+    }
+    const claimed = retiredSourceBinding.successor;
+    if (
+      claimed !== undefined &&
+      (claimed.attestationId !== row.attestationId || claimed.generation !== row.generation)
+    ) {
+      throw new DispatchStagedRebaseSourceError(
+        "already-claimed",
+        "staged-rebase source already allocated a different successor generation",
+      );
+    }
+  }
   const admissionOrdinal =
     priorEnrollment[0]?.implementationQueue?.enrollment.admissionOrdinal ??
     queueRows(deps.store, partition.partitionKey).reduce(
@@ -651,6 +715,28 @@ export function enqueueImplementationCandidate(
     );
   }
   deps.store.replace(row, Object.freeze({ ...row, implementationQueue: candidate }));
+  if (retiredSourceRow !== undefined && retiredSourceBinding !== undefined) {
+    const claimedSource: DispatchStagedRebaseSourceBinding = Object.freeze({
+      ...retiredSourceBinding,
+      successor: Object.freeze({
+        attestationId: row.attestationId,
+        generation: row.generation,
+      }),
+    });
+    const retiredControl: ImplementationQueueControl = Object.freeze({
+      ...retiredSourceRow.implementationQueue!,
+      partitionRevision: candidate.partitionRevision + 1,
+      stagedRebaseSource: claimedSource,
+    });
+    deps.store.replace(
+      retiredSourceRow,
+      Object.freeze({
+        ...retiredSourceRow,
+        implementationQueue: retiredControl,
+        stagedRebaseSourceBinding: claimedSource,
+      }),
+    );
+  }
   return candidate;
 }
 
@@ -1125,6 +1211,38 @@ export function retireDispatchStagedRebaseSource(
   request: RetireDispatchStagedRebaseSourceRequest,
   deps: DispatchServiceDeps,
 ): DispatchStagedRebaseSourceBinding {
+  assertOwnNamespace(request.namespace, deps.store);
+  assertTrustedActor(request.actor);
+  const replayRow = requireEnvelope(request, deps);
+  const replayControl = assertQueueIdentity(replayRow, request);
+  const existingSource =
+    replayRow.stagedRebaseSourceBinding ?? replayControl.stagedRebaseSource;
+  if (existingSource !== undefined) {
+    const exactReplay =
+      existingSource.source.attestationId === request.attestationId &&
+      existingSource.source.generation === request.generation &&
+      existingSource.partitionKey === request.partitionKey &&
+      existingSource.enrollmentId === request.enrollmentId &&
+      existingSource.attemptId === request.attemptId &&
+      existingSource.leaseGeneration === request.leaseGeneration &&
+      existingSource.stagedOutputDigest === request.stagedOutputDigest &&
+      existingSource.sourceResultCommit === request.live.resultCommit &&
+      existingSource.sourceResultTree === request.live.resultTree &&
+      existingSource.gitReceiptLineageDigest === digest(request.live.gitReceipts) &&
+      existingSource.repositoryId === request.live.repositoryId &&
+      existingSource.worktreePath === request.live.worktreePath &&
+      existingSource.ontoCommit === request.ontoCommit &&
+      existingSource.guardedRebase === request.guardedRebase &&
+      existingSource.guardedRebaseJournalDigest === request.guardedRebaseJournalDigest &&
+      request.effectLock.bindingDigest === replayControl.attempt.managedWorktreeBindingDigest &&
+      request.live.clean &&
+      request.live.liveTip === request.live.resultCommit;
+    if (exactReplay) return existingSource;
+    throw new DispatchStagedRebaseSourceError(
+      "binding-mismatch",
+      "altered staged-rebase retirement cannot replace the terminal source binding",
+    );
+  }
   const { row, control } = leasedControl(request, deps);
   const front = frontRow(deps.store, request.partitionKey);
   if (
