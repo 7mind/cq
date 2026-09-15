@@ -181,6 +181,40 @@ describe("ledger-MCP implementation candidate queue", () => {
     ).rejects.toThrow(ImplementationQueueConflictError);
   });
 
+  test("cancelled enrollment authority cannot be resurrected by a later generation of the same attestation", async () => {
+    const subject = fixture();
+    const first = await subject.stage(candidate("T6518"));
+    const qualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    await subject.adapter.terminalize({
+      attestationId: first.prepared.attestationId,
+      generation: first.prepared.generation,
+      partitionKey: qualified.queue.partition.partitionKey,
+      enrollmentId: qualified.queue.enrollment.enrollmentId,
+      attemptId: qualified.queue.attempt.attemptId,
+      expectedPartitionRevision: qualified.queue.partitionRevision,
+      reason: "cancelled",
+    });
+    const resurrected = await subject.stage(
+      candidate("T6518", {
+        reprepareOf: first,
+      }),
+    );
+
+    expect(resurrected.prepared).toMatchObject({
+      attestationId: first.prepared.attestationId,
+      generation: first.prepared.generation + 1,
+    });
+    await expect(
+      subject.adapter.qualifyNativeCompletion({
+        candidate: resurrected.candidate,
+        ...resurrected.qualification,
+      }),
+    ).rejects.toThrow(ImplementationQueueConflictError);
+  });
+
   // regression: T6518 review round 3 — a lower-revision row could hide a terminal mutation.
   test("terminal dispatch mutations advance the partition-wide revision", async () => {
     const subject = fixture();

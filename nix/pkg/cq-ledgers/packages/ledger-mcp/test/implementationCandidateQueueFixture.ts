@@ -33,6 +33,7 @@ export interface PrepareQueueCandidateOptions {
   readonly integrationRef: string;
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
+  readonly reprepareOf?: PreparedQueueCandidate;
 }
 
 interface PreparedOnly {
@@ -69,25 +70,28 @@ export class ImplementationCandidateQueueFixture {
 
   async prepareOnly(options: PrepareQueueCandidateOptions): Promise<PreparedOnly> {
     const sequence = this.sequence++;
-    const baseCommit = repeatedHex(sequence);
+    const prior = options.reprepareOf;
+    const baseCommit = prior?.binding.baseCommit ?? repeatedHex(sequence);
     const resultCommit = repeatedHex(sequence + 1);
     const resultTree = repeatedHex(sequence + 2);
     const expectedChild = {
       childId: `queue-child-${String(sequence)}`,
       runId: `queue-run-${String(sequence)}`,
     };
-    const binding: DispatchGitEffectBinding = {
-      taskId: options.taskId,
-      handleToken: `queue-worktree-${String(sequence)}`,
-      handleFingerprint: (sequence % 16).toString(16).repeat(64),
-      repositoryRoot: `/repo-${options.repositoryId.slice(0, 8)}`,
-      repositoryId: options.repositoryId,
-      commonDir: `/repo-${options.repositoryId.slice(0, 8)}/.git`,
-      worktreePath: `/repo-${options.repositoryId.slice(0, 8)}/.claude/worktrees/${options.taskId}-${String(sequence)}`,
-      branch: `implement/${options.taskId}`,
-      ref: `refs/heads/implement/${options.taskId}`,
-      baseCommit,
-    };
+    const binding: DispatchGitEffectBinding =
+      prior?.binding ??
+      {
+        taskId: options.taskId,
+        handleToken: `queue-worktree-${String(sequence)}`,
+        handleFingerprint: (sequence % 16).toString(16).repeat(64),
+        repositoryRoot: `/repo-${options.repositoryId.slice(0, 8)}`,
+        repositoryId: options.repositoryId,
+        commonDir: `/repo-${options.repositoryId.slice(0, 8)}/.git`,
+        worktreePath: `/repo-${options.repositoryId.slice(0, 8)}/.claude/worktrees/${options.taskId}-${String(sequence)}`,
+        branch: `implement/${options.taskId}`,
+        ref: `refs/heads/implement/${options.taskId}`,
+        baseCommit,
+      };
     const input: DispatchJSONValue = {
       taskId: options.taskId,
       headline: "Queue one implementation candidate",
@@ -96,8 +100,9 @@ export class ImplementationCandidateQueueFixture {
       worktreePath: binding.worktreePath,
       branch: binding.branch,
       baseCommit,
-      round: 0,
-      startingCommit: baseCommit,
+      round: prior?.prepared.generation ?? 0,
+      startingCommit: prior?.candidate.resultCommit ?? baseCommit,
+      ...(prior === undefined ? {} : { priorResultCommit: prior.candidate.resultCommit }),
     };
     const outcome = await prepareDispatchOn(
       this.backend,
@@ -113,6 +118,14 @@ export class ImplementationCandidateQueueFixture {
         catalogHash: "b".repeat(64),
         expectedChild,
         gitEffectBinding: binding,
+        ...(prior === undefined
+          ? {}
+          : {
+              reprepareOf: {
+                attestationId: prior.prepared.attestationId,
+                generation: prior.prepared.generation,
+              },
+            }),
       },
       {
         mode: "manager-bound",
