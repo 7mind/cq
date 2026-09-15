@@ -638,7 +638,13 @@ export function enqueueImplementationCandidate(
   });
   const existing = row.implementationQueue;
   if (existing !== undefined) {
-    if (digest(existing) === digest(candidate)) return existing;
+    if (
+      digest(existing.partition) === digest(candidate.partition) &&
+      digest(existing.enrollment) === digest(candidate.enrollment) &&
+      digest(existing.attempt) === digest(candidate.attempt)
+    ) {
+      return existing;
+    }
     throw new ImplementationQueueConflictError(
       "binding-mismatch",
       "a different immutable queue attempt is already bound to this dispatch",

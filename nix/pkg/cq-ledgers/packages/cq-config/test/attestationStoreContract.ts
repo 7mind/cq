@@ -61,6 +61,7 @@ import {
   TOMBSTONE_RETAINED_FIELDS,
   TRUSTED_DISPATCH_ACTORS,
   abortDispatchOn,
+  acquireImplementationCandidateOn,
   attestationRowDigest,
   claimParentGateOn,
   confirmDispatchCompletionOn,
@@ -69,6 +70,7 @@ import {
   dispatchOperationScope,
   dispatchPayloadDigest,
   discoverDispatchRecoveryOn,
+  enqueueImplementationCandidateOn,
   fetchDispatchInputOn,
   fetchDispatchResultOn,
   inputCapabilityHash,
@@ -76,10 +78,13 @@ import {
   isAttestationTombstone,
   prepareDispatchOn,
   provenanceBindingOf,
+  qualifyDispatchStagedCompletionOn,
+  recoverImplementationCandidateOn,
   resultCapabilityHash,
   resolveDispatchRecoveryOn,
   storeDispatchResultOn,
   sweepAttestationsOn,
+  terminalizeImplementationCandidateOn,
   type AbortDispatchRequest,
   type AttestationBackend,
   type AttestationNamespace,
@@ -92,6 +97,7 @@ import {
   type FetchDispatchResultRequest,
   type InputCapability,
   type LedgerBackend,
+  type ImplementationQueueControl,
   type NativeCompletionProof,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
@@ -678,6 +684,190 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           DispatchStateConflictError,
         );
         expect((await afterComplete.fetch(handleOf(p))).state).toBe("result-stored");
+      }));
+
+    test("qualified implementation queue state, FIFO lease generations, and terminal provenance survive reopen", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const p = await driver.prepare({
+          surface: "codex",
+          gitEffectBinding: PARENT_GATE_BINDING,
+          idempotencyKey: "qualified-queue-reopen",
+        });
+        await driver.fetchInput(p);
+        const staged = await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT);
+        if (staged.state !== "gate-pending") throw new Error("expected gate-pending staging");
+        const enqueue = async (
+          backend: AttestationBackend,
+        ): Promise<ImplementationQueueControl> =>
+          await enqueueImplementationCandidateOn(
+            backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...handleOf(p),
+              repositoryId: PARENT_GATE_BINDING.repositoryId,
+              integrationRef: "refs/heads/main",
+              authority: {
+                taskId: "T720",
+                goalRef: "goals:G94",
+                finalizedManifestDigest: "7".repeat(64),
+              },
+              observedBaseCommit: PARENT_GATE_BINDING.baseCommit,
+              resultCommit: "b".repeat(40),
+              resultTree: "8".repeat(40),
+              gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+              packagedEnvironmentDigest: "9".repeat(64),
+              gitReceipts: [],
+              gitEffectBinding: PARENT_GATE_BINDING,
+              stagedOutputDigest: staged.result.outputDigest,
+            },
+            { now: clock.now },
+          );
+        const queued = await enqueue(driver.backend);
+        expect(queued.enrollment.admissionOrdinal).toBe(1);
+
+        const reopened = await fixture.restart();
+        expect(await enqueue(reopened)).toEqual(queued);
+        expect(
+          await acquireImplementationCandidateOn(
+            reopened,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              partitionKey: queued.partition.partitionKey,
+              holderId: "parent-gate-1",
+            },
+            { now: clock.now },
+          ),
+        ).toMatchObject({ state: "blocked", frontState: "enqueued" });
+
+        const qualificationRequest = {
+          namespace: driver.namespace,
+          actor: "trusted-parent" as const,
+          ...handleOf(p),
+          partitionKey: queued.partition.partitionKey,
+          enrollmentId: queued.enrollment.enrollmentId,
+          attemptId: queued.attempt.attemptId,
+          stagedOutputDigest: staged.result.outputDigest,
+          expectedChild: CHILD,
+          expectedProvenance: provenanceBindingOf(p),
+          nativeCompletion: completion(),
+        };
+        const qualified = await qualifyDispatchStagedCompletionOn(
+          reopened,
+          qualificationRequest,
+          { now: clock.now },
+        );
+        expect(qualified).toMatchObject({ state: "qualified", replayed: false });
+        expect(
+          await qualifyDispatchStagedCompletionOn(reopened, qualificationRequest, {
+            now: clock.now,
+          }),
+        ).toMatchObject({ state: "qualified", replayed: true });
+        await expect(
+          qualifyDispatchStagedCompletionOn(
+            reopened,
+            {
+              ...qualificationRequest,
+              nativeCompletion: completion({ completedAt: "2026-07-27T09:05:01.000Z" }),
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow("altered staged-completion proof");
+
+        const afterQualification = await fixture.restart();
+        const [left, right] = await Promise.all([
+          acquireImplementationCandidateOn(
+            afterQualification,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              partitionKey: queued.partition.partitionKey,
+              holderId: "parent-gate-left",
+            },
+            { now: clock.now },
+          ),
+          acquireImplementationCandidateOn(
+            await fixture.peer(),
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              partitionKey: queued.partition.partitionKey,
+              holderId: "parent-gate-right",
+            },
+            { now: clock.now },
+          ),
+        ]);
+        const leased = [left, right].find(
+          (outcome): outcome is Extract<typeof outcome, { state: "leased" }> =>
+            outcome.state === "leased",
+        );
+        expect([left.state, right.state].sort()).toEqual(["blocked", "leased"]);
+        if (leased === undefined) throw new Error("one contender must hold the lease");
+
+        const recovered = await recoverImplementationCandidateOn(
+          afterQualification,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            attestationId: leased.lease.attestationId,
+            generation: leased.lease.generation,
+            partitionKey: leased.lease.partitionKey,
+            enrollmentId: leased.lease.enrollmentId,
+            attemptId: leased.lease.attemptId,
+            staleLeaseGeneration: leased.lease.leaseGeneration,
+            expectedPartitionRevision: leased.partitionRevision,
+          },
+          { now: clock.now },
+        );
+        expect(recovered.leaseGeneration).toBe(leased.lease.leaseGeneration + 1);
+        await expect(
+          recoverImplementationCandidateOn(
+            afterQualification,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              attestationId: leased.lease.attestationId,
+              generation: leased.lease.generation,
+              partitionKey: leased.lease.partitionKey,
+              enrollmentId: leased.lease.enrollmentId,
+              attemptId: leased.lease.attemptId,
+              staleLeaseGeneration: leased.lease.leaseGeneration,
+              expectedPartitionRevision: recovered.partitionRevision,
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow("lease generation");
+
+        await terminalizeImplementationCandidateOn(
+          afterQualification,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            ...handleOf(p),
+            partitionKey: queued.partition.partitionKey,
+            enrollmentId: queued.enrollment.enrollmentId,
+            attemptId: queued.attempt.attemptId,
+            expectedPartitionRevision: recovered.partitionRevision,
+            reason: "cancelled",
+          },
+          { now: clock.now },
+        );
+        clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+        await new AttestationDriver(afterQualification, clock).sweep();
+        const [tombstone] = await fixture.rows();
+        expect(tombstone).toMatchObject({
+          kind: "tombstone",
+          implementationQueue: {
+            kind: "cq-implementation-queue-tombstone-binding",
+            enrollmentId: queued.enrollment.enrollmentId,
+            qualificationDigest:
+              qualified.state === "qualified"
+                ? qualified.qualification.qualificationDigest
+                : undefined,
+            state: "terminal",
+          },
+        });
       }));
 
     test("deterministic parent-gate rejection replays after restart without recovery authority", () =>

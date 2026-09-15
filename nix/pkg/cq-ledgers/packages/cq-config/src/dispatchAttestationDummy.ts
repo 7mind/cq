@@ -339,12 +339,13 @@ export class InMemoryAttestationStore implements AttestationStore {
  * double that quietly kept half a sweep would make that assertion vacuous.
  */
 export class InMemoryAttestationBackend implements AttestationBackend {
-  private readonly mutex = new AsyncMutex();
+  private mutex: AsyncMutex;
   private store: InMemoryAttestationStore;
   private closed = false;
 
   constructor(store: InMemoryAttestationStore) {
     this.store = store;
+    this.mutex = inMemoryStoreMutex(store);
   }
 
   get namespace(): AttestationNamespace {
@@ -362,6 +363,7 @@ export class InMemoryAttestationBackend implements AttestationBackend {
    */
   rehydrate(): this {
     this.store = this.reopen(this.store.snapshot());
+    this.mutex = inMemoryStoreMutex(this.store);
     return this;
   }
 
@@ -411,4 +413,14 @@ export class InMemoryAttestationBackend implements AttestationBackend {
   private reopen(rows: readonly AttestationRow[]): InMemoryAttestationStore {
     return InMemoryAttestationStore.rehydrate(this.store.namespace, rows, this.store.fault);
   }
+}
+
+const IN_MEMORY_STORE_MUTEXES = new WeakMap<InMemoryAttestationStore, AsyncMutex>();
+
+function inMemoryStoreMutex(store: InMemoryAttestationStore): AsyncMutex {
+  const existing = IN_MEMORY_STORE_MUTEXES.get(store);
+  if (existing !== undefined) return existing;
+  const created = new AsyncMutex();
+  IN_MEMORY_STORE_MUTEXES.set(store, created);
+  return created;
 }
