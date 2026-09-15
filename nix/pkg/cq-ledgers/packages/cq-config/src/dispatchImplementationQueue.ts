@@ -1237,7 +1237,7 @@ export function terminalizeImplementationCandidate(
         generation: row.generation,
         abortedAt: row.abortedAt,
         reason,
-        details: row.abortDetails,
+        ...(row.abortDetails === undefined ? {} : { details: row.abortDetails }),
       });
     }
     throw new ImplementationQueueConflictError(
