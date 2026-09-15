@@ -626,7 +626,8 @@ export function enqueueImplementationCandidate(
   }
   const terminalPrior = priorEnrollment.find(
     (candidate) =>
-      candidate.attestationId !== row.attestationId &&
+      (candidate.attestationId !== row.attestationId ||
+        candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired",
   );
   if (terminalPrior !== undefined) {
