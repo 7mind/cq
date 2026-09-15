@@ -2517,7 +2517,15 @@ function claimStagedRebaseSuccessor(
   if (previous === undefined) return;
   const queue = previous.implementationQueue;
   const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
-  if (source === undefined) return;
+  if (source === undefined) {
+    if (bridge !== undefined && queue !== undefined) {
+      throw new AttestationBindingError(
+        "reprepareOf",
+        "the guarded-rebase source is not a retired implementation queue enrollment",
+      );
+    }
+    return;
+  }
   if (bridge === undefined || request.gitEffectBinding === undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",
