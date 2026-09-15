@@ -3142,12 +3142,7 @@ function writeAbort(
               row.implementationQueue.partition.partitionKey,
             ),
             terminal: Object.freeze({
-              reason:
-                reason === "cancelled"
-                  ? ("cancelled" as const)
-                  : reason === "native-failure"
-                    ? ("native-failure" as const)
-                    : ("mismatched-completion" as const),
+              reason,
               terminalAt: at,
               detailsDigest:
                 details === undefined

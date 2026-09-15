@@ -50,8 +50,7 @@ export type ImplementationCandidateQueueState =
   | "staged-rebase-retired";
 
 export type ImplementationCandidateTerminalReason =
-  | "cancelled"
-  | "native-failure"
+  | DispatchAbortReason
   | "foreign-completion"
   | "mismatched-completion"
   | "superseded"
@@ -1212,7 +1211,6 @@ export function terminalizeImplementationCandidate(
 ): AbortedDispatchResult<DispatchAbortReason> {
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
-  assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
   const reason =
@@ -1221,13 +1219,40 @@ export function terminalizeImplementationCandidate(
       : request.reason === "native-failure"
         ? "native-failure"
         : "protocol-violation";
+  const details = request.detail ?? { reason: request.reason };
+  const detailsDigest = digest(details);
+  if (!active(control)) {
+    if (
+      control.state === "terminal" &&
+      row.state === "aborted" &&
+      row.abortReason === reason &&
+      row.abortedAt !== undefined &&
+      row.abortDetailsDigest === detailsDigest &&
+      control.terminal?.reason === request.reason &&
+      control.terminal.detailsDigest === detailsDigest
+    ) {
+      return Object.freeze({
+        state: "aborted" as const,
+        attestationId: row.attestationId,
+        generation: row.generation,
+        abortedAt: row.abortedAt,
+        reason,
+        details: row.abortDetails,
+      });
+    }
+    throw new ImplementationQueueConflictError(
+      "already-terminal",
+      `implementation queue control is already ${control.state}`,
+    );
+  }
+  assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
   return queuedAbort(
     row,
     control,
     deps.now(),
     reason,
     request.reason,
-    request.detail ?? { reason: request.reason },
+    details,
     deps,
   );
 }
