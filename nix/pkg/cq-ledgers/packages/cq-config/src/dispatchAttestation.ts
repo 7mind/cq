@@ -2580,15 +2580,31 @@ function claimStagedRebaseSuccessor(
     ...source,
     successor: Object.freeze({ ...successor }),
   });
-  const claimedQueue: ImplementationQueueControl | ImplementationQueueTombstoneBinding =
-    Object.freeze({
-      ...queue,
-      partitionRevision: nextImplementationQueuePartitionRevision(
-        deps.store,
-        implementationQueuePartitionKey(queue),
-      ),
+  const partitionRevision = nextImplementationQueuePartitionRevision(
+    deps.store,
+    implementationQueuePartitionKey(queue),
+  );
+  if (isAttestationTombstone(previous)) {
+    const claimedQueue: ImplementationQueueTombstoneBinding = Object.freeze({
+      ...previous.implementationQueue!,
+      partitionRevision,
       stagedRebaseSource: claimedSource,
     });
+    deps.store.replace(
+      previous,
+      Object.freeze({
+        ...previous,
+        implementationQueue: claimedQueue,
+        stagedRebaseSourceBinding: claimedSource,
+      }),
+    );
+    return;
+  }
+  const claimedQueue: ImplementationQueueControl = Object.freeze({
+    ...previous.implementationQueue!,
+    partitionRevision,
+    stagedRebaseSource: claimedSource,
+  });
   deps.store.replace(
     previous,
     Object.freeze({
