@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  AttestationContractError,
   DISPATCH_OVERLAY_REGISTRY,
   ImplementationQueueConflictError,
   InMemoryAttestationBackend,
@@ -40,6 +41,18 @@ function candidate(
 ): PrepareQueueCandidateOptions {
   return { ...defaults, taskId, ...overrides };
 }
+
+type DirectTerminalReason = Parameters<
+  ImplementationCandidateQueueFixture["adapter"]["terminalize"]
+>[0]["reason"];
+
+// @ts-expect-error parent-lost requires the authoritative dispatch abort transition.
+const parentLostDirectReason: DirectTerminalReason = "parent-lost";
+// @ts-expect-error gate-rejected requires a claimed and completed supervised gate.
+const gateRejectedDirectReason: DirectTerminalReason = "gate-rejected";
+// @ts-expect-error operational-abstention belongs to the authoritative dispatch abort transition.
+const operationalAbstentionDirectReason: DirectTerminalReason = "operational-abstention";
+void [parentLostDirectReason, gateRejectedDirectReason, operationalAbstentionDirectReason];
 
 describe("ledger-MCP implementation candidate queue", () => {
   const backends: InMemoryAttestationBackend[] = [];
@@ -282,6 +295,49 @@ describe("ledger-MCP implementation candidate queue", () => {
       );
       if (afterConflict === undefined) throw new Error("conflicted queue row missing");
       expect(attestationRowDigest(afterConflict)).toBe(terminalDigest);
+    });
+  }
+
+  for (const protectedReason of [
+    "parent-lost",
+    "gate-rejected",
+    "operational-abstention",
+  ] as const) {
+    // regression: T6518 review round 9 — stored abort provenance widened this command's domain.
+    test(`${protectedReason} cannot bypass its authoritative transition through direct terminalization`, async () => {
+      const subject = fixture();
+      const staged = await subject.stage(candidate("T6518"));
+      const qualified = await subject.adapter.qualifyNativeCompletion({
+        candidate: staged.candidate,
+        ...staged.qualification,
+      });
+      const before = await subject.backend.transact({ kind: "namespace" }, (store) =>
+        store.read(staged.prepared),
+      );
+      if (before === undefined) throw new Error("qualified queue row missing");
+      const beforeDigest = attestationRowDigest(before);
+
+      await expect(
+        subject.adapter.terminalize({
+          attestationId: staged.prepared.attestationId,
+          generation: staged.prepared.generation,
+          partitionKey: qualified.queue.partition.partitionKey,
+          enrollmentId: qualified.queue.enrollment.enrollmentId,
+          attemptId: qualified.queue.attempt.attemptId,
+          expectedPartitionRevision: qualified.queue.partitionRevision,
+          reason: protectedReason as unknown as DirectTerminalReason,
+        }),
+      ).rejects.toThrow(AttestationContractError);
+
+      const after = await subject.backend.transact({ kind: "namespace" }, (store) =>
+        store.read(staged.prepared),
+      );
+      if (after === undefined) throw new Error("refused queue row missing");
+      expect(attestationRowDigest(after)).toBe(beforeDigest);
+      expect(after).toMatchObject({
+        state: "gate-pending",
+        implementationQueue: { state: "qualified" },
+      });
     });
   }
 
