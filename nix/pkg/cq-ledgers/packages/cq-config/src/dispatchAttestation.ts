@@ -2513,18 +2513,11 @@ function claimStagedRebaseSuccessor(
     }
     return;
   }
-  const previous = requireRow(reprepareOf, deps);
+  const previous = readRow(reprepareOf, deps);
+  if (previous === undefined) return;
   const queue = previous.implementationQueue;
   const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
-  if (source === undefined) {
-    if (bridge !== undefined) {
-      throw new AttestationBindingError(
-        "gitEffectBinding.guardedRebaseBridge",
-        "a guarded-rebase successor requires retired staged-rebase source authority",
-      );
-    }
-    return;
-  }
+  if (source === undefined) return;
   if (bridge === undefined || request.gitEffectBinding === undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",
