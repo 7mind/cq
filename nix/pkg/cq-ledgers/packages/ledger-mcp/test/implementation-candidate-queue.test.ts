@@ -6,6 +6,7 @@ import {
   InMemoryAttestationStore,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   abortDispatchOn,
+  attestationRowDigest,
   claimParentGateOn,
   completeParentGateOn,
   confirmDispatchCompletionOn,
@@ -217,6 +218,111 @@ describe("ledger-MCP implementation candidate queue", () => {
         ...resurrected.qualification,
       }),
     ).rejects.toThrow(ImplementationQueueConflictError);
+  });
+
+  for (const terminalReason of [
+    "cancelled",
+    "native-failure",
+    "foreign-completion",
+    "mismatched-completion",
+    "superseded",
+  ] as const) {
+    test(`${terminalReason} terminalization is immutable and exact replay does not advance the partition`, async () => {
+      const subject = fixture();
+      const staged = await subject.stage(candidate("T6518"));
+      const qualified = await subject.adapter.qualifyNativeCompletion({
+        candidate: staged.candidate,
+        ...staged.qualification,
+      });
+      const request = {
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+        partitionKey: qualified.queue.partition.partitionKey,
+        enrollmentId: qualified.queue.enrollment.enrollmentId,
+        attemptId: qualified.queue.attempt.attemptId,
+        expectedPartitionRevision: qualified.queue.partitionRevision,
+        reason: terminalReason,
+        detail: { terminalReason },
+      } as const;
+      await expect(
+        subject.adapter.terminalize({
+          ...request,
+          expectedPartitionRevision: request.expectedPartitionRevision - 1,
+        }),
+      ).rejects.toMatchObject({ reason: "partition-revision" });
+
+      const first = await subject.adapter.terminalize(request);
+      const terminalRow = await subject.backend.transact({ kind: "namespace" }, (store) =>
+        store.read(staged.prepared),
+      );
+      if (terminalRow === undefined) throw new Error("terminal queue row missing");
+      const terminalDigest = attestationRowDigest(terminalRow);
+      expect(terminalRow.implementationQueue).toMatchObject({
+        state: "terminal",
+        terminal: { reason: terminalReason },
+      });
+
+      expect(await subject.adapter.terminalize(request)).toEqual(first);
+      const afterReplay = await subject.backend.transact({ kind: "namespace" }, (store) =>
+        store.read(staged.prepared),
+      );
+      if (afterReplay === undefined) throw new Error("replayed queue row missing");
+      expect(attestationRowDigest(afterReplay)).toBe(terminalDigest);
+
+      const alteredReason = terminalReason === "cancelled" ? "native-failure" : "cancelled";
+      await expect(
+        subject.adapter.terminalize({
+          ...request,
+          expectedPartitionRevision: terminalRow.implementationQueue!.partitionRevision,
+          reason: alteredReason,
+        }),
+      ).rejects.toMatchObject({ reason: "already-terminal" });
+      const afterConflict = await subject.backend.transact({ kind: "namespace" }, (store) =>
+        store.read(staged.prepared),
+      );
+      if (afterConflict === undefined) throw new Error("conflicted queue row missing");
+      expect(attestationRowDigest(afterConflict)).toBe(terminalDigest);
+    });
+  }
+
+  test("released queue control cannot be terminalized", async () => {
+    const subject = fixture();
+    const staged = await subject.stage(candidate("T6518"));
+    const qualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await subject.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "released-terminalization",
+    });
+    if (acquired.state !== "leased") throw new Error("expected a leased candidate");
+    const released = await subject.adapter.release({
+      ...acquired.lease,
+      expectedPartitionRevision: acquired.partitionRevision,
+    });
+    const releasedRow = await subject.backend.transact({ kind: "namespace" }, (store) =>
+      store.read(staged.prepared),
+    );
+    if (releasedRow === undefined) throw new Error("released queue row missing");
+    const releasedDigest = attestationRowDigest(releasedRow);
+
+    await expect(
+      subject.adapter.terminalize({
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+        partitionKey: released.partition.partitionKey,
+        enrollmentId: released.enrollment.enrollmentId,
+        attemptId: released.attempt.attemptId,
+        expectedPartitionRevision: released.partitionRevision,
+        reason: "cancelled",
+      }),
+    ).rejects.toMatchObject({ reason: "already-terminal" });
+    const afterConflict = await subject.backend.transact({ kind: "namespace" }, (store) =>
+      store.read(staged.prepared),
+    );
+    if (afterConflict === undefined) throw new Error("released queue row disappeared");
+    expect(attestationRowDigest(afterConflict)).toBe(releasedDigest);
   });
 
   for (const reason of ["cancelled", "parent-lost"] as const) {

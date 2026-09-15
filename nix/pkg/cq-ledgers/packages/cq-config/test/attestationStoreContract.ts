@@ -867,6 +867,133 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         });
       }));
 
+    for (const abortCase of [
+      {
+        reason: "parent-lost",
+        details: { source: "queue-parent-loss" },
+      },
+      {
+        reason: "gate-rejected",
+        details: {
+          kind: "cq-supervised-gate-rejection",
+          version: 1,
+          command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          gateExitCode: 1,
+          passCount: 16,
+          failCount: 1,
+          outputTail: "controlled queue gate rejection",
+        },
+      },
+      {
+        reason: "operational-abstention",
+        details: { source: "queue-operator-abstention" },
+      },
+    ] as const) {
+      test(`queue terminal provenance preserves ${abortCase.reason}`, () =>
+        withCase(async ({ fixture, driver, clock }) => {
+          const prepared = await driver.prepare({
+            surface: "codex",
+            gitEffectBinding: PARENT_GATE_BINDING,
+            idempotencyKey: `queue-abort-${abortCase.reason}`,
+          });
+          if (prepared.parentGateCapability === undefined) {
+            throw new Error("Codex worker prepare omitted parent gate authority");
+          }
+          await driver.fetchInput(prepared);
+          const staged = await driver.store(
+            prepared.resultCapability,
+            PARENT_GATE_STAGED_OUTPUT,
+          );
+          if (staged.state !== "gate-pending") throw new Error("expected gate-pending staging");
+          const queued = await enqueueImplementationCandidateOn(
+            driver.backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...handleOf(prepared),
+              repositoryId: PARENT_GATE_BINDING.repositoryId,
+              integrationRef: "refs/heads/main",
+              authority: {
+                taskId: "T720",
+                goalRef: "goals:G94",
+                finalizedManifestDigest: "7".repeat(64),
+              },
+              observedBaseCommit: PARENT_GATE_BINDING.baseCommit,
+              resultCommit: "b".repeat(40),
+              resultTree: "8".repeat(40),
+              gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+              packagedEnvironmentDigest: "9".repeat(64),
+              gitReceipts: [],
+              gitEffectBinding: PARENT_GATE_BINDING,
+              stagedOutputDigest: staged.result.outputDigest,
+            },
+            { now: clock.now },
+          );
+          await qualifyDispatchStagedCompletionOn(
+            driver.backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...handleOf(prepared),
+              partitionKey: queued.partition.partitionKey,
+              enrollmentId: queued.enrollment.enrollmentId,
+              attemptId: queued.attempt.attemptId,
+              stagedOutputDigest: staged.result.outputDigest,
+              expectedChild: CHILD,
+              expectedProvenance: provenanceBindingOf(prepared),
+              nativeCompletion: completion(),
+            },
+            { now: clock.now },
+          );
+          if (abortCase.reason === "gate-rejected") {
+            const acquired = await acquireImplementationCandidateOn(
+              driver.backend,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                partitionKey: queued.partition.partitionKey,
+                holderId: "queue-gate-rejection",
+              },
+              { now: clock.now },
+            );
+            if (acquired.state !== "leased") throw new Error("expected a leased candidate");
+            await claimParentGateOn(
+              driver.backend,
+              {
+                ...handleOf(prepared),
+                parentGateCapability: prepared.parentGateCapability,
+                queueLease: acquired.lease,
+              },
+              { now: clock.now },
+            );
+          }
+
+          await driver.abort(prepared, {
+            reason: abortCase.reason,
+            details: abortCase.details,
+            ...(abortCase.reason === "parent-lost"
+              ? {
+                  recoveryContext: {
+                    liveTip: PARENT_GATE_BINDING.baseCommit,
+                    gitReceipts: [],
+                  },
+                }
+              : {}),
+          });
+          const reopened = await fixture.restart();
+          const persisted = await reopened.transact({ kind: "namespace" }, (store) =>
+            store.read(handleOf(prepared)),
+          );
+          expect(persisted?.implementationQueue).toMatchObject({
+            state: "terminal",
+            terminal: {
+              reason: abortCase.reason,
+              detailsDigest: dispatchPayloadDigest(abortCase.details),
+            },
+          });
+        }));
+    }
+
     // regression: T6518 review round 3 — required-live PostgreSQL omitted this authority path.
     test("staged-rebase retirement atomically allocates one successor on the same enrollment", () =>
       withCase(async ({ fixture, driver, clock }) => {

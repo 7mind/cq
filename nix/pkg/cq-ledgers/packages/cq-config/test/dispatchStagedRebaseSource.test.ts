@@ -21,6 +21,7 @@ import {
   sequentialDispatchRandomBytes,
   storeDispatchResultOn,
   sweepAttestationsOn,
+  terminalizeImplementationCandidateOn,
   type AttestationNamespace,
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
@@ -307,6 +308,58 @@ describe("staged-rebase source retirement", () => {
     clock.advance(IDEMPOTENCY_HORIZON_MS - TERMINAL_ENVELOPE_RETENTION_MS);
     await sweepAttestationsOn(backend, { now: clock.now });
     expect(backend.storedRows()).toHaveLength(0);
+  });
+
+  test("staged-rebase-retired queue control cannot be terminalized", async () => {
+    const { backend, prepared, retirement } = await qualifiedAndLeased();
+    const source = await retireDispatchStagedRebaseSourceOn(backend, retirement, {
+      now: clock.now,
+    });
+    const retiredRow = await backend.transact({ kind: "namespace" }, (store) =>
+      store.read(prepared),
+    );
+    if (retiredRow?.kind !== "envelope" || retiredRow.implementationQueue === undefined) {
+      throw new Error("retired queue row missing");
+    }
+
+    await expect(
+      terminalizeImplementationCandidateOn(
+        backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          attestationId: prepared.attestationId,
+          generation: prepared.generation,
+          partitionKey: retiredRow.implementationQueue.partition.partitionKey,
+          enrollmentId: retiredRow.implementationQueue.enrollment.enrollmentId,
+          attemptId: retiredRow.implementationQueue.attempt.attemptId,
+          expectedPartitionRevision: retiredRow.implementationQueue.partitionRevision,
+          reason: "native-failure",
+        },
+        { now: clock.now },
+      ),
+    ).rejects.toMatchObject({ reason: "already-terminal" });
+    expect(
+      await fetchDispatchResultOn(
+        backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          attestationId: prepared.attestationId,
+          generation: prepared.generation,
+        },
+        { now: clock.now },
+      ),
+    ).toMatchObject({ state: "aborted", reason: "staged-rebase" });
+    const afterConflict = await backend.transact({ kind: "namespace" }, (store) =>
+      store.read(prepared),
+    );
+    expect(afterConflict).toMatchObject({
+      implementationQueue: {
+        state: "staged-rebase-retired",
+        stagedRebaseSource: { serverBindingDigest: source.serverBindingDigest },
+      },
+    });
   });
 
   test("the retired source binds exactly one successor attempt to the original enrollment", async () => {
