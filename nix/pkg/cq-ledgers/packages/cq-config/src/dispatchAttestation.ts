@@ -109,6 +109,13 @@ import {
   type ResultCapability,
   type StoreDispatchResult,
 } from "./compactDispatchProtocol.js";
+import type {
+  DispatchStagedRebaseSourceBinding,
+  ImplementationQueueControl,
+  ImplementationQueueLeaseBinding,
+  ImplementationQueueTombstoneBinding,
+  ImplementationStagedCompletionQualification,
+} from "./dispatchImplementationQueue.js";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ATTESTATION_ID_RE = /^att_[A-Za-z0-9_-]{32,}$/;
@@ -1181,6 +1188,12 @@ export interface AttestationEnvelope {
   readonly gateSubmittedOutputDigest?: string;
   readonly gateClaimedAt?: string;
   readonly gateEpoch?: number;
+  /** Durable queue identity and lease state for a supervised implementation candidate. */
+  readonly implementationQueue?: ImplementationQueueControl;
+  /** Trusted native completion bound to exact staged bytes before any gate starts. */
+  readonly stagedCompletionQualification?: ImplementationStagedCompletionQualification;
+  /** Server-authenticated authority retained after staged-rebase retirement. */
+  readonly stagedRebaseSourceBinding?: DispatchStagedRebaseSourceBinding;
   readonly output?: DispatchJSONValue;
   readonly outputDigest?: string;
   readonly consumedAt?: string;
@@ -1231,6 +1244,9 @@ export interface AttestationTombstone {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Retained so collapse cannot resurrect a predecessor's single-use authority. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Minimal terminal queue identity/provenance retained through collapse. */
+  readonly implementationQueue?: ImplementationQueueTombstoneBinding;
+  readonly stagedRebaseSourceBinding?: DispatchStagedRebaseSourceBinding;
 }
 
 export type AttestationRow = AttestationEnvelope | AttestationTombstone;
@@ -1280,6 +1296,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "gateSubmittedOutputDigest",
   "gateClaimedAt",
   "gateEpoch",
+  "stagedCompletionQualification",
   "consumedAt",
   "outputMaterializedAt",
   "abortedAt",
@@ -2793,6 +2810,13 @@ function terminalDigestOf(
   return dispatchPayloadDigest({ terminalKind: kind, ...detail });
 }
 
+function queueControlWithoutLease(
+  control: ImplementationQueueControl,
+): Omit<ImplementationQueueControl, "lease"> {
+  const { lease: _lease, ...remaining } = control;
+  return remaining;
+}
+
 const BACKEND_OWNED_ABORTED_RESULTS = new WeakSet<object>();
 
 export function isBackendOwnedAbortedDispatchResult(
@@ -2956,6 +2980,31 @@ function writeAbort(
     ...(row.storedAt === undefined ? {} : { storedAt: row.storedAt }),
     ...(row.output === undefined ? {} : { output: row.output }),
     ...(row.outputDigest === undefined ? {} : { outputDigest: row.outputDigest }),
+    ...(row.implementationQueue === undefined
+      ? {}
+      : {
+          implementationQueue: Object.freeze({
+            ...queueControlWithoutLease(row.implementationQueue),
+            state: "terminal" as const,
+            partitionRevision: row.implementationQueue.partitionRevision + 1,
+            terminal: Object.freeze({
+              reason:
+                reason === "cancelled"
+                  ? ("cancelled" as const)
+                  : reason === "native-failure"
+                    ? ("native-failure" as const)
+                    : ("mismatched-completion" as const),
+              terminalAt: at,
+              detailsDigest:
+                details === undefined
+                  ? dispatchPayloadDigest(null)
+                  : dispatchPayloadDigest(details),
+            }),
+          }),
+        }),
+    ...(row.stagedCompletionQualification === undefined
+      ? {}
+      : { stagedCompletionQualification: row.stagedCompletionQualification }),
     abortedAt: at,
     abortReason: reason,
     ...(details === undefined ? {} : { abortDetails: details }),
@@ -3133,6 +3182,7 @@ function supervisedWorkerGateContextOf(
 
 export interface ParentGateFinalizeRequest extends DispatchHandle {
   readonly parentGateCapability: ParentGateCapability;
+  readonly queueLease?: ImplementationQueueLeaseBinding;
 }
 
 export interface ClaimedParentGate {
@@ -3180,6 +3230,43 @@ function requireParentGateRow(
   return row;
 }
 
+function assertParentGateQueueLease(
+  row: AttestationEnvelope,
+  lease: ImplementationQueueLeaseBinding | undefined,
+): void {
+  const control = row.implementationQueue;
+  if (control === undefined) return;
+  if (
+    control.qualification === undefined ||
+    row.stagedCompletionQualification?.qualificationDigest !==
+      control.qualification.qualificationDigest
+  ) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      "parent gate requires an exactly qualified staged completion",
+    );
+  }
+  if (
+    lease === undefined ||
+    control.state !== "leased" ||
+    control.lease === undefined ||
+    lease.attestationId !== row.attestationId ||
+    lease.generation !== row.generation ||
+    lease.partitionKey !== control.partition.partitionKey ||
+    lease.enrollmentId !== control.enrollment.enrollmentId ||
+    lease.attemptId !== control.attempt.attemptId ||
+    lease.holderId !== control.lease.holderId ||
+    lease.leaseGeneration !== control.lease.generation
+  ) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      "parent gate requires the exact current implementation queue lease",
+    );
+  }
+}
+
 /** Claim or reclaim the durable parent-owned gate under the worktree effect lock. */
 export function claimParentGate(
   request: ParentGateFinalizeRequest,
@@ -3199,6 +3286,7 @@ export function claimParentGate(
       `attestation "${row.attestationId}" has no staged parent gate`,
     );
   }
+  assertParentGateQueueLease(row, request.queueLease);
   if (row.output === undefined || row.gateSubmittedAt === undefined) {
     throw new AttestationContractError("row", "a staged parent gate must carry output and time");
   }
@@ -3252,6 +3340,7 @@ export function completeParentGate(
       `attestation "${row.attestationId}" has no claimed parent gate`,
     );
   }
+  assertParentGateQueueLease(row, request.queueLease);
   if (row.gateEpoch !== request.gateEpoch) {
     throw new DispatchStateConflictError(
       STORE_RESULT,
@@ -3652,6 +3741,16 @@ export function confirmDispatchCompletion(
   if (row.output === undefined || row.outputDigest === undefined) {
     throw new AttestationContractError("row", "a result-stored envelope must carry its output");
   }
+  if (
+    row.stagedCompletionQualification !== undefined &&
+    dispatchPayloadDigest(row.stagedCompletionQualification.nativeCompletion as unknown as DispatchJSONValue) !==
+      dispatchPayloadDigest(proof as unknown as DispatchJSONValue)
+  ) {
+    throw new AttestationBindingError(
+      "nativeCompletion",
+      "completion proof differs from the persisted staged-completion qualification",
+    );
+  }
   const terminalDigest = terminalDigestOf("consumed", {
     outputDigest: row.outputDigest,
     childId: proof.childId,
@@ -3682,6 +3781,20 @@ export function confirmDispatchCompletion(
     nativeCompletion: proof,
     terminalAt: at,
     terminalDigest,
+    ...(row.implementationQueue === undefined
+      ? {}
+      : {
+          implementationQueue: Object.freeze({
+            ...queueControlWithoutLease(row.implementationQueue),
+            state: "released" as const,
+            partitionRevision: row.implementationQueue.partitionRevision + 1,
+            terminal: Object.freeze({
+              reason: "gate-complete" as const,
+              terminalAt: at,
+              detailsDigest: dispatchPayloadDigest({ outputDigest: row.outputDigest }),
+            }),
+          }),
+        }),
     ...(continuationBinding === undefined
       ? {}
       : { dispatchContinuationBinding: continuationBinding }),
@@ -4399,6 +4512,45 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.implementationQueue === undefined
+      ? {}
+      : row.implementationQueue.state !== "released" &&
+          row.implementationQueue.state !== "terminal" &&
+          row.implementationQueue.state !== "staged-rebase-retired"
+        ? (() => {
+            throw new AttestationContractError(
+              "implementationQueue.state",
+              "a terminal attestation cannot retain a runnable queue enrollment",
+            );
+          })()
+        : {
+            implementationQueue: Object.freeze({
+              kind: "cq-implementation-queue-tombstone-binding" as const,
+              version: 1 as const,
+              partitionKey: row.implementationQueue.partition.partitionKey,
+              enrollmentId: row.implementationQueue.enrollment.enrollmentId,
+              admissionOrdinal: row.implementationQueue.enrollment.admissionOrdinal,
+              attemptId: row.implementationQueue.attempt.attemptId,
+              state: row.implementationQueue.state,
+              partitionRevision: row.implementationQueue.partitionRevision,
+              leaseGeneration: row.implementationQueue.leaseGeneration,
+              ...(row.implementationQueue.qualification === undefined
+                ? {}
+                : {
+                    qualificationDigest:
+                      row.implementationQueue.qualification.qualificationDigest,
+                  }),
+              ...(row.implementationQueue.terminal === undefined
+                ? {}
+                : { terminal: row.implementationQueue.terminal }),
+              ...(row.implementationQueue.stagedRebaseSource === undefined
+                ? {}
+                : { stagedRebaseSource: row.implementationQueue.stagedRebaseSource }),
+            }),
+          }),
+    ...(row.stagedRebaseSourceBinding === undefined
+      ? {}
+      : { stagedRebaseSourceBinding: row.stagedRebaseSourceBinding }),
   });
 }
 

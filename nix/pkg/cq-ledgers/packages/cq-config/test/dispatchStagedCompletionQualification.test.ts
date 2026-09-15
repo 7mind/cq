@@ -2,12 +2,15 @@ import { describe, expect, test } from "bun:test";
 import {
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   claimParentGateOn,
+  enqueueImplementationCandidateOn,
   fetchDispatchInputOn,
   prepareDispatchOn,
   provenanceBindingOf,
+  qualifyDispatchStagedCompletionOn,
   sequentialDispatchRandomBytes,
   storeDispatchResultOn,
   type AttestationEnvelope,
@@ -15,6 +18,8 @@ import {
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
+  type GatePendingResultView,
+  type ImplementationQueueControl,
   type NativeCompletionProof,
 } from "@cq/config";
 
@@ -77,6 +82,7 @@ const nativeCompletion: NativeCompletionProof = {
 async function staged(): Promise<{
   readonly backend: InMemoryAttestationBackend;
   readonly prepared: DispatchPrepared;
+  readonly pending: GatePendingResultView;
 }> {
   const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
   const outcome = await prepareDispatchOn(
@@ -114,13 +120,49 @@ async function staged(): Promise<{
     { now: clock.now },
   );
   expect(stored.state).toBe("gate-pending");
-  return { backend, prepared: outcome.prepared };
+  if (stored.state !== "gate-pending") throw new Error("expected gate-pending result");
+  return { backend, prepared: outcome.prepared, pending: stored.result };
+}
+
+async function enrolled(): Promise<{
+  readonly backend: InMemoryAttestationBackend;
+  readonly prepared: DispatchPrepared;
+  readonly pending: GatePendingResultView;
+  readonly queue: ImplementationQueueControl;
+}> {
+  const candidate = await staged();
+  const queue = await enqueueImplementationCandidateOn(
+    candidate.backend,
+    {
+      namespace,
+      actor: "trusted-parent",
+      attestationId: candidate.prepared.attestationId,
+      generation: candidate.prepared.generation,
+      repositoryId: binding.repositoryId,
+      integrationRef: "refs/heads/main",
+      authority: {
+        taskId: "T6518",
+        goalRef: "goals:G6518",
+        finalizedManifestDigest: "7".repeat(64),
+      },
+      observedBaseCommit: baseCommit,
+      resultCommit,
+      resultTree: "8".repeat(40),
+      gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+      packagedEnvironmentDigest: "9".repeat(64),
+      gitReceipts: [],
+      gitEffectBinding: binding,
+      stagedOutputDigest: candidate.pending.outputDigest,
+    },
+    { now: clock.now },
+  );
+  return { ...candidate, queue };
 }
 
 describe("staged completion qualification", () => {
   // regression: T6518 — pre-change gate-pending rows were directly runnable.
   test("stale-base gate-pending conflict is refused before the attempt is qualified", async () => {
-    const { backend, prepared } = await staged();
+    const { backend, prepared } = await enrolled();
     await expect(
       claimParentGateOn(
         backend,
@@ -136,7 +178,25 @@ describe("staged completion qualification", () => {
 
   // regression: T6518 — no durable row bound the native observation to staged bytes.
   test("staged-completion qualification is persisted before any gate can start", async () => {
-    const { backend, prepared } = await staged();
+    const { backend, prepared, pending, queue } = await enrolled();
+    const qualified = await qualifyDispatchStagedCompletionOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        partitionKey: queue.partition.partitionKey,
+        enrollmentId: queue.enrollment.enrollmentId,
+        attemptId: queue.attempt.attemptId,
+        stagedOutputDigest: pending.outputDigest,
+        expectedChild,
+        expectedProvenance: provenanceBindingOf(prepared),
+        nativeCompletion,
+      },
+      { now: clock.now },
+    );
+    expect(qualified.state).toBe("qualified");
     const row = backend.storedRows()[0] as AttestationEnvelope;
     expect(row).toEqual(
       expect.objectContaining({

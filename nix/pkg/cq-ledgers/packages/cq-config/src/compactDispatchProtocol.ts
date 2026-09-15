@@ -144,6 +144,7 @@ export const DISPATCH_ABORT_REASONS = [
   "parent-lost",
   "gate-rejected",
   "operational-abstention",
+  "staged-rebase",
 ] as const;
 
 export type DispatchAbortReason = (typeof DISPATCH_ABORT_REASONS)[number];
