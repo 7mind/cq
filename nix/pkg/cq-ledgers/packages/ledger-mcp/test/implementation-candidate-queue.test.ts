@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  DISPATCH_OVERLAY_REGISTRY,
   ImplementationQueueConflictError,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
@@ -8,7 +9,10 @@ import {
   claimParentGateOn,
   completeParentGateOn,
   confirmDispatchCompletionOn,
+  prepareDispatchOn,
+  sequentialDispatchRandomBytes,
   type AttestationNamespace,
+  type DispatchGitEffectBinding,
   type DispatchJSONValue,
 } from "@cq/config";
 import {
@@ -214,6 +218,102 @@ describe("ledger-MCP implementation candidate queue", () => {
       }),
     ).rejects.toThrow(ImplementationQueueConflictError);
   });
+
+  for (const reason of ["cancelled", "parent-lost"] as const) {
+    test(`${reason} queued source cannot use an ordinary guarded-rebase bridge`, async () => {
+      const subject = fixture();
+      const first = await subject.stage(candidate("T6518"));
+      const qualified = await subject.adapter.qualifyNativeCompletion({
+        candidate: first.candidate,
+        ...first.qualification,
+      });
+      if (reason === "cancelled") {
+        await subject.adapter.terminalize({
+          attestationId: first.prepared.attestationId,
+          generation: first.prepared.generation,
+          partitionKey: qualified.queue.partition.partitionKey,
+          enrollmentId: qualified.queue.enrollment.enrollmentId,
+          attemptId: qualified.queue.attempt.attemptId,
+          expectedPartitionRevision: qualified.queue.partitionRevision,
+          reason,
+        });
+      } else {
+        await abortDispatchOn(
+          subject.backend,
+          {
+            namespace,
+            actor: "trusted-parent",
+            attestationId: first.prepared.attestationId,
+            generation: first.prepared.generation,
+            reason,
+            recoveryContext: { liveTip: first.binding.baseCommit, gitReceipts: [] },
+          },
+          { now: subject.clock.now },
+        );
+      }
+      const ontoCommit = "a".repeat(40);
+      const rebasedStartCommit = "b".repeat(40);
+      const successorBinding: DispatchGitEffectBinding = {
+        ...first.binding,
+        baseCommit: ontoCommit,
+        guardedRebaseBridge: {
+          guardedRebase: `cq-guarded-rebase:v1:${"c".repeat(64)}`,
+          operationId: `terminal-queue-${reason}-bridge`,
+          requestDigest: "d".repeat(64),
+          oldResultCommit: first.candidate.resultCommit,
+          ontoCommit,
+          rebasedStartCommit,
+          outcome: "clean",
+          exactTip: true,
+          finalizedAt: subject.clock.peek(),
+        },
+      };
+
+      await expect(
+        prepareDispatchOn(
+          subject.backend,
+          {
+            namespace,
+            roleId: "implement-worker",
+            surface: "codex",
+            input: {
+              taskId: first.binding.taskId,
+              headline: "Reject a terminal queue bridge",
+              description: "A terminal queue enrollment lacks staged-rebase retirement authority.",
+              acceptance: "Only a retired queue source can allocate a guarded-rebase successor.",
+              worktreePath: first.binding.worktreePath,
+              branch: first.binding.branch,
+              baseCommit: ontoCommit,
+              round: first.prepared.generation,
+              startingCommit: rebasedStartCommit,
+              priorResultCommit: first.candidate.resultCommit,
+            },
+            idempotencyKey: `terminal-queue-${reason}-successor`,
+            timeoutMs: 600_000,
+            registry: DISPATCH_OVERLAY_REGISTRY,
+            promptDigest: "a".repeat(64),
+            catalogHash: "b".repeat(64),
+            expectedChild: {
+              childId: `queue-${reason}-successor-child`,
+              runId: `queue-${reason}-successor-run`,
+            },
+            reprepareOf: {
+              attestationId: first.prepared.attestationId,
+              generation: first.prepared.generation,
+            },
+            gitEffectBinding: successorBinding,
+          },
+          {
+            mode: "manager-bound",
+            now: subject.clock.now,
+            randomBytes: sequentialDispatchRandomBytes(reason === "cancelled" ? 7000 : 7100),
+            lineageFenceGuard: async () => null,
+            withLineageLock: async (operation) => await operation(),
+          },
+        ),
+      ).rejects.toThrow("not a retired implementation queue enrollment");
+    });
+  }
 
   // regression: T6518 review round 3 — a lower-revision row could hide a terminal mutation.
   test("terminal dispatch mutations advance the partition-wide revision", async () => {
