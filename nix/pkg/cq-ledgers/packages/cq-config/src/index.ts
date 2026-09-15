@@ -828,6 +828,7 @@ export {
 } from "./dispatchAttestation.js";
 export type {
   ImplementationCandidateQueueState,
+  ImplementationCandidateDirectTerminalReason,
   ImplementationCandidateTerminalReason,
   ImplementationQueuePartition,
   ImplementationQueueAuthority,

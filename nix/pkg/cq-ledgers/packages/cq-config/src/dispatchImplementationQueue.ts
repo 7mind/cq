@@ -49,13 +49,39 @@ export type ImplementationCandidateQueueState =
   | "terminal"
   | "staged-rebase-retired";
 
-export type ImplementationCandidateTerminalReason =
-  | DispatchAbortReason
+export type ImplementationCandidateDirectTerminalReason =
+  | "cancelled"
+  | "native-failure"
   | "foreign-completion"
   | "mismatched-completion"
-  | "superseded"
+  | "superseded";
+
+export type ImplementationCandidateTerminalReason =
+  | DispatchAbortReason
+  | ImplementationCandidateDirectTerminalReason
   | "gate-complete"
   | "staged-rebase";
+
+const DIRECT_TERMINAL_ABORT_REASON: Readonly<
+  Record<ImplementationCandidateDirectTerminalReason, DispatchAbortReason>
+> = Object.freeze({
+  cancelled: "cancelled",
+  "native-failure": "native-failure",
+  "foreign-completion": "protocol-violation",
+  "mismatched-completion": "protocol-violation",
+  superseded: "cancelled",
+});
+
+function assertDirectTerminalReason(
+  reason: unknown,
+): asserts reason is ImplementationCandidateDirectTerminalReason {
+  if (typeof reason !== "string" || !Object.hasOwn(DIRECT_TERMINAL_ABORT_REASON, reason)) {
+    throw new AttestationContractError(
+      "reason",
+      `unknown implementation candidate terminal reason "${String(reason)}"`,
+    );
+  }
+}
 
 export interface ImplementationQueuePartition {
   readonly kind: "cq-implementation-queue-partition";
@@ -1202,24 +1228,18 @@ export function recoverImplementationCandidate(
 
 export function terminalizeImplementationCandidate(
   request: Omit<ImplementationQueueLeaseTransitionRequest, "holderId" | "leaseGeneration"> & {
-    readonly reason: Exclude<
-      ImplementationCandidateTerminalReason,
-      "gate-complete" | "staged-rebase"
-    >;
+    readonly reason: ImplementationCandidateDirectTerminalReason;
   },
   deps: DispatchServiceDeps,
 ): AbortedDispatchResult<DispatchAbortReason> {
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
+  const terminalReason: unknown = request.reason;
+  assertDirectTerminalReason(terminalReason);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
-  const reason =
-    request.reason === "cancelled" || request.reason === "superseded"
-      ? "cancelled"
-      : request.reason === "native-failure"
-        ? "native-failure"
-        : "protocol-violation";
-  const details = request.detail ?? { reason: request.reason };
+  const reason = DIRECT_TERMINAL_ABORT_REASON[terminalReason];
+  const details = request.detail ?? { reason: terminalReason };
   const detailsDigest = digest(details);
   if (!active(control)) {
     if (
@@ -1228,7 +1248,7 @@ export function terminalizeImplementationCandidate(
       row.abortReason === reason &&
       row.abortedAt !== undefined &&
       row.abortDetailsDigest === detailsDigest &&
-      control.terminal?.reason === request.reason &&
+      control.terminal?.reason === terminalReason &&
       control.terminal.detailsDigest === detailsDigest
     ) {
       return Object.freeze({
@@ -1251,7 +1271,7 @@ export function terminalizeImplementationCandidate(
     control,
     deps.now(),
     reason,
-    request.reason,
+    terminalReason,
     details,
     deps,
   );
