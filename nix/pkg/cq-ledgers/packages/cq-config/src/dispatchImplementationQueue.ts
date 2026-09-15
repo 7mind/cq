@@ -633,13 +633,20 @@ export function enqueueImplementationCandidate(
   let retiredSourceRow: AttestationRow | undefined;
   let retiredSourceBinding: DispatchStagedRebaseSourceBinding | undefined;
   if (successorSource !== undefined) {
-    if (retiredSourceRows.length !== 1) {
+    retiredSourceRow = retiredSourceRows.find((candidate) => {
+      const source = candidate.implementationQueue?.stagedRebaseSource;
+      return (
+        source?.sourceReference === successorSource.sourceReference &&
+        source.source.attestationId === successorSource.source.attestationId &&
+        source.source.generation === successorSource.source.generation
+      );
+    });
+    if (retiredSourceRow === undefined) {
       throw new DispatchStagedRebaseSourceError(
         "ineligible-source",
-        "staged-rebase successor requires exactly one retired source enrollment",
+        "staged-rebase successor requires its exact retired source enrollment",
       );
     }
-    retiredSourceRow = retiredSourceRows[0]!;
     retiredSourceBinding = retiredSourceRow.implementationQueue!.stagedRebaseSource!;
     if (
       retiredSourceBinding.sourceReference !== successorSource.sourceReference ||
