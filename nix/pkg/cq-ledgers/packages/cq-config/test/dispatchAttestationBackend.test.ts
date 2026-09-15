@@ -875,7 +875,7 @@ describe("isAttestationDomainError separates a service decision from a driver fa
     const exported = Object.entries(module).filter(
       ([name, value]) =>
         typeof value === "function" &&
-        /^(Attestation|Dispatch).*Error$/.test(name) &&
+        /^(Attestation|Dispatch|Implementation).*Error$/.test(name) &&
         Object.prototype.isPrototypeOf.call(Error, value as object),
     );
     // Sanity: the filter found the classes at all, including the backend module's.

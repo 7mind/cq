@@ -529,6 +529,7 @@ export type {
   NativeCompletionProof,
   ConfirmDispatchCompletion,
   DispatchAbortReason,
+  DispatchTerminalAbortReason,
   AbortDispatch,
   DispatchLifecycleState,
   FetchDispatchResultState,
@@ -545,6 +546,7 @@ export type {
 } from "./compactDispatchProtocol.js";
 export {
   DISPATCH_ABORT_REASONS,
+  DISPATCH_TERMINAL_ABORT_REASONS,
   DISPATCH_LIFECYCLE_STATES,
   FETCH_DISPATCH_RESULT_STATES,
   DISPATCH_PROTOCOL_OPERATIONS,

@@ -144,10 +144,17 @@ export const DISPATCH_ABORT_REASONS = [
   "parent-lost",
   "gate-rejected",
   "operational-abstention",
-  "staged-rebase",
 ] as const;
 
 export type DispatchAbortReason = (typeof DISPATCH_ABORT_REASONS)[number];
+
+/** Terminal reasons observable by a trusted parent, including server-only retirement. */
+export const DISPATCH_TERMINAL_ABORT_REASONS = [
+  ...DISPATCH_ABORT_REASONS,
+  "staged-rebase",
+] as const;
+
+export type DispatchTerminalAbortReason = (typeof DISPATCH_TERMINAL_ABORT_REASONS)[number];
 
 /** Trusted terminal abort request. */
 export interface AbortDispatch extends DispatchHandle {
@@ -200,10 +207,12 @@ export interface ConsumedDispatchResult extends DispatchHandle {
   readonly nativeCompletion: NativeCompletionProof;
 }
 
-export interface AbortedDispatchResult extends DispatchHandle {
+export interface AbortedDispatchResult<
+  Reason extends DispatchTerminalAbortReason = DispatchTerminalAbortReason,
+> extends DispatchHandle {
   readonly state: "aborted";
   readonly abortedAt: string;
-  readonly reason: DispatchAbortReason;
+  readonly reason: Reason;
   readonly details?: DispatchJSONValue;
 }
 
@@ -597,7 +606,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
       "aborted",
       {
         abortedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
-        reason: { type: "string", enum: [...DISPATCH_ABORT_REASONS] },
+        reason: { type: "string", enum: [...DISPATCH_TERMINAL_ABORT_REASONS] },
         details: {},
       },
       ["abortedAt", "reason"],

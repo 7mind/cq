@@ -1541,7 +1541,7 @@ describe("abort wins, from every non-terminal state", () => {
     }
     const h = harness();
     const p = prepared(h);
-    for (const reason of [...PROTOTYPE_NAMES, "", "nope", 7, undefined]) {
+    for (const reason of [...PROTOTYPE_NAMES, "", "nope", "staged-rebase", 7, undefined]) {
       expect(
         () => abortDispatch(abortRequest(p, { reason: reason as never }), h.deps),
         String(reason),

@@ -91,6 +91,7 @@ import {
   type AbortedDispatchResult,
   type ConsumedDispatchResult,
   type DispatchAbortReason,
+  type DispatchTerminalAbortReason,
   type DispatchDeadlines,
   type DispatchHandle,
   type DispatchJSONValue,
@@ -281,6 +282,9 @@ export class DispatchContinuationError extends Error {
   }
 }
 
+/** Base for service-decision errors declared by attestation extension modules. */
+export abstract class DispatchAttestationExtensionError extends Error {}
+
 /**
  * Every error class that can escape a dispatch service call as a DECISION about
  * the dispatch, rather than as a failure of the underlying store.
@@ -310,6 +314,7 @@ export const ATTESTATION_ERROR_CLASSES = Object.freeze([
   AttestationKeyReuseError,
   DispatchRecoveryError,
   DispatchContinuationError,
+  DispatchAttestationExtensionError,
   DispatchInputValidationError,
   DispatchOverlayError,
   DispatchRefAssemblyError,
@@ -1201,7 +1206,7 @@ export interface AttestationEnvelope {
   readonly outputMaterializedAt?: string;
   readonly nativeCompletion?: NativeCompletionProof;
   readonly abortedAt?: string;
-  readonly abortReason?: DispatchAbortReason;
+  readonly abortReason?: DispatchTerminalAbortReason;
   readonly abortDetails?: DispatchJSONValue;
   readonly abortDetailsDigest?: string;
   /** When the record went terminal — the clock the 24h/30d windows run from. */
@@ -2825,8 +2830,16 @@ export function isBackendOwnedAbortedDispatchResult(
   return typeof value === "object" && value !== null && BACKEND_OWNED_ABORTED_RESULTS.has(value);
 }
 
-function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
-  if (row.state !== "aborted" || row.abortedAt === undefined || row.abortReason === undefined) {
+function abortedResultOf<Reason extends DispatchTerminalAbortReason>(
+  row: AttestationEnvelope,
+  reason: Reason,
+): AbortedDispatchResult<Reason> {
+  if (
+    row.state !== "aborted" ||
+    row.abortedAt === undefined ||
+    row.abortReason === undefined ||
+    row.abortReason !== reason
+  ) {
     throw new AttestationContractError("row", `expected an aborted envelope, got "${row.state}"`);
   }
   const aborted = Object.freeze({
@@ -2834,7 +2847,7 @@ function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
     attestationId: row.attestationId,
     generation: row.generation,
     abortedAt: row.abortedAt,
-    reason: row.abortReason,
+    reason,
     ...(row.abortDetails === undefined ? {} : { details: row.abortDetails }),
   });
   BACKEND_OWNED_ABORTED_RESULTS.add(aborted);
@@ -2892,9 +2905,7 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   return consumed;
 }
 
-function assertSupervisedGateRejectionDetails(
-  value: DispatchJSONValue | undefined,
-): void {
+function assertSupervisedGateRejectionDetails(value: DispatchJSONValue | undefined): void {
   if (!isImplementWorkerSupervisedGateRejectionDetails(value)) {
     throw new AttestationContractError("details", "invalid supervised gate rejection evidence");
   }
@@ -2914,7 +2925,7 @@ function writeAbort(
   details: DispatchJSONValue | undefined,
   deps: Deps,
   recoveryContext?: DispatchRecoveryContext,
-): AbortedDispatchResult {
+): AbortedDispatchResult<DispatchAbortReason> {
   if (recoveryContext !== undefined && reason !== "parent-lost") {
     throw new AttestationContractError(
       "recoveryContext",
@@ -3014,7 +3025,7 @@ function writeAbort(
     ...(dispatchRecoveryBinding === undefined ? {} : { dispatchRecoveryBinding }),
   });
   deps.store.replace(row, next);
-  return abortedResultOf(next);
+  return abortedResultOf(next, reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -3029,7 +3040,10 @@ function writeAbort(
 export type StoreDispatchResultOutcome =
   | { readonly state: "gate-pending"; readonly result: GatePendingResultView }
   | { readonly state: "result-stored"; readonly result: StoredDispatchResultView }
-  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult<DispatchAbortReason>;
+    };
 
 /** The child-visible acknowledgement of a stored result. Carries no capability. */
 export interface StoredDispatchResultView {
@@ -3195,7 +3209,10 @@ export interface ClaimedParentGate {
 export type ClaimParentGateOutcome =
   | ClaimedParentGate
   | { readonly state: "result-stored"; readonly result: StoredDispatchResultView }
-  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult<DispatchAbortReason>;
+    };
 
 export interface CompleteParentGateRequest extends ParentGateFinalizeRequest {
   readonly gateEpoch: number;
@@ -3277,7 +3294,10 @@ export function claimParentGate(
     return Object.freeze({ state: "result-stored" as const, result: storedViewOf(row) });
   }
   if (row.state === "aborted" && row.abortReason === "gate-rejected") {
-    return Object.freeze({ state: "aborted" as const, result: abortedResultOf(row) });
+    return Object.freeze({
+      state: "aborted" as const,
+      result: abortedResultOf(row, "gate-rejected"),
+    });
   }
   if (row.state !== "gate-pending" && row.state !== "gate-running") {
     throw new DispatchStateConflictError(
@@ -3621,7 +3641,10 @@ export interface ConfirmedDispatchResultView {
 
 export type ConfirmDispatchCompletionOutcome =
   | { readonly state: "consumed"; readonly result: ConfirmedDispatchResultView }
-  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult<DispatchAbortReason>;
+    };
 
 const CONFIRM: DispatchProtocolOperation = "confirm_dispatch_completion";
 
@@ -3743,8 +3766,9 @@ export function confirmDispatchCompletion(
   }
   if (
     row.stagedCompletionQualification !== undefined &&
-    dispatchPayloadDigest(row.stagedCompletionQualification.nativeCompletion as unknown as DispatchJSONValue) !==
-      dispatchPayloadDigest(proof as unknown as DispatchJSONValue)
+    dispatchPayloadDigest(
+      row.stagedCompletionQualification.nativeCompletion as unknown as DispatchJSONValue,
+    ) !== dispatchPayloadDigest(proof as unknown as DispatchJSONValue)
   ) {
     throw new AttestationBindingError(
       "nativeCompletion",
@@ -3909,7 +3933,7 @@ const ABORT_REASON_SET: ReadonlySet<string> = new Set([
 export function abortDispatch(
   request: AbortDispatchRequest,
   deps: DispatchServiceDeps,
-): AbortedDispatchResult {
+): AbortedDispatchResult<DispatchAbortReason> {
   assertTrustedNamespace(request.namespace, deps, ABORT);
   const actor: unknown = request.actor;
   if (typeof actor !== "string" || !TRUSTED_ACTOR_SET.has(actor)) {
@@ -3936,7 +3960,7 @@ export function abortDispatch(
         ? row.abortDetailsDigest === undefined
         : row.abortDetailsDigest === dispatchPayloadDigest(details);
     if (sameReason && sameDetails) {
-      return abortedResultOf(row);
+      return abortedResultOf(row, reason as DispatchAbortReason);
     }
     throw new DispatchStateConflictError(
       ABORT,
@@ -4078,7 +4102,10 @@ export function fetchDispatchResult(
       return consumed;
     }
     case "aborted":
-      return abortedResultOf(row);
+      if (row.abortReason === undefined) {
+        throw new AttestationContractError("row", "an aborted envelope must carry abortReason");
+      }
+      return abortedResultOf(row, row.abortReason);
   }
 }
 
@@ -4537,8 +4564,7 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
               ...(row.implementationQueue.qualification === undefined
                 ? {}
                 : {
-                    qualificationDigest:
-                      row.implementationQueue.qualification.qualificationDigest,
+                    qualificationDigest: row.implementationQueue.qualification.qualificationDigest,
                   }),
               ...(row.implementationQueue.terminal === undefined
                 ? {}

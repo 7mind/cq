@@ -132,6 +132,7 @@ import { LEDGER_BACKENDS } from "./types.js";
 import type {
   AbortedDispatchResult,
   ConsumedDispatchResult,
+  DispatchAbortReason,
   DispatchHandle,
   FetchDispatchResult,
   MaterializedDispatchInput,
@@ -1023,7 +1024,7 @@ export async function abortDispatchOn(
   backend: AttestationBackend,
   request: AbortDispatchRequest,
   deps: AttestationBackendDeps,
-): Promise<AbortedDispatchResult> {
+): Promise<AbortedDispatchResult<DispatchAbortReason>> {
   return backend.transact(handleLoadScope(request), (store) =>
     abortDispatch(request, { store, now: deps.now }),
   );
@@ -1627,7 +1628,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
           record["kind"] === "tombstone" && record["terminalKind"] === "consumed";
         if (!envelopeFailure && !collapsedFailure) {
           throw new AttestationStorageError(
-            'stored current-recovery failure classification is not bound to a consumed fail result',
+            "stored current-recovery failure classification is not bound to a consumed fail result",
           );
         }
       }

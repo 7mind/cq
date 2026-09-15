@@ -4,6 +4,7 @@ import {
   AttestationNamespaceError,
   AttestationNotFoundError,
   DispatchAuthorizationError,
+  DispatchAttestationExtensionError,
   DispatchStateConflictError,
   assertDispatchHandle,
   attestationInstantMs,
@@ -24,6 +25,8 @@ import {
 import type { AttestationBackend } from "./dispatchAttestationBackend.js";
 import type {
   AbortedDispatchResult,
+  DispatchAbortReason,
+  DispatchTerminalAbortReason,
   DispatchHandle,
   DispatchJSONValue,
   NativeCompletionProof,
@@ -179,7 +182,7 @@ export interface ImplementationQueueTombstoneBinding {
   readonly stagedRebaseSource?: DispatchStagedRebaseSourceBinding;
 }
 
-export class ImplementationQueueConflictError extends Error {
+export class ImplementationQueueConflictError extends DispatchAttestationExtensionError {
   readonly reason:
     | "binding-mismatch"
     | "not-front"
@@ -196,7 +199,7 @@ export class ImplementationQueueConflictError extends Error {
   }
 }
 
-export class DispatchStagedRebaseSourceError extends Error {
+export class DispatchStagedRebaseSourceError extends DispatchAttestationExtensionError {
   readonly reason:
     | "binding-mismatch"
     | "not-qualified-front"
@@ -829,16 +832,16 @@ function withoutLease(
   return remaining;
 }
 
-function queuedAbort(
+function queuedAbort<Reason extends DispatchTerminalAbortReason>(
   row: AttestationEnvelope,
   control: ImplementationQueueControl,
   at: string,
-  reason: "cancelled" | "native-failure" | "protocol-violation" | "staged-rebase",
+  reason: Reason,
   queueReason: ImplementationCandidateTerminalReason,
   details: DispatchJSONValue,
   deps: DispatchServiceDeps,
   stagedRebaseSource?: DispatchStagedRebaseSourceBinding,
-): AbortedDispatchResult {
+): AbortedDispatchResult<Reason> {
   const detailsDigest = digest(details);
   const terminalDigest = digest({ terminalKind: "aborted", reason, detailsDigest });
   const queue: ImplementationQueueControl = Object.freeze({
@@ -907,7 +910,10 @@ export type QualifyDispatchStagedCompletionOutcome =
       readonly qualification: ImplementationStagedCompletionQualification;
       readonly replayed: boolean;
     }
-  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult<"protocol-violation">;
+    };
 
 export function qualifyDispatchStagedCompletion(
   request: QualifyDispatchStagedCompletionRequest,
@@ -1216,7 +1222,7 @@ export function terminalizeImplementationCandidate(
     >;
   },
   deps: DispatchServiceDeps,
-): AbortedDispatchResult {
+): AbortedDispatchResult<DispatchAbortReason> {
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
@@ -1525,7 +1531,7 @@ export async function terminalizeImplementationCandidateOn(
   backend: AttestationBackend,
   request: Parameters<typeof terminalizeImplementationCandidate>[0],
   deps: { readonly now: () => string },
-): Promise<AbortedDispatchResult> {
+): Promise<AbortedDispatchResult<DispatchAbortReason>> {
   return backend.transact({ kind: "namespace" }, (store) =>
     terminalizeImplementationCandidate(request, { store, now: deps.now }),
   );

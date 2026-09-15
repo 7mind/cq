@@ -313,6 +313,18 @@ describe("ref-first handle, capability, and lifecycle operation contracts", () =
     });
     rejects(ABORT_DISPATCH_SCHEMA, { ...HANDLE, reason: "authorization-failure" });
   });
+
+  test("server-only staged-rebase is observable but not an ordinary transport abort", () => {
+    expect(DISPATCH_ABORT_REASONS).not.toContain("staged-rebase");
+    rejects(ABORT_DISPATCH_SCHEMA, { ...HANDLE, reason: "staged-rebase" });
+    accepts(FETCH_DISPATCH_RESULT_SCHEMA, {
+      state: "aborted",
+      ...HANDLE,
+      abortedAt: "2026-07-25T09:30:02.000Z",
+      reason: "staged-rebase",
+      details: { sourceReference: `cq-staged-rebase-source:v1:${SHA256}` },
+    });
+  });
 });
 
 describe("typed fetch_dispatch_result outcomes", () => {
