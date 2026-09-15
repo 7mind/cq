@@ -82,6 +82,7 @@ import {
   recoverImplementationCandidateOn,
   resultCapabilityHash,
   resolveDispatchRecoveryOn,
+  retireDispatchStagedRebaseSourceOn,
   storeDispatchResultOn,
   sweepAttestationsOn,
   terminalizeImplementationCandidateOn,
@@ -868,6 +869,192 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
             state: "terminal",
           },
         });
+      }));
+
+    // regression: T6518 review round 3 — required-live PostgreSQL omitted this authority path.
+    test("staged-rebase retirement atomically allocates one successor on the same enrollment", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const sourcePrepared = await driver.prepare({
+          surface: "codex",
+          gitEffectBinding: PARENT_GATE_BINDING,
+          idempotencyKey: "staged-rebase-source",
+        });
+        await driver.fetchInput(sourcePrepared);
+        const staged = await driver.store(
+          sourcePrepared.resultCapability,
+          PARENT_GATE_STAGED_OUTPUT,
+        );
+        if (staged.state !== "gate-pending") throw new Error("expected staged source result");
+        const sourceQueue = await enqueueImplementationCandidateOn(
+          driver.backend,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            ...handleOf(sourcePrepared),
+            repositoryId: PARENT_GATE_BINDING.repositoryId,
+            integrationRef: "refs/heads/main",
+            authority: {
+              taskId: "T720",
+              goalRef: "goals:G94",
+              finalizedManifestDigest: "7".repeat(64),
+            },
+            observedBaseCommit: PARENT_GATE_BINDING.baseCommit,
+            resultCommit: "b".repeat(40),
+            resultTree: "8".repeat(40),
+            gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            packagedEnvironmentDigest: "9".repeat(64),
+            gitReceipts: [],
+            gitEffectBinding: PARENT_GATE_BINDING,
+            stagedOutputDigest: staged.result.outputDigest,
+          },
+          { now: clock.now },
+        );
+        await qualifyDispatchStagedCompletionOn(
+          driver.backend,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            ...handleOf(sourcePrepared),
+            partitionKey: sourceQueue.partition.partitionKey,
+            enrollmentId: sourceQueue.enrollment.enrollmentId,
+            attemptId: sourceQueue.attempt.attemptId,
+            stagedOutputDigest: staged.result.outputDigest,
+            expectedChild: CHILD,
+            expectedProvenance: provenanceBindingOf(sourcePrepared),
+            nativeCompletion: completion(),
+          },
+          { now: clock.now },
+        );
+        const acquired = await acquireImplementationCandidateOn(
+          driver.backend,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            partitionKey: sourceQueue.partition.partitionKey,
+            holderId: "staged-rebase-retirement",
+          },
+          { now: clock.now },
+        );
+        if (acquired.state !== "leased") throw new Error("expected source lease");
+        const ontoCommit = "c".repeat(40);
+        const guardedRebase = `cq-guarded-rebase:v1:${"d".repeat(64)}`;
+        const journalDigest = "e".repeat(64);
+        const source = await retireDispatchStagedRebaseSourceOn(
+          driver.backend,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            ...acquired.lease,
+            expectedPartitionRevision: acquired.partitionRevision,
+            stagedOutputDigest: staged.result.outputDigest,
+            effectLock: {
+              kind: "managed-worktree-effect-lock",
+              bindingDigest: sourceQueue.attempt.managedWorktreeBindingDigest,
+            },
+            live: {
+              clean: true,
+              liveTip: "b".repeat(40),
+              resultCommit: "b".repeat(40),
+              resultTree: "8".repeat(40),
+              repositoryId: PARENT_GATE_BINDING.repositoryId,
+              worktreePath: PARENT_GATE_BINDING.worktreePath,
+              gitReceipts: [],
+            },
+            ontoCommit,
+            guardedRebase,
+            guardedRebaseJournalDigest: journalDigest,
+          },
+          { now: clock.now },
+        );
+        const rebasedStartCommit = "f".repeat(40);
+        const successorBinding: DispatchGitEffectBinding = {
+          ...PARENT_GATE_BINDING,
+          baseCommit: ontoCommit,
+          guardedRebaseBridge: {
+            guardedRebase,
+            operationId: "shared-contract-successor",
+            requestDigest: journalDigest,
+            oldResultCommit: "b".repeat(40),
+            ontoCommit,
+            rebasedStartCommit,
+            outcome: "clean",
+            exactTip: true,
+            finalizedAt: clock.peek(),
+          },
+        };
+        const successorPrepared = await driver.prepare({
+          input: {
+            ...(INPUT as Readonly<Record<string, DispatchJSONValue>>),
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            round: 1,
+          },
+          idempotencyKey: "staged-rebase-successor",
+          reprepareOf: handleOf(sourcePrepared),
+          gitEffectBinding: successorBinding,
+        });
+        expect(successorPrepared.generation).toBe(sourcePrepared.generation + 1);
+        const sourceAfterPrepare = (await fixture.rows()).find(
+          (row) => row.generation === sourcePrepared.generation,
+        );
+        expect(sourceAfterPrepare?.stagedRebaseSourceBinding?.successor).toEqual(
+          handleOf(successorPrepared),
+        );
+
+        const reopened = new AttestationDriver(await fixture.restart(), clock);
+        await reopened.fetchInput(successorPrepared);
+        const successorStaged = await reopened.store(
+          successorPrepared.resultCapability,
+          PARENT_GATE_STAGED_OUTPUT,
+        );
+        if (successorStaged.state !== "gate-pending") {
+          throw new Error("expected staged successor result");
+        }
+        const successorQueue = await enqueueImplementationCandidateOn(
+          reopened.backend,
+          {
+            namespace: driver.namespace,
+            actor: "trusted-parent",
+            ...handleOf(successorPrepared),
+            repositoryId: successorBinding.repositoryId,
+            integrationRef: "refs/heads/main",
+            authority: sourceQueue.enrollment,
+            observedBaseCommit: ontoCommit,
+            resultCommit: "b".repeat(40),
+            resultTree: "8".repeat(40),
+            gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            packagedEnvironmentDigest: "9".repeat(64),
+            gitReceipts: [],
+            gitEffectBinding: successorBinding,
+            stagedOutputDigest: successorStaged.result.outputDigest,
+            stagedRebaseSource: {
+              sourceReference: source.sourceReference,
+              source: source.source,
+              leaseGeneration: source.leaseGeneration,
+              guardedRebase: source.guardedRebase,
+              ontoCommit: source.ontoCommit,
+              guardedRebaseJournalDigest: source.guardedRebaseJournalDigest,
+            },
+          },
+          { now: clock.now },
+        );
+        expect(successorQueue.enrollment).toMatchObject({
+          enrollmentId: sourceQueue.enrollment.enrollmentId,
+          admissionOrdinal: sourceQueue.enrollment.admissionOrdinal,
+        });
+        await expect(
+          reopened.prepare({
+            input: {
+              ...(INPUT as Readonly<Record<string, DispatchJSONValue>>),
+              baseCommit: ontoCommit,
+              startingCommit: rebasedStartCommit,
+              round: 1,
+            },
+            idempotencyKey: "staged-rebase-second-successor",
+            reprepareOf: handleOf(sourcePrepared),
+            gitEffectBinding: successorBinding,
+          }),
+        ).rejects.toThrow(/already allocated a successor/);
       }));
 
     test("deterministic parent-gate rejection replays after restart without recovery authority", () =>

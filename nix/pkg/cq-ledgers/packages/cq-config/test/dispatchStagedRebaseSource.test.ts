@@ -395,4 +395,54 @@ describe("staged-rebase source retirement", () => {
       },
     });
   });
+
+  // regression: T6518 review round 3 — enqueue claimed the source after prepare and store_result.
+  test("successor allocation requires and atomically claims exact retired source authority", async () => {
+    const { backend, prepared, retirement } = await qualifiedAndLeased();
+    await retireDispatchStagedRebaseSourceOn(backend, retirement, { now: clock.now });
+    const sourceHandle = {
+      attestationId: prepared.attestationId,
+      generation: prepared.generation,
+    };
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, ontoCommit, 1),
+        idempotencyKey: "staged-rebase-unbound-successor",
+        reprepareOf: sourceHandle,
+        gitEffectBinding: { ...binding, baseCommit: ontoCommit },
+      }),
+    ).rejects.toThrow(DispatchStagedRebaseSourceError);
+
+    const rebasedStartCommit = "d".repeat(40);
+    const successorBinding: DispatchGitEffectBinding = {
+      ...binding,
+      baseCommit: ontoCommit,
+      guardedRebaseBridge: {
+        guardedRebase,
+        operationId: "staged-rebase-prepare-claim",
+        requestDigest: guardedRebaseJournalDigest,
+        oldResultCommit: resultCommit,
+        ontoCommit,
+        rebasedStartCommit,
+        outcome: "clean",
+        exactTip: true,
+        finalizedAt: clock.peek(),
+      },
+    };
+    const successor = await prepare(backend, {
+      input: input(ontoCommit, rebasedStartCommit, 1),
+      idempotencyKey: "staged-rebase-claimed-successor",
+      reprepareOf: sourceHandle,
+      gitEffectBinding: successorBinding,
+    });
+    expect(successor.generation).toBe(prepared.generation + 1);
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, rebasedStartCommit, 1),
+        idempotencyKey: "staged-rebase-second-successor",
+        reprepareOf: sourceHandle,
+        gitEffectBinding: successorBinding,
+      }),
+    ).rejects.toThrow(/already allocated a successor/);
+  });
 });

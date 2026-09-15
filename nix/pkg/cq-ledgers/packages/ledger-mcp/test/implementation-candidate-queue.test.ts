@@ -3,6 +3,8 @@ import {
   ImplementationQueueConflictError,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  abortDispatchOn,
+  claimParentGateOn,
   type AttestationNamespace,
 } from "@cq/config";
 import {
@@ -146,6 +148,104 @@ describe("ledger-MCP implementation candidate queue", () => {
       store.read(duplicate.prepared),
     );
     expect(duplicateRow?.implementationQueue).toBeUndefined();
+  });
+
+  // regression: T6518 review round 3 — terminal enrollment was treated as reusable authority.
+  test("cancelled enrollment authority cannot be resurrected", async () => {
+    const subject = fixture();
+    const first = await subject.stage(candidate("T6518"));
+    const qualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    await subject.adapter.terminalize({
+      attestationId: first.prepared.attestationId,
+      generation: first.prepared.generation,
+      partitionKey: qualified.queue.partition.partitionKey,
+      enrollmentId: qualified.queue.enrollment.enrollmentId,
+      attemptId: qualified.queue.attempt.attemptId,
+      expectedPartitionRevision: qualified.queue.partitionRevision,
+      reason: "cancelled",
+    });
+    const resurrected = await subject.stage(candidate("T6518"));
+
+    await expect(
+      subject.adapter.qualifyNativeCompletion({
+        candidate: resurrected.candidate,
+        ...resurrected.qualification,
+      }),
+    ).rejects.toThrow(ImplementationQueueConflictError);
+  });
+
+  // regression: T6518 review round 3 — a lower-revision row could hide a terminal mutation.
+  test("terminal dispatch mutations advance the partition-wide revision", async () => {
+    const subject = fixture();
+    const first = await subject.stage(candidate("T6518"));
+    const second = await subject.stage(candidate("T6519"));
+    await subject.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    const secondQualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: second.candidate,
+      ...second.qualification,
+    });
+    await abortDispatchOn(
+      subject.backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        reason: "cancelled",
+      },
+      { now: subject.clock.now },
+    );
+
+    await expect(
+      subject.adapter.acquire({
+        partitionKey: secondQualified.queue.partition.partitionKey,
+        holderId: "stale-partition-observer",
+        expectedPartitionRevision: secondQualified.queue.partitionRevision,
+      }),
+    ).rejects.toThrow(/partition revision/);
+  });
+
+  // regression: T6518 review round 3 — state checks ran before exact replay checks.
+  test("exact qualification replay remains idempotent after the gate starts", async () => {
+    const subject = fixture();
+    const staged = await subject.stage(candidate("T6518"));
+    const qualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await subject.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "qualification-replay-gate",
+    });
+    if (acquired.state !== "leased") throw new Error("expected qualified candidate lease");
+    if (staged.prepared.parentGateCapability === undefined) {
+      throw new Error("managed Codex worker omitted parent gate capability");
+    }
+    await claimParentGateOn(
+      subject.backend,
+      {
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+        parentGateCapability: staged.prepared.parentGateCapability,
+        queueLease: acquired.lease,
+      },
+      { now: subject.clock.now },
+    );
+
+    const replay = await subject.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    expect(replay).toMatchObject({
+      queue: { state: "leased" },
+      qualification: { state: "qualified", replayed: true },
+    });
   });
 
   test("park, yield, resume, cancellation, and stale lease generations are explicit", async () => {
