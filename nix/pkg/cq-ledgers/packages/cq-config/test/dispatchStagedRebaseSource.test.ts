@@ -411,7 +411,7 @@ describe("staged-rebase source retirement", () => {
         reprepareOf: sourceHandle,
         gitEffectBinding: { ...binding, baseCommit: ontoCommit },
       }),
-    ).rejects.toThrow(DispatchStagedRebaseSourceError);
+    ).rejects.toThrow(/retired staged-rebase source/);
 
     const rebasedStartCommit = "d".repeat(40);
     const successorBinding: DispatchGitEffectBinding = {

@@ -524,7 +524,10 @@ export function enqueueImplementationCandidate(
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
   const row = requireEnvelope(request, deps);
-  if (row.state !== "gate-pending" || row.gateSubmittedOutputDigest === undefined) {
+  if (
+    (row.state !== "gate-pending" || row.gateSubmittedOutputDigest === undefined) &&
+    !(row.state === "gate-running" && row.implementationQueue !== undefined)
+  ) {
     throw new DispatchStateConflictError(
       "store_result",
       row.state,
@@ -621,6 +624,17 @@ export function enqueueImplementationCandidate(
       `enrollment is already active on ${activePrior.attestationId}#${String(activePrior.generation)}`,
     );
   }
+  const terminalPrior = priorEnrollment.find(
+    (candidate) =>
+      candidate.attestationId !== row.attestationId &&
+      candidate.implementationQueue!.state !== "staged-rebase-retired",
+  );
+  if (terminalPrior !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "already-terminal",
+      `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected`,
+    );
+  }
   const retiredSourceRows = priorEnrollment.filter(
     (candidate) =>
       candidate.implementationQueue!.state === "staged-rebase-retired" &&
@@ -633,10 +647,9 @@ export function enqueueImplementationCandidate(
       "a retired enrollment requires its exact staged-rebase source authority",
     );
   }
-  let retiredSourceRow: AttestationRow | undefined;
   let retiredSourceBinding: DispatchStagedRebaseSourceBinding | undefined;
   if (successorSource !== undefined) {
-    retiredSourceRow = retiredSourceRows.find((candidate) => {
+    const retiredSourceRow = retiredSourceRows.find((candidate) => {
       const source = candidate.implementationQueue?.stagedRebaseSource;
       return (
         source?.sourceReference === successorSource.sourceReference &&
@@ -665,7 +678,11 @@ export function enqueueImplementationCandidate(
       retiredSourceBinding.ontoCommit !==
         request.gitEffectBinding.guardedRebaseBridge?.ontoCommit ||
       retiredSourceBinding.guardedRebase !==
-        request.gitEffectBinding.guardedRebaseBridge?.guardedRebase
+        request.gitEffectBinding.guardedRebaseBridge?.guardedRebase ||
+      retiredSourceBinding.successor?.attestationId !== row.attestationId ||
+      retiredSourceBinding.successor?.generation !== row.generation ||
+      row.attestationId !== retiredSourceBinding.source.attestationId ||
+      row.generation !== retiredSourceBinding.source.generation + 1
     ) {
       throw new DispatchStagedRebaseSourceError(
         "binding-mismatch",
@@ -745,45 +762,14 @@ export function enqueueImplementationCandidate(
       "a different immutable queue attempt is already bound to this dispatch",
     );
   }
-  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: candidate }));
-  if (retiredSourceRow !== undefined && retiredSourceBinding !== undefined) {
-    const claimedSource: DispatchStagedRebaseSourceBinding = Object.freeze({
-      ...retiredSourceBinding,
-      successor: Object.freeze({
-        attestationId: row.attestationId,
-        generation: row.generation,
-      }),
-    });
-    if (isAttestationTombstone(retiredSourceRow)) {
-      const retiredBinding: ImplementationQueueTombstoneBinding = Object.freeze({
-        ...retiredSourceRow.implementationQueue!,
-        partitionRevision: candidate.partitionRevision + 1,
-        stagedRebaseSource: claimedSource,
-      });
-      deps.store.replace(
-        retiredSourceRow,
-        Object.freeze({
-          ...retiredSourceRow,
-          implementationQueue: retiredBinding,
-          stagedRebaseSourceBinding: claimedSource,
-        }),
-      );
-    } else {
-      const retiredControl: ImplementationQueueControl = Object.freeze({
-        ...retiredSourceRow.implementationQueue!,
-        partitionRevision: candidate.partitionRevision + 1,
-        stagedRebaseSource: claimedSource,
-      });
-      deps.store.replace(
-        retiredSourceRow,
-        Object.freeze({
-          ...retiredSourceRow,
-          implementationQueue: retiredControl,
-          stagedRebaseSourceBinding: claimedSource,
-        }),
-      );
-    }
+  if (row.state !== "gate-pending" || row.gateSubmittedOutputDigest === undefined) {
+    throw new DispatchStateConflictError(
+      "store_result",
+      row.state,
+      "only a gate-pending staged result can enter the implementation queue",
+    );
   }
+  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: candidate }));
   return candidate;
 }
 
@@ -923,13 +909,6 @@ export function qualifyDispatchStagedCompletion(
   assertTrustedActor(request.actor);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
-  if (row.state !== "gate-pending") {
-    throw new DispatchStateConflictError(
-      "confirm_dispatch_completion",
-      row.state,
-      "staged-completion qualification requires a gate-pending dispatch",
-    );
-  }
   const qualificationPayload = {
     partitionKey: request.partitionKey,
     enrollmentId: request.enrollmentId,
@@ -941,6 +920,13 @@ export function qualifyDispatchStagedCompletion(
   };
   const replayDigest = digest(qualificationPayload);
   const existing = control.qualification ?? row.stagedCompletionQualification;
+  if (row.state !== "gate-pending" && !(row.state === "gate-running" && existing !== undefined)) {
+    throw new DispatchStateConflictError(
+      "confirm_dispatch_completion",
+      row.state,
+      "staged-completion qualification requires a gate-pending dispatch",
+    );
+  }
   if (existing !== undefined) {
     if (existing.qualificationDigest === replayDigest) {
       return Object.freeze({

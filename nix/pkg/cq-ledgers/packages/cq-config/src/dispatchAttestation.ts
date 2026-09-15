@@ -2271,6 +2271,7 @@ export function prepareDispatch(
     request.reprepareOf === undefined
       ? mintAttestationId(deps.randomBytes)
       : request.reprepareOf.attestationId;
+  claimStagedRebaseSuccessor(request, { attestationId, generation }, deps);
 
   executed.push("mint-input-capability");
   const inputCapability = mintInputCapability(deps.randomBytes);
@@ -2494,6 +2495,108 @@ function resolveGeneration(
     );
   }
   return reprepareOf.generation + 1;
+}
+
+function claimStagedRebaseSuccessor(
+  request: PrepareDispatchRequest,
+  successor: DispatchHandle,
+  deps: PrepareDispatchDeps,
+): void {
+  const reprepareOf = request.reprepareOf;
+  const bridge = request.gitEffectBinding?.guardedRebaseBridge;
+  if (reprepareOf === undefined) {
+    if (bridge !== undefined) {
+      throw new AttestationBindingError(
+        "gitEffectBinding.guardedRebaseBridge",
+        "a guarded-rebase successor requires its exact retired source handle",
+      );
+    }
+    return;
+  }
+  const previous = requireRow(reprepareOf, deps);
+  const queue = previous.implementationQueue;
+  const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
+  if (source === undefined) {
+    if (bridge !== undefined) {
+      throw new AttestationBindingError(
+        "gitEffectBinding.guardedRebaseBridge",
+        "a guarded-rebase successor requires retired staged-rebase source authority",
+      );
+    }
+    return;
+  }
+  if (bridge === undefined || request.gitEffectBinding === undefined) {
+    throw new DispatchStateConflictError(
+      "prepare_dispatch",
+      isAttestationTombstone(previous) ? previous.terminalKind : previous.state,
+      "a retired staged-rebase source requires its exact finalized guarded-rebase journal",
+    );
+  }
+  if (queue === undefined || queue.state !== "staged-rebase-retired") {
+    throw new AttestationBindingError(
+      "reprepareOf",
+      "the guarded-rebase source is not a retired implementation queue enrollment",
+    );
+  }
+  if (source.successor !== undefined) {
+    throw new DispatchStateConflictError(
+      "prepare_dispatch",
+      isAttestationTombstone(previous) ? previous.terminalKind : previous.state,
+      "the retired staged-rebase source already allocated a successor",
+    );
+  }
+  const input =
+    typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
+      ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const sourceQueueBinding = queue.stagedRebaseSource;
+  if (
+    source.source.attestationId !== reprepareOf.attestationId ||
+    source.source.generation !== reprepareOf.generation ||
+    successor.attestationId !== source.source.attestationId ||
+    successor.generation !== source.source.generation + 1 ||
+    source.partitionKey !== implementationQueuePartitionKey(queue) ||
+    source.enrollmentId !==
+      ("enrollment" in queue ? queue.enrollment.enrollmentId : queue.enrollmentId) ||
+    source.attemptId !== ("attempt" in queue ? queue.attempt.attemptId : queue.attemptId) ||
+    source.leaseGeneration !== queue.leaseGeneration ||
+    sourceQueueBinding?.serverBindingDigest !== source.serverBindingDigest ||
+    source.sourceResultCommit !== bridge.oldResultCommit ||
+    source.ontoCommit !== bridge.ontoCommit ||
+    source.guardedRebase !== bridge.guardedRebase ||
+    source.guardedRebaseJournalDigest !== bridge.requestDigest ||
+    source.repositoryId !== request.gitEffectBinding.repositoryId ||
+    source.worktreePath !== request.gitEffectBinding.worktreePath ||
+    request.gitEffectBinding.baseCommit !== source.ontoCommit ||
+    input?.["baseCommit"] !== source.ontoCommit ||
+    input?.["startingCommit"] !== bridge.rebasedStartCommit
+  ) {
+    throw new AttestationBindingError(
+      "gitEffectBinding.guardedRebaseBridge",
+      "successor prepare does not match the retired source, managed binding, or finalized guarded-rebase journal",
+    );
+  }
+  const claimedSource: DispatchStagedRebaseSourceBinding = Object.freeze({
+    ...source,
+    successor: Object.freeze({ ...successor }),
+  });
+  const claimedQueue: ImplementationQueueControl | ImplementationQueueTombstoneBinding =
+    Object.freeze({
+      ...queue,
+      partitionRevision: nextImplementationQueuePartitionRevision(
+        deps.store,
+        implementationQueuePartitionKey(queue),
+      ),
+      stagedRebaseSource: claimedSource,
+    });
+  deps.store.replace(
+    previous,
+    Object.freeze({
+      ...previous,
+      implementationQueue: claimedQueue,
+      stagedRebaseSourceBinding: claimedSource,
+    }),
+  );
 }
 
 function continuationClaimedBy(
@@ -2822,6 +2925,26 @@ function queueControlWithoutLease(
   return remaining;
 }
 
+function implementationQueuePartitionKey(
+  control: ImplementationQueueControl | ImplementationQueueTombstoneBinding,
+): string {
+  return "partition" in control ? control.partition.partitionKey : control.partitionKey;
+}
+
+function nextImplementationQueuePartitionRevision(
+  store: AttestationStore,
+  partitionKey: string,
+): number {
+  return (
+    store.rows().reduce((maximum, candidate) => {
+      const control = candidate.implementationQueue;
+      return control !== undefined && implementationQueuePartitionKey(control) === partitionKey
+        ? Math.max(maximum, control.partitionRevision)
+        : maximum;
+    }, 0) + 1
+  );
+}
+
 const BACKEND_OWNED_ABORTED_RESULTS = new WeakSet<object>();
 
 export function isBackendOwnedAbortedDispatchResult(
@@ -2997,7 +3120,10 @@ function writeAbort(
           implementationQueue: Object.freeze({
             ...queueControlWithoutLease(row.implementationQueue),
             state: "terminal" as const,
-            partitionRevision: row.implementationQueue.partitionRevision + 1,
+            partitionRevision: nextImplementationQueuePartitionRevision(
+              deps.store,
+              row.implementationQueue.partition.partitionKey,
+            ),
             terminal: Object.freeze({
               reason:
                 reason === "cancelled"
@@ -3811,7 +3937,10 @@ export function confirmDispatchCompletion(
           implementationQueue: Object.freeze({
             ...queueControlWithoutLease(row.implementationQueue),
             state: "released" as const,
-            partitionRevision: row.implementationQueue.partitionRevision + 1,
+            partitionRevision: nextImplementationQueuePartitionRevision(
+              deps.store,
+              row.implementationQueue.partition.partitionKey,
+            ),
             terminal: Object.freeze({
               reason: "gate-complete" as const,
               terminalAt: at,

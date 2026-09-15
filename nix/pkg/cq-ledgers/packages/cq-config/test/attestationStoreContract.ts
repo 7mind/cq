@@ -697,9 +697,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         await driver.fetchInput(p);
         const staged = await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT);
         if (staged.state !== "gate-pending") throw new Error("expected gate-pending staging");
-        const enqueue = async (
-          backend: AttestationBackend,
-        ): Promise<ImplementationQueueControl> =>
+        const enqueue = async (backend: AttestationBackend): Promise<ImplementationQueueControl> =>
           await enqueueImplementationCandidateOn(
             backend,
             {
@@ -754,11 +752,9 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           expectedProvenance: provenanceBindingOf(p),
           nativeCompletion: completion(),
         };
-        const qualified = await qualifyDispatchStagedCompletionOn(
-          reopened,
-          qualificationRequest,
-          { now: clock.now },
-        );
+        const qualified = await qualifyDispatchStagedCompletionOn(reopened, qualificationRequest, {
+          now: clock.now,
+        });
         expect(qualified).toMatchObject({ state: "qualified", replayed: false });
         expect(
           await qualifyDispatchStagedCompletionOn(reopened, qualificationRequest, {
@@ -983,6 +979,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           },
         };
         const successorPrepared = await driver.prepare({
+          surface: "codex",
           input: {
             ...(INPUT as Readonly<Record<string, DispatchJSONValue>>),
             baseCommit: ontoCommit,
@@ -1003,9 +1000,27 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
 
         const reopened = new AttestationDriver(await fixture.restart(), clock);
         await reopened.fetchInput(successorPrepared);
+        const successorOutput: DispatchJSONValue = {
+          ...(PARENT_GATE_STAGED_OUTPUT as Readonly<Record<string, DispatchJSONValue>>),
+          resultCommit: rebasedStartCommit,
+          gitReceipts: [],
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: ontoCommit,
+            headCommit: rebasedStartCommit,
+          },
+          gitLineage: {
+            kind: "guarded-rebase",
+            guardedRebase,
+            ontoCommit,
+            rebasedStartCommit,
+            exactTip: true,
+          },
+        };
         const successorStaged = await reopened.store(
           successorPrepared.resultCapability,
-          PARENT_GATE_STAGED_OUTPUT,
+          successorOutput,
         );
         if (successorStaged.state !== "gate-pending") {
           throw new Error("expected staged successor result");
@@ -1020,7 +1035,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
             integrationRef: "refs/heads/main",
             authority: sourceQueue.enrollment,
             observedBaseCommit: ontoCommit,
-            resultCommit: "b".repeat(40),
+            resultCommit: rebasedStartCommit,
             resultTree: "8".repeat(40),
             gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
             packagedEnvironmentDigest: "9".repeat(64),
@@ -1044,6 +1059,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         });
         await expect(
           reopened.prepare({
+            surface: "codex",
             input: {
               ...(INPUT as Readonly<Record<string, DispatchJSONValue>>),
               baseCommit: ontoCommit,

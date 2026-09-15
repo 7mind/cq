@@ -782,7 +782,11 @@ export function prepareLoadScope(request: PrepareDispatchRequest): AttestationLo
   if (typeof key !== "string") {
     return { kind: "none" };
   }
-  if (request.continuationClaim !== undefined || request.journalRecoveryReservation !== undefined) {
+  if (
+    request.continuationClaim !== undefined ||
+    request.journalRecoveryReservation !== undefined ||
+    request.gitEffectBinding?.guardedRebaseBridge !== undefined
+  ) {
     return { kind: "namespace" };
   }
   if (request.reprepareOf === undefined) {
@@ -985,7 +989,7 @@ export async function confirmDispatchCompletionOn(
   request: ConfirmDispatchCompletionRequest,
   deps: AttestationBackendDeps,
 ): Promise<ConfirmDispatchCompletionOutcome> {
-  return backend.transact(handleLoadScope(request), (store) =>
+  return backend.transact({ kind: "namespace" }, (store) =>
     confirmDispatchCompletion(request, { store, now: deps.now }),
   );
 }
@@ -1025,7 +1029,7 @@ export async function abortDispatchOn(
   request: AbortDispatchRequest,
   deps: AttestationBackendDeps,
 ): Promise<AbortedDispatchResult<DispatchAbortReason>> {
-  return backend.transact(handleLoadScope(request), (store) =>
+  return backend.transact({ kind: "namespace" }, (store) =>
     abortDispatch(request, { store, now: deps.now }),
   );
 }

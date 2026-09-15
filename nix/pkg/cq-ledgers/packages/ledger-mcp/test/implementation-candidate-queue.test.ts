@@ -3,9 +3,13 @@ import {
   ImplementationQueueConflictError,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   abortDispatchOn,
   claimParentGateOn,
+  completeParentGateOn,
+  confirmDispatchCompletionOn,
   type AttestationNamespace,
+  type DispatchJSONValue,
 } from "@cq/config";
 import {
   ImplementationCandidateQueueFixture,
@@ -206,6 +210,105 @@ describe("ledger-MCP implementation candidate queue", () => {
       subject.adapter.acquire({
         partitionKey: secondQualified.queue.partition.partitionKey,
         holderId: "stale-partition-observer",
+        expectedPartitionRevision: secondQualified.queue.partitionRevision,
+      }),
+    ).rejects.toThrow(/partition revision/);
+  });
+
+  // regression: T6518 review round 3 — confirmation also advanced only its stale row revision.
+  test("confirmed dispatch mutations advance the partition-wide revision", async () => {
+    const subject = fixture();
+    const first = await subject.stage(candidate("T6518"));
+    const firstQualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    const firstLease = await subject.adapter.acquire({
+      partitionKey: firstQualified.queue.partition.partitionKey,
+      holderId: "confirm-partition-revision",
+    });
+    if (firstLease.state !== "leased") throw new Error("expected first candidate lease");
+    const second = await subject.stage(candidate("T6519"));
+    const secondQualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: second.candidate,
+      ...second.qualification,
+    });
+    if (first.prepared.parentGateCapability === undefined) {
+      throw new Error("managed Codex worker omitted parent gate capability");
+    }
+    const claimed = await claimParentGateOn(
+      subject.backend,
+      {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        parentGateCapability: first.prepared.parentGateCapability,
+        queueLease: firstLease.lease,
+      },
+      { now: subject.clock.now },
+    );
+    if (claimed.state !== "gate-running") throw new Error("expected claimed parent gate");
+    await completeParentGateOn(
+      subject.backend,
+      {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        parentGateCapability: first.prepared.parentGateCapability,
+        queueLease: firstLease.lease,
+        gateEpoch: claimed.gateEpoch,
+        output: {
+          ...(claimed.output as Readonly<Record<string, DispatchJSONValue>>),
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            version: 1,
+            attestationId: first.prepared.attestationId,
+            generation: first.prepared.generation,
+            roleId: "implement-worker",
+            roleVersion: first.prepared.promptProvenance.version,
+            surface: "codex",
+            promptDigest: first.prepared.promptProvenance.promptDigest,
+            catalogHash: first.prepared.promptProvenance.catalogHash,
+            inputDigest: first.prepared.promptProvenance.inputDigest,
+            taskId: first.binding.taskId,
+            worktreePath: first.binding.worktreePath,
+            branch: first.binding.branch,
+            baseCommit: first.binding.baseCommit,
+            startingCommit: first.binding.baseCommit,
+            resultCommit: first.candidate.resultCommit,
+            clean: true,
+            command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 1,
+            capturedAt: subject.clock.now(),
+            filesTouchedDigest: "1".repeat(64),
+            gitReceiptsDigest: "2".repeat(64),
+            mutationTableDigest: "3".repeat(64),
+          },
+        },
+      },
+      { now: subject.clock.now },
+    );
+    await confirmDispatchCompletionOn(
+      subject.backend,
+      {
+        namespace,
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        nativeCompletion: first.qualification.nativeCompletion,
+        expectedProvenance: first.qualification.expectedProvenance,
+        continuationContext: {
+          liveTip: first.binding.baseCommit,
+          gitReceipts: [],
+        },
+      },
+      { now: subject.clock.now },
+    );
+
+    await expect(
+      subject.adapter.acquire({
+        partitionKey: secondQualified.queue.partition.partitionKey,
+        holderId: "stale-confirm-observer",
         expectedPartitionRevision: secondQualified.queue.partitionRevision,
       }),
     ).rejects.toThrow(/partition revision/);
