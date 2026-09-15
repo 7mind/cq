@@ -34,10 +34,7 @@ const SHA256 = /^[0-9a-f]{64}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const FULL_OBJECT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const PROTECTED_REF = /^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
-const TRUSTED_QUEUE_ACTORS: ReadonlySet<string> = new Set([
-  "trusted-parent",
-  "trusted-extension",
-]);
+const TRUSTED_QUEUE_ACTORS: ReadonlySet<string> = new Set(["trusted-parent", "trusted-extension"]);
 
 export type ImplementationCandidateQueueState =
   | "enqueued"
@@ -215,6 +212,20 @@ export class DispatchStagedRebaseSourceError extends Error {
   }
 }
 
+type PersistedQueueBinding = ImplementationQueueControl | ImplementationQueueTombstoneBinding;
+
+function persistedPartitionKey(binding: PersistedQueueBinding): string {
+  return "partition" in binding ? binding.partition.partitionKey : binding.partitionKey;
+}
+
+function persistedEnrollmentId(binding: PersistedQueueBinding): string {
+  return "enrollment" in binding ? binding.enrollment.enrollmentId : binding.enrollmentId;
+}
+
+function persistedAdmissionOrdinal(binding: PersistedQueueBinding): number {
+  return "enrollment" in binding ? binding.enrollment.admissionOrdinal : binding.admissionOrdinal;
+}
+
 export interface EnqueueImplementationCandidateRequest extends DispatchHandle {
   readonly namespace: AttestationNamespace;
   readonly actor: "trusted-parent" | "trusted-extension";
@@ -284,8 +295,7 @@ export type AcquireImplementationCandidateOutcome =
       readonly replayed: boolean;
     };
 
-export interface ImplementationQueueLeaseTransitionRequest
-  extends ImplementationQueueLeaseBinding {
+export interface ImplementationQueueLeaseTransitionRequest extends ImplementationQueueLeaseBinding {
   readonly namespace: AttestationNamespace;
   readonly actor: "trusted-parent" | "trusted-extension";
   readonly expectedPartitionRevision: number;
@@ -302,8 +312,7 @@ export interface RecoverImplementationCandidateRequest extends DispatchHandle {
   readonly expectedPartitionRevision: number;
 }
 
-export interface RetireDispatchStagedRebaseSourceRequest
-  extends ImplementationQueueLeaseTransitionRequest {
+export interface RetireDispatchStagedRebaseSourceRequest extends ImplementationQueueLeaseTransitionRequest {
   readonly stagedOutputDigest: string;
   readonly effectLock: {
     readonly kind: "managed-worktree-effect-lock";
@@ -358,13 +367,15 @@ function requireEnvelope(handle: DispatchHandle, deps: DispatchServiceDeps): Att
   return row;
 }
 
-function queueRows(store: AttestationStore, partitionKey?: string): AttestationEnvelope[] {
-  return store.rows().filter(
-    (row): row is AttestationEnvelope =>
-      !isAttestationTombstone(row) &&
-      row.implementationQueue !== undefined &&
-      (partitionKey === undefined || row.implementationQueue.partition.partitionKey === partitionKey),
-  );
+function queueRows(store: AttestationStore, partitionKey?: string): AttestationRow[] {
+  return store
+    .rows()
+    .filter(
+      (row) =>
+        row.implementationQueue !== undefined &&
+        (partitionKey === undefined ||
+          persistedPartitionKey(row.implementationQueue) === partitionKey),
+    );
 }
 
 function currentPartitionRevision(store: AttestationStore, partitionKey: string): number {
@@ -384,7 +395,10 @@ function active(control: ImplementationQueueControl): boolean {
 
 function frontRow(store: AttestationStore, partitionKey: string): AttestationEnvelope | undefined {
   return queueRows(store, partitionKey)
-    .filter((row) => active(row.implementationQueue!))
+    .filter(
+      (row): row is AttestationEnvelope =>
+        !isAttestationTombstone(row) && active(row.implementationQueue!),
+    )
     .sort(
       (left, right) =>
         left.implementationQueue!.enrollment.admissionOrdinal -
@@ -436,10 +450,16 @@ export function implementationQueuePartition(input: {
     throw new AttestationContractError("projectKey", "expected a trusted project identity");
   }
   if (!SHA256.test(input.repositoryId)) {
-    throw new AttestationContractError("repositoryId", "expected a lowercase SHA-256 repository identity");
+    throw new AttestationContractError(
+      "repositoryId",
+      "expected a lowercase SHA-256 repository identity",
+    );
   }
   if (!PROTECTED_REF.test(input.integrationRef)) {
-    throw new AttestationContractError("integrationRef", "expected a full protected refs/heads ref");
+    throw new AttestationContractError(
+      "integrationRef",
+      "expected a full protected refs/heads ref",
+    );
   }
   const identity = {
     projectKey: input.projectKey,
@@ -584,12 +604,13 @@ export function enqueueImplementationCandidate(
 
   const stableEnrollmentId = enrollmentId(partition, authority);
   const priorEnrollment = queueRows(deps.store, partition.partitionKey).filter(
-    (candidate) =>
-      candidate.implementationQueue!.enrollment.enrollmentId === stableEnrollmentId,
+    (candidate) => persistedEnrollmentId(candidate.implementationQueue!) === stableEnrollmentId,
   );
   const activePrior = priorEnrollment.find(
     (candidate) =>
-      candidate.attestationId !== row.attestationId && active(candidate.implementationQueue!),
+      !isAttestationTombstone(candidate) &&
+      candidate.attestationId !== row.attestationId &&
+      active(candidate.implementationQueue!),
   );
   if (activePrior !== undefined) {
     throw new ImplementationQueueConflictError(
@@ -609,7 +630,7 @@ export function enqueueImplementationCandidate(
       "a retired enrollment requires its exact staged-rebase source authority",
     );
   }
-  let retiredSourceRow: AttestationEnvelope | undefined;
+  let retiredSourceRow: AttestationRow | undefined;
   let retiredSourceBinding: DispatchStagedRebaseSourceBinding | undefined;
   if (successorSource !== undefined) {
     if (retiredSourceRows.length !== 1) {
@@ -653,10 +674,12 @@ export function enqueueImplementationCandidate(
     }
   }
   const admissionOrdinal =
-    priorEnrollment[0]?.implementationQueue?.enrollment.admissionOrdinal ??
+    (priorEnrollment[0]?.implementationQueue === undefined
+      ? undefined
+      : persistedAdmissionOrdinal(priorEnrollment[0].implementationQueue)) ??
     queueRows(deps.store, partition.partitionKey).reduce(
       (maximum, candidate) =>
-        Math.max(maximum, candidate.implementationQueue!.enrollment.admissionOrdinal),
+        Math.max(maximum, persistedAdmissionOrdinal(candidate.implementationQueue!)),
       0,
     ) + 1;
   const enrollment: ImplementationQueueEnrollment = Object.freeze({
@@ -678,9 +701,7 @@ export function enqueueImplementationCandidate(
     finalizedManifestDigest: authority.finalizedManifestDigest,
     managedWorktreeBindingDigest: digest(binding),
     gitReceiptLineageDigest: digest(request.gitReceipts),
-    gitReceipts: Object.freeze(
-      request.gitReceipts.map((receipt) => Object.freeze({ ...receipt })),
-    ),
+    gitReceipts: Object.freeze(request.gitReceipts.map((receipt) => Object.freeze({ ...receipt }))),
     worktreePath: binding.worktreePath,
     repositoryId: binding.repositoryId,
   };
@@ -723,19 +744,35 @@ export function enqueueImplementationCandidate(
         generation: row.generation,
       }),
     });
-    const retiredControl: ImplementationQueueControl = Object.freeze({
-      ...retiredSourceRow.implementationQueue!,
-      partitionRevision: candidate.partitionRevision + 1,
-      stagedRebaseSource: claimedSource,
-    });
-    deps.store.replace(
-      retiredSourceRow,
-      Object.freeze({
-        ...retiredSourceRow,
-        implementationQueue: retiredControl,
-        stagedRebaseSourceBinding: claimedSource,
-      }),
-    );
+    if (isAttestationTombstone(retiredSourceRow)) {
+      const retiredBinding: ImplementationQueueTombstoneBinding = Object.freeze({
+        ...retiredSourceRow.implementationQueue!,
+        partitionRevision: candidate.partitionRevision + 1,
+        stagedRebaseSource: claimedSource,
+      });
+      deps.store.replace(
+        retiredSourceRow,
+        Object.freeze({
+          ...retiredSourceRow,
+          implementationQueue: retiredBinding,
+          stagedRebaseSourceBinding: claimedSource,
+        }),
+      );
+    } else {
+      const retiredControl: ImplementationQueueControl = Object.freeze({
+        ...retiredSourceRow.implementationQueue!,
+        partitionRevision: candidate.partitionRevision + 1,
+        stagedRebaseSource: claimedSource,
+      });
+      deps.store.replace(
+        retiredSourceRow,
+        Object.freeze({
+          ...retiredSourceRow,
+          implementationQueue: retiredControl,
+          stagedRebaseSourceBinding: claimedSource,
+        }),
+      );
+    }
   }
   return candidate;
 }
@@ -800,9 +837,7 @@ function queuedAbort(
   const queue: ImplementationQueueControl = Object.freeze({
     ...withoutLease(control),
     state:
-      stagedRebaseSource === undefined
-        ? ("terminal" as const)
-        : ("staged-rebase-retired" as const),
+      stagedRebaseSource === undefined ? ("terminal" as const) : ("staged-rebase-retired" as const),
     partitionRevision: nextPartitionRevision(deps.store, control.partition.partitionKey),
     terminal: Object.freeze({ reason: queueReason, terminalAt: at, detailsDigest }),
     ...(stagedRebaseSource === undefined ? {} : { stagedRebaseSource }),
@@ -840,9 +875,7 @@ function queuedAbort(
       ? {}
       : { stagedCompletionQualification: control.qualification }),
     implementationQueue: queue,
-    ...(stagedRebaseSource === undefined
-      ? {}
-      : { stagedRebaseSourceBinding: stagedRebaseSource }),
+    ...(stagedRebaseSource === undefined ? {} : { stagedRebaseSourceBinding: stagedRebaseSource }),
     abortedAt: at,
     abortReason: reason,
     abortDetails: details,
@@ -922,9 +955,7 @@ export function qualifyDispatchStagedCompletion(
   const at = deps.now();
   if (!completionMatches || !bindingsMatch) {
     const queueReason: ImplementationCandidateTerminalReason =
-      proof.childId === row.expectedChild.childId
-        ? "mismatched-completion"
-        : "foreign-completion";
+      proof.childId === row.expectedChild.childId ? "mismatched-completion" : "foreign-completion";
     return Object.freeze({
       state: "aborted" as const,
       result: queuedAbort(
@@ -973,10 +1004,7 @@ export function acquireImplementationCandidate(
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
   if (typeof request.holderId !== "string" || request.holderId.trim() === "") {
-    throw new AttestationContractError(
-      "holderId",
-      "expected a non-empty lease holder identity",
-    );
+    throw new AttestationContractError("holderId", "expected a non-empty lease holder identity");
   }
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
   const revision = currentPartitionRevision(deps.store, request.partitionKey);
@@ -1174,10 +1202,7 @@ export function recoverImplementationCandidate(
 }
 
 export function terminalizeImplementationCandidate(
-  request: Omit<
-    ImplementationQueueLeaseTransitionRequest,
-    "holderId" | "leaseGeneration"
-  > & {
+  request: Omit<ImplementationQueueLeaseTransitionRequest, "holderId" | "leaseGeneration"> & {
     readonly reason: Exclude<
       ImplementationCandidateTerminalReason,
       "gate-complete" | "staged-rebase"
@@ -1215,8 +1240,7 @@ export function retireDispatchStagedRebaseSource(
   assertTrustedActor(request.actor);
   const replayRow = requireEnvelope(request, deps);
   const replayControl = assertQueueIdentity(replayRow, request);
-  const existingSource =
-    replayRow.stagedRebaseSourceBinding ?? replayControl.stagedRebaseSource;
+  const existingSource = replayRow.stagedRebaseSourceBinding ?? replayControl.stagedRebaseSource;
   if (existingSource !== undefined) {
     const exactReplay =
       existingSource.source.attestationId === request.attestationId &&

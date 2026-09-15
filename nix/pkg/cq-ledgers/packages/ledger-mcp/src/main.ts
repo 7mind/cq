@@ -88,6 +88,12 @@ import { createConfigCapability } from "./configCapability.js";
 import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
 
 export { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
+export { ImplementationCandidateQueueAdapter } from "./implementationCandidateQueue.js";
+export type {
+  ImplementationCandidateQueueAdapterOptions,
+  QualifiedImplementationCandidate,
+  QualifyNativeImplementationCandidateRequest,
+} from "./implementationCandidateQueue.js";
 import { serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { connectRemoteMcpProxy, serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { computeConfig } from "./configCapability.js";

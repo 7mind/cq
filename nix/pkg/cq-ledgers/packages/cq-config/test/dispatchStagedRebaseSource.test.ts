@@ -60,11 +60,7 @@ const packagedEnvironmentDigest = "8".repeat(64);
 const guardedRebase = `cq-guarded-rebase:v1:${"9".repeat(64)}`;
 const guardedRebaseJournalDigest = "a".repeat(64);
 
-function input(
-  base: string,
-  startingCommit: string,
-  round: number,
-): DispatchJSONValue {
+function input(base: string, startingCommit: string, round: number): DispatchJSONValue {
   return {
     taskId: "T6518",
     headline: "Retire a staged rebase source",
@@ -259,9 +255,9 @@ describe("staged-rebase source retirement", () => {
     const source = await retireDispatchStagedRebaseSourceOn(backend, retirement, {
       now: clock.now,
     });
-    expect(await retireDispatchStagedRebaseSourceOn(backend, retirement, { now: clock.now })).toEqual(
-      source,
-    );
+    expect(
+      await retireDispatchStagedRebaseSourceOn(backend, retirement, { now: clock.now }),
+    ).toEqual(source);
     await expect(
       retireDispatchStagedRebaseSourceOn(
         backend,
@@ -318,6 +314,10 @@ describe("staged-rebase source retirement", () => {
     const source = await retireDispatchStagedRebaseSourceOn(backend, retirement, {
       now: clock.now,
     });
+    clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+    await sweepAttestationsOn(backend, { now: clock.now });
+    backend.rehydrate();
+    expect(backend.storedRows()[0]?.kind).toBe("tombstone");
     const rebasedStartCommit = "d".repeat(40);
     const successorResult = "e".repeat(40);
     const successorTree = "f".repeat(40);
@@ -380,19 +380,12 @@ describe("staged-rebase source retirement", () => {
       ),
     ).toEqual(successorQueue);
     await expect(
-      enqueue(
-        backend,
-        successor,
-        stored.result,
-        successorBinding,
-        successorResult,
-        successorTree,
-        { ...sourceClaim, guardedRebaseJournalDigest: "0".repeat(64) },
-      ),
+      enqueue(backend, successor, stored.result, successorBinding, successorResult, successorTree, {
+        ...sourceClaim,
+        guardedRebaseJournalDigest: "0".repeat(64),
+      }),
     ).rejects.toThrow(DispatchStagedRebaseSourceError);
-    const retired = backend.storedRows().find(
-      (row) => row.generation === prepared.generation,
-    );
+    const retired = backend.storedRows().find((row) => row.generation === prepared.generation);
     expect(retired).toMatchObject({
       stagedRebaseSourceBinding: {
         successor: {
