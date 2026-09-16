@@ -180,6 +180,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
 
         const expectCallerMintedRejection = async (
           candidate: AdmittedGenericMutation,
+          candidateBinding: AdmittedGenericMutationBinding = binding,
         ): Promise<void> => {
           const candidateQueries = new PostgresOperationQueries(
             fakeSql(candidate),
@@ -189,16 +190,32 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
             () => 0,
             null,
           );
-          const rejected = await resolvePostgresGenericRows(candidateQueries, candidate, binding);
+          const rejected = await resolvePostgresGenericRows(
+            candidateQueries,
+            candidate,
+            candidateBinding,
+          );
           expect(rejected.plan).toMatchObject({
             kind: "rejected",
             error: { code: "caller-minted-admission" },
           });
         };
-        await expectCallerMintedRejection({
+        const clonedScope = {
           ...admitted,
           scope: { ...admitted.scope, targetRefs: [`${TASKS_LEDGER}:T9999`] },
-        });
+        };
+        await expectCallerMintedRejection(clonedScope);
+        const prototypeLookalike = Object.assign(
+          Object.create(Object.getPrototypeOf(binding)) as object,
+          { owns: () => true },
+        ) as AdmittedGenericMutationBinding;
+        await expectCallerMintedRejection(clonedScope, prototypeLookalike);
+        const CapturedBindingToken = Object.getPrototypeOf(binding).constructor as new (
+          owns: (value: unknown) => value is AdmittedGenericMutation,
+        ) => AdmittedGenericMutationBinding;
+        expect(
+          () => new CapturedBindingToken((_value): _value is AdmittedGenericMutation => true),
+        ).toThrow("generic mutation binding constructor is private");
         await expectCallerMintedRejection({
           ...admitted,
           admission: foreignAdmission,
