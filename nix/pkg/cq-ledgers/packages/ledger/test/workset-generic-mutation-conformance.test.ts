@@ -210,7 +210,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
           fields: { title: "updated" },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
-        };
+        } as never;
       },
     });
 
