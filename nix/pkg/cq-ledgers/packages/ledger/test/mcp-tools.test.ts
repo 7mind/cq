@@ -1383,6 +1383,36 @@ describe("ledger MCP tools", () => {
     }
   });
 
+  it("create_item, workset get, and derive_predicates expose one rooted planning goal", async () => {
+    const store = await buildStore();
+    try {
+      const tools = createLedgerMcpTools(store);
+      await createRoot(tools, { title: "MCP workset scenario" });
+      const goal = decode<{ item: { id: string } }>(
+        await callTool(tools, "create_item", {
+          ledger_id: "goals",
+          milestone_id: "M1",
+          status: "clarifying",
+          fields: { title: "rooted goal", description: "plan through MCP" },
+        }),
+      );
+      await requireWorksetStore(store).setRoots([`goals:${goal.item.id}`]);
+
+      const workset = decode<{
+        op: "get";
+        graph: { nodes: Array<{ ref: string }> };
+      }>(await callTool(tools, "workset", { op: "get", projection: "id" }));
+      const predicates = decode<DerivedPredicates>(
+        await callTool(tools, "derive_predicates", {}),
+      );
+
+      expect(workset.graph.nodes).toEqual([{ ref: `goals:${goal.item.id}` }]);
+      expect(predicates.pPlan).toEqual({ value: true, items: [goal.item.id] });
+    } finally {
+      await store.dispose();
+    }
+  });
+
   it("reopen_item moves a terminal item to a non-terminal status", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);

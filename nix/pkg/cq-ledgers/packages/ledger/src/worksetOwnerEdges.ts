@@ -185,6 +185,19 @@ export type OwnerEdgeResolution =
       readonly reason: string;
     };
 
+/**
+ * Traversal is deliberately distinct from new-child authorization. A sealed
+ * edge may remain traversable after its owner leaves the creation phase.
+ */
+export type ExistingOwnerEdgeTraversalResolution =
+  | {
+      readonly decision: "allow";
+      readonly childLedgers: readonly string[];
+    }
+  | {
+      readonly decision: "deny";
+    };
+
 // ---------------------------------------------------------------------------
 // Status sets per owner ledger
 // ---------------------------------------------------------------------------
@@ -406,6 +419,30 @@ export const ALLOWED_OWNER_EDGE_ROWS: readonly AllowedOwnerEdgeRow[] = [
     childLedgers: [DEFECTS_LEDGER],
   }),
 ];
+
+/**
+ * Resolve an existing canonical edge for graph traversal. This never
+ * authorizes a new child: planned ideas retain only already-sealed live
+ * idea-to-goal edges, while creation remains restricted to open/postponed.
+ */
+export function resolveExistingOwnerEdgeTraversal(input: {
+  readonly ownerLedger: string;
+  readonly ownerStatus: string;
+  readonly creationKind: LifecycleCreationKind;
+}): ExistingOwnerEdgeTraversalResolution {
+  const creation = resolveOwnerEdgePolicy(input);
+  if (creation.decision === "allow") {
+    return { decision: "allow", childLedgers: creation.childLedgers };
+  }
+  if (
+    input.ownerLedger === IDEAS_LEDGER &&
+    input.ownerStatus === "planned" &&
+    input.creationKind === "idea-to-goal"
+  ) {
+    return { decision: "allow", childLedgers: [GOALS_LEDGER] };
+  }
+  return { decision: "deny" };
+}
 
 /** Deny reasons for owner ledgers that never authorise lifecycle creation. */
 const OWNER_LEDGER_DENY_REASON: Readonly<Record<string, string>> = {

@@ -8,7 +8,7 @@
  * - one owned-write admission held through commit
  */
 
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
   WorksetOwnedLifecycleError,
   readCanonicalOwnership,
@@ -100,8 +100,7 @@ export function runWorksetCoordinationBundleContract(
       expect(defaultMembers.has(`${GOALS_LEDGER}:${consumed.goal.id}`)).toBe(true);
     });
 
-    // expected-failure: tasks:T6565
-    test.failing("retains the exact owned live goal after consuming the root idea", async () => {
+    it("retains the exact owned live goal after consuming the root idea", async () => {
       const ledger = await factory.build();
       await ledger.init();
       const idea = await ledger.owned.createOwnerless({

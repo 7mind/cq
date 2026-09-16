@@ -189,23 +189,42 @@ describe("workset-phase — planned/building finalized manifest", () => {
   });
 });
 
-describe("workset-phase — superseded review exclusion via owner status", () => {
-  it("does not include sealed children when owner status no longer allows the edge", () => {
-    // Idea owner must be open/postponed for idea-to-goal. Terminal planned idea
-    // must not expand goals.
+describe("workset-phase — sealed idea-to-goal traversal", () => {
+  it("retains a live sealed goal from a planned idea but excludes terminal goals", () => {
     const idea = item("I1", "planned", { title: "spent idea" });
-    const goal = item("G1", "clarifying", {
+    const liveGoal = item("G1", "clarifying", {
       title: "g",
+      description: "d",
+      [WORKSET_OWNER_REF_FIELD]: "ideas:I1",
+      [WORKSET_OWNER_EDGE_KIND_FIELD]: "idea-to-goal",
+    });
+    const terminalGoal = item("G2", "done", {
+      title: "done",
       description: "d",
       [WORKSET_OWNER_REF_FIELD]: "ideas:I1",
       [WORKSET_OWNER_EDGE_KIND_FIELD]: "idea-to-goal",
     });
     const state = buildWorksetActiveState([
       { ledger: "ideas", items: [idea] },
-      { ledger: "goals", items: [goal] },
+      { ledger: "goals", items: [liveGoal, terminalGoal] },
     ]);
     const graph = closeWorkset(["ideas:I1"], state);
+    expect(graph.nodes.map((n) => n.ref)).toEqual(["ideas:I1", "goals:G1"]);
+    expect(graph.nodes.map((n) => n.ref)).not.toContain("goals:G2");
+  });
+
+  it("does not traverse a sealed goal from a discarded idea", () => {
+    const idea = item("I1", "discarded", { title: "discarded idea" });
+    const goal = item("G1", "clarifying", {
+      title: "g",
+      description: "d",
+      [WORKSET_OWNER_REF_FIELD]: "ideas:I1",
+      [WORKSET_OWNER_EDGE_KIND_FIELD]: "idea-to-goal",
+    });
+    const graph = closeWorkset(["ideas:I1"], buildWorksetActiveState([
+      { ledger: "ideas", items: [idea] },
+      { ledger: "goals", items: [goal] },
+    ]));
     expect(graph.nodes.map((n) => n.ref)).toEqual(["ideas:I1"]);
-    expect(graph.nodes.map((n) => n.ref)).not.toContain("goals:G1");
   });
 });

@@ -57,7 +57,7 @@ import {
   isAmbiguousLegacyOwnership,
   PREREQUISITE_EDGE,
   readCanonicalOwnership,
-  resolveOwnerEdgePolicy,
+  resolveExistingOwnerEdgeTraversal,
   type WorksetOwnerEdgeKind,
 } from "./worksetOwnerEdges.js";
 
@@ -157,6 +157,7 @@ export class WorksetRootError extends LedgerError {
 
 const GOAL_DRAFT_PHASES = new Set(["clarifying", "planning"]);
 const GOAL_FINALIZED_PHASES = new Set(["planned", "building"]);
+const LIVE_GOAL_STATUSES = new Set(["clarifying", "planning", "planned", "building"]);
 
 const LIVE_TASK_STATUSES = new Set(["planned", "wip", "blocked"]);
 const LIVE_MILESTONE_STATUSES = new Set(["open", "postponed", "blocked"]);
@@ -505,9 +506,9 @@ export function closeWorkset(
       const childLedger = splitRef(childRef).ledger;
       const edgeKind = ownership.edgeKind;
 
-      // Policy must allow this edge for the owner's current status.
+      // Existing sealed traversal is distinct from new-child authorization.
       if (edgeKind === "prerequisite") continue; // never sealed as ownership
-      const resolution = resolveOwnerEdgePolicy({
+      const resolution = resolveExistingOwnerEdgeTraversal({
         ownerLedger: ledger,
         ownerStatus: item.status,
         // Every sealed edge kind except prerequisite is a lifecycle creation kind.
@@ -515,6 +516,7 @@ export function closeWorkset(
       });
       if (resolution.decision !== "allow") continue;
       if (!resolution.childLedgers.includes(childLedger)) continue;
+      if (childLedger === GOALS_LEDGER && !LIVE_GOAL_STATUSES.has(child.status)) continue;
 
       // Phase-aware draft / finalized filters.
       if (edgeKind === "active-current-draft" || edgeKind === "finalized-manifest") {
