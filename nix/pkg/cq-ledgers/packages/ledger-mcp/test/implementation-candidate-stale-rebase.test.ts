@@ -98,10 +98,78 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
     expect(reconciliationCalls).toBe(1);
     expect(acquireCalls).toBe(0);
 
+    const later = await fixture.stage({
+      taskId: "T6520",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "c".repeat(64),
+    });
+    const laterQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: later.candidate,
+      ...later.qualification,
+    });
+    const laterLease = Object.freeze({
+      attestationId: later.prepared.attestationId,
+      generation: later.prepared.generation,
+      partitionKey: laterQualified.queue.partition.partitionKey,
+      enrollmentId: laterQualified.queue.enrollment.enrollmentId,
+      attemptId: laterQualified.queue.attempt.attemptId,
+      holderId: "restart-conflict-coordinator",
+      leaseGeneration: 1,
+    });
+    let conflictParked = false;
+    let conflictParkCalls = 0;
+    let laterGateCalls = 0;
+    const conflictedQueue = {
+      inspectPendingStagedRebase: async () =>
+        conflictParked ? undefined : { control, source },
+      parkRetiredStagedRebaseConflict: async () => {
+        conflictParkCalls += 1;
+        conflictParked = true;
+        return {
+          ...control,
+          partitionRevision: control.partitionRevision + 1,
+          stagedRebaseDisposition: {
+            kind: "cq-staged-rebase-disposition" as const,
+            version: 1 as const,
+            state: "conflict-pending" as const,
+            dispositionAt: "2026-09-15T12:00:02.000Z",
+            detailsDigest: "a".repeat(64),
+          },
+        };
+      },
+      acquire: async () => {
+        acquireCalls += 1;
+        return {
+          state: "leased" as const,
+          lease: laterLease,
+          partitionRevision: control.partitionRevision + 2,
+          replayed: false,
+        };
+      },
+      inspectLease: async () => ({
+        ...laterQualified.queue,
+        state: "leased" as const,
+        partitionRevision: control.partitionRevision + 2,
+        leaseGeneration: laterLease.leaseGeneration,
+        lease: {
+          holderId: laterLease.holderId,
+          generation: laterLease.leaseGeneration,
+          acquiredAt: "2026-09-15T12:00:03.000Z",
+        },
+      }),
+    } as unknown as ConstructorParameters<typeof ImplementationCandidateCoordinator>[0];
     const conflicted = new ImplementationCandidateCoordinator(
-      queue,
+      conflictedQueue,
       {
         reconcileRetiredSource: async () => ({ state: "conflict-pending" as const }),
+        observeProtectedHead: async (laterControl: typeof laterQualified.queue) =>
+          laterControl.attempt.observedBaseCommit,
+        finalizeQualifiedFront: async () => {
+          laterGateCalls += 1;
+        },
+        confirmAndFetchQualifiedFront: async () => undefined,
       } as unknown as ImplementationCandidateCoordinatorOperations,
     );
     expect(
@@ -112,11 +180,27 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
     ).toEqual({
       state: "blocked",
       partitionKey: source.partitionKey,
-      partitionRevision: control.partitionRevision,
+      partitionRevision: control.partitionRevision + 1,
       front: source.source,
       frontState: "staged-rebase-retired",
     });
+    expect(conflictParkCalls).toBe(1);
     expect(acquireCalls).toBe(0);
+
+    expect(
+      await conflicted.run({
+        partitionKey: qualified.queue.partition.partitionKey,
+        holderId: "restart-conflict-coordinator",
+      }),
+    ).toEqual({
+      state: "completed",
+      handle: {
+        attestationId: later.prepared.attestationId,
+        generation: later.prepared.generation,
+      },
+    });
+    expect(acquireCalls).toBe(1);
+    expect(laterGateCalls).toBe(1);
   });
 
   // regression: T6519 — a staged row with no durable completion proof must not block forever.

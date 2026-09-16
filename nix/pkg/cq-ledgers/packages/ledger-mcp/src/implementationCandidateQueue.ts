@@ -3,6 +3,7 @@ import {
   dispatchPayloadDigest,
   enqueueImplementationCandidateOn,
   isAttestationTombstone,
+  parkDispatchStagedRebaseConflictOn,
   parkImplementationCandidateOn,
   qualifyDispatchStagedCompletionOn,
   recoverImplementationCandidateOn,
@@ -193,6 +194,7 @@ export class ImplementationCandidateQueueAdapter {
             control === undefined ||
             source === undefined ||
             control.state !== "staged-rebase-retired" ||
+            control.stagedRebaseDisposition !== undefined ||
             control.partition.partitionKey !== partitionKey
           ) {
             return [];
@@ -217,6 +219,27 @@ export class ImplementationCandidateQueueAdapter {
         );
       return checkpoints[0];
     });
+  }
+
+  parkRetiredStagedRebaseConflict(
+    checkpoint: PendingStagedRebaseCheckpoint,
+  ): Promise<ImplementationQueueControl> {
+    return parkDispatchStagedRebaseConflictOn(
+      this.backend,
+      {
+        namespace: this.backend.namespace,
+        actor: this.actor,
+        ...checkpoint.source.source,
+        partitionKey: checkpoint.source.partitionKey,
+        enrollmentId: checkpoint.source.enrollmentId,
+        attemptId: checkpoint.source.attemptId,
+        leaseGeneration: checkpoint.source.leaseGeneration,
+        sourceReference: checkpoint.source.sourceReference,
+        expectedPartitionRevision: checkpoint.control.partitionRevision,
+        detail: { disposition: "conflict" },
+      },
+      { now: this.now },
+    );
   }
 
   park(request: LeaseTransitionRequest): Promise<ImplementationQueueControl> {
@@ -374,10 +397,11 @@ export class ImplementationCandidateCoordinator {
       }
       const reconciled = await this.operations.reconcileRetiredSource(pending);
       if (reconciled.state === "conflict-pending") {
+        const parked = await this.queue.parkRetiredStagedRebaseConflict(pending);
         return Object.freeze({
           state: "blocked" as const,
           partitionKey: pending.source.partitionKey,
-          partitionRevision: pending.control.partitionRevision,
+          partitionRevision: parked.partitionRevision,
           front: Object.freeze({ ...pending.source.source }),
           frontState: "staged-rebase-retired" as const,
         });
@@ -423,10 +447,11 @@ export class ImplementationCandidateCoordinator {
       ) {
         throw new Error("conflicted staged-rebase retirement lost its durable checkpoint");
       }
+      const parked = await this.queue.parkRetiredStagedRebaseConflict(retired);
       return Object.freeze({
         state: "blocked" as const,
         partitionKey: retired.source.partitionKey,
-        partitionRevision: retired.control.partitionRevision,
+        partitionRevision: parked.partitionRevision,
         front: Object.freeze({ ...retired.source.source }),
         frontState: "staged-rebase-retired" as const,
       });

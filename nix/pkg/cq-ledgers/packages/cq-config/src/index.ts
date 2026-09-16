@@ -848,6 +848,7 @@ export type {
   ImplementationQueueControl,
   ImplementationQueueTombstoneBinding,
   DispatchStagedRebaseSourceBinding,
+  DispatchStagedRebaseDisposition,
   EnqueueImplementationCandidateRequest,
   QualifyDispatchStagedCompletionRequest,
   QualifyDispatchStagedCompletionOutcome,
@@ -856,6 +857,7 @@ export type {
   ImplementationQueueLeaseTransitionRequest,
   RecoverImplementationCandidateRequest,
   RetireDispatchStagedRebaseSourceRequest,
+  ParkDispatchStagedRebaseConflictRequest,
 } from "./dispatchImplementationQueue.js";
 export {
   ImplementationQueueConflictError,
@@ -881,6 +883,8 @@ export {
   terminalizeImplementationCandidateOn,
   retireDispatchStagedRebaseSource,
   retireDispatchStagedRebaseSourceOn,
+  parkDispatchStagedRebaseConflict,
+  parkDispatchStagedRebaseConflictOn,
   implementationQueueTombstoneBinding,
   assertQueuedParentGateLease,
   queueBindingOf,

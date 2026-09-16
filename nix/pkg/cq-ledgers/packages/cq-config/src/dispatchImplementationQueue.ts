@@ -171,6 +171,14 @@ export interface DispatchStagedRebaseSourceBinding {
   readonly successor?: DispatchHandle;
 }
 
+export interface DispatchStagedRebaseDisposition {
+  readonly kind: "cq-staged-rebase-disposition";
+  readonly version: 1;
+  readonly state: "conflict-pending";
+  readonly dispositionAt: string;
+  readonly detailsDigest: string;
+}
+
 export interface ImplementationQueueTerminal {
   readonly reason: ImplementationCandidateTerminalReason;
   readonly terminalAt: string;
@@ -191,6 +199,7 @@ export interface ImplementationQueueControl {
   readonly lease?: ImplementationQueueLease;
   readonly terminal?: ImplementationQueueTerminal;
   readonly stagedRebaseSource?: DispatchStagedRebaseSourceBinding;
+  readonly stagedRebaseDisposition?: DispatchStagedRebaseDisposition;
 }
 
 export interface ImplementationQueueTombstoneBinding {
@@ -209,6 +218,7 @@ export interface ImplementationQueueTombstoneBinding {
   readonly qualificationDigest?: string;
   readonly terminal?: ImplementationQueueTerminal;
   readonly stagedRebaseSource?: DispatchStagedRebaseSourceBinding;
+  readonly stagedRebaseDisposition?: DispatchStagedRebaseDisposition;
 }
 
 export class ImplementationQueueConflictError extends DispatchAttestationExtensionError {
@@ -362,6 +372,18 @@ export interface RetireDispatchStagedRebaseSourceRequest extends ImplementationQ
   readonly ontoCommit: string;
   readonly guardedRebase: string;
   readonly guardedRebaseJournalDigest: string;
+}
+
+export interface ParkDispatchStagedRebaseConflictRequest extends DispatchHandle {
+  readonly namespace: AttestationNamespace;
+  readonly actor: "trusted-parent" | "trusted-extension";
+  readonly partitionKey: string;
+  readonly enrollmentId: string;
+  readonly attemptId: string;
+  readonly leaseGeneration: number;
+  readonly sourceReference: string;
+  readonly expectedPartitionRevision: number;
+  readonly detail?: DispatchJSONValue;
 }
 
 function digest(value: unknown): string {
@@ -1467,6 +1489,55 @@ export function retireDispatchStagedRebaseSource(
   return source;
 }
 
+export function parkDispatchStagedRebaseConflict(
+  request: ParkDispatchStagedRebaseConflictRequest,
+  deps: DispatchServiceDeps,
+): ImplementationQueueControl {
+  assertOwnNamespace(request.namespace, deps.store);
+  assertTrustedActor(request.actor);
+  const row = requireEnvelope(request, deps);
+  const control = assertQueueIdentity(row, request);
+  const source = row.stagedRebaseSourceBinding ?? control.stagedRebaseSource;
+  if (
+    control.state !== "staged-rebase-retired" ||
+    source === undefined ||
+    source.sourceReference !== request.sourceReference ||
+    source.leaseGeneration !== request.leaseGeneration ||
+    control.leaseGeneration !== request.leaseGeneration
+  ) {
+    throw new ImplementationQueueConflictError(
+      "stale-lease",
+      "conflict disposition requires the exact retired staged-rebase authority",
+    );
+  }
+  const detailsDigest = digest(request.detail ?? { disposition: "conflict" });
+  const existing = control.stagedRebaseDisposition;
+  if (existing !== undefined) {
+    if (existing.state === "conflict-pending" && existing.detailsDigest === detailsDigest) {
+      return control;
+    }
+    throw new ImplementationQueueConflictError(
+      "binding-mismatch",
+      "an altered conflict disposition cannot replace the retired staged-rebase disposition",
+    );
+  }
+  assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
+  const disposition: DispatchStagedRebaseDisposition = Object.freeze({
+    kind: "cq-staged-rebase-disposition" as const,
+    version: 1 as const,
+    state: "conflict-pending" as const,
+    dispositionAt: deps.now(),
+    detailsDigest,
+  });
+  const next: ImplementationQueueControl = Object.freeze({
+    ...control,
+    partitionRevision: nextPartitionRevision(deps.store, request.partitionKey),
+    stagedRebaseDisposition: disposition,
+  });
+  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: next }));
+  return next;
+}
+
 export function implementationQueueTombstoneBinding(
   control: ImplementationQueueControl,
 ): ImplementationQueueTombstoneBinding {
@@ -1497,6 +1568,9 @@ export function implementationQueueTombstoneBinding(
     ...(control.stagedRebaseSource === undefined
       ? {}
       : { stagedRebaseSource: control.stagedRebaseSource }),
+    ...(control.stagedRebaseDisposition === undefined
+      ? {}
+      : { stagedRebaseDisposition: control.stagedRebaseDisposition }),
   });
 }
 
@@ -1636,6 +1710,16 @@ export async function retireDispatchStagedRebaseSourceOn(
 ): Promise<DispatchStagedRebaseSourceBinding> {
   return backend.transact({ kind: "namespace" }, (store) =>
     retireDispatchStagedRebaseSource(request, { store, now: deps.now }),
+  );
+}
+
+export async function parkDispatchStagedRebaseConflictOn(
+  backend: AttestationBackend,
+  request: ParkDispatchStagedRebaseConflictRequest,
+  deps: { readonly now: () => string },
+): Promise<ImplementationQueueControl> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    parkDispatchStagedRebaseConflict(request, { store, now: deps.now }),
   );
 }
 
