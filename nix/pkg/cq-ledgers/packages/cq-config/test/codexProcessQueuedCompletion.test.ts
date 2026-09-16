@@ -205,6 +205,15 @@ describe("Codex process queued completion [Behavioral-Active, Blackbox-Group]", 
     "real library adapter process returns queued, then a qualified lease gates, confirms, and fetches",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "cq-library-queued-process-"));
+      const initialized = Bun.spawnSync([
+        process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+        "init",
+        "--quiet",
+        root,
+      ]);
+      if (initialized.exitCode !== 0) {
+        throw new Error(new TextDecoder().decode(initialized.stderr));
+      }
       const executable = join(root, "codex-queued");
       const roleInstructions = "T6519 library process queued completion";
       const promptDigest = new Bun.CryptoHasher("sha256")
