@@ -5608,10 +5608,10 @@ export interface ImplementationCompletionMergeAdmissionProviderOptions {
 }
 
 /**
- * Authenticate the merge journal before the process-launch deadline begins,
- * then wrap the ordinary workset provider while preserving the same admission
- * through process registration, ref update, settlement, durable `merged`, and
- * release.
+ * Authenticate and durably prepare the merge journal before the process-launch
+ * deadline begins, then wrap the ordinary workset provider while preserving
+ * the same admission through process registration, ref update, settlement,
+ * durable `merged`, and release.
  */
 export async function implementationCompletionMergeAdmissionProviderFromStore(
   options: ImplementationCompletionMergeAdmissionProviderOptions,
@@ -5622,6 +5622,22 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
     options.binding,
     validatedHead,
   );
+  const preparationAlreadyDurable =
+    (validatedCompletion.state === "merge-started" &&
+      validatedHead === validatedCompletion.repositoryHead) ||
+    (validatedCompletion.state === "merged" &&
+      validatedHead === validatedCompletion.resultCommit);
+  if (!preparationAlreadyDurable) {
+    await markImplementationCompletionMergeStarted(
+      options.store,
+      options.binding.completionRef,
+      validatedHead,
+      options.now,
+    );
+  }
+  if ((await options.repositoryHead()) !== validatedHead) {
+    throw new Error("repository HEAD changed during durable merge-started preparation");
+  }
   return {
     async acquire(input): Promise<WorksetBrokerAdmissionHandle> {
       if (input.kind !== "merge" || input.targetRef !== options.binding.targetRef)
@@ -5640,33 +5656,7 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
           phase,
         );
         if (observedHead !== validatedHead)
-          throw new Error("repository HEAD changed before durable merge-started preparation");
-        const preparationAlreadyDurable =
-          (validatedCompletion.state === "merge-started" &&
-            validatedHead === validatedCompletion.repositoryHead) ||
-          (validatedCompletion.state === "merged" &&
-            validatedHead === validatedCompletion.resultCommit);
-        if (!preparationAlreadyDurable) {
-          await awaitBeforeLaunchDeadline(
-            markImplementationCompletionMergeStarted(
-              options.store,
-              options.binding.completionRef,
-              observedHead,
-              options.now,
-            ),
-            deadline,
-            phase,
-          );
-        }
-        remainingLaunchDeadlineMs(deadline, phase);
-        const confirmedHead = await awaitBeforeLaunchDeadline(
-          options.repositoryHead(),
-          deadline,
-          phase,
-        );
-        if (confirmedHead !== observedHead) {
-          throw new Error("repository HEAD changed during durable merge-started preparation");
-        }
+          throw new Error("repository HEAD changed after durable merge-started preparation");
         await Promise.resolve(underlying.prepareGuardianShare?.(guardian, deadline));
         mergePrepared = true;
       };

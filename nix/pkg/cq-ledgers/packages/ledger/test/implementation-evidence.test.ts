@@ -575,7 +575,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
     await admission.registerProcessGroup({ pgid: 654, leaderPid: 654 });
     await expect(admission.shareWithGuardian({ pgid: 654, leaderPid: 654 })).rejects.toThrow(
-      "repository HEAD changed during durable merge-started preparation",
+      "repository HEAD changed after durable merge-started preparation",
     );
     expect(underlying.events()).not.toContain("guardian-shared");
     await admission.markSettled();
@@ -583,7 +583,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(underlying.activeAdmissionCount()).toBe(0);
   });
 
-  test("rejects a repository-head CAS change after journal prevalidation", async () => {
+  test("rejects a repository-head CAS change during durable preparation before admission", async () => {
     const f = await fixture();
     const completion = await f.service.prepareCompletion({
       taskRef: "tasks:T2345",
@@ -599,30 +599,30 @@ describe("versioned protected implementation evidence [BG]", () => {
     });
     const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
     let reads = 0;
-    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
-      provider: underlying,
-      store: f.evidence,
-      binding: {
-        kind: "merge",
-        targetRef: "tasks:T2345",
-        repositoryRoot: "/repo",
-        commit: RESULT,
-        completionRef: completion.completionRef,
-        mergeOperationId: "merge-prevalidation-head-cas",
-      },
-      repositoryHead: async () => {
-        reads += 1;
-        return reads === 2 ? "c".repeat(40) : BASE;
-      },
-    });
-    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
-    await admission.registerProcessGroup({ pgid: 655, leaderPid: 655 });
-    await expect(admission.shareWithGuardian({ pgid: 655, leaderPid: 655 })).rejects.toThrow(
-      "repository HEAD changed before durable merge-started preparation",
+    await expect(
+      implementationCompletionMergeAdmissionProviderFromStore({
+        provider: underlying,
+        store: f.evidence,
+        binding: {
+          kind: "merge",
+          targetRef: "tasks:T2345",
+          repositoryRoot: "/repo",
+          commit: RESULT,
+          completionRef: completion.completionRef,
+          mergeOperationId: "merge-prevalidation-head-cas",
+        },
+        repositoryHead: async () => {
+          reads += 1;
+          return reads === 2 ? "c".repeat(40) : BASE;
+        },
+      }),
+    ).rejects.toThrow(
+      "repository HEAD changed during durable merge-started preparation",
     );
-    expect(underlying.events()).not.toContain("guardian-shared");
-    await admission.markSettled();
-    await admission.releaseAfterSettlement();
+    expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
+      "merge-started",
+    );
+    expect(underlying.events()).toEqual([]);
     expect(underlying.activeAdmissionCount()).toBe(0);
   });
 
