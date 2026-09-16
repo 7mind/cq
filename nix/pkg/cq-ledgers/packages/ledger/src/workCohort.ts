@@ -17,7 +17,11 @@ import {
   parseGoalFinalizedManifest,
   type WorksetGraph,
 } from "./worksetGraph.js";
-import { readCanonicalOwnership } from "./worksetOwnerEdges.js";
+import {
+  readCanonicalOwnership,
+  resolveOwnerEdgePolicy,
+  type WorksetOwnerEdgeKind,
+} from "./worksetOwnerEdges.js";
 import type { WorksetStore } from "./worksetStore.js";
 
 export const COHORT_PHASE_ORDER_V1 = ["investigation", "implementation"] as const;
@@ -619,26 +623,73 @@ function dependencyClosure(graph: WorksetGraph, memberRef: string): readonly str
   return sortedUnique(closure);
 }
 
-function investigationOwnershipRef(graph: WorksetGraph, memberRef: string): string {
-  const inbound = new Map<string, string>();
-  for (const edge of graph.edges) {
-    if (edge.kind === "prerequisite") continue;
-    const prior = inbound.get(edge.to);
-    if (prior !== undefined && prior !== edge.from) {
-      throw new Error(`${edge.to} has multiple primary ownership boundaries`);
-    }
-    inbound.set(edge.to, edge.from);
-  }
+interface PrimaryOwnershipHop {
+  readonly childRef: string;
+  readonly childLedger: string;
+  readonly ownerRef: string;
+  readonly ownerLedger: string;
+  readonly ownerStatus: string;
+  readonly edgeKind: Exclude<WorksetOwnerEdgeKind, "prerequisite">;
+}
+
+function investigationOwnershipRef(
+  activeItems: ReadonlyMap<string, Item>,
+  memberRef: string,
+): string {
   const visited = new Set<string>();
+  const hops: PrimaryOwnershipHop[] = [];
   let current = memberRef;
-  while (true) {
+  while (!current.startsWith(`${GOALS_LEDGER}:`)) {
     if (visited.has(current)) throw new Error(`${memberRef} has cyclic primary ownership`);
     visited.add(current);
-    const owner = inbound.get(current);
-    if (owner === undefined) return current;
-    current = owner;
-    if (current.startsWith(`${GOALS_LEDGER}:`)) return current;
+    const item = activeItems.get(current);
+    if (item === undefined) {
+      throw new Error(`${memberRef} primary ownership boundary ${current} is unavailable`);
+    }
+    const ownership = readCanonicalOwnership(item);
+    if (ownership === null) {
+      throw new Error(`${memberRef} has no primary ownership boundary from ${current}`);
+    }
+    if (visited.has(ownership.ownerRef)) {
+      throw new Error(`${memberRef} has cyclic primary ownership`);
+    }
+    const owner = activeItems.get(ownership.ownerRef);
+    if (owner === undefined) {
+      throw new Error(
+        `${memberRef} primary ownership boundary ${ownership.ownerRef} is unavailable`,
+      );
+    }
+    if (ownership.edgeKind === "prerequisite") {
+      throw new Error(`${memberRef} primary ownership cannot use a prerequisite edge`);
+    }
+    hops.push({
+      childRef: current,
+      childLedger: canonicalRefParts(current).ledgerId,
+      ownerRef: ownership.ownerRef,
+      ownerLedger: canonicalRefParts(ownership.ownerRef).ledgerId,
+      ownerStatus: owner.status,
+      edgeKind: ownership.edgeKind,
+    });
+    current = ownership.ownerRef;
   }
+  for (const hop of hops) {
+    const resolution = resolveOwnerEdgePolicy({
+      ownerLedger: hop.ownerLedger,
+      ownerStatus: hop.ownerStatus,
+      creationKind: hop.edgeKind,
+    });
+    if (resolution.decision !== "allow") {
+      throw new Error(
+        `${memberRef} primary ownership edge ${hop.ownerRef} -> ${hop.childRef} is not live: ${resolution.reason}`,
+      );
+    }
+    if (!resolution.childLedgers.includes(hop.childLedger)) {
+      throw new Error(
+        `${memberRef} primary ownership edge ${hop.ownerRef} -> ${hop.childRef} does not authorise ${hop.childLedger}`,
+      );
+    }
+  }
+  return current;
 }
 
 function sourceReferenceOrder(
@@ -927,7 +978,7 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
           }),
         ];
       });
-      const ownershipRef = investigationOwnershipRef(graph, memberRef);
+      const ownershipRef = investigationOwnershipRef(activeItems, memberRef);
       const ownershipItem = activeItems.get(ownershipRef);
       if (ownershipItem === undefined) {
         throw new Error(`${memberRef} primary ownership boundary ${ownershipRef} is unavailable`);
