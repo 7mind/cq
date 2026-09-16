@@ -90,6 +90,21 @@ describe("cohort admission observation", () => {
     expect(prose.observationDigest).toBe(plain.observationDigest);
   });
 
+  test("rejects a singleton absent from the exact workset snapshot", async () => {
+    const snapshot = snapshotFor([{ ref: "tasks:T1" }], {});
+    await expect(
+      produceCohortAdmissionObservationV1(
+        { memberRefs: ["tasks:T1"] },
+        {
+          resolveExactSnapshot: async () => ({
+            ...snapshot,
+            workset: { ...snapshot.workset, orderedMemberRefs: [] },
+          }),
+        },
+      ),
+    ).rejects.toThrow("every cohort member must belong to the exact workset snapshot");
+  });
+
   test("rejects repository witness paths not derived through the bounded graph", async () => {
     const snapshot = snapshotFor([{ ref: "tasks:T1" }], {});
     const member = snapshot.members[0]!;
