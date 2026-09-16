@@ -166,7 +166,7 @@ function localInvestigationFixture(
   causeConfirmed: boolean,
   splitOwner = false,
   rootKind: "goal" | "members" = "goal",
-  ownerFault: "none" | "missing" | "cycle" | "revoked" = "none",
+  ownerFault: "none" | "missing" | "cycle" | "revoked" | "wrong-kind" = "none",
 ): LocalPrimaryFixture {
   const memberSpecs = ["D1", "D2"].map((id) => ({
     ref: `defects:${id}`,
@@ -198,7 +198,10 @@ function localInvestigationFixture(
             : splitOwner && id === "D2"
               ? "goals:G2"
               : "goals:G1",
-      worksetOwnerEdgeKind: "review-filed-defect",
+      worksetOwnerEdgeKind:
+        ownerFault === "wrong-kind" && id === "D1"
+          ? "finalized-manifest"
+          : "review-filed-defect",
     }),
   );
   const hypotheses = ["D1", "D2"].map((id, index) =>
@@ -826,6 +829,7 @@ describe("cohort admission observation", () => {
     ["missing", "primary ownership boundary goals:G-missing is unavailable"],
     ["cycle", "has cyclic primary ownership"],
     ["revoked", "does not authorise review-filed-defect"],
+    ["wrong-kind", "does not authorise defects"],
   ] as const)("rejects %s primary investigation ownership", async (ownerFault, message) => {
     const local = localInvestigationFixture(true, false, "members", ownerFault);
     const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
