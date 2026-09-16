@@ -5,11 +5,12 @@ import {
   type ImplementationCandidateCoordinatorOperations,
 } from "../src/implementationCandidateQueue.js";
 import { ImplementationCandidateQueueFixture } from "./implementationCandidateQueueFixture.js";
+import { runCoordinatorProcessContract } from "./implementationCandidateCoordinatorProcessContract.js";
 
 const namespace = { backend: "xdg" as const, projectKey: "coordinator-race" };
 
 describe("implementation candidate coordinator race [Behavioral-Active, Blackbox-Group]", () => {
-  test("three workers observe one runnable-front lease and one gate launch", async () => {
+  test("three in-process coordinators over the memory dummy observe one runnable-front lease and one gate launch", async () => {
     const fixture = new ImplementationCandidateQueueFixture(
       new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace)),
     );
@@ -58,4 +59,10 @@ describe("implementation candidate coordinator race [Behavioral-Active, Blackbox
     expect(outcomes.filter(({ state }) => state === "blocked")).toHaveLength(2);
     expect(gateCalls).toBe(1);
   });
+
+  test(
+    "three peer processes over independent SQLite connections launch one guarded rebase and leave the trailing enrollment untouched [Behavioral-Active Effectual-GoodCommunication]",
+    () => runCoordinatorProcessContract({ backend: "sqlite" }),
+    120_000,
+  );
 });

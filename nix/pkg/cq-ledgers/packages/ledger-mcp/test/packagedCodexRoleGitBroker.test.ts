@@ -31,8 +31,11 @@ import {
 import {
   createLedgerStore,
   createInMemoryWorksetStore,
+  GOALS_LEDGER,
   ImplementationEvidenceService,
+  MILESTONES_AMBIENT_ID,
   observeManagedRebaseConflict,
+  PLAN_FINALIZED_MANIFEST_FIELD,
   prepareManagedWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
@@ -1160,23 +1163,29 @@ describe("packaged cq-codex-role Git broker", () => {
       const retryCapturePath = path.join(fixtureRoot, "retry-capture.json");
       const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
       const gateCountPath = path.join(fixtureRoot, "retry-gate-count.log");
-      const finalizerAttemptsPath = path.join(fixtureRoot, "retry-finalizer-attempts.log");
-      const finalizerCommittedPath = path.join(fixtureRoot, "retry-finalizer-committed");
+      const qualificationAttemptsPath = path.join(
+        fixtureRoot,
+        "retry-qualification-attempts.log",
+      );
+      const qualificationCommittedPath = path.join(
+        fixtureRoot,
+        "retry-qualification-committed",
+      );
       const flakyLedgerCommand = path.join(fixtureRoot, "flaky-ledger-command");
       await writeFile(
         flakyLedgerCommand,
         `#!/bin/sh
-parent_gate=0
+candidate_qualification=0
 for arg in "$@"; do
-  if test "$arg" = "--parent-gate-finalize"; then parent_gate=1; fi
+  if test "$arg" = "--implementation-candidate-qualify"; then candidate_qualification=1; fi
 done
-if test "$parent_gate" = 1; then
-  printf 'attempt\\n' >> ${JSON.stringify(finalizerAttemptsPath)}
-  if test ! -e ${JSON.stringify(finalizerCommittedPath)}; then
+if test "$candidate_qualification" = 1; then
+  printf 'attempt\\n' >> ${JSON.stringify(qualificationAttemptsPath)}
+  if test ! -e ${JSON.stringify(qualificationCommittedPath)}; then
     ${JSON.stringify(ledgerCommand)} "$@" > /dev/null
     status=$?
     if test "$status" -ne 0; then exit "$status"; fi
-    touch ${JSON.stringify(finalizerCommittedPath)}
+    touch ${JSON.stringify(qualificationCommittedPath)}
     exit 1
   fi
 fi
@@ -1245,8 +1254,10 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       });
       expect(retryCapture.denied).toEqual(expect.arrayContaining(["git-metadata", "refs"]));
       expect(retryCapture.inheritedWorksetCredentials).toEqual([]);
-      expect((await readFile(finalizerAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(2);
-      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
+      expect((await readFile(qualificationAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(
+        2,
+      );
+      expect(await Bun.file(gateCountPath).exists()).toBe(false);
       expect(retryReceipts).toHaveLength(2);
       expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
       expect(retryReceipts[1]?.["newHead"]).toBe(retryCapture.output["resultCommit"]);
@@ -1256,17 +1267,24 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         firstResultCommit,
         String(retryCapture.output["resultCommit"]),
       ]);
-      const retryConfirmed = await capability.confirmCompletion({
-        ...retryHandle,
-        nativeCompletion: {
-          kind: "native-completion",
-          actor: "trusted-parent",
-          ...retryExpectedChild,
-          completedAt: dispatchNow,
-        },
-        expectedProvenance: retryPrepared.prepared.promptProvenance,
+      const queuedControl = await backend.transact({ kind: "handle", handle: retryHandle }, (store) => {
+        const row = store.read(retryHandle);
+        if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
+          throw new Error("installed worker did not durably qualify its staged result");
+        }
+        return row.implementationQueue;
       });
-      expect(retryConfirmed.state).toBe("consumed");
+      expect(queuedControl).toMatchObject({ state: "qualified", leaseGeneration: 0 });
+      if (capability.coordinateImplementationCandidate === undefined) {
+        throw new Error("installed worker coordinator is unavailable");
+      }
+      expect(
+        await capability.coordinateImplementationCandidate({
+          partitionKey: queuedControl.partition.partitionKey,
+          holderId: "installed-process-later-coordinator",
+        }),
+      ).toEqual({ state: "completed", handle: retryHandle });
+      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
       const retryFetched = await capability.fetch(retryHandle);
       expect(retryFetched).toMatchObject({
         state: "consumed",
@@ -1687,6 +1705,22 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           headline: "installed guarded-rebase continuation",
           description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
           acceptance: "the guarded continuation completes through the installed boundary",
+          ledgerRefs: ["goals:G2151"],
+          worksetOwnerRef: "goals:G2151",
+          worksetOwnerEdgeKind: "active-current-draft",
+        },
+      });
+      await seededStore.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: "G2151",
+        status: "planning",
+        fields: {
+          title: "installed guarded-rebase continuation gate",
+          description: "exercise a finalized task through the installed boundary",
+          [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify({
+            revision: 1,
+            milestones: [{ key: "installed", id: seededMilestone.id }],
+            tasks: [{ key: "guarded-rebase", id: taskId }],
+          }),
         },
       });
       await seededStore.store.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
@@ -1813,24 +1847,23 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
           output: Record<string, unknown>;
         };
-        if (capability.finalizeParentGate === undefined) {
-          throw new Error("installed worker dispatch lacks parent finalization");
+        const queuedControl = await backend.transact({ kind: "handle", handle }, (store) => {
+          const row = store.read(handle);
+          if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
+            throw new Error("installed worker did not durably qualify its staged result");
+          }
+          return row.implementationQueue;
+        });
+        expect(queuedControl).toMatchObject({ state: "qualified", leaseGeneration: 0 });
+        if (capability.coordinateImplementationCandidate === undefined) {
+          throw new Error("installed worker coordinator is unavailable");
         }
-        await capability.finalizeParentGate({
-          ...handle,
-          parentGateCapability: prepared.prepared.parentGateCapability,
-        });
-        const confirmed = await capability.confirmCompletion({
-          ...handle,
-          nativeCompletion: {
-            kind: "native-completion",
-            actor: "trusted-parent",
-            ...expectedChild,
-            completedAt: new Date().toISOString(),
-          },
-          expectedProvenance: prepared.prepared.promptProvenance,
-        });
-        expect(confirmed.state).toBe("consumed");
+        expect(
+          await capability.coordinateImplementationCandidate({
+            partitionKey: queuedControl.partition.partitionKey,
+            holderId: `installed-${input.label}-later-coordinator`,
+          }),
+        ).toEqual({ state: "completed", handle });
         const fetched = await capability.fetch(handle);
         if (fetched.state !== "consumed") throw new Error(`unexpected worker state ${fetched.state}`);
         return { handle, capture, consumed: fetched as ConsumedDispatchResult };

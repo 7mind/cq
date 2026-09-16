@@ -328,13 +328,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "91bec1699d5ee9211acba68f2b06587974209003811387db538fb907c835997a",
+      "sha256": "5e519fcd3e6af185ced0b8e431eae1d1362cf4eea6da6f6fecdea6ae0353dd09",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "91bec1699d5ee9211acba68f2b06587974209003811387db538fb907c835997a",
+      "sha256": "5e519fcd3e6af185ced0b8e431eae1d1362cf4eea6da6f6fecdea6ae0353dd09",
       "targets": []
     },
     {
@@ -585,7 +585,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "6f703c545c39ede3297fdff8130af6acafb4c2b00fa007fc64bcab46350bc729",
+      "sha256": "81b4ec4694f717694384ccd0839e07e1243c156ef6444547d58171fda9020c65",
       "targets": []
     },
     {
@@ -921,7 +921,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/codex-role-dispatch.ts",
-      "sha256": "21a65c751c3530b9492149b8eed63d244f0139139e9c0ac11fc5e777fe6ae7ff",
+      "sha256": "855c78ff0fcda69da82f06e4c78e34d43104f270567c088ae7b163124a30286d",
       "targets": []
     },
     {
@@ -1419,7 +1419,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "6f703c545c39ede3297fdff8130af6acafb4c2b00fa007fc64bcab46350bc729",
+      "sha256": "81b4ec4694f717694384ccd0839e07e1243c156ef6444547d58171fda9020c65",
       "targets": []
     },
     {
@@ -2236,6 +2236,30 @@
       "kind": "spawn",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/cq-subagent-process-lifecycle.ts",
       "sha256": "8e43863be93cdd9b84d320960a8757af416e77752340750be5fc6c914074597e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
+      "sha256": "96f28d87e8687133a628f52b077e490b1ac5554d4c4701b05268b8df16dbd22d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/implementationCandidateCoordinatorProcessWorker.ts",
+      "sha256": "65f5667e578ba574c4797f547be6c5d80a6efd8ec4b5691c63752f9ba288d1ce",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementationCandidateCoordinatorProcessContract.ts",
+      "sha256": "6f416d9fd262ab09bf1084022aa818ca19ad8151e3685c8b79ed0b1be688725b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementationCandidateCoordinatorProcessContract.ts",
+      "sha256": "6f416d9fd262ab09bf1084022aa818ca19ad8151e3685c8b79ed0b1be688725b",
       "targets": []
     }
   ]

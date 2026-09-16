@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import {
   createStrictInMemoryWorksetEffectAdmissionProvider,
@@ -53,6 +54,9 @@ const PARENT_GATE_CAPABILITY = {
   scope: "parent-gate",
   token: "cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
+const DISPATCH_SCRIPT = fileURLToPath(
+  new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
+);
 const BOUNDARY_CONTEXTS = {
   cwd: "/worktrees/task",
   ledgerCwd: "/projects/cq",
@@ -104,6 +108,119 @@ function trustedStoredStream(finalMessage: string): string {
 }
 
 describe("T1330 Codex role process boundary", () => {
+  // specified: T6519 — qualification is the installed runner's terminal transport action.
+  test("installed runner returns the queued handle before any coordinator process starts [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-installed-queued-return-"));
+    const worktree = join(root, "worktree");
+    const promptRoot = join(root, "prompts");
+    const codex = join(root, "codex");
+    const cq = join(root, "cq");
+    const markers = join(root, "markers.jsonl");
+    const initialized = Bun.spawnSync(["git", "init", "--quiet", worktree]);
+    if (initialized.exitCode !== 0) {
+      throw new Error(new TextDecoder().decode(initialized.stderr));
+    }
+    writeFileSync(join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+    mkdirSync(join(promptRoot, "roles"), { recursive: true });
+    writeFileSync(join(promptRoot, "roles", "implement-worker.md"), "Queue one result.\n");
+    writeFileSync(
+      codex,
+      `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+appendFileSync(process.env["CQ_T6519_INSTALLED_MARKERS"], JSON.stringify({ action: "codex" }) + "\\n");
+const launch = JSON.parse(await Bun.stdin.text());
+const handle = { attestationId: launch.attestationId, generation: launch.generation };
+const acknowledgement = { state: "gate-pending", result: { state: "gate-pending", ...handle, submittedAt: "2026-09-16T12:00:00.000Z", outputDigest: "${"a".repeat(64)}" } };
+process.stdout.write([
+  JSON.stringify({ type: "thread.started", thread_id: "installed-queued-thread" }),
+  JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "ledger", tool: "store_result", result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] } } }),
+  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(handle) } }),
+  JSON.stringify({ type: "turn.completed", usage: {} }),
+].join("\\n"));
+`,
+    );
+    chmodSync(codex, 0o755);
+    writeFileSync(
+      cq,
+      `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const marker = process.env["CQ_T6519_INSTALLED_MARKERS"];
+if (marker === undefined) throw new Error("marker path missing");
+appendFileSync(marker, JSON.stringify({ action: "cq-start", argv: process.argv.slice(2) }) + "\\n");
+if (process.argv.includes("__workset-effect-provider")) {
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of lines) {
+    const request = JSON.parse(line);
+    appendFileSync(marker, JSON.stringify({ action: "provider", request }) + "\\n");
+    process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
+    if (request.op === "release" || request.op === "abandon") break;
+  }
+  process.exit(0);
+}
+const request = JSON.parse(await Bun.stdin.text());
+if (process.argv.includes("--implementation-candidate-qualify")) {
+  appendFileSync(marker, JSON.stringify({ action: "qualify", request }) + "\\n");
+  process.stdout.write(JSON.stringify({ state: "queued", attestationId: request.attestationId, generation: request.generation, partitionKey: "cq-implementation-queue:v1:installed", outputDigest: "${"a".repeat(64)}", qualificationDigest: "${"b".repeat(64)}" }));
+  process.exit(0);
+}
+if (process.argv.includes("--implementation-candidate-coordinate")) {
+  appendFileSync(marker, JSON.stringify({ action: "coordinate", request }) + "\\n");
+  process.stdout.write(JSON.stringify({ state: "empty", partitionKey: request.partitionKey, partitionRevision: 1 }));
+  process.exit(0);
+}
+throw new Error("unexpected cq invocation");
+`,
+    );
+    chmodSync(cq, 0o755);
+    try {
+      const invocation = {
+        roleId: "implement-worker",
+        handle: HANDLE,
+        inputCapability: INPUT_CAPABILITY,
+        resultCapability: RESULT_CAPABILITY,
+        gitChangeCapability: GIT_CHANGE_CAPABILITY,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+        effectTargetRef: "tasks:T6519",
+        cwd: worktree,
+        ledgerCwd: worktree,
+        model: "queued-model",
+        reasoningEffort: "high",
+        sandboxMode: "danger-full-access",
+        timeoutMs: 10_000,
+      } as const;
+      const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
+        cwd: worktree,
+        env: {
+          ...process.env,
+          CQ_PROMPT_ROOT: promptRoot,
+          CQ_CODEX_EXECUTABLE: codex,
+          CQ_CODEX_LEDGER_COMMAND: cq,
+          CQ_CODEX_ROLE_CORRELATION_ID: "installed-queued-correlation",
+          CQ_T6519_INSTALLED_MARKERS: markers,
+        },
+        stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(stdout)).toEqual(HANDLE);
+      const observations = readFileSync(markers, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { readonly action: string });
+      expect(observations.filter(({ action }) => action === "qualify")).toHaveLength(1);
+      expect(observations.filter(({ action }) => action === "coordinate")).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   test("candidate qualification replays one exact request after a lost acknowledgement [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-candidate-qualification-replay-"));
     const runner = join(root, "qualifier");

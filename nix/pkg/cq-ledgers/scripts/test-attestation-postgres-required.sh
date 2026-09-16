@@ -87,4 +87,5 @@ export CQ_TEST_REQUIRE_PG=1
 cd "$ledger_root"
 bun test \
   packages/cq-config/test/attestationStore-postgres.test.ts \
+  packages/ledger-mcp/test/implementation-candidate-coordinator-race-postgres.test.ts \
   packages/ledger/test/attestationConstruction-postgresHub.test.ts
