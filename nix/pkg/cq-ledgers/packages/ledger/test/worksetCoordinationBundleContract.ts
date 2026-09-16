@@ -8,7 +8,7 @@
  * - one owned-write admission held through commit
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import {
   WorksetOwnedLifecycleError,
   readCanonicalOwnership,
@@ -98,6 +98,29 @@ export function runWorksetCoordinationBundleContract(
       expect(readCanonicalOwnership(consumed.goal)?.edgeKind).toBe("idea-to-goal");
       const defaultMembers = memberRefsForRoot(ledger, `${IDEAS_LEDGER}:${idea2.id}`);
       expect(defaultMembers.has(`${GOALS_LEDGER}:${consumed.goal.id}`)).toBe(true);
+    });
+
+    // expected-failure: tasks:T6565
+    test.failing("retains the exact owned live goal after consuming the root idea", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const idea = await ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "consumed-root-idea" },
+      });
+      await ledger.setRoots([`${IDEAS_LEDGER}:${idea.id}`]);
+      const consumed = await ledger.bundles.bootstrapIdeaToGoal({
+        ideaId: idea.id,
+        goal: { title: "consumed-root-goal", description: "consume root" },
+        consumeIdea: true,
+      });
+
+      expect(consumed.idea.status).toBe("planned");
+      const members = memberRefsForRoot(ledger, `${IDEAS_LEDGER}:${idea.id}`);
+      expect(members).toEqual(
+        new Set([`${IDEAS_LEDGER}:${idea.id}`, `${GOALS_LEDGER}:${consumed.goal.id}`]),
+      );
     });
 
     it("bootstrapDefectToFixGoal seals fix-goal ownership", async () => {
