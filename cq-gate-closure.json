@@ -8,6 +8,8 @@
   "opaqueEdges": [
     { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "a64c1e1657c6afb2711e913d57de727a274524fe9c94d6dfe961e7040a115454", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "112c8e5625e491b2e5615bb054a6dc0bb8798a2758e28c2665d2a6983bfde9ac", "targets": [] },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",
@@ -242,7 +244,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "48fc1a1169ec3d796e58b478a38c0b48901c7694d2312aa293ef5b9380384d68",
+      "sha256": "4712faa568eb4c8b2f235fa9a82ad59af46d3d6792f9f29ab82a22477d30b164",
       "targets": []
     },
     {
@@ -326,13 +328,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "93686742ce2769d23aecc936b8ddc999708263c30de390750a05cef26d97a70d",
+      "sha256": "91bec1699d5ee9211acba68f2b06587974209003811387db538fb907c835997a",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "93686742ce2769d23aecc936b8ddc999708263c30de390750a05cef26d97a70d",
+      "sha256": "91bec1699d5ee9211acba68f2b06587974209003811387db538fb907c835997a",
       "targets": []
     },
     {
@@ -589,7 +591,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "465dac114ee9c94ebf6aae91918b852785c5e2603602de92e9399ce2ec051bb2",
+      "sha256": "29e71546d2af13a45760dda9506f00bd69d365be20c9557fa2afa868addb521b",
       "targets": []
     },
     {
@@ -919,7 +921,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/codex-role-dispatch.ts",
-      "sha256": "570b19fbf7ba25051bef24366f7a9b6392de0a0871271d453754fbf9e320e72b",
+      "sha256": "21a65c751c3530b9492149b8eed63d244f0139139e9c0ac11fc5e777fe6ae7ff",
       "targets": []
     },
     {
@@ -931,7 +933,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "48fc1a1169ec3d796e58b478a38c0b48901c7694d2312aa293ef5b9380384d68",
+      "sha256": "4712faa568eb4c8b2f235fa9a82ad59af46d3d6792f9f29ab82a22477d30b164",
       "targets": []
     },
     {
@@ -1567,13 +1569,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/guardedRebaseContinuation.ts",
-      "sha256": "f3916e14632bc5ba90642779403a11f61cf4190e892a4568cb6c454ca9a933ff",
+      "sha256": "7bdd22473934bbf6a93b75d326c55a2be77aa66851ce9bd4c467e93649bbbbfa",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/guardedRebaseContinuation.ts",
-      "sha256": "f3916e14632bc5ba90642779403a11f61cf4190e892a4568cb6c454ca9a933ff",
+      "sha256": "7bdd22473934bbf6a93b75d326c55a2be77aa66851ce9bd4c467e93649bbbbfa",
       "targets": []
     },
     {
