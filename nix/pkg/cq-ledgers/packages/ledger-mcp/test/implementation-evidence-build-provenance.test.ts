@@ -45,9 +45,9 @@ interface ConstructedService {
   };
 }
 
-async function constructSourceWorkspaceService(
+async function sourceWorkspaceServiceOptions(
   repositoryRoot: string,
-): Promise<ConstructedService> {
+) {
   const store = new InMemoryLedgerStore();
   await store.init();
   const resolved = {
@@ -57,13 +57,50 @@ async function constructSourceWorkspaceService(
   const dispatchCapability = {
     observeEvidence: async () => ({ state: "missing" as const }),
   } as unknown as DispatchCapability;
-  return createProductionImplementationEvidenceService({
+  return {
     resolved,
     dispatchCapability,
     repositoryRoot,
     environment: { CQ_HARNESS: "codex" },
     trustedSourceWorkspaceBuildCommit: BUILD_COMMIT,
-  }) as unknown as ConstructedService;
+  } as const;
+}
+
+async function constructSourceWorkspaceService(
+  repositoryRoot: string,
+): Promise<ConstructedService> {
+  return createProductionImplementationEvidenceService(
+    await sourceWorkspaceServiceOptions(repositoryRoot),
+  ) as unknown as ConstructedService;
+}
+
+type ShippedFactory = typeof createProductionImplementationEvidenceService;
+
+function exportedFactory(module: unknown, name: string): ShippedFactory {
+  const factory = (module as Record<string, unknown>)[name];
+  expect(typeof factory).toBe("function");
+  return factory as ShippedFactory;
+}
+
+async function shippedFactories(): Promise<ReadonlyArray<readonly [string, ShippedFactory]>> {
+  const [standalone, tui, web, status] = await Promise.all([
+    import("../src/main.js"),
+    import("../../ledger-tui/src/mcpClient.js"),
+    import("../../ledger-web/src/serve.js"),
+    import("../../cq-cli/src/implementationEvidenceStatus.js"),
+  ]);
+  return [
+    [
+      "standalone-mcp",
+      exportedFactory(standalone, "createStandaloneImplementationEvidenceService"),
+    ],
+    ["embedded-tui", exportedFactory(tui, "createEmbeddedTuiImplementationEvidenceService")],
+    ["embedded-web", exportedFactory(web, "createEmbeddedWebImplementationEvidenceService")],
+    [
+      "embedded-status",
+      exportedFactory(status, "createEmbeddedStatusImplementationEvidenceService"),
+    ],
+  ];
 }
 
 // regression: defects:D430 — one immutable cq output must not derive build identity from live HEAD.
@@ -138,16 +175,33 @@ test("rejects substituted packaged build provenance", () => {
   );
 });
 
-test("all shipped constructors consume packaged provenance without a live-HEAD injection", async () => {
-  const sources = await Promise.all([
-    readFile(new URL("../src/main.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../ledger-tui/src/mcpClient.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../ledger-web/src/serve.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../cq-cli/src/implementationEvidenceStatus.ts", import.meta.url), "utf8"),
-  ]);
-  for (const source of sources) {
-    expect(source).toContain("createProductionImplementationEvidenceService({");
-    expect(source).not.toContain("trustedSourceWorkspaceBuildCommit");
+test("all shipped constructors expose immutable provenance through public protected status", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "cq-shipped-provenance-control-"));
+  try {
+    await git(root, ["init", "-q", "-b", "main"]);
+    await git(root, ["config", "user.name", "provenance-test"]);
+    await git(root, ["config", "user.email", "provenance-test@example.invalid"]);
+    const firstHead = await commit(root, "first.txt", "first\n");
+    const options = await sourceWorkspaceServiceOptions(root);
+    const services = (await shippedFactories()).map(
+      ([name, factory]) => [name, factory(options)] as const,
+    );
+
+    for (const [name, service] of services) {
+      const status = await service.evidenceServiceStatus();
+      expect(status.startupBuildCommit, name).toBe(BUILD_COMMIT);
+      expect(status.repositoryHead, name).toBe(firstHead);
+    }
+
+    const secondHead = await commit(root, "second.txt", "second\n");
+    expect(secondHead).not.toBe(firstHead);
+    for (const [name, service] of services) {
+      const status = await service.evidenceServiceStatus();
+      expect(status.startupBuildCommit, name).toBe(BUILD_COMMIT);
+      expect(status.repositoryHead, name).toBe(secondHead);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
