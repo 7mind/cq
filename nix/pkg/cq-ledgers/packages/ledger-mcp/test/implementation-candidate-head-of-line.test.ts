@@ -49,7 +49,7 @@ describe("implementation candidate head-of-line policy [Behavioral-Active, Black
       ...first.qualification,
     });
     const second = await fixture.stage(candidate("T6520"));
-    const secondQualified = await fixture.adapter.qualifyNativeCompletion({
+    await fixture.adapter.qualifyNativeCompletion({
       candidate: second.candidate,
       ...second.qualification,
     });
