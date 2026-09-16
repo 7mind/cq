@@ -1,7 +1,16 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
 import { describe, expect, test } from "bun:test";
+
+import type { AttestationEnvelope } from "@cq/config";
 
 import {
   CohortCandidateSealConflictError,
+  GitG213CandidateRepositoryV1,
   InMemoryCohortCandidateSealStoreV1,
   assertCohortLiveEffectCurrentV1,
   bindCohortLiveEffectV1,
@@ -12,9 +21,79 @@ import {
   createCohortEvidenceSubjectV1,
   createPendingCohortCandidateAttemptV1,
   isCohortEvidenceReceiptReusableV1,
+  resolveG213QualifiedCandidateRowV1,
   stageCohortCandidateAttemptV1,
+  type CohortGitChangeReceiptV1,
+  type CohortWholeDiffEntryV1,
 } from "../src/workCohort.js";
 import { commit, observationFor, qualifiedQueue, receipt, sha256 } from "./workCohortFixture.js";
+
+const execFileAsync = promisify(execFile);
+
+async function authenticatedCandidateRow(input: {
+  readonly dispatch: {
+    readonly attestationId: string;
+    readonly generation: number;
+    readonly taskId: string;
+    readonly branch: string;
+    readonly startingCommit: string;
+  };
+  readonly result: string;
+  readonly tree: string;
+  readonly receipts: readonly CohortGitChangeReceiptV1[];
+  readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
+  readonly attempt?: string;
+}) {
+  const gitEffectBinding = {
+    taskId: input.dispatch.taskId,
+    handleToken: "worktree-token",
+    handleFingerprint: sha256("worktree-fingerprint"),
+    repositoryRoot: "/repo",
+    repositoryId: "repository:test",
+    commonDir: "/repo/.git",
+    worktreePath: "/repo/.claude/worktrees/test",
+    branch: input.dispatch.branch,
+    ref: `refs/heads/${input.dispatch.branch}`,
+    baseCommit: input.dispatch.startingCommit,
+  };
+  const queue = qualifiedQueue({
+    taskId: input.dispatch.taskId,
+    base: input.dispatch.startingCommit,
+    result: input.result,
+    tree: input.tree,
+    receipts: input.receipts,
+    ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
+    managedWorktreeBindingDigest: sha256(gitEffectBinding),
+  });
+  const row = {
+    kind: "envelope",
+    attestationId: input.dispatch.attestationId,
+    generation: input.dispatch.generation,
+    promptProvenance: {
+      roleId: "implement-worker",
+      version: 10,
+      promptDigest: sha256("prompt"),
+      inputDigest: sha256("input"),
+    },
+    expectedChild: { childId: "child", runId: "run" },
+    input: { startingCommit: input.dispatch.startingCommit },
+    gitEffectBinding,
+    implementationQueue: queue,
+    output: {
+      taskId: input.dispatch.taskId,
+      resultCommit: input.result,
+      gitReceipts: input.receipts,
+      filesTouched: input.repositoryDiff.map((entry) => entry.path),
+    },
+  } as unknown as AttestationEnvelope;
+  const authenticated = await resolveG213QualifiedCandidateRowV1({
+    row,
+    repository: {
+      resolveWholeDiff: async () => input.repositoryDiff,
+    },
+  });
+  return { queue, row: authenticated };
+}
 
 async function identityFixture() {
   const observation = await observationFor([{ ref: "tasks:T1" }, { ref: "tasks:T2" }]);
@@ -37,11 +116,18 @@ async function identityFixture() {
   const tree = commit("result-tree");
   const receipts = [receipt({ base, result, tree })];
   const pending = createPendingCohortCandidateAttemptV1(definition, dispatch);
-  const queue = qualifiedQueue({ taskId: dispatch.taskId, base, result, tree, receipts });
   const repositoryDiff = [
     { path: "src/result.ts", mode: "100644" as const, blobDigest: sha256("result blob") },
   ];
-  const row = { preparedDispatch: dispatch, queue, repositoryDiff };
+  const authenticated = await authenticatedCandidateRow({
+    dispatch,
+    result,
+    tree,
+    receipts,
+    repositoryDiff,
+  });
+  const queue = authenticated.queue;
+  const row = authenticated.row;
   const staged = stageCohortCandidateAttemptV1(pending, { row });
   return {
     observation,
@@ -185,26 +271,21 @@ describe("cohort candidate identity", () => {
     const nextResult = commit("next-result");
     const nextTree = commit("next-tree");
     const nextReceipts = [receipt({ base: fixture.base, result: nextResult, tree: nextTree, operation: "next" })];
-    const nextQueue = qualifiedQueue({
-      taskId: fixture.dispatch.taskId,
-      base: fixture.base,
+    const nextDispatch = { ...fixture.dispatch, generation: 2 };
+    const nextRepositoryDiff = [
+      { path: "src/result.ts", mode: "100644" as const, blobDigest: sha256("two") },
+    ];
+    const nextAuthenticated = await authenticatedCandidateRow({
+      dispatch: nextDispatch,
       result: nextResult,
       tree: nextTree,
       receipts: nextReceipts,
+      repositoryDiff: nextRepositoryDiff,
       attempt: "attempt:next",
     });
-    const nextPending = createPendingCohortCandidateAttemptV1(fixture.definition, {
-      ...fixture.dispatch,
-      generation: 2,
-    });
+    const nextPending = createPendingCohortCandidateAttemptV1(fixture.definition, nextDispatch);
     const nextAttempt = stageCohortCandidateAttemptV1(nextPending, {
-      row: {
-        preparedDispatch: { ...fixture.dispatch, generation: 2 },
-        queue: nextQueue,
-        repositoryDiff: [
-          { path: "src/result.ts", mode: "100644", blobDigest: sha256("two") },
-        ],
-      },
+      row: nextAuthenticated.row,
     });
     const nextSeal = store.seal({
       definition: fixture.definition,
@@ -226,19 +307,16 @@ describe("cohort candidate identity", () => {
 
   test("cannot substitute a dispatch or allocate an independent G213 identity", async () => {
     const fixture = await identityFixture();
+    const other = await authenticatedCandidateRow({
+      dispatch: { ...fixture.dispatch, generation: 2 },
+      result: fixture.result,
+      tree: fixture.tree,
+      receipts: fixture.receipts,
+      repositoryDiff: fixture.row.repositoryDiff,
+    });
     expect(() =>
       stageCohortCandidateAttemptV1(fixture.pending, {
-        row: {
-          preparedDispatch: { ...fixture.dispatch, generation: 2 },
-          queue: qualifiedQueue({
-            taskId: fixture.dispatch.taskId,
-            base: fixture.base,
-            result: fixture.result,
-            tree: fixture.tree,
-            receipts: fixture.receipts,
-          }),
-          repositoryDiff: fixture.row.repositoryDiff,
-        },
+        row: other.row,
       }),
     ).toThrow("actual G213 row");
   });
@@ -291,6 +369,47 @@ describe("cohort candidate identity", () => {
         gitReceipts: fixture.receipts,
       }),
     ).toThrow("G213 repository diff");
+  });
+
+  test("production Git source derives the exact G213 whole diff", async () => {
+    const repositoryRoot = await mkdtemp(join(tmpdir(), "cq-g213-diff-"));
+    try {
+      const git = async (args: readonly string[]): Promise<string> => {
+        const result = await execFileAsync("git", [...args], { cwd: repositoryRoot });
+        return result.stdout.trim();
+      };
+      await git(["init", "--quiet"]);
+      await git(["config", "user.name", "cq-test"]);
+      await git(["config", "user.email", "cq-test@localhost"]);
+      await mkdir(join(repositoryRoot, "src"), { recursive: true });
+      await writeFile(join(repositoryRoot, "src/result.ts"), "export const result = 1;\n");
+      await git(["add", "."]);
+      await git(["commit", "--quiet", "-m", "base"]);
+      const baseCommit = await git(["rev-parse", "HEAD"]);
+      await writeFile(join(repositoryRoot, "src/result.ts"), "export const result = 2;\n");
+      await git(["add", "."]);
+      await git(["commit", "--quiet", "-m", "result"]);
+      const resultCommit = await git(["rev-parse", "HEAD"]);
+      const resultTree = await git(["rev-parse", "HEAD^{tree}"]);
+
+      const repository = new GitG213CandidateRepositoryV1({
+        repositoryRoot,
+        repositoryId: "repository:test",
+      });
+      const diff = await repository.resolveWholeDiff({
+        repositoryId: "repository:test",
+        baseCommit,
+        resultCommit,
+        resultTree,
+      });
+
+      expect(diff).toHaveLength(1);
+      expect(diff[0]?.path).toBe("src/result.ts");
+      expect(diff[0]?.mode).toBe("100644");
+      expect(diff[0]?.blobDigest).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      await rm(repositoryRoot, { recursive: true, force: true });
+    }
   });
 
   test("semantic changes advance the definition generation", async () => {

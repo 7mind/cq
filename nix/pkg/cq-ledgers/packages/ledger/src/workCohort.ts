@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
-import type { ImplementationQueueControl } from "@cq/config";
+import type { AttestationEnvelope, ImplementationQueueControl } from "@cq/config";
+
+import {
+  nodeDispatchBaseGitRunner,
+  type DispatchBaseGitRunner,
+} from "./dispatchBase.js";
 
 export const COHORT_PHASE_ORDER_V1 = ["investigation", "implementation"] as const;
 
@@ -240,6 +246,365 @@ export interface CohortAdmissionObservationSourceV1 {
   resolveExactSnapshot(
     request: CohortAdmissionObservationRequestV1,
   ): Promise<CohortAdmissionSnapshotV1>;
+}
+
+type LocalInvestigationCohortMemberV1 = Omit<
+  ResolvedInvestigationCohortMemberV1,
+  "repository" | "environment"
+>;
+
+type LocalImplementationCohortMemberV1 = Omit<
+  ResolvedImplementationCohortMemberV1,
+  "repository" | "environment"
+>;
+
+export type LocalResolvedCohortMemberV1 =
+  | LocalInvestigationCohortMemberV1
+  | LocalImplementationCohortMemberV1;
+
+export interface CohortLocalAdmissionDefinitionV1 {
+  readonly kind: "cq-local-cohort-admission-definition";
+  readonly version: 1;
+  readonly workset: CohortWorksetSnapshotV1;
+  readonly manifest: CohortManifestSnapshotV1 | null;
+  readonly members: readonly LocalResolvedCohortMemberV1[];
+  readonly authenticatedBenefitReceipts: readonly CohortAuthenticatedBenefitReceiptV1[];
+  readonly unavailableFacts: readonly CohortUnavailableFactV1[];
+}
+
+export interface CohortLocalRepositoryV1 {
+  resolveIdentity(): Promise<CohortRepositoryIdentityV1>;
+  readFile(identity: CohortRepositoryIdentityV1, path: string): Promise<string | null>;
+  resolveRelationship(
+    identity: CohortRepositoryIdentityV1,
+    from: string,
+    to: string,
+  ): Promise<CohortSourceRelationshipV1 | null>;
+}
+
+const LOCAL_COHORT_GRAPH_LIMIT = 256;
+
+function relativeImportCandidates(from: string, specifier: string): readonly string[] {
+  if (!specifier.startsWith(".")) return Object.freeze([]);
+  const unresolved = posix.normalize(posix.join(posix.dirname(from), specifier));
+  return Object.freeze(
+    sortedUnique([
+      unresolved,
+      `${unresolved}.ts`,
+      `${unresolved}.tsx`,
+      `${unresolved}.js`,
+      `${unresolved}.mjs`,
+      `${unresolved}.cjs`,
+      `${unresolved}.json`,
+      `${unresolved}/index.ts`,
+      `${unresolved}/index.tsx`,
+      `${unresolved}/index.js`,
+    ]),
+  );
+}
+
+function importedSpecifiers(source: string): readonly string[] {
+  const specifiers: string[] = [];
+  const pattern = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*["']([^"']+)["']/gu;
+  for (const match of source.matchAll(pattern)) {
+    const specifier = match[1];
+    if (specifier !== undefined) specifiers.push(specifier);
+  }
+  return sortedUnique(specifiers);
+}
+
+/** Read one exact committed repository snapshot without scanning beyond named paths. */
+export class GitCohortLocalRepositoryV1 implements CohortLocalRepositoryV1 {
+  readonly #repositoryRoot: string;
+  readonly #repositoryId: string;
+  readonly #git: DispatchBaseGitRunner;
+
+  constructor(input: {
+    readonly repositoryRoot: string;
+    readonly repositoryId: string;
+    readonly git?: DispatchBaseGitRunner;
+  }) {
+    assertNonEmpty(input.repositoryRoot, "cohort repository root");
+    assertNonEmpty(input.repositoryId, "cohort repository id");
+    this.#repositoryRoot = input.repositoryRoot;
+    this.#repositoryId = input.repositoryId;
+    this.#git = input.git ?? nodeDispatchBaseGitRunner;
+  }
+
+  async #required(args: readonly string[], label: string): Promise<string> {
+    const result = await this.#git(this.#repositoryRoot, args);
+    if (result.code !== 0) {
+      throw new Error(`${label} failed: ${result.stderr.trim()}`);
+    }
+    return result.stdout;
+  }
+
+  async resolveIdentity(): Promise<CohortRepositoryIdentityV1> {
+    const [headCommit, treeOid] = await Promise.all([
+      this.#required(["rev-parse", "--verify", "HEAD^{commit}"], "cohort repository HEAD"),
+      this.#required(["rev-parse", "--verify", "HEAD^{tree}"], "cohort repository tree"),
+    ]);
+    const identity = Object.freeze({
+      repositoryId: this.#repositoryId,
+      headCommit: headCommit.trim(),
+      treeOid: treeOid.trim(),
+    });
+    assertRepositoryIdentity(identity);
+    return identity;
+  }
+
+  async readFile(identity: CohortRepositoryIdentityV1, rawPath: string): Promise<string | null> {
+    if (identity.repositoryId !== this.#repositoryId) {
+      throw new Error("cohort repository read used another repository identity");
+    }
+    assertRepositoryIdentity(identity);
+    const path = normalizedRepositoryPath(rawPath, "cohort repository file");
+    const object = `${identity.headCommit}:${path}`;
+    const type = await this.#git(this.#repositoryRoot, ["cat-file", "-t", object]);
+    if (type.code !== 0) return null;
+    if (type.stdout.trim() !== "blob") {
+      throw new Error(`${path} is not a committed regular file`);
+    }
+    return await this.#required(["show", object], `${path} read`);
+  }
+
+  async resolveRelationship(
+    identity: CohortRepositoryIdentityV1,
+    rawFrom: string,
+    rawTo: string,
+  ): Promise<CohortSourceRelationshipV1 | null> {
+    const from = normalizedRepositoryPath(rawFrom, "cohort relationship source");
+    const to = normalizedRepositoryPath(rawTo, "cohort relationship target");
+    const source = await this.readFile(identity, from);
+    if (source === null || (await this.readFile(identity, to)) === null) return null;
+    const packageDirectory = posix.dirname(to);
+    if (
+      posix.basename(to) === "package.json" &&
+      (packageDirectory === "." || from.startsWith(`${packageDirectory}/`))
+    ) {
+      return "package";
+    }
+    const related = importedSpecifiers(source).some((specifier) =>
+      relativeImportCandidates(from, specifier).includes(to),
+    );
+    if (!related) return null;
+    return /(?:^|\/)(?:test|tests)\/|\.(?:test|spec)\.[^.]+$/u.test(from) ? "test" : "import";
+  }
+}
+
+function parseLocalAdmissionDefinition(raw: string): CohortLocalAdmissionDefinitionV1 {
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as { kind?: unknown }).kind !== "cq-local-cohort-admission-definition" ||
+    (parsed as { version?: unknown }).version !== 1 ||
+    !Array.isArray((parsed as { members?: unknown }).members) ||
+    !Array.isArray((parsed as { authenticatedBenefitReceipts?: unknown }).authenticatedBenefitReceipts) ||
+    !Array.isArray((parsed as { unavailableFacts?: unknown }).unavailableFacts)
+  ) {
+    throw new Error("local cohort admission definition is not version 1");
+  }
+  return parsed as CohortLocalAdmissionDefinitionV1;
+}
+
+function repositoryNodeSymbol(candidate: Extract<CohortWitnessInputV1, { kind: "repository-node" }>): string {
+  const symbol = candidate.nodeIdentity.split("#").at(-1) ?? "";
+  assertNonEmpty(symbol, "repository witness symbol");
+  return symbol;
+}
+
+function sourceExportsSymbol(source: string, symbol: string): boolean {
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `\\bexport\\s+(?:(?:declare|default|abstract)\\s+)*(?:class|function|const|let|var|interface|type|enum|namespace)\\s+${escaped}\\b`,
+    "u",
+  ).test(source);
+}
+
+/** Bounded pre-admission producer backed by one committed local definition and Git tree. */
+export class LocalCohortAdmissionObservationSourceV1
+  implements CohortAdmissionObservationSourceV1
+{
+  readonly #repository: CohortLocalRepositoryV1;
+  readonly #definitionPath: string;
+  readonly #environment: CohortEnvironmentIdentityV1;
+
+  constructor(input: {
+    readonly repository: CohortLocalRepositoryV1;
+    readonly definitionPath: string;
+    readonly environment: CohortEnvironmentIdentityV1;
+  }) {
+    this.#repository = input.repository;
+    this.#definitionPath = normalizedRepositoryPath(
+      input.definitionPath,
+      "local cohort definition path",
+    );
+    assertDigest(input.environment.environmentDigest, "environment digest");
+    this.#environment = Object.freeze({ ...input.environment });
+  }
+
+  async resolveExactSnapshot(
+    request: CohortAdmissionObservationRequestV1,
+  ): Promise<CohortAdmissionSnapshotV1> {
+    const repository = await this.#repository.resolveIdentity();
+    const definitionBytes = await this.#repository.readFile(repository, this.#definitionPath);
+    if (definitionBytes === null) {
+      throw new Error(`local cohort definition ${this.#definitionPath} does not exist at HEAD`);
+    }
+    const definition = parseLocalAdmissionDefinition(definitionBytes);
+    assertUnique(
+      definition.members.map((member) => member.memberRef),
+      "local cohort definition member refs",
+    );
+    const definitionMembers = new Map(definition.members.map((member) => [member.memberRef, member]));
+    const members = request.memberRefs.map((memberRef) => {
+      const member = definitionMembers.get(memberRef);
+      if (member === undefined) {
+        throw new Error(`${memberRef} is absent from the local cohort definition`);
+      }
+      return member;
+    });
+    const pathMembers = new Map<string, Set<string>>();
+    const edgeRequests = new Map<string, { readonly from: string; readonly to: string }>();
+    const addPath = (rawPath: string, memberRef: string): string => {
+      const path = normalizedRepositoryPath(rawPath, `${memberRef} bounded source path`);
+      const refs = pathMembers.get(path) ?? new Set<string>();
+      refs.add(memberRef);
+      pathMembers.set(path, refs);
+      if (pathMembers.size > LOCAL_COHORT_GRAPH_LIMIT) {
+        throw new Error(`bounded cohort source graph exceeds ${String(LOCAL_COHORT_GRAPH_LIMIT)} files`);
+      }
+      return path;
+    };
+    for (const member of members) {
+      for (const sourceRef of member.sourceRefs) {
+        const sourcePath = addPath(sourceRef, member.memberRef);
+        let directory = posix.dirname(sourcePath);
+        while (true) {
+          const manifestPath = directory === "." ? "package.json" : `${directory}/package.json`;
+          if ((await this.#repository.readFile(repository, manifestPath)) !== null) {
+            addPath(manifestPath, member.memberRef);
+            edgeRequests.set(`${sourcePath}\u0000${manifestPath}`, {
+              from: sourcePath,
+              to: manifestPath,
+            });
+            break;
+          }
+          if (directory === ".") break;
+          directory = posix.dirname(directory);
+        }
+      }
+      for (const candidate of member.boundaryCandidates) {
+        if (candidate.witness.kind !== "repository-node") continue;
+        const memberPath = candidate.witness.memberPath.map((path) =>
+          addPath(path, member.memberRef),
+        );
+        addPath(candidate.witness.sourcePath, member.memberRef);
+        for (let index = 1; index < memberPath.length; index += 1) {
+          const from = memberPath[index - 1]!;
+          const to = memberPath[index]!;
+          edgeRequests.set(`${from}\u0000${to}`, { from, to });
+        }
+      }
+    }
+    const fileBytes = new Map<string, string>();
+    for (const path of pathMembers.keys()) {
+      const bytes = await this.#repository.readFile(repository, path);
+      if (bytes === null) throw new Error(`${path} does not exist in the exact repository tree`);
+      fileBytes.set(path, bytes);
+    }
+    const edges: CohortSourceGraphEdgeV1[] = [];
+    for (const requestEdge of edgeRequests.values()) {
+      const relationship = await this.#repository.resolveRelationship(
+        repository,
+        requestEdge.from,
+        requestEdge.to,
+      );
+      if (relationship === null) {
+        throw new Error(
+          `${requestEdge.from} -> ${requestEdge.to} is not a repository-derived relationship`,
+        );
+      }
+      edges.push(Object.freeze({ ...requestEdge, relationship }));
+    }
+    const resolvedMembers: ResolvedCohortMemberV1[] = members.map((member) => {
+      const boundaryCandidates = member.boundaryCandidates.map((candidate) => {
+        if (candidate.witness.kind === "repository-node") {
+          const sourcePath = normalizedRepositoryPath(
+            candidate.witness.sourcePath,
+            "repository witness source",
+          );
+          const bytes = fileBytes.get(sourcePath);
+          if (bytes === undefined) throw new Error(`${sourcePath} was not inspected`);
+          if (candidate.witness.nodeKind === "generated-source") {
+            const expected = `generated:${digest(bytes)}`;
+            if (!bytes.includes("@generated") || candidate.witness.nodeIdentity !== expected) {
+              throw new Error(`${sourcePath} does not derive the named generated source node`);
+            }
+          } else if (!sourceExportsSymbol(bytes, repositoryNodeSymbol(candidate.witness))) {
+            throw new Error(`${sourcePath} does not export the named repository witness`);
+          }
+        }
+        const provenancePath = normalizedRepositoryPath(
+          candidate.focusedCommand.provenance.sourceRef,
+          `${member.memberRef} command provenance source`,
+        );
+        const provenanceBytes = fileBytes.get(provenancePath);
+        if (provenanceBytes === undefined) {
+          throw new Error(`${member.memberRef} command provenance was not inspected`);
+        }
+        return Object.freeze({
+          ...candidate,
+          focusedCommand: Object.freeze({
+            ...candidate.focusedCommand,
+            provenance: Object.freeze({
+              sourceRef: provenancePath,
+              sourceRevision: digest(provenanceBytes),
+            }),
+          }),
+        });
+      });
+      return Object.freeze({
+        ...member,
+        repository,
+        environment: this.#environment,
+        boundaryCandidates: Object.freeze(boundaryCandidates),
+      }) as ResolvedCohortMemberV1;
+    });
+    const sourceGraph = Object.freeze({
+      nodes: Object.freeze(
+        [...fileBytes.entries()].map(([path, bytes]) =>
+          Object.freeze({
+            path,
+            blobDigest: digest(bytes),
+            referencedBy: Object.freeze([...(pathMembers.get(path) ?? [])].sort()),
+          }),
+        ),
+      ),
+      edges: Object.freeze(edges),
+    });
+    return Object.freeze({
+      producer: "cq-local-repository-cohort-producer",
+      producerRevision: digest({
+        version: 1,
+        definitionPath: this.#definitionPath,
+        definitionDigest: digest(definitionBytes),
+      }),
+      workset: definition.workset,
+      manifest: definition.manifest,
+      repository,
+      environment: this.#environment,
+      sourceGraph,
+      members: Object.freeze(resolvedMembers),
+      authenticatedBenefitReceipts: Object.freeze([...definition.authenticatedBenefitReceipts]),
+      unavailableFacts: Object.freeze(
+        definition.unavailableFacts.filter(
+          (fact) => fact.memberRef === null || request.memberRefs.includes(fact.memberRef),
+        ),
+      ),
+    });
+  }
 }
 
 export interface MemberAcceptancePlanV1 {
@@ -1369,7 +1734,10 @@ export function createPendingCohortCandidateAttemptV1(
   return Object.freeze({ ...payload, candidateAttemptDigest: digest(payload) });
 }
 
+const AUTHENTICATED_G213_ROW_V1: unique symbol = Symbol("cq-authenticated-g213-row-v1");
+
 export interface G213QualifiedCandidateRowV1 {
+  readonly [AUTHENTICATED_G213_ROW_V1]: true;
   readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
   readonly queue: ImplementationQueueControl;
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
@@ -1384,7 +1752,10 @@ export function stageCohortCandidateAttemptV1(
   pending: PendingCohortCandidateAttemptV1,
   binding: G213CandidateAttemptBindingV1,
 ): StagedCohortCandidateAttemptV1 {
-  if (canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)) {
+  if (
+    binding.row[AUTHENTICATED_G213_ROW_V1] !== true ||
+    canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)
+  ) {
     throw new Error("G213 candidate binding differs from the actual G213 row");
   }
   const queue = binding.row.queue;
@@ -1444,6 +1815,175 @@ function normalizeWholeDiff(
     .sort((left, right) => left.path.localeCompare(right.path));
   assertUnique(wholeDiff.map((entry) => entry.path), "candidate whole-diff paths");
   return Object.freeze(wholeDiff);
+}
+
+export interface G213CandidateRepositoryV1 {
+  resolveWholeDiff(input: {
+    readonly repositoryId: string;
+    readonly baseCommit: string;
+    readonly resultCommit: string;
+    readonly resultTree: string;
+  }): Promise<readonly CohortWholeDiffEntryV1[]>;
+}
+
+/** Resolve the result-side identity of every changed path from one local Git object graph. */
+export class GitG213CandidateRepositoryV1 implements G213CandidateRepositoryV1 {
+  readonly #repositoryRoot: string;
+  readonly #repositoryId: string;
+  readonly #git: DispatchBaseGitRunner;
+
+  constructor(input: {
+    readonly repositoryRoot: string;
+    readonly repositoryId: string;
+    readonly git?: DispatchBaseGitRunner;
+  }) {
+    assertNonEmpty(input.repositoryRoot, "G213 repository root");
+    assertNonEmpty(input.repositoryId, "G213 repository id");
+    this.#repositoryRoot = input.repositoryRoot;
+    this.#repositoryId = input.repositoryId;
+    this.#git = input.git ?? nodeDispatchBaseGitRunner;
+  }
+
+  async #required(args: readonly string[], label: string): Promise<string> {
+    const result = await this.#git(this.#repositoryRoot, args);
+    if (result.code !== 0) throw new Error(`${label} failed: ${result.stderr.trim()}`);
+    return result.stdout;
+  }
+
+  async resolveWholeDiff(input: {
+    readonly repositoryId: string;
+    readonly baseCommit: string;
+    readonly resultCommit: string;
+    readonly resultTree: string;
+  }): Promise<readonly CohortWholeDiffEntryV1[]> {
+    if (input.repositoryId !== this.#repositoryId) {
+      throw new Error("G213 candidate names another repository");
+    }
+    assertCommit(input.baseCommit, "G213 candidate base commit");
+    assertCommit(input.resultCommit, "G213 candidate result commit");
+    const [baseType, resultType, resultTree] = await Promise.all([
+      this.#required(["cat-file", "-t", input.baseCommit], "G213 base lookup"),
+      this.#required(["cat-file", "-t", input.resultCommit], "G213 result lookup"),
+      this.#required(["rev-parse", "--verify", `${input.resultCommit}^{tree}`], "G213 tree lookup"),
+    ]);
+    if (baseType.trim() !== "commit" || resultType.trim() !== "commit") {
+      throw new Error("G213 candidate base and result must be commits");
+    }
+    if (resultTree.trim() !== input.resultTree) {
+      throw new Error("G213 candidate result tree differs from the repository");
+    }
+    const rawPaths = await this.#required(
+      ["diff", "--name-only", "-z", "--no-renames", input.baseCommit, input.resultCommit],
+      "G213 whole-diff lookup",
+    );
+    const paths = rawPaths
+      .split("\u0000")
+      .filter((path) => path !== "")
+      .map((path) => normalizedRepositoryPath(path, "G213 whole-diff path"));
+    assertUnique(paths, "G213 whole-diff paths");
+    const entries: CohortWholeDiffEntryV1[] = [];
+    for (const path of paths) {
+      let revision = input.resultCommit;
+      let treeEntry = await this.#git(this.#repositoryRoot, ["ls-tree", revision, "--", path]);
+      if (treeEntry.code !== 0 || treeEntry.stdout.trim() === "") {
+        revision = input.baseCommit;
+        treeEntry = await this.#git(this.#repositoryRoot, ["ls-tree", revision, "--", path]);
+      }
+      if (treeEntry.code !== 0 || treeEntry.stdout.trim() === "") {
+        throw new Error(`${path} is absent from both ends of the G213 whole diff`);
+      }
+      const match = /^(100644|100755) blob ([0-9a-f]{40,64})\t/u.exec(treeEntry.stdout.trim());
+      if (match === null) throw new Error(`${path} is not a regular file in the G213 whole diff`);
+      entries.push(
+        Object.freeze({
+          path,
+          mode: match[1] as "100644" | "100755",
+          blobDigest: digest({ gitBlobOid: match[2], revision }),
+        }),
+      );
+    }
+    return normalizeWholeDiff(entries);
+  }
+}
+
+/** Authenticate one persisted G213 row and its repository diff before cohort staging. */
+export async function resolveG213QualifiedCandidateRowV1(input: {
+  readonly row: AttestationEnvelope;
+  readonly repository: G213CandidateRepositoryV1;
+}): Promise<G213QualifiedCandidateRowV1> {
+  const row = input.row;
+  const queue = row.implementationQueue;
+  const binding = row.gitEffectBinding;
+  if (
+    row.kind !== "envelope" ||
+    row.promptProvenance.roleId !== "implement-worker" ||
+    queue === undefined ||
+    binding === undefined ||
+    queue.state !== "qualified" ||
+    queue.qualification === undefined
+  ) {
+    throw new Error("actual G213 row is not one qualified managed implement-worker");
+  }
+  if (typeof row.input !== "object" || row.input === null || Array.isArray(row.input)) {
+    throw new Error("actual G213 row input is not an object");
+  }
+  const rowInput = row.input as Readonly<Record<string, unknown>>;
+  const startingCommit = rowInput["startingCommit"];
+  if (typeof startingCommit !== "string") {
+    throw new Error("actual G213 row lacks its prepared starting commit");
+  }
+  assertCommit(startingCommit, "actual G213 row starting commit");
+  if (
+    queue.attempt.managedWorktreeBindingDigest !== digest(binding) ||
+    queue.attempt.taskId !== binding.taskId ||
+    queue.attempt.repositoryId !== binding.repositoryId ||
+    queue.qualification.expectedChild.childId !== row.expectedChild.childId ||
+    queue.qualification.expectedChild.runId !== row.expectedChild.runId ||
+    queue.qualification.expectedProvenance.roleId !== row.promptProvenance.roleId ||
+    queue.qualification.expectedProvenance.version !== row.promptProvenance.version ||
+    queue.qualification.expectedProvenance.promptDigest !== row.promptProvenance.promptDigest ||
+    queue.qualification.expectedProvenance.inputDigest !== row.promptProvenance.inputDigest
+  ) {
+    throw new Error("actual G213 row identity or qualification is inconsistent");
+  }
+  if (typeof row.output !== "object" || row.output === null || Array.isArray(row.output)) {
+    throw new Error("actual G213 row lacks its staged output");
+  }
+  const output = row.output as Readonly<Record<string, unknown>>;
+  if (
+    output["taskId"] !== binding.taskId ||
+    output["resultCommit"] !== queue.attempt.resultCommit ||
+    digest(output["gitReceipts"] ?? []) !== queue.attempt.gitReceiptLineageDigest
+  ) {
+    throw new Error("actual G213 row staged output differs from its queue attempt");
+  }
+  const repositoryDiff = normalizeWholeDiff(
+    await input.repository.resolveWholeDiff({
+      repositoryId: binding.repositoryId,
+      baseCommit: queue.attempt.observedBaseCommit,
+      resultCommit: queue.attempt.resultCommit,
+      resultTree: queue.attempt.resultTree,
+    }),
+  );
+  if (
+    !Array.isArray(output["filesTouched"]) ||
+    canonical(sortedUnique(output["filesTouched"] as string[])) !==
+      canonical(repositoryDiff.map((entry) => entry.path))
+  ) {
+    throw new Error("actual G213 row filesTouched differs from the repository diff");
+  }
+  return Object.freeze({
+    [AUTHENTICATED_G213_ROW_V1]: true as const,
+    preparedDispatch: Object.freeze({
+      attestationId: row.attestationId,
+      generation: row.generation,
+      taskId: binding.taskId,
+      branch: binding.branch,
+      startingCommit,
+    }),
+    queue,
+    repositoryDiff,
+  });
 }
 
 export interface CohortGitChangeReceiptV1 {

@@ -300,6 +300,7 @@ export function qualifiedQueue(input: {
   readonly tree: string;
   readonly receipts: readonly CohortGitChangeReceiptV1[];
   readonly attempt?: string;
+  readonly managedWorktreeBindingDigest?: string;
 }): ImplementationQueueControl {
   return {
     kind: "cq-implementation-queue-control",
@@ -335,7 +336,7 @@ export function qualifiedQueue(input: {
       taskId: input.taskId,
       goalRef: "goals:G-test",
       finalizedManifestDigest: sha256("manifest"),
-      managedWorktreeBindingDigest: sha256("worktree"),
+      managedWorktreeBindingDigest: input.managedWorktreeBindingDigest ?? sha256("worktree"),
       gitReceiptLineageDigest: sha256(input.receipts),
       gitReceipts: input.receipts,
       worktreePath: "/repo/.claude/worktrees/test",
