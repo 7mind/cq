@@ -18,7 +18,13 @@ import {
   type CohortRepositoryIdentityV1,
   type CohortSourceRelationshipV1,
 } from "../src/workCohort.js";
-import { GOALS_SCHEMA, TASKS_SCHEMA } from "../src/constants.js";
+import {
+  DEFECTS_SCHEMA,
+  GOALS_SCHEMA,
+  HYPOTHESIS_SCHEMA,
+  REVIEWS_SCHEMA,
+  TASKS_SCHEMA,
+} from "../src/constants.js";
 import { PLAN_FINALIZED_MANIFEST_FIELD } from "../src/planLifecycle.js";
 import type { FetchedLedger, Item } from "../src/types.js";
 import { commit, observationFor, sha256, snapshotFor } from "./workCohortFixture.js";
@@ -83,7 +89,10 @@ class InMemoryCohortPrimaryLedger implements CohortPrimaryLedgerReaderV1 {
   }
 }
 
-function localPrimaryFixture(nodeIdentity = "shared#CohortContract"): LocalPrimaryFixture {
+function localPrimaryFixture(
+  nodeIdentity = "shared#CohortContract",
+  primaryReferenceChain = false,
+): LocalPrimaryFixture {
   const snapshot = snapshotFor([{ ref: "tasks:T1" }, { ref: "tasks:T2" }], {});
   const manifest = {
     revision: 1,
@@ -100,11 +109,18 @@ function localPrimaryFixture(nodeIdentity = "shared#CohortContract"): LocalPrima
   const tasks = ["T1", "T2"].map((id) =>
     primaryItem(id, "planned", {
       headline: `Task ${id}`,
-      sourceRefs: [`src/tasks:${id}.ts`],
+      sourceRefs: [
+        `src/tasks:${id}.ts`,
+        ...(primaryReferenceChain ? ["reviews:R1"] : []),
+      ],
       worksetOwnerRef: "goals:G1",
       worksetOwnerEdgeKind: "finalized-manifest",
     }),
   );
+  const review = primaryItem("R1", "go-ahead", {
+    sourceRefs: [`cq-implementation-adoption:v1:${"a".repeat(64)}`],
+    sessionLogs: [".cq/logs/review-R1.md"],
+  });
   const members = snapshot.members.map((member) => ({
     memberRef: member.memberRef,
     boundaryCandidates: member.boundaryCandidates.map((candidate) => ({
@@ -126,8 +142,76 @@ function localPrimaryFixture(nodeIdentity = "shared#CohortContract"): LocalPrima
     ledger: new InMemoryCohortPrimaryLedger([
       fetchedLedger("goals", GOALS_SCHEMA, [goal]),
       fetchedLedger("tasks", TASKS_SCHEMA, tasks),
+      ...(primaryReferenceChain
+        ? [fetchedLedger("reviews", REVIEWS_SCHEMA, [review])]
+        : []),
     ]),
     workset: { snapshot: () => ({ roots: ["goals:G1"], epoch: 7 }) },
+    plan: {
+      kind: "cq-cohort-admission-plan",
+      version: 1,
+      members,
+    },
+    environmentDigest: snapshot.environment.environmentDigest,
+  };
+}
+
+function localInvestigationFixture(causeConfirmed: boolean, splitOwner = false): LocalPrimaryFixture {
+  const memberSpecs = ["D1", "D2"].map((id) => ({
+    ref: `defects:${id}`,
+    phase: "investigation" as const,
+  }));
+  const snapshot = snapshotFor(memberSpecs, {});
+  const goals = [
+    primaryItem("G1", "planned", { headline: "First investigation goal" }),
+    ...(splitOwner
+      ? [primaryItem("G2", "planned", { headline: "Second investigation goal" })]
+      : []),
+  ];
+  const defects = ["D1", "D2"].map((id) =>
+    primaryItem(id, causeConfirmed ? "root-caused" : "wip", {
+      headline: `Defect ${id}`,
+      severity: "high",
+      rootCause: "shared primary cause",
+      sourceRefs: [`src/defects:${id}.ts`],
+      worksetOwnerRef: splitOwner && id === "D2" ? "goals:G2" : "goals:G1",
+      worksetOwnerEdgeKind: "review-filed-defect",
+    }),
+  );
+  const hypotheses = ["D1", "D2"].map((id, index) =>
+    primaryItem(`H${String(index + 1)}`, causeConfirmed ? "confirmed" : "uncertain", {
+      headline: `Hypothesis ${id}`,
+      evidence: ["same bounded evidence class"],
+      worksetOwnerRef: `defects:${id}`,
+      worksetOwnerEdgeKind: "hypothesis",
+    }),
+  );
+  const members = snapshot.members.map((member, index) => ({
+    memberRef: member.memberRef,
+    investigationHypothesisRef: `hypothesis:H${String(index + 1)}`,
+    boundaryCandidates: member.boundaryCandidates.map((candidate) => ({
+      ...candidate,
+      focusedCommand: {
+        ...candidate.focusedCommand,
+        provenance: {
+          ...candidate.focusedCommand.provenance,
+          sourceRef: `src/${member.memberRef}.ts`,
+        },
+      },
+    })),
+  }));
+  return {
+    ledger: new InMemoryCohortPrimaryLedger([
+      fetchedLedger("goals", GOALS_SCHEMA, goals),
+      fetchedLedger("defects", DEFECTS_SCHEMA, defects),
+      fetchedLedger("hypothesis", HYPOTHESIS_SCHEMA, hypotheses),
+    ]),
+    workset: {
+      snapshot: () => ({
+        roots: splitOwner ? ["goals:G1", "goals:G2"] : ["goals:G1"],
+        epoch: 11,
+      }),
+    },
     plan: {
       kind: "cq-cohort-admission-plan",
       version: 1,
@@ -147,6 +231,14 @@ function localRepositoryFiles(_nodeIdentity?: string): ReadonlyMap<string, strin
     [
       "src/tasks:T2.ts",
       'import type { CohortContract } from "./contracts/shared";\nexport const taskTwo: CohortContract = { version: 1 };\n',
+    ],
+    [
+      "src/defects:D1.ts",
+      'import type { CohortContract } from "./contracts/shared";\nexport const defectOne: CohortContract = { version: 1 };\n',
+    ],
+    [
+      "src/defects:D2.ts",
+      'import type { CohortContract } from "./contracts/shared";\nexport const defectTwo: CohortContract = { version: 1 };\n',
     ],
     ["src/contracts/shared.ts", "export interface CohortContract { readonly version: 1 }\n"],
     [
@@ -184,7 +276,10 @@ class InMemoryCohortLocalRepository implements CohortLocalRepositoryV1 {
     if (to === "package.json") return "package";
     if (from === "tests/cohort.test.ts" && to === "src/contracts/shared.ts") return "test";
     if (
-      (from === "src/tasks:T1.ts" || from === "src/tasks:T2.ts") &&
+      (from === "src/tasks:T1.ts" ||
+        from === "src/tasks:T2.ts" ||
+        from === "src/defects:D1.ts" ||
+        from === "src/defects:D2.ts") &&
       to === "src/contracts/shared.ts"
     ) {
       return "import";
@@ -540,6 +635,89 @@ describe("cohort admission observation", () => {
         member.phase === "implementation" ? member.implementationAuthority : null,
       ),
     ).toEqual(["cq-finalized-manifest:goals:G1", "cq-finalized-manifest:goals:G1"]);
+  });
+
+  test("resolves primary ledger, opaque authority, and log references without treating them as Git paths", async () => {
+    const local = localPrimaryFixture("shared#CohortContract", true);
+    const recording = new RecordingCohortLocalRepository(
+      new InMemoryCohortLocalRepository(localRepositoryFiles()),
+    );
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: recording,
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["tasks:T1", "tasks:T2"] },
+      source,
+    );
+    const first = observation.members[0] as (typeof observation.members)[number] & {
+      readonly sourceReferences: readonly {
+        readonly kind: string;
+        readonly ref: string;
+      }[];
+    };
+
+    expect(first.sourceRefs).toEqual(["src/tasks:T1.ts"]);
+    expect(first.sourceReferences.map(({ kind, ref }) => ({ kind, ref }))).toEqual([
+      { kind: "opaque-authority", ref: `cq-implementation-adoption:v1:${"a".repeat(64)}` },
+      { kind: "primary-ledger", ref: "reviews:R1" },
+      { kind: "primary-log", ref: ".cq/logs/review-R1.md" },
+      { kind: "repository-path", ref: "src/tasks:T1.ts" },
+    ]);
+    expect(recording.reads).not.toContain("reviews:R1");
+    expect(recording.reads).not.toContain(".cq/logs/review-R1.md");
+  });
+
+  test.each([
+    ["confirmed", true],
+    ["unconfirmed", false],
+  ] as const)("fuses primary-backed %s investigations through an independent repository witness", async (_label, causeConfirmed) => {
+    const local = localInvestigationFixture(causeConfirmed);
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["defects:D1", "defects:D2"] },
+      source,
+    );
+    const [decision] = constructCohortDecisionsV1(observation);
+
+    expect(decision?.includedMemberRefs).toEqual(["defects:D1", "defects:D2"]);
+    expect(new Set(observation.members.map(({ ownershipBoundaryDigest }) => ownershipBoundaryDigest)).size).toBe(1);
+    expect(new Set(observation.members.map(({ authorityBoundaryDigest }) => authorityBoundaryDigest)).size).toBe(1);
+    if (!causeConfirmed) {
+      expect(observation.members.every(({ unavailableFacts }) => unavailableFacts.some(({ fact }) => fact === "confirmed-cause"))).toBe(true);
+      expect(observation.members.flatMap(({ attestations }) => attestations).every(({ applicability }) => applicability.kind === "repository-path")).toBe(true);
+    }
+  });
+
+  test("keeps distinct primary investigation owners outside one cohort", async () => {
+    const local = localInvestigationFixture(true, true);
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["defects:D1", "defects:D2"] },
+      source,
+    );
+
+    expect(constructCohortDecisionsV1(observation)[0]?.excluded[0]?.reason).toBe(
+      "ownership-or-manifest",
+    );
   });
 
   test("resolves a TypeScript source behind a JavaScript import specifier", async () => {
