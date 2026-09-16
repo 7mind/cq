@@ -179,6 +179,43 @@ describe("T1330 Codex role process boundary", () => {
     }
   });
 
+  // regression: T6519 — one installed coordinator invocation must not strand a trailing front.
+  test("candidate coordinator drains again after completing one runnable front [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-candidate-coordinate-drain-"));
+    const runner = join(root, "coordinator");
+    const attempts = join(root, "attempts");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
+        "attempt=$((attempt + 1))",
+        `printf %s "$attempt" >${JSON.stringify(attempts)}`,
+        "if test \"$attempt\" -eq 1; then",
+        "  printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+        "else",
+        "  printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}'",
+        "fi",
+      ].join("\n"),
+    );
+    chmodSync(runner, 0o755);
+    try {
+      const outcome = await executeCodexImplementationCandidateCoordinator({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        partitionKey: "cq-implementation-queue:v1:partition",
+        holderId: "installed-codex:partition",
+        timeoutMs: 2_000,
+      });
+      expect(outcome).toEqual({ state: "completed" });
+      expect(readFileSync(attempts, "utf8")).toBe("2");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("D444 keeps global evidence auditors capability-scoped while ordinary roles retain workset admission [Behavioral-Active Blackbox-Atomic]", async () => {
     const worksetProvider = {
       acquire: async () => {
