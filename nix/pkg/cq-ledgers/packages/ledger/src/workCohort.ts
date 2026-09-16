@@ -577,15 +577,18 @@ function orderedMembers(
 ): readonly ResolvedCohortMemberV1[] {
   assertUnique(workset.orderedMemberRefs, "workset member refs");
   const order = new Map(workset.orderedMemberRefs.map((memberRef, index) => [memberRef, index]));
+  for (const member of members) {
+    if (!order.has(member.memberRef)) {
+      throw new Error("every cohort member must belong to the exact workset snapshot");
+    }
+  }
   return Object.freeze(
     [...members].sort((left, right) => {
       const phase = COHORT_PHASE_ORDER_V1.indexOf(left.phase) - COHORT_PHASE_ORDER_V1.indexOf(right.phase);
       if (phase !== 0) return phase;
       const leftOrder = order.get(left.memberRef);
       const rightOrder = order.get(right.memberRef);
-      if (leftOrder === undefined || rightOrder === undefined) {
-        throw new Error("every cohort member must belong to the exact workset snapshot");
-      }
+      if (leftOrder === undefined || rightOrder === undefined) throw new Error("unreachable workset order");
       return leftOrder - rightOrder || left.memberRef.localeCompare(right.memberRef);
     }),
   );
