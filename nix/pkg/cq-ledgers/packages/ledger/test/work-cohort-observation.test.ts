@@ -162,7 +162,11 @@ function localPrimaryFixture(
   };
 }
 
-function localInvestigationFixture(causeConfirmed: boolean, splitOwner = false): LocalPrimaryFixture {
+function localInvestigationFixture(
+  causeConfirmed: boolean,
+  splitOwner = false,
+  rootKind: "goal" | "members" = "goal",
+): LocalPrimaryFixture {
   const memberSpecs = ["D1", "D2"].map((id) => ({
     ref: `defects:${id}`,
     phase: "investigation" as const,
@@ -215,7 +219,12 @@ function localInvestigationFixture(causeConfirmed: boolean, splitOwner = false):
     ]),
     workset: {
       snapshot: () => ({
-        roots: splitOwner ? ["goals:G1", "goals:G2"] : ["goals:G1"],
+        roots:
+          rootKind === "members"
+            ? ["defects:D1", "defects:D2"]
+            : splitOwner
+              ? ["goals:G1", "goals:G2"]
+              : ["goals:G1"],
         epoch: 11,
       }),
     },
@@ -752,10 +761,12 @@ describe("cohort admission observation", () => {
   });
 
   test.each([
-    ["confirmed", true],
-    ["unconfirmed", false],
-  ] as const)("fuses primary-backed %s investigations through an independent repository witness", async (_label, causeConfirmed) => {
-    const local = localInvestigationFixture(causeConfirmed);
+    ["confirmed", true, "goal"],
+    ["confirmed", true, "members"],
+    ["unconfirmed", false, "goal"],
+    ["unconfirmed", false, "members"],
+  ] as const)("fuses primary-backed %s investigations from %s roots through an independent repository witness", async (_label, causeConfirmed, rootKind) => {
+    const local = localInvestigationFixture(causeConfirmed, false, rootKind);
     const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
       repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
       ledger: local.ledger,
