@@ -82,6 +82,13 @@ export const IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES = Object.freeze({
 export type ImplementationCandidateHeadOfLineDisposition =
   keyof typeof IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES;
 
+export interface ApplyImplementationCandidateHeadOfLineDispositionRequest {
+  readonly disposition: ImplementationCandidateHeadOfLineDisposition;
+  readonly lease: ImplementationQueueLeaseBinding;
+  readonly expectedPartitionRevision: number;
+  readonly detail?: LeaseTransitionRequest["detail"];
+}
+
 /** Trusted ledger-MCP boundary over the durable attestation queue transaction. */
 export class ImplementationCandidateQueueAdapter {
   private readonly backend: AttestationBackend;
@@ -219,6 +226,25 @@ export class ImplementationCandidateQueueAdapter {
       { namespace: this.backend.namespace, actor: this.actor, ...request },
       { now: this.now },
     );
+  }
+
+  applyHeadOfLineDisposition(
+    request: ApplyImplementationCandidateHeadOfLineDispositionRequest,
+  ) {
+    const action = IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES[request.disposition];
+    const transition = {
+      ...request.lease,
+      expectedPartitionRevision: request.expectedPartitionRevision,
+      detail: request.detail ?? { disposition: request.disposition },
+    };
+    if (action === "park") return this.park(transition);
+    if (action === "yield") return this.yield(transition);
+    if (action === "resume") return this.resume(transition);
+    const { holderId: _holderId, leaseGeneration: _leaseGeneration, ...terminal } = transition;
+    return this.terminalize({
+      ...terminal,
+      reason: action,
+    });
   }
 }
 

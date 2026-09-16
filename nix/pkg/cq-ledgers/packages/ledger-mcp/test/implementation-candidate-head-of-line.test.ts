@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryAttestationBackend, InMemoryAttestationStore } from "@cq/config";
-import { IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES } from "../src/implementationCandidateQueue.js";
+import {
+  IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES,
+  type ImplementationCandidateHeadOfLineDisposition,
+} from "../src/implementationCandidateQueue.js";
 import { ImplementationCandidateQueueFixture } from "./implementationCandidateQueueFixture.js";
 
 const namespace = { backend: "xdg" as const, projectKey: "head-of-line" };
@@ -71,6 +74,95 @@ describe("implementation candidate head-of-line policy [Behavioral-Active, Black
       lease: {
         attestationId: second.prepared.attestationId,
         generation: second.prepared.generation,
+      },
+    });
+  });
+
+  test.each([
+    ["park", "parked"],
+    ["yield", "yielded"],
+    ["cancel", "terminal"],
+    ["supersede", "terminal"],
+    ["review-question", "parked"],
+    ["non-converging-criticism", "yielded"],
+    ["task-abandonment", "terminal"],
+    ["owner-revocation", "terminal"],
+    ["worktree-authority-revocation", "terminal"],
+    ["permanent-ineligibility", "terminal"],
+    ["conflict", "parked"],
+    ["deterministic-red", "yielded"],
+    ["execution-uncertainty", "parked"],
+  ] as const)("applies %s durably and revokes its lease", async (disposition, expectedState) => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const staged = await fixture.stage(candidate(`T${String(6600 + disposition.length)}`));
+    const qualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: `coordinator-${disposition}`,
+    });
+    if (acquired.state !== "leased") throw new Error("expected a live lease");
+
+    await fixture.adapter.applyHeadOfLineDisposition({
+      disposition: disposition as ImplementationCandidateHeadOfLineDisposition,
+      lease: acquired.lease,
+      expectedPartitionRevision: acquired.partitionRevision,
+      detail: { disposition },
+    });
+
+    const row = backend.storedRows().find(
+      (entry) =>
+        entry.attestationId === staged.prepared.attestationId &&
+        entry.generation === staged.prepared.generation,
+    );
+    expect(row?.implementationQueue).toMatchObject({
+      state: expectedState,
+      leaseGeneration: acquired.lease.leaseGeneration,
+    });
+    expect(row?.implementationQueue).not.toHaveProperty("lease");
+  });
+
+  test("resume retains enrollment and qualification under a fresh lease generation", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const staged = await fixture.stage(candidate("T6699"));
+    const qualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "coordinator-before-resume",
+    });
+    if (acquired.state !== "leased") throw new Error("expected a live lease");
+    const parked = await fixture.adapter.applyHeadOfLineDisposition({
+      disposition: "park",
+      lease: acquired.lease,
+      expectedPartitionRevision: acquired.partitionRevision,
+      detail: { disposition: "park" },
+    });
+    if (!("partition" in parked)) throw new Error("expected parked control");
+
+    await fixture.adapter.applyHeadOfLineDisposition({
+      disposition: "resume",
+      lease: acquired.lease,
+      expectedPartitionRevision: parked.partitionRevision,
+      detail: { disposition: "resume" },
+    });
+    const resumed = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "coordinator-after-resume",
+    });
+
+    expect(resumed).toMatchObject({
+      state: "leased",
+      lease: {
+        enrollmentId: acquired.lease.enrollmentId,
+        attemptId: acquired.lease.attemptId,
+        leaseGeneration: acquired.lease.leaseGeneration + 1,
       },
     });
   });
