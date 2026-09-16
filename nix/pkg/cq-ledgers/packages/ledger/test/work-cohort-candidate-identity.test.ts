@@ -39,7 +39,19 @@ async function identityFixture() {
   const pending = createPendingCohortCandidateAttemptV1(definition, dispatch);
   const queue = qualifiedQueue({ taskId: dispatch.taskId, base, result, tree, receipts });
   const staged = stageCohortCandidateAttemptV1(pending, { preparedDispatch: dispatch, queue });
-  return { observation, decision, definition, dispatch, base, result, tree, receipts, pending, staged };
+  return {
+    observation,
+    decision,
+    definition,
+    dispatch,
+    base,
+    result,
+    tree,
+    receipts,
+    pending,
+    queue,
+    staged,
+  };
 }
 
 describe("cohort candidate identity", () => {
@@ -216,6 +228,59 @@ describe("cohort candidate identity", () => {
         }),
       }),
     ).toThrow("substituted the prepared dispatch");
+  });
+
+  test("rejects an attestation substituted for the actual G213 row", async () => {
+    const fixture = await identityFixture();
+    const foreign = { ...fixture.dispatch, attestationId: "att-foreign" };
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    expect(() =>
+      stageCohortCandidateAttemptV1(pending, {
+        preparedDispatch: foreign,
+        queue: fixture.queue,
+      }),
+    ).toThrow("actual G213 row");
+  });
+
+  test("rejects a generation substituted for the actual G213 row", async () => {
+    const fixture = await identityFixture();
+    const foreign = { ...fixture.dispatch, generation: 99 };
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    expect(() =>
+      stageCohortCandidateAttemptV1(pending, {
+        preparedDispatch: foreign,
+        queue: fixture.queue,
+      }),
+    ).toThrow("actual G213 row");
+  });
+
+  test("rejects a branch substituted for the actual G213 row", async () => {
+    const fixture = await identityFixture();
+    const foreign = { ...fixture.dispatch, branch: "implement/T-foreign" };
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    expect(() =>
+      stageCohortCandidateAttemptV1(pending, {
+        preparedDispatch: foreign,
+        queue: fixture.queue,
+      }),
+    ).toThrow("actual G213 row");
+  });
+
+  test("rejects a whole diff substituted for the G213 repository diff", async () => {
+    const fixture = await identityFixture();
+    expect(() =>
+      new InMemoryCohortCandidateSealStoreV1().seal({
+        definition: fixture.definition,
+        attempt: fixture.staged,
+        baseCommit: fixture.base,
+        resultCommit: fixture.result,
+        resultTree: fixture.tree,
+        wholeDiff: [
+          { path: "src/unrelated.ts", mode: "100644", blobDigest: sha256("unrelated") },
+        ],
+        gitReceipts: fixture.receipts,
+      }),
+    ).toThrow("G213 repository diff");
   });
 
   test("semantic changes advance the definition generation", async () => {
