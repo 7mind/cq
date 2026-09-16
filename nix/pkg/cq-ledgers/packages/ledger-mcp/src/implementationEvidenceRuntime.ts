@@ -510,6 +510,10 @@ export interface CreateProductionImplementationEvidenceServiceOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   /** Explicit trust seam for source-workspace construction; packaged callers omit it. */
   readonly trustedSourceWorkspaceBuildCommit?: string;
+  /** Trusted fixture seam for public status checks; packaged callers omit it. */
+  readonly readBootstrapAuthority?: NonNullable<
+    ImplementationEvidenceServiceDependencies["readBootstrapAuthority"]
+  >;
   /** Trusted process seam; production defaults to the selected harness executable. */
   readonly externalReviewRunner?: ExternalReviewRunner;
   /** Trusted packaged registry seam; production packaging supplies canonical manifests. */
@@ -538,7 +542,7 @@ export function createProductionImplementationEvidenceService(
   const serviceBuildCommit = implementationEvidenceBuildCommit(
     options.trustedSourceWorkspaceBuildCommit,
   );
-  const readBootstrapAuthority = async () => {
+  const readBootstrapAuthority = options.readBootstrapAuthority ?? (async () => {
     const rule = D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE;
     const goal = await resolveUniqueGoalState(
       store,
@@ -613,7 +617,7 @@ export function createProductionImplementationEvidenceService(
         true,
       ),
     };
-  };
+  });
   const readAuditManifest =
     options.readAuditManifest ??
     (async (manifestId: string) =>

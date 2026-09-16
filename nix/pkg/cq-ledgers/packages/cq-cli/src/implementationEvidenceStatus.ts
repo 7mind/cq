@@ -9,6 +9,7 @@ import {
   createProductionImplementationEvidenceService,
   createSingleProjectDispatchRuntime,
   resolvePromptSurface,
+  type CreateProductionImplementationEvidenceServiceOptions,
 } from "@cq/ledger-mcp";
 import { withRemoteManagementClient } from "./remoteClient.js";
 
@@ -122,6 +123,12 @@ export function assertImplementationEvidenceServiceStatus(value: unknown): asser
 
 export type ImplementationEvidenceStatusQuery = (cwd: string) => Promise<unknown>;
 
+export function createEmbeddedStatusImplementationEvidenceService(
+  options: CreateProductionImplementationEvidenceServiceOptions,
+): ReturnType<typeof createProductionImplementationEvidenceService> {
+  return createProductionImplementationEvidenceService(options);
+}
+
 const queryRemoteImplementationEvidenceStatus: ImplementationEvidenceStatusQuery = async (cwd) =>
   await withRemoteManagementClient(
     cwd,
@@ -151,7 +158,7 @@ const queryEmbeddedImplementationEvidenceStatus: ImplementationEvidenceStatusQue
         throw new Error("implementation evidence dispatch runtime is unavailable");
       if (resolved.implementationEvidenceStore === undefined)
         throw new Error("protected implementation evidence store is unavailable");
-      return await createProductionImplementationEvidenceService({
+      return await createEmbeddedStatusImplementationEvidenceService({
         resolved,
         dispatchCapability: dispatchRuntime.capability,
         repositoryRoot: cwd,

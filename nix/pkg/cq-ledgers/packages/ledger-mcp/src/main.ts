@@ -90,9 +90,13 @@ import {
 } from "@cq/config";
 import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
-import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
+import {
+  createProductionImplementationEvidenceService,
+  type CreateProductionImplementationEvidenceServiceOptions,
+} from "./implementationEvidenceRuntime.js";
 
 export { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
+export type { CreateProductionImplementationEvidenceServiceOptions } from "./implementationEvidenceRuntime.js";
 export {
   IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES,
   ImplementationCandidateCoordinator,
@@ -1525,6 +1529,12 @@ export function changedFrame(ledgerId: string | null): string {
   );
 }
 
+export function createStandaloneImplementationEvidenceService(
+  options: CreateProductionImplementationEvidenceServiceOptions,
+): ImplementationEvidenceService {
+  return createProductionImplementationEvidenceService(options);
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(TOP_LEVEL_USAGE + "\n");
@@ -1606,7 +1616,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
-      ? createProductionImplementationEvidenceService({
+      ? createStandaloneImplementationEvidenceService({
           resolved,
           dispatchCapability,
           repositoryRoot: cwd,

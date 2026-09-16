@@ -781,8 +781,8 @@ EOF
               exit 1
             fi
 
-            HOME=$TMPDIR ${pkgs.bun}/bin/bun run \
-              "$WORKSPACE/packages/ledger-mcp/scripts/probe-implementation-evidence-build-provenance.ts" \
+            ${pkgs.bun}/bin/bun run \
+              "$WORKSPACE/packages/cq-cli/src/probeImplementationEvidenceBuildProvenance.ts" \
               "${sourceRevision}"
 
             fakeCodex=$TMPDIR/fake-codex

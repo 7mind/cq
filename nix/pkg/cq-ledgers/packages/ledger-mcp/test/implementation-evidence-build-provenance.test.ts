@@ -63,6 +63,34 @@ async function sourceWorkspaceServiceOptions(
     repositoryRoot,
     environment: { CQ_HARNESS: "codex" },
     trustedSourceWorkspaceBuildCommit: BUILD_COMMIT,
+    readBootstrapAuthority: async () => ({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: "f".repeat(64),
+      mappings: {
+        evidenceTaskRef: "tasks:T3000",
+        historicalTaskRef: "tasks:T3001",
+        activationTaskRef: "tasks:T3002",
+      },
+      evidenceTask: {
+        taskRef: "tasks:T3000",
+        status: "done",
+        resultCommit: BUILD_COMMIT,
+        ready: false,
+      },
+      historicalTask: {
+        taskRef: "tasks:T3001",
+        status: "planned",
+        resultCommit: null,
+        ready: true,
+      },
+      activationTask: {
+        taskRef: "tasks:T3002",
+        status: "planned",
+        resultCommit: null,
+        ready: false,
+        actionKey: "activate-implementation-evidence",
+      },
+    }),
   } as const;
 }
 
@@ -83,11 +111,12 @@ function exportedFactory(module: unknown, name: string): ShippedFactory {
 }
 
 async function shippedFactories(): Promise<ReadonlyArray<readonly [string, ShippedFactory]>> {
+  const importModule = async (specifier: string): Promise<unknown> => await import(specifier);
   const [standalone, tui, web, status] = await Promise.all([
-    import("../src/main.js"),
-    import("../../ledger-tui/src/mcpClient.js"),
-    import("../../ledger-web/src/serve.js"),
-    import("../../cq-cli/src/implementationEvidenceStatus.js"),
+    importModule("../src/main.js"),
+    importModule("../../ledger-tui/src/mcpClient.js"),
+    importModule("../../ledger-web/src/serve.js"),
+    importModule("../../cq-cli/src/implementationEvidenceStatus.js"),
   ]);
   return [
     [
@@ -211,6 +240,6 @@ test("the cq derivation requires clean self.rev and runs the installed provenanc
   expect(flake).toContain('builtins.match "^[0-9a-f]{40}$" self.rev');
   expect(flake).toContain("!(self ? dirtyRev)");
   expect(flake).toContain('export const PACKAGED_BUILD_COMMIT = "${sourceRevision}" as const;');
-  expect(flake).toContain("probe-implementation-evidence-build-provenance.ts");
+  expect(flake).toContain("probeImplementationEvidenceBuildProvenance.ts");
   expect(flake).toContain("doInstallCheck = true;");
 });

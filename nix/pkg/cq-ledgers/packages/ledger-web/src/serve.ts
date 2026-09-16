@@ -36,6 +36,7 @@ import {
   LEDGER_TOPIC,
   resolvePromptSurface,
   startLedgerCoherenceWatcher,
+  type CreateProductionImplementationEvidenceServiceOptions,
 } from "@cq/ledger-mcp";
 import {
   backfillXdgProjectIdentities,
@@ -67,6 +68,12 @@ export const WHOLE_STORE_DEFAULT_PORT = 5191;
  * throws if every one is occupied.
  */
 const MAX_PORT_SCAN = 64;
+
+export function createEmbeddedWebImplementationEvidenceService(
+  options: CreateProductionImplementationEvidenceServiceOptions,
+): ReturnType<typeof createProductionImplementationEvidenceService> {
+  return createProductionImplementationEvidenceService(options);
+}
 
 const WEB_SRC = path.resolve(import.meta.dir, "main.tsx");
 /** Exported so hubServe.ts (`cq serve`, T586) can reuse the same bundle output dir. */
@@ -397,7 +404,7 @@ async function serveEmbedded(
   });
   const implementationEvidence =
     dispatchRuntime.kind === "available" && resolved.implementationEvidenceStore !== undefined
-      ? createProductionImplementationEvidenceService({
+      ? createEmbeddedWebImplementationEvidenceService({
           resolved,
           dispatchCapability: dispatchRuntime.capability,
           repositoryRoot: opts.cwd,

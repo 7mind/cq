@@ -20,6 +20,7 @@ import {
   createSingleProjectDispatchRuntime,
   resolvePromptSurface,
   type DispatchRuntime,
+  type CreateProductionImplementationEvidenceServiceOptions,
 } from "@cq/ledger-mcp";
 import type { LedgerStore, ResolvedLedgerStore } from "@cq/ledger";
 import type {
@@ -72,6 +73,12 @@ export interface EmbeddedContext {
   readonly resolved: ResolvedLedgerStore;
   /** The durable dispatch backend owned by this embedded server. */
   readonly dispatchRuntime: DispatchRuntime;
+}
+
+export function createEmbeddedTuiImplementationEvidenceService(
+  options: CreateProductionImplementationEvidenceServiceOptions,
+): ReturnType<typeof createProductionImplementationEvidenceService> {
+  return createProductionImplementationEvidenceService(options);
 }
 
 export class McpLedgerClient implements WorksetCapableLedgerClient {
@@ -154,7 +161,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
     });
     const implementationEvidence =
       dispatchRuntime.kind === "available" && resolved.implementationEvidenceStore !== undefined
-        ? createProductionImplementationEvidenceService({
+        ? createEmbeddedTuiImplementationEvidenceService({
             resolved,
             dispatchCapability: dispatchRuntime.capability,
             repositoryRoot: cwd,

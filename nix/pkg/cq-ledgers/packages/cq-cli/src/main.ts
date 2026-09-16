@@ -68,6 +68,7 @@ import {
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 import { runDispatchRecoveryCommand } from "./dispatchRecovery.js";
 import { runImplementationEvidenceStatus } from "./implementationEvidenceStatus.js";
+export { createEmbeddedStatusImplementationEvidenceService } from "./implementationEvidenceStatus.js";
 
 import { withRemoteAdminClient } from "./remoteClient.js";
 

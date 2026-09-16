@@ -28,6 +28,8 @@ import { resolveRemoteLaunch } from "@cq/ledger";
 import { App } from "./app.js";
 import { McpLedgerClient } from "./mcpClient.js";
 
+export { createEmbeddedTuiImplementationEvidenceService } from "./mcpClient.js";
+
 /**
  * D13/T132: ink render options for the TUI. `incrementalRendering` (ink 7.0.5,
  * default off) line-diffs and rewrites only changed lines; the default standard
