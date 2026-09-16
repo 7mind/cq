@@ -8,34 +8,106 @@ import { describe, expect, test } from "bun:test";
 
 import {
   GitCohortLocalRepositoryV1,
-  LocalCohortAdmissionObservationSourceV1,
+  LedgerWorksetCohortAdmissionObservationSourceV1,
   cohortObservationInvalidationsV1,
   constructCohortDecisionsV1,
   produceCohortAdmissionObservationV1,
-  type CohortLocalAdmissionDefinitionV1,
+  type CohortAdmissionPlanV1,
   type CohortLocalRepositoryV1,
+  type CohortPrimaryLedgerReaderV1,
   type CohortRepositoryIdentityV1,
   type CohortSourceRelationshipV1,
 } from "../src/workCohort.js";
+import { GOALS_SCHEMA, TASKS_SCHEMA } from "../src/constants.js";
+import { PLAN_FINALIZED_MANIFEST_FIELD } from "../src/planLifecycle.js";
+import type { FetchedLedger, Item } from "../src/types.js";
 import { commit, observationFor, sha256, snapshotFor } from "./workCohortFixture.js";
 
 const execFileAsync = promisify(execFile);
-const LOCAL_DEFINITION_PATH = "cohort-definition.json";
 
-function localDefinition(nodeIdentity = "shared#CohortContract"): {
-  readonly definition: CohortLocalAdmissionDefinitionV1;
+interface LocalPrimaryFixture {
+  readonly ledger: CohortPrimaryLedgerReaderV1;
+  readonly workset: { snapshot(): { readonly roots: readonly string[]; readonly epoch: number } };
+  readonly plan: CohortAdmissionPlanV1;
   readonly environmentDigest: string;
-} {
+}
+
+function primaryItem(id: string, status: string, fields: Item["fields"]): Item {
+  return {
+    id,
+    milestoneId: "M1",
+    status,
+    fields,
+    createdAt: "2026-09-16T00:00:00.000Z",
+    updatedAt: "2026-09-16T00:00:00.000Z",
+    author: "trusted-test-producer",
+    session: "trusted-test-session",
+  };
+}
+
+function fetchedLedger(id: string, schema: FetchedLedger["schema"], items: readonly Item[]): FetchedLedger {
+  return {
+    id,
+    schema,
+    counters: { milestone: 2, item: items.length + 1 },
+    milestones: [
+      {
+        id: "M1",
+        milestone: { id: "M1", status: "open", title: "fixture", description: "" },
+        items: [...items],
+      },
+    ],
+    archivePointers: [],
+  };
+}
+
+class InMemoryCohortPrimaryLedger implements CohortPrimaryLedgerReaderV1 {
+  readonly #ledgers: ReadonlyMap<string, FetchedLedger>;
+
+  constructor(ledgers: readonly FetchedLedger[]) {
+    this.#ledgers = new Map(ledgers.map((ledger) => [ledger.id, ledger]));
+  }
+
+  enumerate(): string[] {
+    return [...this.#ledgers.keys()];
+  }
+
+  fetch(ledgerId: string): FetchedLedger {
+    const ledger = this.#ledgers.get(ledgerId);
+    if (ledger === undefined) throw new Error(`missing fixture ledger ${ledgerId}`);
+    return ledger;
+  }
+
+  async fetchArchive(): Promise<never> {
+    throw new Error("fixture has no archives");
+  }
+}
+
+function localPrimaryFixture(nodeIdentity = "shared#CohortContract"): LocalPrimaryFixture {
   const snapshot = snapshotFor([{ ref: "tasks:T1" }, { ref: "tasks:T2" }], {});
-  const members = snapshot.members.map((member) => {
-    const {
-      repository: _repository,
-      environment: _environment,
-      ...memberWithoutRuntimeIdentity
-    } = member;
-    return {
-      ...memberWithoutRuntimeIdentity,
-      boundaryCandidates: memberWithoutRuntimeIdentity.boundaryCandidates.map((candidate) => ({
+  const manifest = {
+    revision: 1,
+    milestones: [],
+    tasks: [
+      { key: "one", id: "T1" },
+      { key: "two", id: "T2" },
+    ],
+  };
+  const goal = primaryItem("G1", "planned", {
+    headline: "Cohort goal",
+    [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify(manifest),
+  });
+  const tasks = ["T1", "T2"].map((id) =>
+    primaryItem(id, "planned", {
+      headline: `Task ${id}`,
+      sourceRefs: [`src/tasks:${id}.ts`],
+      worksetOwnerRef: "goals:G1",
+      worksetOwnerEdgeKind: "finalized-manifest",
+    }),
+  );
+  const members = snapshot.members.map((member) => ({
+    memberRef: member.memberRef,
+    boundaryCandidates: member.boundaryCandidates.map((candidate) => ({
         ...candidate,
         focusedCommand: {
           ...candidate.focusedCommand,
@@ -49,26 +121,24 @@ function localDefinition(nodeIdentity = "shared#CohortContract"): {
             ? { ...candidate.witness, nodeIdentity }
             : candidate.witness,
       })),
-    };
-  });
+  }));
   return {
-    definition: {
-      kind: "cq-local-cohort-admission-definition",
+    ledger: new InMemoryCohortPrimaryLedger([
+      fetchedLedger("goals", GOALS_SCHEMA, [goal]),
+      fetchedLedger("tasks", TASKS_SCHEMA, tasks),
+    ]),
+    workset: { snapshot: () => ({ roots: ["goals:G1"], epoch: 7 }) },
+    plan: {
+      kind: "cq-cohort-admission-plan",
       version: 1,
-      workset: snapshot.workset,
-      manifest: snapshot.manifest,
       members,
-      authenticatedBenefitReceipts: snapshot.authenticatedBenefitReceipts,
-      unavailableFacts: snapshot.unavailableFacts,
     },
     environmentDigest: snapshot.environment.environmentDigest,
   };
 }
 
-function localRepositoryFiles(nodeIdentity?: string): ReadonlyMap<string, string> {
-  const local = localDefinition(nodeIdentity);
+function localRepositoryFiles(_nodeIdentity?: string): ReadonlyMap<string, string> {
   return new Map([
-    [LOCAL_DEFINITION_PATH, JSON.stringify(local.definition)],
     ["package.json", JSON.stringify({ name: "cohort-source" })],
     [
       "src/tasks:T1.ts",
@@ -111,7 +181,7 @@ class InMemoryCohortLocalRepository implements CohortLocalRepositoryV1 {
     from: string,
     to: string,
   ): Promise<CohortSourceRelationshipV1 | null> {
-    if (to === "package.json" && from !== LOCAL_DEFINITION_PATH) return "package";
+    if (to === "package.json") return "package";
     if (from === "tests/cohort.test.ts" && to === "src/contracts/shared.ts") return "test";
     if (
       (from === "src/tasks:T1.ts" || from === "src/tasks:T2.ts") &&
@@ -283,10 +353,12 @@ describe("cohort admission observation", () => {
       const harness = await makeRepository();
       try {
         const recording = new RecordingCohortLocalRepository(harness.repository);
-        const local = localDefinition();
-        const source = new LocalCohortAdmissionObservationSourceV1({
+        const local = localPrimaryFixture();
+        const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
           repository: recording,
-          definitionPath: LOCAL_DEFINITION_PATH,
+          ledger: local.ledger,
+          workset: local.workset,
+          plan: local.plan,
           environment: { environmentDigest: local.environmentDigest },
         });
         const request = { memberRefs: ["tasks:T1", "tasks:T2"] } as const;
@@ -300,7 +372,11 @@ describe("cohort admission observation", () => {
           "tasks:T1",
           "tasks:T2",
         ]);
-        expect(observation.producer).toBe("cq-local-repository-cohort-producer");
+        expect(observation.producer).toBe("cq-primary-ledger-workset-cohort-producer");
+        expect(observation.members.map(({ authorityRef }) => authorityRef)).toEqual([
+          "goals:G1",
+          "goals:G1",
+        ]);
         expect(prose.observationDigest).toBe(observation.observationDigest);
         expect(
           observation.members[0]?.attestations[0]?.acceptancePlan.provenance.sourceRevision,
@@ -336,10 +412,12 @@ describe("cohort admission observation", () => {
     test(`${adapterName} source rejects a same-file different-symbol witness`, async () => {
       const harness = await makeRepository("shared#MissingContract");
       try {
-        const local = localDefinition("shared#MissingContract");
-        const source = new LocalCohortAdmissionObservationSourceV1({
+        const local = localPrimaryFixture("shared#MissingContract");
+        const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
           repository: harness.repository,
-          definitionPath: LOCAL_DEFINITION_PATH,
+          ledger: local.ledger,
+          workset: local.workset,
+          plan: local.plan,
           environment: { environmentDigest: local.environmentDigest },
         });
         await expect(
@@ -408,10 +486,12 @@ describe("cohort admission observation", () => {
       ]),
     );
     try {
-      const local = localDefinition();
-      const source = new LocalCohortAdmissionObservationSourceV1({
+      const local = localPrimaryFixture();
+      const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
         repository: harness.repository,
-        definitionPath: LOCAL_DEFINITION_PATH,
+        ledger: local.ledger,
+        workset: local.workset,
+        plan: local.plan,
         environment: { environmentDigest: local.environmentDigest },
       });
 
@@ -426,34 +506,40 @@ describe("cohort admission observation", () => {
     }
   });
 
-  test("rejects implementation authority fabricated in the cohort definition", async () => {
-    const local = localDefinition();
-    const fabricated = {
-      ...local.definition,
-      members: local.definition.members.map((member) => ({
+  test("does not accept implementation authority fabricated outside primary CQ state", async () => {
+    const local = localPrimaryFixture();
+    const fabricatedPlan = {
+      ...local.plan,
+      members: local.plan.members.map((member) => ({
         ...member,
         authorityRef: "authority:fabricated",
         authorityRevision: "authority-revision:fabricated",
         authorityBoundaryDigest: sha256("authority:fabricated"),
-        ...(member.phase === "implementation"
-          ? { implementationAuthority: "implementation-authority:fabricated" }
-          : {}),
+        implementationAuthority: "implementation-authority:fabricated",
       })),
     };
-    const files = new Map(localRepositoryFiles());
-    files.set(LOCAL_DEFINITION_PATH, JSON.stringify(fabricated));
-    const source = new LocalCohortAdmissionObservationSourceV1({
-      repository: new InMemoryCohortLocalRepository(files),
-      definitionPath: LOCAL_DEFINITION_PATH,
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: fabricatedPlan,
       environment: { environmentDigest: local.environmentDigest },
     });
 
-    await expect(
-      produceCohortAdmissionObservationV1(
-        { memberRefs: ["tasks:T1", "tasks:T2"] },
-        source,
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["tasks:T1", "tasks:T2"] },
+      source,
+    );
+
+    expect(observation.members.map(({ authorityRef }) => authorityRef)).toEqual([
+      "goals:G1",
+      "goals:G1",
+    ]);
+    expect(
+      observation.members.map((member) =>
+        member.phase === "implementation" ? member.implementationAuthority : null,
       ),
-    ).rejects.toThrow("implementation authority is not derived from trusted CQ state");
+    ).toEqual(["cq-finalized-manifest:goals:G1", "cq-finalized-manifest:goals:G1"]);
   });
 
   test("resolves a TypeScript source behind a JavaScript import specifier", async () => {
@@ -463,6 +549,37 @@ describe("cohort admission observation", () => {
         [
           "src/tasks:T1.ts",
           'import type { CohortContract } from "./contracts/shared.js";\nexport const taskOne: CohortContract = { version: 1 };\n',
+        ],
+      ]),
+    );
+    try {
+      const repositoryIdentity = await harness.repository.resolveIdentity();
+      expect(
+        await harness.repository.resolveRelationship(
+          repositoryIdentity,
+          "src/tasks:T1.ts",
+          "src/contracts/shared.ts",
+        ),
+      ).toBe("import");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  test("resolves a TypeScript source through a workspace package export", async () => {
+    const harness = await gitRepositoryHarness(
+      undefined,
+      new Map([
+        [
+          "package.json",
+          JSON.stringify({
+            name: "cohort-source",
+            exports: { "./contracts": "./src/contracts/shared.js" },
+          }),
+        ],
+        [
+          "src/tasks:T1.ts",
+          'import type { CohortContract } from "cohort-source/contracts";\nexport const taskOne: CohortContract = { version: 1 };\n',
         ],
       ]),
     );

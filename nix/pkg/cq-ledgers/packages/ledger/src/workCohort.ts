@@ -2,11 +2,23 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import type { AttestationEnvelope, ImplementationQueueControl } from "@cq/config";
+import ts from "typescript";
 
 import {
   nodeDispatchBaseGitRunner,
   type DispatchBaseGitRunner,
 } from "./dispatchBase.js";
+import { DEFECTS_LEDGER, GOALS_LEDGER, HYPOTHESIS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import type { LedgerStore } from "./store/LedgerStore.js";
+import type { Item } from "./types.js";
+import {
+  buildWorksetActiveState,
+  closeWorkset,
+  parseGoalFinalizedManifest,
+  type WorksetGraph,
+} from "./worksetGraph.js";
+import { readCanonicalOwnership } from "./worksetOwnerEdges.js";
+import type { WorksetStore } from "./worksetStore.js";
 
 export const COHORT_PHASE_ORDER_V1 = ["investigation", "implementation"] as const;
 
@@ -248,29 +260,22 @@ export interface CohortAdmissionObservationSourceV1 {
   ): Promise<CohortAdmissionSnapshotV1>;
 }
 
-type LocalInvestigationCohortMemberV1 = Omit<
-  ResolvedInvestigationCohortMemberV1,
-  "repository" | "environment"
->;
-
-type LocalImplementationCohortMemberV1 = Omit<
-  ResolvedImplementationCohortMemberV1,
-  "repository" | "environment"
->;
-
-export type LocalResolvedCohortMemberV1 =
-  | LocalInvestigationCohortMemberV1
-  | LocalImplementationCohortMemberV1;
-
-export interface CohortLocalAdmissionDefinitionV1 {
-  readonly kind: "cq-local-cohort-admission-definition";
-  readonly version: 1;
-  readonly workset: CohortWorksetSnapshotV1;
-  readonly manifest: CohortManifestSnapshotV1 | null;
-  readonly members: readonly LocalResolvedCohortMemberV1[];
-  readonly authenticatedBenefitReceipts: readonly CohortAuthenticatedBenefitReceiptV1[];
-  readonly unavailableFacts: readonly CohortUnavailableFactV1[];
+export interface CohortAdmissionMemberPlanV1 {
+  readonly memberRef: string;
+  readonly investigationHypothesisRef?: string;
+  readonly boundaryCandidates: readonly CohortBoundaryCandidateInputV1[];
 }
+
+export interface CohortAdmissionPlanV1 {
+  readonly kind: "cq-cohort-admission-plan";
+  readonly version: 1;
+  readonly members: readonly CohortAdmissionMemberPlanV1[];
+}
+
+export type CohortPrimaryLedgerReaderV1 = Pick<
+  LedgerStore,
+  "enumerate" | "fetch" | "fetchArchive"
+>;
 
 export interface CohortLocalRepositoryV1 {
   resolveIdentity(): Promise<CohortRepositoryIdentityV1>;
@@ -284,12 +289,23 @@ export interface CohortLocalRepositoryV1 {
 
 const LOCAL_COHORT_GRAPH_LIMIT = 256;
 
-function relativeImportCandidates(from: string, specifier: string): readonly string[] {
-  if (!specifier.startsWith(".")) return Object.freeze([]);
-  const unresolved = posix.normalize(posix.join(posix.dirname(from), specifier));
+function modulePathCandidates(unresolved: string): readonly string[] {
+  const extension = posix.extname(unresolved);
+  const withoutExtension = extension === "" ? unresolved : unresolved.slice(0, -extension.length);
+  const typeScriptSubstitutions =
+    extension === ".js"
+      ? [`${withoutExtension}.ts`, `${withoutExtension}.tsx`, `${withoutExtension}.d.ts`]
+      : extension === ".jsx"
+        ? [`${withoutExtension}.tsx`, `${withoutExtension}.ts`]
+        : extension === ".mjs"
+          ? [`${withoutExtension}.mts`, `${withoutExtension}.d.mts`]
+          : extension === ".cjs"
+            ? [`${withoutExtension}.cts`, `${withoutExtension}.d.cts`]
+            : [];
   return Object.freeze(
     sortedUnique([
       unresolved,
+      ...typeScriptSubstitutions,
       `${unresolved}.ts`,
       `${unresolved}.tsx`,
       `${unresolved}.js`,
@@ -303,14 +319,59 @@ function relativeImportCandidates(from: string, specifier: string): readonly str
   );
 }
 
+function relativeImportCandidates(from: string, specifier: string): readonly string[] {
+  if (!specifier.startsWith(".")) return Object.freeze([]);
+  return modulePathCandidates(posix.normalize(posix.join(posix.dirname(from), specifier)));
+}
+
 function importedSpecifiers(source: string): readonly string[] {
-  const specifiers: string[] = [];
-  const pattern = /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*["']([^"']+)["']/gu;
-  for (const match of source.matchAll(pattern)) {
-    const specifier = match[1];
-    if (specifier !== undefined) specifiers.push(specifier);
+  const imports = ts.preProcessFile(source, true, true).importedFiles;
+  return sortedUnique(imports.map(({ fileName }) => fileName));
+}
+
+function packageTargetStrings(value: unknown, wildcard: string | null): readonly string[] {
+  if (typeof value === "string") {
+    return Object.freeze([wildcard === null ? value : value.replaceAll("*", wildcard)]);
   }
-  return sortedUnique(specifiers);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return Object.freeze([]);
+  }
+  return Object.freeze(
+    Object.values(value as Record<string, unknown>).flatMap((entry) =>
+      packageTargetStrings(entry, wildcard),
+    ),
+  );
+}
+
+function packageExportTargets(packageJson: Record<string, unknown>, subpath: string): readonly string[] {
+  const exports = packageJson["exports"];
+  if (typeof exports === "string") {
+    return subpath === "." ? Object.freeze([exports]) : Object.freeze([]);
+  }
+  if (typeof exports === "object" && exports !== null && !Array.isArray(exports)) {
+    const entries = Object.entries(exports as Record<string, unknown>);
+    const subpathEntries = entries.filter(([key]) => key.startsWith("."));
+    if (subpathEntries.length === 0) {
+      return subpath === "." ? packageTargetStrings(exports, null) : Object.freeze([]);
+    }
+    const exact = subpathEntries.find(([key]) => key === subpath);
+    if (exact !== undefined) return packageTargetStrings(exact[1], null);
+    for (const [key, value] of subpathEntries) {
+      const wildcardIndex = key.indexOf("*");
+      if (wildcardIndex === -1) continue;
+      const prefix = key.slice(0, wildcardIndex);
+      const suffix = key.slice(wildcardIndex + 1);
+      if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+      return packageTargetStrings(value, subpath.slice(prefix.length, subpath.length - suffix.length));
+    }
+    return Object.freeze([]);
+  }
+  if (subpath !== ".") return Object.freeze([subpath.slice(2)]);
+  return Object.freeze(
+    [packageJson["types"], packageJson["module"], packageJson["main"]].filter(
+      (value): value is string => typeof value === "string",
+    ),
+  );
 }
 
 /** Read one exact committed repository snapshot without scanning beyond named paths. */
@@ -368,6 +429,44 @@ export class GitCohortLocalRepositoryV1 implements CohortLocalRepositoryV1 {
     return await this.#required(["show", object], `${path} read`);
   }
 
+  async #workspaceImportResolves(
+    identity: CohortRepositoryIdentityV1,
+    specifier: string,
+    targetPath: string,
+  ): Promise<boolean> {
+    let directory = posix.dirname(targetPath);
+    while (true) {
+      const manifestPath = directory === "." ? "package.json" : `${directory}/package.json`;
+      const bytes = await this.readFile(identity, manifestPath);
+      if (bytes !== null) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(bytes);
+        } catch {
+          throw new Error(`${manifestPath} is not valid JSON`);
+        }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error(`${manifestPath} is not one package object`);
+        }
+        const packageJson = parsed as Record<string, unknown>;
+        const packageName = packageJson["name"];
+        if (
+          typeof packageName === "string" &&
+          (specifier === packageName || specifier.startsWith(`${packageName}/`))
+        ) {
+          const subpath = specifier === packageName ? "." : `.${specifier.slice(packageName.length)}`;
+          return packageExportTargets(packageJson, subpath).some((target) => {
+            if (!target.startsWith("./")) return false;
+            const unresolved = posix.normalize(posix.join(directory, target));
+            return modulePathCandidates(unresolved).includes(targetPath);
+          });
+        }
+      }
+      if (directory === ".") return false;
+      directory = posix.dirname(directory);
+    }
+  }
+
   async resolveRelationship(
     identity: CohortRepositoryIdentityV1,
     rawFrom: string,
@@ -384,28 +483,19 @@ export class GitCohortLocalRepositoryV1 implements CohortLocalRepositoryV1 {
     ) {
       return "package";
     }
-    const related = importedSpecifiers(source).some((specifier) =>
-      relativeImportCandidates(from, specifier).includes(to),
-    );
+    let related = false;
+    for (const specifier of importedSpecifiers(source)) {
+      if (
+        relativeImportCandidates(from, specifier).includes(to) ||
+        (await this.#workspaceImportResolves(identity, specifier, to))
+      ) {
+        related = true;
+        break;
+      }
+    }
     if (!related) return null;
     return /(?:^|\/)(?:test|tests)\/|\.(?:test|spec)\.[^.]+$/u.test(from) ? "test" : "import";
   }
-}
-
-function parseLocalAdmissionDefinition(raw: string): CohortLocalAdmissionDefinitionV1 {
-  const parsed: unknown = JSON.parse(raw);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as { kind?: unknown }).kind !== "cq-local-cohort-admission-definition" ||
-    (parsed as { version?: unknown }).version !== 1 ||
-    !Array.isArray((parsed as { members?: unknown }).members) ||
-    !Array.isArray((parsed as { authenticatedBenefitReceipts?: unknown }).authenticatedBenefitReceipts) ||
-    !Array.isArray((parsed as { unavailableFacts?: unknown }).unavailableFacts)
-  ) {
-    throw new Error("local cohort admission definition is not version 1");
-  }
-  return parsed as CohortLocalAdmissionDefinitionV1;
 }
 
 function repositoryNodeSymbol(candidate: Extract<CohortWitnessInputV1, { kind: "repository-node" }>): string {
@@ -415,31 +505,156 @@ function repositoryNodeSymbol(candidate: Extract<CohortWitnessInputV1, { kind: "
 }
 
 function sourceExportsSymbol(source: string, symbol: string): boolean {
-  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp(
-    `\\bexport\\s+(?:(?:declare|default|abstract)\\s+)*(?:class|function|const|let|var|interface|type|enum|namespace)\\s+${escaped}\\b`,
-    "u",
-  ).test(source);
+  const parsed = ts.createSourceFile(
+    "cohort-witness.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TSX,
+  );
+  const isExported = (node: ts.Node): boolean =>
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node)?.some(({ kind }) => kind === ts.SyntaxKind.ExportKeyword) ?? false);
+  for (const statement of parsed.statements) {
+    if (ts.isExportDeclaration(statement) && statement.exportClause !== undefined) {
+      if (
+        ts.isNamedExports(statement.exportClause) &&
+        statement.exportClause.elements.some(({ name }) => name.text === symbol)
+      ) {
+        return true;
+      }
+      if (ts.isNamespaceExport(statement.exportClause) && statement.exportClause.name.text === symbol) {
+        return true;
+      }
+      continue;
+    }
+    if (!isExported(statement)) continue;
+    if (ts.isVariableStatement(statement)) {
+      if (
+        statement.declarationList.declarations.some(
+          ({ name }) => ts.isIdentifier(name) && name.text === symbol,
+        )
+      ) {
+        return true;
+      }
+      continue;
+    }
+    if (
+      (ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement)) &&
+      statement.name !== undefined &&
+      statement.name.text === symbol
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
-/** Bounded pre-admission producer backed by one committed local definition and Git tree. */
-export class LocalCohortAdmissionObservationSourceV1
+function canonicalRefParts(ref: string): { readonly ledgerId: string; readonly itemId: string } {
+  const separator = ref.indexOf(":");
+  if (separator <= 0 || separator === ref.length - 1 || ref.indexOf(":", separator + 1) !== -1) {
+    throw new Error(`${ref} is not one canonical ledger:item reference`);
+  }
+  return { ledgerId: ref.slice(0, separator), itemId: ref.slice(separator + 1) };
+}
+
+function itemRevision(ref: string, item: Item): string {
+  return digest({ ref, item });
+}
+
+function stringField(item: Item, field: string): string | null {
+  const value = item.fields[field];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function stringArrayField(item: Item, field: string): readonly string[] {
+  const value = item.fields[field];
+  return Array.isArray(value)
+    ? Object.freeze(value.filter((entry): entry is string => typeof entry === "string"))
+    : Object.freeze([]);
+}
+
+function dependencyClosure(graph: WorksetGraph, memberRef: string): readonly string[] {
+  const prerequisites = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (edge.kind !== "prerequisite") continue;
+    const refs = prerequisites.get(edge.from) ?? [];
+    refs.push(edge.to);
+    prerequisites.set(edge.from, refs);
+  }
+  const closure = new Set<string>();
+  const pending = [...(prerequisites.get(memberRef) ?? [])];
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (current === undefined || closure.has(current)) continue;
+    closure.add(current);
+    pending.push(...(prerequisites.get(current) ?? []));
+  }
+  return sortedUnique(closure);
+}
+
+function readActivePrimaryItems(reader: CohortPrimaryLedgerReaderV1): ReadonlyMap<string, Item> {
+  const ledgers = reader.enumerate().map((ledger) => {
+    const fetched = reader.fetch(ledger);
+    return {
+      ledger,
+      items: fetched.milestones.flatMap(({ items }) => items),
+    };
+  });
+  return buildWorksetActiveState(ledgers).byRef;
+}
+
+async function readUniquePrimaryItem(
+  reader: CohortPrimaryLedgerReaderV1,
+  active: ReadonlyMap<string, Item>,
+  ref: string,
+): Promise<Item> {
+  const { ledgerId, itemId } = canonicalRefParts(ref);
+  const matches: Item[] = [];
+  const activeItem = active.get(ref);
+  if (activeItem !== undefined) matches.push(activeItem);
+  const ledger = reader.fetch(ledgerId);
+  for (const pointer of ledger.archivePointers) {
+    const archive = await reader.fetchArchive(ledgerId, pointer.id);
+    const items = archive.kind === "group" ? archive.milestone.items : [archive.item];
+    matches.push(...items.filter(({ id }) => id === itemId));
+  }
+  if (matches.length !== 1) {
+    throw new Error(`${ref} resolves to ${String(matches.length)} primary CQ records`);
+  }
+  return matches[0]!;
+}
+
+/** Bounded pre-admission producer over CQ's primary ledger/workset contracts and one Git tree. */
+export class LedgerWorksetCohortAdmissionObservationSourceV1
   implements CohortAdmissionObservationSourceV1
 {
   readonly #repository: CohortLocalRepositoryV1;
-  readonly #definitionPath: string;
+  readonly #ledger: CohortPrimaryLedgerReaderV1;
+  readonly #workset: Pick<WorksetStore, "snapshot">;
+  readonly #plan: CohortAdmissionPlanV1;
   readonly #environment: CohortEnvironmentIdentityV1;
 
   constructor(input: {
     readonly repository: CohortLocalRepositoryV1;
-    readonly definitionPath: string;
+    readonly ledger: CohortPrimaryLedgerReaderV1;
+    readonly workset: Pick<WorksetStore, "snapshot">;
+    readonly plan: CohortAdmissionPlanV1;
     readonly environment: CohortEnvironmentIdentityV1;
   }) {
     this.#repository = input.repository;
-    this.#definitionPath = normalizedRepositoryPath(
-      input.definitionPath,
-      "local cohort definition path",
-    );
+    this.#ledger = input.ledger;
+    this.#workset = input.workset;
+    if (input.plan.kind !== "cq-cohort-admission-plan" || input.plan.version !== 1) {
+      throw new Error("cohort admission plan is not version 1");
+    }
+    assertUnique(input.plan.members.map(({ memberRef }) => memberRef), "cohort admission plan refs");
+    this.#plan = input.plan;
     assertDigest(input.environment.environmentDigest, "environment digest");
     this.#environment = Object.freeze({ ...input.environment });
   }
@@ -448,23 +663,192 @@ export class LocalCohortAdmissionObservationSourceV1
     request: CohortAdmissionObservationRequestV1,
   ): Promise<CohortAdmissionSnapshotV1> {
     const repository = await this.#repository.resolveIdentity();
-    const definitionBytes = await this.#repository.readFile(repository, this.#definitionPath);
-    if (definitionBytes === null) {
-      throw new Error(`local cohort definition ${this.#definitionPath} does not exist at HEAD`);
-    }
-    const definition = parseLocalAdmissionDefinition(definitionBytes);
-    assertUnique(
-      definition.members.map((member) => member.memberRef),
-      "local cohort definition member refs",
+    const worksetEpoch = await this.#workset.snapshot();
+    const activeItems = readActivePrimaryItems(this.#ledger);
+    const graph = closeWorkset(
+      worksetEpoch.roots,
+      { byRef: activeItems },
+      { validateLiveRoots: true },
     );
-    const definitionMembers = new Map(definition.members.map((member) => [member.memberRef, member]));
-    const members = request.memberRefs.map((memberRef) => {
-      const member = definitionMembers.get(memberRef);
-      if (member === undefined) {
-        throw new Error(`${memberRef} is absent from the local cohort definition`);
+    if (!graph.restrictive) {
+      throw new Error("cohort admission requires one restrictive primary CQ workset");
+    }
+    const orderedMemberRefs = Object.freeze(graph.nodes.map(({ ref }) => ref));
+    for (const memberRef of request.memberRefs) {
+      if (!orderedMemberRefs.includes(memberRef)) {
+        throw new Error(`${memberRef} is absent from the exact primary CQ workset`);
       }
-      return member;
+    }
+    const workset: CohortWorksetSnapshotV1 = Object.freeze({
+      worksetRef: `workset:${repository.repositoryId}`,
+      worksetRevision: digest({
+        roots: worksetEpoch.roots,
+        epoch: worksetEpoch.epoch,
+        nodes: graph.nodes.map(({ ref, item }) => ({ ref, revision: itemRevision(ref, item) })),
+        edges: graph.edges,
+      }),
+      orderedMemberRefs,
     });
+    const plans = new Map(this.#plan.members.map((plan) => [plan.memberRef, plan]));
+    const primaryBindings = new Map<string, string>();
+    const manifests: CohortManifestSnapshotV1[] = [];
+    const members: ResolvedCohortMemberV1[] = [];
+    for (const memberRef of request.memberRefs) {
+      const plan = plans.get(memberRef);
+      if (plan === undefined) throw new Error(`${memberRef} is absent from the trusted admission plan`);
+      const item = activeItems.get(memberRef);
+      if (item === undefined) throw new Error(`${memberRef} is not one active primary CQ member`);
+      const revision = itemRevision(memberRef, item);
+      primaryBindings.set(memberRef, revision);
+      const sourceRefs = Object.freeze([...stringArrayField(item, "sourceRefs")]);
+      const dependencies = dependencyClosure(graph, memberRef);
+      const { ledgerId } = canonicalRefParts(memberRef);
+      if (ledgerId === TASKS_LEDGER) {
+        const ownership = readCanonicalOwnership(item);
+        if (ownership?.edgeKind !== "finalized-manifest" || !ownership.ownerRef.startsWith(`${GOALS_LEDGER}:`)) {
+          throw new Error(`${memberRef} implementation authority is not derived from trusted CQ state`);
+        }
+        const goal = activeItems.get(ownership.ownerRef);
+        if (goal === undefined) {
+          throw new Error(`${memberRef} owning goal is absent from the exact primary CQ workset`);
+        }
+        const goalRevision = itemRevision(ownership.ownerRef, goal);
+        primaryBindings.set(ownership.ownerRef, goalRevision);
+        const finalizedManifest = parseGoalFinalizedManifest(goal);
+        if (finalizedManifest === null) {
+          throw new Error(`${memberRef} owning goal has no exact finalized manifest`);
+        }
+        const manifestRevision = digest({ goalRef: ownership.ownerRef, manifest: finalizedManifest });
+        const manifestMemberRefs = Object.freeze(
+          finalizedManifest.tasks.map(({ id }) => `${TASKS_LEDGER}:${id}`),
+        );
+        if (!manifestMemberRefs.includes(memberRef)) {
+          throw new Error(`${memberRef} is absent from its owning goal's finalized manifest`);
+        }
+        manifests.push(
+          Object.freeze({
+            manifestRef: ownership.ownerRef,
+            manifestRevision,
+            memberRefs: manifestMemberRefs,
+          }),
+        );
+        const authorityRevision = digest({
+          goalRef: ownership.ownerRef,
+          goalRevision,
+          manifestRevision,
+          worksetRevision: workset.worksetRevision,
+        });
+        members.push(
+          Object.freeze({
+            memberRef,
+            memberRevision: revision,
+            phase: "implementation",
+            ownershipBoundaryDigest: digest({ ownership, manifestRevision }),
+            authorityRef: ownership.ownerRef,
+            authorityRevision,
+            authorityBoundaryDigest: digest({
+              phase: "implementation",
+              authorityRef: ownership.ownerRef,
+              authorityRevision,
+            }),
+            dependencyClosure: dependencies,
+            sourceRefs,
+            repository,
+            environment: this.#environment,
+            boundaryCandidates: plan.boundaryCandidates,
+            unavailableFacts: Object.freeze([]),
+            taskRevision: revision,
+            goalRef: ownership.ownerRef,
+            finalizedManifestRevision: manifestRevision,
+            implementationAuthority: `cq-finalized-manifest:${ownership.ownerRef}`,
+          }),
+        );
+        continue;
+      }
+      if (ledgerId !== DEFECTS_LEDGER) {
+        throw new Error(`${memberRef} is neither a defect investigation nor an implementation task`);
+      }
+      const hypothesisRef = plan.investigationHypothesisRef;
+      if (hypothesisRef === undefined || !hypothesisRef.startsWith(`${HYPOTHESIS_LEDGER}:`)) {
+        throw new Error(`${memberRef} admission plan has no canonical investigation hypothesis`);
+      }
+      const hypothesis = await readUniquePrimaryItem(this.#ledger, activeItems, hypothesisRef);
+      const hypothesisOwnership = readCanonicalOwnership(hypothesis);
+      if (hypothesisOwnership?.ownerRef !== memberRef || hypothesisOwnership.edgeKind !== "hypothesis") {
+        throw new Error(`${memberRef} investigation authority is not derived from trusted CQ state`);
+      }
+      const hypothesisRevision = itemRevision(hypothesisRef, hypothesis);
+      primaryBindings.set(hypothesisRef, hypothesisRevision);
+      const rootCause = stringField(item, "rootCause");
+      const causeConfirmed = hypothesis.status === "confirmed" && rootCause !== null;
+      const causeDigest = digest({
+        defectRef: memberRef,
+        defectRevision: revision,
+        hypothesisRef,
+        hypothesisRevision,
+        rootCause,
+        evidence: stringArrayField(hypothesis, "evidence"),
+      });
+      const receiptDigest = digest({
+        kind: "cq-primary-confirmed-cause-receipt",
+        causeDigest,
+        worksetRevision: workset.worksetRevision,
+      });
+      const boundaryCandidates = plan.boundaryCandidates.map((candidate) =>
+        candidate.witness.kind === "confirmed-cause"
+          ? Object.freeze({
+              ...candidate,
+              witness: Object.freeze({ kind: "confirmed-cause" as const, causeDigest, receiptDigest }),
+            })
+          : candidate,
+      );
+      const authorityRevision = digest({
+        worksetRevision: workset.worksetRevision,
+        defectRevision: revision,
+        hypothesisRevision,
+        hypothesisOwnership,
+      });
+      members.push(
+        Object.freeze({
+          memberRef,
+          memberRevision: revision,
+          phase: "investigation",
+          ownershipBoundaryDigest: digest({ memberRef, hypothesisRef, hypothesisOwnership }),
+          authorityRef: workset.worksetRef,
+          authorityRevision,
+          authorityBoundaryDigest: digest({
+            phase: "investigation",
+            authorityRef: workset.worksetRef,
+            authorityRevision,
+          }),
+          dependencyClosure: dependencies,
+          sourceRefs: Object.freeze(
+            sortedUnique([...sourceRefs, ...stringArrayField(hypothesis, "sourceRefs")]),
+          ),
+          repository,
+          environment: this.#environment,
+          boundaryCandidates: Object.freeze(boundaryCandidates),
+          unavailableFacts: Object.freeze(
+            causeConfirmed
+              ? []
+              : [{ memberRef, fact: "confirmed-cause", reason: "primary CQ cause is unconfirmed" }],
+          ),
+          defectRef: memberRef,
+          defectRevision: revision,
+          hypothesisRef,
+          hypothesisRevision,
+          hypothesisState: hypothesis.status,
+          causeState: causeConfirmed ? "confirmed" : rootCause === null ? "unavailable" : "unconfirmed",
+          confirmedCauseReceiptDigests: Object.freeze(causeConfirmed ? [receiptDigest] : []),
+          investigationAuthority: `cq-workset-investigation:${workset.worksetRef}`,
+        }),
+      );
+    }
+    const manifestIdentities = new Set(manifests.map((manifest) => canonical(manifest)));
+    if (manifestIdentities.size > 1) {
+      throw new Error("implementation cohort spans multiple exact finalized manifests");
+    }
+    const manifest = manifests[0] ?? null;
     const pathMembers = new Map<string, Set<string>>();
     const edgeRequests = new Map<string, { readonly from: string; readonly to: string }>();
     const addPath = (rawPath: string, memberRef: string): string => {
@@ -496,6 +880,7 @@ export class LocalCohortAdmissionObservationSourceV1
         }
       }
       for (const candidate of member.boundaryCandidates) {
+        addPath(candidate.focusedCommand.provenance.sourceRef, member.memberRef);
         if (candidate.witness.kind !== "repository-node") continue;
         const memberPath = candidate.witness.memberPath.map((path) =>
           addPath(path, member.memberRef),
@@ -565,12 +950,7 @@ export class LocalCohortAdmissionObservationSourceV1
           }),
         });
       });
-      return Object.freeze({
-        ...member,
-        repository,
-        environment: this.#environment,
-        boundaryCandidates: Object.freeze(boundaryCandidates),
-      }) as ResolvedCohortMemberV1;
+      return Object.freeze({ ...member, boundaryCandidates: Object.freeze(boundaryCandidates) });
     });
     const sourceGraph = Object.freeze({
       nodes: Object.freeze(
@@ -584,25 +964,39 @@ export class LocalCohortAdmissionObservationSourceV1
       ),
       edges: Object.freeze(edges),
     });
+    const worksetAfter = await this.#workset.snapshot();
+    if (canonical(worksetAfter) !== canonical(worksetEpoch)) {
+      throw new Error("primary CQ workset changed while producing the cohort observation");
+    }
+    const activeAfter = readActivePrimaryItems(this.#ledger);
+    for (const [ref, expectedRevision] of primaryBindings) {
+      const current = await readUniquePrimaryItem(this.#ledger, activeAfter, ref);
+      if (itemRevision(ref, current) !== expectedRevision) {
+        throw new Error(`${ref} changed while producing the cohort observation`);
+      }
+    }
     return Object.freeze({
-      producer: "cq-local-repository-cohort-producer",
+      producer: "cq-primary-ledger-workset-cohort-producer",
       producerRevision: digest({
-        version: 1,
-        definitionPath: this.#definitionPath,
-        definitionDigest: digest(definitionBytes),
+        version: 2,
+        plan: this.#plan,
+        workset,
+        manifest,
       }),
-      workset: definition.workset,
-      manifest: definition.manifest,
+      workset,
+      manifest,
       repository,
       environment: this.#environment,
       sourceGraph,
       members: Object.freeze(resolvedMembers),
-      authenticatedBenefitReceipts: Object.freeze([...definition.authenticatedBenefitReceipts]),
-      unavailableFacts: Object.freeze(
-        definition.unavailableFacts.filter(
-          (fact) => fact.memberRef === null || request.memberRefs.includes(fact.memberRef),
-        ),
-      ),
+      authenticatedBenefitReceipts: Object.freeze([]),
+      unavailableFacts: Object.freeze([
+        {
+          memberRef: null,
+          fact: "authenticated-benefit-receipts",
+          reason: "no authenticated prior duration/outcome receipt was present in primary CQ state",
+        },
+      ]),
     });
   }
 }
