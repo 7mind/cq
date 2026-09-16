@@ -93,6 +93,10 @@ function localPrimaryFixture(
   nodeIdentity = "shared#CohortContract",
   primaryReferenceChain = false,
   missingRepositorySource = false,
+  reviewSummary = "primary review",
+  reviewSourceRefs: readonly string[] = [
+    `cq-implementation-adoption:v1:${"a".repeat(64)}`,
+  ],
 ): LocalPrimaryFixture {
   const snapshot = snapshotFor([{ ref: "tasks:T1" }, { ref: "tasks:T2" }], {});
   const manifest = {
@@ -119,7 +123,8 @@ function localPrimaryFixture(
     }),
   );
   const review = primaryItem("R1", "go-ahead", {
-    sourceRefs: [`cq-implementation-adoption:v1:${"a".repeat(64)}`],
+    summary: reviewSummary,
+    sourceRefs: [...reviewSourceRefs],
     sessionLogs: [".cq/logs/review-R1.md"],
   });
   const members = snapshot.members.map((member) => ({
@@ -690,6 +695,60 @@ describe("cohort admission observation", () => {
         source,
       ),
     ).rejects.toThrow("src/missing-task.ts does not exist in the exact repository tree");
+  });
+
+  test("invalidates an observation when a referenced primary row changes", async () => {
+    const observe = async (reviewSummary: string) => {
+      const local = localPrimaryFixture(
+        "shared#CohortContract",
+        true,
+        false,
+        reviewSummary,
+      );
+      return await produceCohortAdmissionObservationV1(
+        { memberRefs: ["tasks:T1", "tasks:T2"] },
+        new LedgerWorksetCohortAdmissionObservationSourceV1({
+          repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+          ledger: local.ledger,
+          workset: local.workset,
+          plan: local.plan,
+          environment: { environmentDigest: local.environmentDigest },
+        }),
+      );
+    };
+    const prior = await observe("first primary review");
+    const current = await observe("changed primary review");
+
+    expect(cohortObservationInvalidationsV1(prior, current)).toContain("source-or-tree");
+  });
+
+  test("bounds recursively retained primary source provenance", async () => {
+    const refs = Array.from(
+      { length: 257 },
+      (_, index) =>
+        `cq-implementation-adoption:v1:${index.toString(16).padStart(64, "0")}`,
+    );
+    const local = localPrimaryFixture(
+      "shared#CohortContract",
+      true,
+      false,
+      "primary review",
+      refs,
+    );
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    await expect(
+      produceCohortAdmissionObservationV1(
+        { memberRefs: ["tasks:T1", "tasks:T2"] },
+        source,
+      ),
+    ).rejects.toThrow("bounded cohort source provenance exceeds 256 references");
   });
 
   test.each([

@@ -1551,10 +1551,6 @@ export async function produceCohortAdmissionObservationV1(
     assertDigest(member.authorityBoundaryDigest, `${member.memberRef} authority boundary`);
     assertUnique(member.dependencyClosure, `${member.memberRef} dependency closure`);
     assertUnique(member.sourceRefs, `${member.memberRef} source refs`);
-    assertUnique(
-      member.sourceReferences.map((reference) => canonical(reference)),
-      `${member.memberRef} source references`,
-    );
     for (const sourceRef of member.sourceRefs) {
       const path = normalizedRepositoryPath(sourceRef, `${member.memberRef} source ref`);
       if (!graph.nodeByPath.has(path)) throw new Error(`${member.memberRef} source ${path} was not inspected`);
