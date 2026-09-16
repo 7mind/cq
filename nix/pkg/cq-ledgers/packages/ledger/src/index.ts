@@ -922,6 +922,8 @@ export type {
   DispatchContinuationResolution,
   FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
+  QualifyImplementationCandidateInput,
+  QualifyImplementationCandidateOutcome,
   PrepareDispatchToolInput,
   StoreResultToolInput,
 } from "./mcp/dispatchCapability.js";

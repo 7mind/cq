@@ -9,6 +9,7 @@ import {
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
+  executeCodexImplementationCandidateQualifier,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
   loadConfig,
@@ -124,6 +125,33 @@ export async function main(): Promise<void> {
       ? await executeCodexRoleBoundary(plan, worksetEffect)
       : await executeCodexRoleBoundary(plan, correlationId, undefined, worksetEffect);
   const handle = "observation" in execution ? execution.handle : execution;
+  if (roleId === "implement-worker") {
+    if (invocation.parentGateCapability === undefined) {
+      throw new Error("codex-role-dispatch: implement-worker requires parent gate authority");
+    }
+    if (correlationId === undefined || !("observation" in execution)) {
+      throw new Error(
+        "codex-role-dispatch: implement-worker requires a registered process observation",
+      );
+    }
+    if (execution.observation.outcome !== "completed") {
+      throw new Error("codex-role-dispatch: implement-worker process did not complete");
+    }
+    await executeCodexImplementationCandidateQualifier({
+      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+      ledgerCwd: invocation.ledgerCwd,
+      promptRoot,
+      handle,
+      roleId,
+      correlationId,
+      childThreadId: execution.observation.childThreadId,
+      outcome: execution.observation.outcome,
+      exitStatus: execution.observation.exitStatus,
+      observedAt: new Date().toISOString(),
+      promptDigest: plan.effectivePreturn.rolePromptDigest,
+      timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
+    });
+  }
   if (observationPath !== undefined && "observation" in execution) {
     await appendFile(
       observationPath,

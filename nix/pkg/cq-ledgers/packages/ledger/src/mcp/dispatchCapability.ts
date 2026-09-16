@@ -87,6 +87,29 @@ export interface FinalizeParentGateInput extends DispatchHandle {
   readonly parentGateCapability: ParentGateCapability;
 }
 
+export interface QualifyImplementationCandidateInput extends DispatchHandle {
+  readonly roleId: string;
+  readonly correlationId: string;
+  readonly childThreadId: string;
+  readonly outcome: "completed";
+  readonly exitStatus: number;
+  readonly observedAt: string;
+  readonly promptDigest: string;
+}
+
+export type QualifyImplementationCandidateOutcome =
+  | {
+      readonly state: "queued";
+      readonly attestationId: string;
+      readonly generation: number;
+      readonly outputDigest: string;
+      readonly qualificationDigest: string;
+    }
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult;
+    };
+
 export interface FetchDispatchInputToolInput extends DispatchHandle {
   readonly inputCapability: InputCapability;
 }
@@ -143,6 +166,9 @@ export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;
+  qualifyImplementationCandidate?(
+    input: QualifyImplementationCandidateInput,
+  ): Promise<QualifyImplementationCandidateOutcome>;
   finalizeParentGate?(input: FinalizeParentGateInput): Promise<StoreDispatchResultOutcome>;
   confirmCompletion(
     input: ConfirmDispatchCompletionToolInput,

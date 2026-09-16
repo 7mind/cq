@@ -1,4 +1,5 @@
 import {
+  CODEX_CORRELATION_SEPARATOR,
   CODEX_STAGED_TIMING_BASIS,
   DISPATCH_INPUT_VALIDATION_DEFERRED,
   DISPATCH_OVERLAY_REGISTRY,
@@ -8,6 +9,7 @@ import {
   IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   IDEMPOTENCY_HORIZON_MS,
   AttestationKeyReuseError,
   AttestationBackendUnsupportedError,
@@ -22,6 +24,7 @@ import {
   assembleDispatchInput,
   attestationInstantMs,
   confirmDispatchCompletionOn,
+  enqueueImplementationCandidateOn,
   replayConfirmedDispatchCompletionOn,
   defaultDispatchRandomBytes,
   dispatchPayloadDigest,
@@ -32,6 +35,7 @@ import {
   loadConfig,
   prepareDispatchOn,
   prepareDispatchRequestDigest,
+  qualifyDispatchStagedCompletionOn,
   resolveDispatchGitEffectBindingOn,
   resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
@@ -40,6 +44,7 @@ import {
   storeDispatchResultOn,
   validateDispatchInput,
   type AttestationBackend,
+  type AttestationEnvelope,
   type DispatchNarrativeSource,
   type DispatchJSONValue,
   type DispatchPrepareAccepted,
@@ -84,6 +89,8 @@ import {
   type CurrentRecoverySealJournalStore,
   type DispatchLineageCutoverFence,
   type DispatchCapability,
+  type GitChangeBrokerReceipt,
+  type QualifyImplementationCandidateInput,
   type GitChangeBrokerResultEvidence,
   type GitRebaseConflictState,
   type GitConflictContinuationResultEvidence,
@@ -99,7 +106,67 @@ import type { PromptArtifactStore } from "./promptArtifactStore.js";
 import {
   assertManagedRecoveryTipEligible,
   captureCurrentDispatchRecoverySealUnderLock,
+  currentRecoveryTaskEvidence,
 } from "./dispatchRecoverySeal.js";
+
+const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
+const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
+
+async function readOnlyGit(repositoryRoot: string, args: readonly string[]): Promise<string> {
+  const child = Bun.spawn(["git", "-C", repositoryRoot, ...args], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [status, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (status !== 0) {
+    throw new Error(`read-only Git observation failed: ${stderr.trim()}`);
+  }
+  const value = stdout.trim();
+  if (value === "") throw new Error("read-only Git observation returned an empty value");
+  return value;
+}
+
+function exactGoalRef(store: LedgerStore, taskId: string): string {
+  const task = store.fetchItem(TASKS_LEDGER, taskId);
+  const goalRefs = (Array.isArray(task.fields["ledgerRefs"])
+    ? task.fields["ledgerRefs"]
+    : []
+  ).filter(
+    (entry): entry is string => typeof entry === "string" && /^goals:[A-Za-z0-9._-]+$/u.test(entry),
+  );
+  if (goalRefs.length !== 1 || goalRefs[0] === undefined) {
+    throw new Error(`task ${taskId} must bind exactly one finalized goal`);
+  }
+  return goalRefs[0];
+}
+
+function assertProcessQualificationObservation(input: QualifyImplementationCandidateInput): void {
+  for (const [field, value] of [
+    ["roleId", input.roleId],
+    ["correlationId", input.correlationId],
+    ["childThreadId", input.childThreadId],
+    ["promptDigest", input.promptDigest],
+  ] as const) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`implementation candidate ${field} must be non-empty`);
+    }
+  }
+  if (input.outcome !== "completed") {
+    throw new Error("only a completed Codex process observation can qualify a candidate");
+  }
+  if (!Number.isInteger(input.exitStatus)) {
+    throw new Error("implementation candidate exitStatus must be an integer");
+  }
+  attestationInstantMs(input.observedAt, "implementationCandidate.observedAt");
+  if (!SHA256_DIGEST.test(input.promptDigest)) {
+    throw new Error("implementation candidate promptDigest must be a SHA-256 digest");
+  }
+}
 
 function stagingDeadlineAfter(durationMs: number, phase: string): number {
   const deadlineMs = Date.now() + durationMs;
@@ -1993,6 +2060,147 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         rememberTerminal(outcome.result, outcome.result.abortedAt);
       }
       return outcome;
+    },
+    qualifyImplementationCandidate: async (input) => {
+      assertProcessQualificationObservation(input);
+      if (options.ledgerStore === undefined) {
+        throw new Error("implementation candidate qualification requires the task ledger");
+      }
+      const row = await options.backend.transact(
+        { kind: "handle", handle: input },
+        (store): AttestationEnvelope => {
+          const persisted = store.read(input);
+          if (persisted === undefined || isAttestationTombstone(persisted)) {
+            throw new Error("implementation candidate qualification requires a live dispatch");
+          }
+          if (
+            persisted.state !== "gate-pending" ||
+            persisted.gateSubmittedOutputDigest === undefined ||
+            persisted.gitEffectBinding === undefined ||
+            persisted.output === undefined
+          ) {
+            throw new DispatchStateConflictError(
+              "confirm_dispatch_completion",
+              persisted.state,
+              "implementation candidate qualification requires one staged managed result",
+            );
+          }
+          return persisted;
+        },
+      );
+      const binding = row.gitEffectBinding!;
+      const expectedChildId = `${input.roleId}${CODEX_CORRELATION_SEPARATOR}${input.correlationId}`;
+      if (
+        row.promptProvenance.roleId !== input.roleId ||
+        row.promptProvenance.promptDigest !== input.promptDigest ||
+        row.expectedChild.childId !== expectedChildId
+      ) {
+        const aborted = await abortDispatchOn(
+          options.backend,
+          {
+            namespace,
+            actor: "trusted-extension",
+            attestationId: input.attestationId,
+            generation: input.generation,
+            reason: "protocol-violation",
+            details: {
+              violation: "foreign-process-completion",
+              observationDigest: dispatchPayloadDigest(input as unknown as DispatchJSONValue),
+            },
+          },
+          { now },
+        );
+        rememberTerminal(aborted, aborted.abortedAt);
+        return Object.freeze({ state: "aborted" as const, result: aborted });
+      }
+      if (row.output === null || typeof row.output !== "object" || Array.isArray(row.output)) {
+        throw new Error("staged implementation candidate output must be an object");
+      }
+      const output = row.output as Readonly<Record<string, DispatchJSONValue>>;
+      const resultCommit = output["resultCommit"];
+      const gitReceipts = output["gitReceipts"];
+      if (
+        output["status"] !== "pass" ||
+        typeof resultCommit !== "string" ||
+        !FULL_GIT_SHA.test(resultCommit) ||
+        !Array.isArray(gitReceipts)
+      ) {
+        throw new Error("only a passing broker-verified worker result can enter the runnable queue");
+      }
+      const [resultTree, integrationRef] = await Promise.all([
+        readOnlyGit(binding.repositoryRoot, ["rev-parse", "--verify", `${resultCommit}^{tree}`]),
+        readOnlyGit(binding.repositoryRoot, ["symbolic-ref", "--quiet", "HEAD"]),
+      ]);
+      if (!FULL_GIT_SHA.test(resultTree) || !/^refs\/heads\//u.test(integrationRef)) {
+        throw new Error("implementation candidate Git identity is malformed");
+      }
+      const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+      const goalRef = exactGoalRef(options.ledgerStore, binding.taskId);
+      const queue = await enqueueImplementationCandidateOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-extension",
+          attestationId: input.attestationId,
+          generation: input.generation,
+          repositoryId: binding.repositoryId,
+          integrationRef,
+          authority: {
+            taskId: binding.taskId,
+            goalRef,
+            finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
+          },
+          observedBaseCommit: binding.baseCommit,
+          resultCommit,
+          resultTree,
+          gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          packagedEnvironmentDigest: row.promptProvenance.catalogHash,
+          gitReceipts: gitReceipts as unknown as readonly GitChangeBrokerReceipt[],
+          gitEffectBinding: binding,
+          stagedOutputDigest: row.gateSubmittedOutputDigest!,
+        },
+        { now },
+      );
+      const nativeCompletion = Object.freeze({
+        kind: "native-completion" as const,
+        actor: "trusted-extension" as const,
+        childId: row.expectedChild.childId,
+        runId: row.expectedChild.runId,
+        completedAt: input.observedAt,
+      });
+      const qualification = await qualifyDispatchStagedCompletionOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-extension",
+          attestationId: input.attestationId,
+          generation: input.generation,
+          partitionKey: queue.partition.partitionKey,
+          enrollmentId: queue.enrollment.enrollmentId,
+          attemptId: queue.attempt.attemptId,
+          stagedOutputDigest: row.gateSubmittedOutputDigest!,
+          expectedChild: row.expectedChild,
+          expectedProvenance: {
+            roleId: row.promptProvenance.roleId,
+            version: row.promptProvenance.version,
+            promptDigest: row.promptProvenance.promptDigest,
+            inputDigest: row.promptProvenance.inputDigest,
+          },
+          nativeCompletion,
+        },
+        { now },
+      );
+      if (qualification.state === "aborted") {
+        rememberTerminal(qualification.result, qualification.result.abortedAt);
+        return Object.freeze({ state: "aborted" as const, result: qualification.result });
+      }
+      return Object.freeze({
+        state: "queued" as const,
+        attestationId: input.attestationId,
+        generation: input.generation,
+        outputDigest: row.gateSubmittedOutputDigest!,
+        qualificationDigest: qualification.qualification.qualificationDigest,
+      });
     },
     finalizeParentGate: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);

@@ -226,6 +226,7 @@ export interface ParsedArgs {
   promptSurface: PromptSurface | undefined;
   promptRoot: string | undefined;
   parentGateFinalize: boolean;
+  implementationCandidateQualify: boolean;
 }
 
 /**
@@ -268,10 +269,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let promptSurface: PromptSurface | undefined;
   let promptRoot: string | undefined;
   let parentGateFinalize = false;
+  let implementationCandidateQualify = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--parent-gate-finalize") {
       parentGateFinalize = true;
+    } else if (a === "--implementation-candidate-qualify") {
+      implementationCandidateQualify = true;
     } else if (a === "--management") {
       management = true;
     } else if (a === "--cwd") {
@@ -352,6 +356,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     promptSurface,
     promptRoot,
     parentGateFinalize,
+    implementationCandidateQualify,
   };
 }
 
@@ -431,6 +436,93 @@ export async function readParentGateFinalizeRequest(
     throw new Error("ledger-mcp: malformed parent gate request");
   }
   return request as unknown as ParentGateFinalizeStdinRequest;
+}
+
+interface ImplementationCandidateQualifyStdinRequest {
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly roleId: string;
+  readonly correlationId: string;
+  readonly childThreadId: string;
+  readonly outcome: "completed";
+  readonly exitStatus: number;
+  readonly observedAt: string;
+  readonly promptDigest: string;
+}
+
+export async function readImplementationCandidateQualifyRequest(
+  input: NodeJS.ReadableStream,
+): Promise<ImplementationCandidateQualifyStdinRequest> {
+  const text = await new Promise<string>((resolveInput, rejectInput) => {
+    let buffered = Buffer.alloc(0);
+    const onData = (chunk: Buffer | string): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (buffered.length + bytes.length > PARENT_GATE_REQUEST_MAX_BYTES) {
+        cleanup();
+        rejectInput(new Error("ledger-mcp: implementation candidate request exceeds 16384 bytes"));
+        return;
+      }
+      buffered = Buffer.concat([buffered, bytes]);
+    };
+    const onEnd = (): void => {
+      cleanup();
+      resolveInput(buffered.toString("utf8"));
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      rejectInput(error);
+    };
+    const cleanup = (): void => {
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      input.pause();
+    };
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+  });
+  if (!text.endsWith("\n") || text.indexOf("\n") !== text.length - 1) {
+    throw new Error(
+      "ledger-mcp: implementation candidate request must be one bounded newline-terminated JSON value",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("ledger-mcp: implementation candidate request must be valid JSON");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("ledger-mcp: implementation candidate request must be an object");
+  }
+  const request = parsed as Record<string, unknown>;
+  const fields = [
+    "attestationId",
+    "childThreadId",
+    "correlationId",
+    "exitStatus",
+    "generation",
+    "observedAt",
+    "outcome",
+    "promptDigest",
+    "roleId",
+  ].sort();
+  if (
+    Object.keys(request).sort().join(",") !== fields.join(",") ||
+    typeof request["attestationId"] !== "string" ||
+    !Number.isInteger(request["generation"]) ||
+    typeof request["roleId"] !== "string" ||
+    typeof request["correlationId"] !== "string" ||
+    typeof request["childThreadId"] !== "string" ||
+    request["outcome"] !== "completed" ||
+    !Number.isInteger(request["exitStatus"]) ||
+    typeof request["observedAt"] !== "string" ||
+    typeof request["promptDigest"] !== "string"
+  ) {
+    throw new Error("ledger-mcp: malformed implementation candidate request");
+  }
+  return request as unknown as ImplementationCandidateQualifyStdinRequest;
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -1229,6 +1321,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     promptSurface,
     promptRoot,
     parentGateFinalize,
+    implementationCandidateQualify,
   } = parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
@@ -1284,6 +1377,25 @@ export async function main(argv: readonly string[]): Promise<void> {
           repositoryRoot: cwd,
         })
       : undefined;
+
+  if (implementationCandidateQualify) {
+    try {
+      if (http !== null || dispatchCapability?.qualifyImplementationCandidate === undefined) {
+        throw new Error(
+          "ledger-mcp: implementation candidate qualification requires a local durable dispatch runtime",
+        );
+      }
+      const outcome = await dispatchCapability.qualifyImplementationCandidate(
+        await readImplementationCandidateQualifyRequest(process.stdin),
+      );
+      process.stdout.write(`${JSON.stringify(outcome)}\n`);
+    } finally {
+      resolved.backup?.close();
+      await dispatchRuntime.close();
+      await store.dispose();
+    }
+    return;
+  }
 
   if (parentGateFinalize) {
     try {

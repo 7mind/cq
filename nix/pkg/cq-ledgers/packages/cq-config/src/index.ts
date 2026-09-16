@@ -954,6 +954,7 @@ export type {
   CodexRoleBoundaryDiagnosticDetailCode,
   CodexRoleBoundaryDiagnostic,
   CodexBrokeredStoreResultOutcome,
+  CodexImplementationCandidateQualifierRequest,
   CodexParentGateFinalizerRequest,
 } from "./codexRoleBoundary.js";
 export {
@@ -975,6 +976,7 @@ export {
   createCodexRoleBoundaryPlan,
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
+  executeCodexImplementationCandidateQualifier,
   executeCodexParentGateFinalizer,
   CodexParentGateAbortedError,
   CodexParentGateRejectedError,

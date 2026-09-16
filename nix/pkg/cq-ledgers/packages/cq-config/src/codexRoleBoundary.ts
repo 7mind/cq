@@ -218,6 +218,103 @@ const CODEX_PARENT_GATE_FINALIZER_ATTEMPTS = 2;
 const CODEX_PARENT_GATE_RECONCILIATION_RESERVE_MS =
   CODEX_STAGED_TIMING_BASIS.parentGateReconciliationReserveMs;
 
+export interface CodexImplementationCandidateQualifierRequest {
+  readonly command: string;
+  readonly ledgerCwd: string;
+  readonly promptRoot: string;
+  readonly handle: DispatchHandle;
+  readonly roleId: string;
+  readonly correlationId: string;
+  readonly childThreadId: string;
+  readonly outcome: "completed";
+  readonly exitStatus: number;
+  readonly observedAt: string;
+  readonly promptDigest: string;
+  readonly timeoutMs: number;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+/** Persist the exact process observation as a qualified queued candidate without starting a gate. */
+export async function executeCodexImplementationCandidateQualifier(
+  input: CodexImplementationCandidateQualifierRequest,
+): Promise<void> {
+  const request = {
+    ...input.handle,
+    roleId: input.roleId,
+    correlationId: input.correlationId,
+    childThreadId: input.childThreadId,
+    outcome: input.outcome,
+    exitStatus: input.exitStatus,
+    observedAt: input.observedAt,
+    promptDigest: input.promptDigest,
+  };
+  const child = Bun.spawn(
+    [
+      input.command,
+      "mcp",
+      "--cwd",
+      input.ledgerCwd,
+      "--prompt-surface",
+      "codex",
+      "--prompt-root",
+      input.promptRoot,
+      "--implementation-candidate-qualify",
+    ],
+    {
+      cwd: input.ledgerCwd,
+      env: withoutWorksetCredentials({ ...process.env, ...input.environment }),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  child.stdin.write(`${JSON.stringify(request)}\n`);
+  child.stdin.end();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, input.timeoutMs);
+  const [exitStatus, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]).finally(() => clearTimeout(timer));
+  if (timedOut) {
+    throw new CodexRoleBoundaryError(
+      `implementation candidate qualification exceeded ${String(input.timeoutMs)} ms`,
+    );
+  }
+  if (exitStatus !== 0) {
+    throw new CodexRoleBoundaryError(
+      `implementation candidate qualification exited ${String(exitStatus)}: ${stderr.trim()}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    throw new CodexRoleBoundaryError("implementation candidate qualification emitted non-JSON stdout");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CodexRoleBoundaryError("implementation candidate qualification emitted a malformed acknowledgement");
+  }
+  const acknowledgement = parsed as Record<string, unknown>;
+  if (
+    Object.keys(acknowledgement).sort().join(",") !==
+      "attestationId,generation,outputDigest,qualificationDigest,state" ||
+    acknowledgement["state"] !== "queued" ||
+    acknowledgement["attestationId"] !== input.handle.attestationId ||
+    acknowledgement["generation"] !== input.handle.generation ||
+    typeof acknowledgement["outputDigest"] !== "string" ||
+    typeof acknowledgement["qualificationDigest"] !== "string"
+  ) {
+    throw new CodexRoleBoundaryError(
+      "implementation candidate qualification emitted a foreign acknowledgement",
+    );
+  }
+}
+
 export interface CodexParentGateFinalizerRequest {
   readonly command: string;
   readonly ledgerCwd: string;
