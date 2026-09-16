@@ -669,7 +669,7 @@ describe("ledger-MCP implementation candidate queue", () => {
         partitionKey: qualified.queue.partition.partitionKey,
         holderId: "blocked-behind-parked-front",
       }),
-    ).toMatchObject({ state: "blocked", frontState: "parked" });
+    ).toMatchObject({ state: "empty" });
     const resumed = await subject.adapter.resume({
       ...acquired.lease,
       expectedPartitionRevision: parked.partitionRevision,

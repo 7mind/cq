@@ -88,8 +88,15 @@ import { createConfigCapability } from "./configCapability.js";
 import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
 
 export { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
-export { ImplementationCandidateQueueAdapter } from "./implementationCandidateQueue.js";
+export {
+  IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES,
+  ImplementationCandidateCoordinator,
+  ImplementationCandidateQueueAdapter,
+} from "./implementationCandidateQueue.js";
 export type {
+  CoordinateImplementationCandidateOutcome,
+  ImplementationCandidateCoordinatorOperations,
+  ImplementationCandidateHeadOfLineDisposition,
   ImplementationCandidateQueueAdapterOptions,
   QualifiedImplementationCandidate,
   QualifyNativeImplementationCandidateRequest,

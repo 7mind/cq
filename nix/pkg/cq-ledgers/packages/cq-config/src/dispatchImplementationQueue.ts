@@ -421,11 +421,15 @@ function active(control: ImplementationQueueControl): boolean {
   return !["released", "terminal", "staged-rebase-retired"].includes(control.state);
 }
 
+function runnable(control: ImplementationQueueControl): boolean {
+  return active(control) && control.state !== "parked" && control.state !== "yielded";
+}
+
 function frontRow(store: AttestationStore, partitionKey: string): AttestationEnvelope | undefined {
   return queueRows(store, partitionKey)
     .filter(
       (row): row is AttestationEnvelope =>
-        !isAttestationTombstone(row) && active(row.implementationQueue!),
+        !isAttestationTombstone(row) && runnable(row.implementationQueue!),
     )
     .sort(
       (left, right) =>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryAttestationBackend, InMemoryAttestationStore } from "@cq/config";
+import { IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES } from "../src/implementationCandidateQueue.js";
 import { ImplementationCandidateQueueFixture } from "./implementationCandidateQueueFixture.js";
 
 const namespace = { backend: "xdg" as const, projectKey: "head-of-line" };
@@ -15,6 +16,25 @@ function candidate(taskId: string) {
 }
 
 describe("implementation candidate head-of-line policy [Behavioral-Active, Blackbox-Group]", () => {
+  test("every terminal or nonterminal front disposition has one explicit lease policy", () => {
+    expect(IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES).toEqual({
+      park: "park",
+      yield: "yield",
+      resume: "resume",
+      cancel: "cancelled",
+      supersede: "superseded",
+      "review-question": "park",
+      "non-converging-criticism": "yield",
+      "task-abandonment": "cancelled",
+      "owner-revocation": "cancelled",
+      "worktree-authority-revocation": "cancelled",
+      "permanent-ineligibility": "superseded",
+      conflict: "park",
+      "deterministic-red": "yield",
+      "execution-uncertainty": "park",
+    });
+  });
+
   // specified: T6519 — an explicitly parked front is fenced out until a fresh resume lease.
   test("park revokes the front lease and advances the next eligible enrollment", async () => {
     const fixture = new ImplementationCandidateQueueFixture(
