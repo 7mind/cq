@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { closeSync, constants as fsConstants, openSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -945,27 +945,33 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     }
   });
 
-  test("preserves exact argv, cwd, env, and stdio bytes", async () => {
+  test("preserves exact argv, cwd, env, and live stdin/stdout/stderr pipes", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-semantics-"));
     roots.push(root);
     const cwd = join(root, "nested cwd");
     await mkdir(cwd);
     const target = [
-      "IFS= read -r input",
-      'printf \'%s\\n\' "$0" "$1" "$2" "$PWD" "$T1624_VALUE" "$T1624_EMPTY" "$input"',
-      "printf 'stderr:%s' \"$input\" >&2",
-    ].join("; ");
+      "const chunks = [];",
+      "process.stdin.on('data', (chunk) => chunks.push(chunk));",
+      "process.stdin.on('end', () => {",
+      "  const input = Buffer.concat(chunks).toString();",
+      "  process.stdout.write(JSON.stringify({ argv: process.argv.slice(1), cwd: process.cwd(), env: process.env, input }));",
+      "  process.stderr.write('stderr:' + input);",
+      "});",
+    ].join("\n");
     const env = {
       T1624_VALUE: "value with spaces",
       T1624_EMPTY: "",
     };
-    const inputPath = join(root, "stdin.txt");
-    await writeFile(inputPath, "stdin payload\n");
-    const input = openSync(inputPath, "r");
+    const inputPath = join(root, "stdin.fifo");
+    const fifo = spawn("mkfifo", [inputPath], { stdio: "ignore" });
+    expect(await exited(fifo)).toEqual({ exitCode: 0, signal: null });
+    expect((await stat(inputPath)).isFIFO()).toBe(true);
+    const input = openSync(inputPath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
     const launched = await (async () => {
       try {
         return await launchRegisteredProcessGroup({
-          argv: ["/bin/sh", "-c", target, "argument with spaces", "", "--literal"],
+          argv: [process.execPath, "-e", target, "argument with spaces", "", "--literal"],
           cwd,
           env,
           stdio: [input, "pipe", "pipe"] as const,
@@ -981,20 +987,20 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     }
     const stdout = streamText(launched.process.stdout);
     const stderr = streamText(launched.process.stderr);
+    const writer = openSync(inputPath, fsConstants.O_WRONLY);
+    try {
+      writeSync(writer, "stdin payload");
+    } finally {
+      closeSync(writer);
+    }
     const [outcome, stdoutText, stderrText] = await Promise.all([launched.exited, stdout, stderr]);
     expect(outcome.exitCode).toBe(0);
-    expect(stdoutText).toBe(
-      [
-        "argument with spaces",
-        "",
-        "--literal",
-        cwd,
-        "value with spaces",
-        "",
-        "stdin payload",
-        "",
-      ].join("\n"),
-    );
+    expect(JSON.parse(stdoutText)).toEqual({
+      argv: ["argument with spaces", "", "--literal"],
+      cwd,
+      env,
+      input: "stdin payload",
+    });
     expect(stderrText).toBe("stderr:stdin payload");
   });
 
@@ -1135,7 +1141,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       "}, 2);",
     ].join("\n");
     const launched = await launchRegisteredProcessGroup({
-      argv: [process.execPath, "-e", target],
+      argv: ["node", "-e", target],
       cwd: root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"] as const,

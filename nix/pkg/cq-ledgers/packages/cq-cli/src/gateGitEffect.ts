@@ -250,7 +250,7 @@ export async function runGateGitEffect(
     }
     const provider =
       request.operation === "merge"
-        ? implementationCompletionMergeAdmissionProviderFromStore({
+        ? await implementationCompletionMergeAdmissionProviderFromStore({
             provider: ordinaryProvider,
             store: resolved.implementationEvidenceStore!,
             binding: expected as Extract<WorksetGitEffectBinding, { readonly kind: "merge" }>,

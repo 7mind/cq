@@ -243,7 +243,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       completionRef: completion.completionRef,
       mergeOperationId: "merge-t2345",
     };
-    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
       provider: underlying,
       store: f.evidence,
       binding,
@@ -318,7 +318,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       };
 
       const rejectedUnderlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-      const rejectedProvider = implementationCompletionMergeAdmissionProviderFromStore({
+      const rejectedProvider = await implementationCompletionMergeAdmissionProviderFromStore({
         provider: {
           acquire: async (input) => {
             const underlying = await rejectedUnderlying.acquire(input);
@@ -354,7 +354,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       const retainedEntryCount = await journalEntryCount(journal);
 
       const retryUnderlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-      const retryProvider = implementationCompletionMergeAdmissionProviderFromStore({
+      const retryProvider = await implementationCompletionMergeAdmissionProviderFromStore({
         provider: retryUnderlying,
         store: f.evidence,
         binding,
@@ -372,15 +372,85 @@ describe("versioned protected implementation evidence [BG]", () => {
         (await f.service.mergeAcknowledgement(completion.completionRef)).mergeOperationId,
       ).toBe("merge-retained-retry");
 
-      const wrongOperationProvider = implementationCompletionMergeAdmissionProviderFromStore({
-        provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
-        store: f.evidence,
-        binding: { ...binding, mergeOperationId: "merge-foreign-operation" },
+      await expect(
+        implementationCompletionMergeAdmissionProviderFromStore({
+          provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+          store: f.evidence,
+          binding: { ...binding, mergeOperationId: "merge-foreign-operation" },
+          repositoryHead: async () => f.getHead(),
+        }),
+      ).rejects.toThrow("merge coordinates do not match");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("prevalidates a retained merge journal before the bounded real-process launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-retained-merge-prevalidation-"));
+    try {
+      const f = await fixture();
+      const completion = await f.service.prepareCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: BASE,
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        reviewAttemptRefs: [f.attemptRef],
+        completion: "implemented",
+        logPaths: [],
+        mergeOperationId: "merge-prevalidated-retained",
+        operationId: "completion-prevalidated-retained",
+        author: "parent",
+      });
+      await f.service.markMergeStarted(completion.completionRef, BASE);
+      let delayedSnapshots = 0;
+      const delayedEvidence: ImplementationEvidenceStore = new Proxy(f.evidence, {
+        get(target, property) {
+          if (property === "snapshot") {
+            return async () => {
+              delayedSnapshots += 1;
+              if (delayedSnapshots === 1) await Bun.sleep(120);
+              return await target.snapshot();
+            };
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+      const provider = await implementationCompletionMergeAdmissionProviderFromStore({
+        provider: underlying,
+        store: delayedEvidence,
+        binding: {
+          kind: "merge",
+          targetRef: "tasks:T2345",
+          repositoryRoot: root,
+          commit: RESULT,
+          completionRef: completion.completionRef,
+          mergeOperationId: "merge-prevalidated-retained",
+        },
         repositoryHead: async () => f.getHead(),
       });
-      await expect(
-        wrongOperationProvider.acquire({ kind: "merge", targetRef: "tasks:T2345" }),
-      ).rejects.toThrow("merge coordinates do not match");
+      const marker = join(root, "target-ran");
+      const broker = new WorksetEffectBroker({ provider });
+      const launched = await broker.launch({
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        argv: [
+          process.execPath,
+          "-e",
+          `require('node:fs').appendFileSync(${JSON.stringify(marker)}, 'ran\\n')`,
+        ],
+        cwd: root,
+        env: process.env,
+        stdio: "ignore" as const,
+        launchDeadlineMs: Date.now() + 50,
+        launchBootstrap: ignoredBootstrap,
+      });
+      await launched.exited;
+
+      expect(await Bun.file(marker).text()).toBe("ran\n");
+      expect(delayedSnapshots).toBe(2);
+      expect(underlying.activeAdmissionCount()).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -417,7 +487,7 @@ describe("versioned protected implementation evidence [BG]", () => {
         },
       });
       const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-      const provider = implementationCompletionMergeAdmissionProviderFromStore({
+      const provider = await implementationCompletionMergeAdmissionProviderFromStore({
         provider: underlying,
         store: slowEvidence,
         binding: {
@@ -498,7 +568,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     });
     const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
     let reads = 0;
-    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
       provider: underlying,
       store: f.evidence,
       binding: {
@@ -525,6 +595,49 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(underlying.activeAdmissionCount()).toBe(0);
   });
 
+  test("rejects a repository-head CAS change after journal prevalidation", async () => {
+    const f = await fixture();
+    const completion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-prevalidation-head-cas",
+      operationId: "completion-prevalidation-head-cas",
+      author: "parent",
+    });
+    const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+    let reads = 0;
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
+      provider: underlying,
+      store: f.evidence,
+      binding: {
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: "merge-prevalidation-head-cas",
+      },
+      repositoryHead: async () => {
+        reads += 1;
+        return reads === 2 ? "c".repeat(40) : BASE;
+      },
+    });
+    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+    await admission.registerProcessGroup({ pgid: 655, leaderPid: 655 });
+    await expect(admission.shareWithGuardian({ pgid: 655, leaderPid: 655 })).rejects.toThrow(
+      "repository HEAD changed before durable merge-started preparation",
+    );
+    expect(underlying.events()).not.toContain("guardian-shared");
+    await admission.markSettled();
+    await admission.releaseAfterSettlement();
+    expect(underlying.activeAdmissionCount()).toBe(0);
+  });
+
   test("recovers an already-at-result HEAD and acknowledges only its durable merged state", async () => {
     const f = await fixture();
     const completion = await f.service.prepareCompletion({
@@ -544,7 +657,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       "not durably merged",
     );
     const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
       provider: underlying,
       store: f.evidence,
       binding: {
@@ -764,7 +877,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       operationId: "completion-settlement-failure",
       author: "parent",
     });
-    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
       provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
       store: f.evidence,
       binding: {

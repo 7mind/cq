@@ -139,6 +139,77 @@ describe("workset Git effect gate [T1984]", () => {
     ]);
   });
 
+  test("launches exactly once when durable admission acquisition finishes before the shared deadline [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await repository();
+    const head = await git(root, ["rev-parse", "HEAD"]);
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    let acquisitions = 0;
+    const binding: WorksetGitEffectBinding = {
+      kind: "branch-create",
+      targetRef: "tasks:T1984",
+      repositoryRoot: root,
+      branch: "implement/T1984",
+      commit: head,
+    };
+
+    const result = await runWorksetGitEffectGate({
+      expected: binding,
+      resolve: async () => binding,
+      provider: {
+        acquire: async (input) => {
+          acquisitions += 1;
+          await Bun.sleep(5);
+          return await strict.acquire(input);
+        },
+      },
+      launchDeadlineMs: Date.now() + 1_000,
+    });
+
+    expect(result).toEqual({ stdout: "", stderr: "", code: 0 });
+    expect(acquisitions).toBe(1);
+    expect(await git(root, ["rev-parse", "refs/heads/implement/T1984"])).toBe(head);
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
+  test("rejects over-deadline durable admission acquisition without launching the Git target [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await repository();
+    const head = await git(root, ["rev-parse", "HEAD"]);
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const binding: WorksetGitEffectBinding = {
+      kind: "branch-create",
+      targetRef: "tasks:T1984",
+      repositoryRoot: root,
+      branch: "implement/T1984",
+      commit: head,
+    };
+    const launchDeadlineMs = Date.now() + 50;
+
+    const error = await runWorksetGitEffectGate({
+      expected: binding,
+      resolve: async () => binding,
+      provider: {
+        acquire: async (input) => {
+          const admission = await strict.acquire(input);
+          await Bun.sleep(Math.max(0, launchDeadlineMs - Date.now()) + 20);
+          return admission;
+        },
+      },
+      launchDeadlineMs,
+    }).then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+    await strict.waitForIdle();
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "launch/admission deadline expired during durable admission acquisition",
+    );
+    expect(await git(root, ["branch", "--list", "implement/T1984"])).toBe("");
+    expect(await git(root, ["rev-parse", "HEAD"])).toBe(head);
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
   test("revalidates exact trusted coordinates after admission and mutates nothing on mismatch [Behavioral-Active Blackbox-GoodCommunication]", async () => {
     const root = await repository();
     const head = await git(root, ["rev-parse", "HEAD"]);
