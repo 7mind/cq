@@ -25,6 +25,7 @@ import {
   stageCohortCandidateAttemptV1,
   type CohortGitChangeReceiptV1,
   type CohortWholeDiffEntryV1,
+  type G213QualifiedCandidateRowV1,
 } from "../src/workCohort.js";
 import { commit, observationFor, qualifiedQueue, receipt, sha256 } from "./workCohortFixture.js";
 
@@ -43,6 +44,7 @@ async function authenticatedCandidateRow(input: {
   readonly receipts: readonly CohortGitChangeReceiptV1[];
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
   readonly attempt?: string;
+  readonly outputFilesTouched?: readonly string[];
 }) {
   const gitEffectBinding = {
     taskId: input.dispatch.taskId,
@@ -83,7 +85,8 @@ async function authenticatedCandidateRow(input: {
       taskId: input.dispatch.taskId,
       resultCommit: input.result,
       gitReceipts: input.receipts,
-      filesTouched: input.repositoryDiff.map((entry) => entry.path),
+      filesTouched:
+        input.outputFilesTouched ?? input.repositoryDiff.map((entry) => entry.path),
     },
   } as unknown as AttestationEnvelope;
   const authenticated = await resolveG213QualifiedCandidateRowV1({
@@ -321,6 +324,18 @@ describe("cohort candidate identity", () => {
     ).toThrow("actual G213 row");
   });
 
+  test("cannot stage a caller-allocated G213 row shape", async () => {
+    const fixture = await identityFixture();
+    const callerAllocated = {
+      preparedDispatch: fixture.row.preparedDispatch,
+      queue: fixture.row.queue,
+      repositoryDiff: fixture.row.repositoryDiff,
+    } as unknown as G213QualifiedCandidateRowV1;
+    expect(() =>
+      stageCohortCandidateAttemptV1(fixture.pending, { row: callerAllocated }),
+    ).toThrow("actual G213 row");
+  });
+
   test("rejects an attestation substituted for the actual G213 row", async () => {
     const fixture = await identityFixture();
     const foreign = { ...fixture.dispatch, attestationId: "att-foreign" };
@@ -369,6 +384,31 @@ describe("cohort candidate identity", () => {
         gitReceipts: fixture.receipts,
       }),
     ).toThrow("G213 repository diff");
+  });
+
+  test("rejects a G213 row whose staged files differ from the repository", async () => {
+    const dispatch = {
+      attestationId: "att-test",
+      generation: 1,
+      taskId: "T-test",
+      branch: "implement/T-test",
+      startingCommit: commit("base"),
+    };
+    const result = commit("result");
+    const tree = commit("result-tree");
+    const receipts = [receipt({ base: dispatch.startingCommit, result, tree })];
+    await expect(
+      authenticatedCandidateRow({
+        dispatch,
+        result,
+        tree,
+        receipts,
+        repositoryDiff: [
+          { path: "src/result.ts", mode: "100644", blobDigest: sha256("result blob") },
+        ],
+        outputFilesTouched: ["src/unrelated.ts"],
+      }),
+    ).rejects.toThrow("filesTouched differs from the repository diff");
   });
 
   test("production Git source derives the exact G213 whole diff", async () => {
