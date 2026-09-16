@@ -731,6 +731,7 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       resolved,
       dispatchCapability,
       repositoryRoot,
+      trustedSourceWorkspaceBuildCommit: await git(repositoryRoot, ["rev-parse", "HEAD"]),
       environment: { ...process.env, CQ_HARNESS: "codex" },
       externalReviewRunner: reviewRunner,
     });
@@ -1049,6 +1050,7 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       resolved,
       dispatchCapability,
       repositoryRoot,
+      trustedSourceWorkspaceBuildCommit: await git(repositoryRoot, ["rev-parse", "HEAD"]),
       environment: { ...process.env, CQ_HARNESS: "codex" },
       externalReviewRunner: reviewRunner,
     });

@@ -60,7 +60,8 @@ test("production operator adoption verifies Git, approval and retained log bytes
     const protectedLedger = protectLedgerStoreWithImplementationEvidence(ledger, evidence);
     const service = createProductionImplementationEvidenceService({
       resolved: { store: protectedLedger, implementationEvidenceStore: evidence, configRoot: repositoryRoot, backend: "xdg", branch: "backup" },
-      repositoryRoot, dispatchCapability: dispatch, environment: { CQ_HARNESS: "codex" },
+      repositoryRoot, dispatchCapability: dispatch, trustedSourceWorkspaceBuildCommit: head,
+      environment: { CQ_HARNESS: "codex" },
     });
     await expect(service.recordAdoption({ ...input, approval: { ...input.approval, answer: "not approved" } })).rejects.toThrow("answered question");
     await expect(service.recordAdoption({ ...input, resultCommit: foreign })).rejects.toThrow("not retained");

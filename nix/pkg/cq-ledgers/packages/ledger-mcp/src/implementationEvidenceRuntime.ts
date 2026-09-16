@@ -46,6 +46,7 @@ import {
   type ReadLogCapability,
 } from "@cq/ledger";
 import { computeReviewers } from "./configCapability.js";
+import { implementationEvidenceBuildCommit } from "./buildProvenance.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 
@@ -273,14 +274,6 @@ async function gitOutput(
   const result = await nodeGitRunner(repositoryRoot)(args);
   if (result.code !== 0) throw new Error(`${label} failed: ${result.stderr.trim()}`);
   return result.stdout.trim();
-}
-
-function startupBuildCommit(repositoryRoot: string): string | undefined {
-  const result = Bun.spawnSync(["git", "-C", repositoryRoot, "rev-parse", "HEAD"]);
-  if (result.exitCode !== 0) return undefined;
-  const commit = new TextDecoder().decode(result.stdout).trim();
-  if (!FULL_SHA.test(commit)) throw new Error("startup build commit is malformed");
-  return commit;
 }
 
 export async function verifyProductionImplementation(
@@ -515,6 +508,8 @@ export interface CreateProductionImplementationEvidenceServiceOptions {
   readonly dispatchCapability: DispatchCapability;
   readonly repositoryRoot: string;
   readonly environment?: Readonly<Record<string, string | undefined>>;
+  /** Explicit trust seam for source-workspace construction; packaged callers omit it. */
+  readonly trustedSourceWorkspaceBuildCommit?: string;
   /** Trusted process seam; production defaults to the selected harness executable. */
   readonly externalReviewRunner?: ExternalReviewRunner;
   /** Trusted packaged registry seam; production packaging supplies canonical manifests. */
@@ -540,7 +535,9 @@ export function createProductionImplementationEvidenceService(
   const environment = options.environment ?? process.env;
   const externalReviewRunner = options.externalReviewRunner ?? runExternalReviewer;
   const store = options.resolved.store;
-  const serviceBuildCommit = startupBuildCommit(options.repositoryRoot);
+  const serviceBuildCommit = implementationEvidenceBuildCommit(
+    options.trustedSourceWorkspaceBuildCommit,
+  );
   const readBootstrapAuthority = async () => {
     const rule = D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE;
     const goal = await resolveUniqueGoalState(
@@ -677,7 +674,7 @@ export function createProductionImplementationEvidenceService(
       },
       recordLedger: async (task, adoption) => await recordProtectedImplementationAdoption(store, task, adoption),
     },
-    ...(serviceBuildCommit === undefined ? {} : { startupBuildCommit: serviceBuildCommit }),
+    startupBuildCommit: serviceBuildCommit,
     implementationEvidenceProtocolVersion: IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
     packagedManifestInventory: PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY,
     readBootstrapAuthority,

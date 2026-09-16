@@ -67,6 +67,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       resolved,
       dispatchCapability,
       repositoryRoot: process.cwd(),
+      trustedSourceWorkspaceBuildCommit: RESULT,
       environment: { CQ_HARNESS: "codex" },
       externalReviewRunner: async ({ identity, prompt }) => {
         observed.push({ adapterIdentity: identity.adapterId, prompt });
@@ -194,6 +195,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
         resolved,
         dispatchCapability,
         repositoryRoot: root,
+        trustedSourceWorkspaceBuildCommit: RESULT,
         environment: { CQ_HARNESS: "codex" },
       });
     }).not.toThrow();
