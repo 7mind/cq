@@ -113,10 +113,10 @@ function exportedFactory(module: unknown, name: string): ShippedFactory {
 async function shippedFactories(): Promise<ReadonlyArray<readonly [string, ShippedFactory]>> {
   const importModule = async (specifier: string): Promise<unknown> => await import(specifier);
   const [standalone, tui, web, status] = await Promise.all([
-    importModule("../src/main.js"),
-    importModule("../../ledger-tui/src/mcpClient.js"),
-    importModule("../../ledger-web/src/serve.js"),
-    importModule("../../cq-cli/src/implementationEvidenceStatus.js"),
+    importModule("../src/main.ts"),
+    importModule("../../ledger-tui/src/mcpClient.ts"),
+    importModule("../../ledger-web/src/serve.ts"),
+    importModule("../../cq-cli/src/implementationEvidenceStatus.ts"),
   ]);
   return [
     [

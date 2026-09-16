@@ -45,6 +45,9 @@ const constructors = [
   ["embedded-web", createEmbeddedWebImplementationEvidenceService],
   ["embedded-status", createEmbeddedStatusImplementationEvidenceService],
 ] as const;
+if (new Set(constructors.map(([, construct]) => construct)).size !== constructors.length) {
+  throw new Error("installed provenance probe requires four distinct shipped constructors");
+}
 
 const root = await mkdtemp(path.join(tmpdir(), "cq-installed-build-provenance-"));
 try {
