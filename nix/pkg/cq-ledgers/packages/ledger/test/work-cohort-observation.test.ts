@@ -161,9 +161,13 @@ async function inMemoryRepositoryHarness(nodeIdentity?: string): Promise<LocalRe
   };
 }
 
-async function gitRepositoryHarness(nodeIdentity?: string): Promise<LocalRepositoryHarness> {
+async function gitRepositoryHarness(
+  nodeIdentity?: string,
+  overrides: ReadonlyMap<string, string> = new Map(),
+): Promise<LocalRepositoryHarness> {
   const repositoryRoot = await mkdtemp(join(tmpdir(), "cq-cohort-source-"));
-  const files = localRepositoryFiles(nodeIdentity);
+  const files = new Map(localRepositoryFiles(nodeIdentity));
+  for (const [path, bytes] of overrides) files.set(path, bytes);
   for (const [path, bytes] of files) {
     const absolute = join(repositoryRoot, path);
     await mkdir(dirname(absolute), { recursive: true });
@@ -391,5 +395,88 @@ describe("cohort admission observation", () => {
         { resolveExactSnapshot: async () => malformed as typeof snapshot },
       ),
     ).rejects.toThrow("does not end at its source node");
+  });
+
+  test("rejects a repository witness exported only inside a comment", async () => {
+    const harness = await gitRepositoryHarness(
+      undefined,
+      new Map([
+        [
+          "src/contracts/shared.ts",
+          "// export interface CohortContract { readonly version: 1 }\nexport const actual = true;\n",
+        ],
+      ]),
+    );
+    try {
+      const local = localDefinition();
+      const source = new LocalCohortAdmissionObservationSourceV1({
+        repository: harness.repository,
+        definitionPath: LOCAL_DEFINITION_PATH,
+        environment: { environmentDigest: local.environmentDigest },
+      });
+
+      await expect(
+        produceCohortAdmissionObservationV1(
+          { memberRefs: ["tasks:T1", "tasks:T2"] },
+          source,
+        ),
+      ).rejects.toThrow("does not export the named repository witness");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  test("rejects implementation authority fabricated in the cohort definition", async () => {
+    const local = localDefinition();
+    const fabricated = {
+      ...local.definition,
+      members: local.definition.members.map((member) => ({
+        ...member,
+        authorityRef: "authority:fabricated",
+        authorityRevision: "authority-revision:fabricated",
+        authorityBoundaryDigest: sha256("authority:fabricated"),
+        ...(member.phase === "implementation"
+          ? { implementationAuthority: "implementation-authority:fabricated" }
+          : {}),
+      })),
+    };
+    const files = new Map(localRepositoryFiles());
+    files.set(LOCAL_DEFINITION_PATH, JSON.stringify(fabricated));
+    const source = new LocalCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(files),
+      definitionPath: LOCAL_DEFINITION_PATH,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    await expect(
+      produceCohortAdmissionObservationV1(
+        { memberRefs: ["tasks:T1", "tasks:T2"] },
+        source,
+      ),
+    ).rejects.toThrow("implementation authority is not derived from trusted CQ state");
+  });
+
+  test("resolves a TypeScript source behind a JavaScript import specifier", async () => {
+    const harness = await gitRepositoryHarness(
+      undefined,
+      new Map([
+        [
+          "src/tasks:T1.ts",
+          'import type { CohortContract } from "./contracts/shared.js";\nexport const taskOne: CohortContract = { version: 1 };\n',
+        ],
+      ]),
+    );
+    try {
+      const repositoryIdentity = await harness.repository.resolveIdentity();
+      expect(
+        await harness.repository.resolveRelationship(
+          repositoryIdentity,
+          "src/tasks:T1.ts",
+          "src/contracts/shared.ts",
+        ),
+      ).toBe("import");
+    } finally {
+      await harness.close();
+    }
   });
 });
