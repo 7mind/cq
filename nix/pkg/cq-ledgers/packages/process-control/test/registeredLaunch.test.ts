@@ -1141,7 +1141,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       "}, 2);",
     ].join("\n");
     const launched = await launchRegisteredProcessGroup({
-      argv: ["node", "-e", target],
+      argv: [process.execPath, "-e", target],
       cwd: root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"] as const,
