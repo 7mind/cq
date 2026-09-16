@@ -60,5 +60,12 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
       },
     });
     expect(events).toEqual(["gate", "confirm-fetch"]);
+    expect(
+      fixture.backend.storedRows().find(
+        (row) =>
+          row.attestationId === staged.prepared.attestationId &&
+          row.generation === staged.prepared.generation,
+      )?.implementationQueue,
+    ).toMatchObject({ state: "released", leaseGeneration: 1 });
   });
 });

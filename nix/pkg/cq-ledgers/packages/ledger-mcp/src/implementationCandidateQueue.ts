@@ -315,6 +315,11 @@ export class ImplementationCandidateCoordinator {
         lease: acquired.lease,
         nativeCompletion: control.qualification.nativeCompletion,
       });
+      await this.queue.release({
+        ...acquired.lease,
+        expectedPartitionRevision: control.partitionRevision,
+        detail: { disposition: "gate-complete" },
+      });
       return Object.freeze({
         state: "completed" as const,
         handle: Object.freeze({
