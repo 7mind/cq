@@ -1,6 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { RegisteredLaunchBootstrapSpecification } from "./registeredLaunch.js";
+import {
+  REGISTERED_LAUNCH_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS,
+  type RegisteredLaunchBootstrapSpecification,
+} from "./registeredLaunch.js";
+import {
+  awaitBeforeLaunchDeadline,
+  remainingLaunchDeadlineMs,
+  validateLaunchDeadlineMs,
+} from "./launchDeadline.js";
 import {
   WorksetEffectBroker,
   type WorksetEffectBrokerOptions,
@@ -99,6 +107,8 @@ export interface RunWorksetGitEffectGateOptions {
   readonly provider: WorksetEffectAdmissionProvider;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** Absolute boundary shared by admission, guardian handoff, and bootstrap release. */
+  readonly launchDeadlineMs?: number;
   readonly environment?: NodeJS.ProcessEnv;
   readonly settlement?: WorksetEffectBrokerOptions["settlement"];
 }
@@ -393,8 +403,18 @@ function gitBootstrap(specification: RegisteredLaunchBootstrapSpecification<"pip
 export async function runWorksetGitEffectGate(
   options: RunWorksetGitEffectGateOptions,
 ): Promise<WorksetGitEffectResult> {
+  const launchDeadlineMs =
+    options.launchDeadlineMs ?? Date.now() + REGISTERED_LAUNCH_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS;
+  validateLaunchDeadlineMs(launchDeadlineMs);
+  remainingLaunchDeadlineMs(launchDeadlineMs, "initial Git-effect coordinate validation");
   const expected = validateBinding(options.expected);
-  const initial = validateBinding(await options.resolve());
+  const initial = validateBinding(
+    await awaitBeforeLaunchDeadline(
+      options.resolve(),
+      launchDeadlineMs,
+      "initial Git-effect coordinate validation",
+    ),
+  );
   if (!sameBinding(expected, initial)) {
     throw new Error("@cq/process-control: trusted Git effect binding does not match the requested coordinates");
   }
@@ -419,6 +439,7 @@ export async function runWorksetGitEffectGate(
     },
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    launchDeadlineMs,
   });
   const outcome = await launched.exited;
   const code = outcome.exitCode ?? (outcome.signal === null ? 1 : 128);

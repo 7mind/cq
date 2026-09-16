@@ -15,10 +15,12 @@ import {
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   type ParentGateAttestation,
 } from "@cq/config";
-import type {
-  MergeEffectBinding,
-  WorksetEffectAdmissionProvider,
-  WorksetBrokerAdmissionHandle,
+import {
+  awaitBeforeLaunchDeadline,
+  remainingLaunchDeadlineMs,
+  type MergeEffectBinding,
+  type WorksetEffectAdmissionProvider,
+  type WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
 import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
@@ -5319,6 +5321,28 @@ export async function markImplementationCompletionMergeStarted(
   observedHead: string,
   now: () => string = () => new Date().toISOString(),
 ): Promise<void> {
+  const snapshot = await store.snapshot();
+  const retained = snapshot.completions[completionRef];
+  if (retained !== undefined) {
+    const blocking = Object.values(snapshot.completions).find(
+      (entry) =>
+        entry.completionRef !== retained.completionRef &&
+        (entry.state === "merge-started" ||
+          entry.state === "merged" ||
+          entry.state === "recording"),
+    );
+    if (blocking !== undefined) {
+      throw new Error(
+        `implementation completion ${blocking.completionRef} blocks another repository merge until recording`,
+      );
+    }
+    if (
+      (retained.state === "merge-started" && observedHead === retained.repositoryHead) ||
+      (retained.state === "merged" && observedHead === retained.resultCommit)
+    ) {
+      return;
+    }
+  }
   await store[mutateEvidence](async (state) => {
     const completion = state.completions[completionRef];
     if (completion === undefined) throw new Error("merge completion journal disappeared");
@@ -5367,6 +5391,14 @@ export async function markImplementationCompletionMerged(
   observedHead: string,
   now: () => string = () => new Date().toISOString(),
 ): Promise<void> {
+  const retained = (await store.snapshot()).completions[completionRef];
+  if (
+    retained !== undefined &&
+    retained.state === "merged" &&
+    observedHead === retained.resultCommit
+  ) {
+    return;
+  }
   await store[mutateEvidence](async (state) => {
     const completion = state.completions[completionRef];
     if (completion === undefined) throw new Error("merge completion journal disappeared");
@@ -5601,12 +5633,31 @@ export function implementationCompletionMergeAdmissionProviderFromStore(
         registerProcessGroup: async (registration, deadline) =>
           await underlying.registerProcessGroup(registration, deadline),
         shareWithGuardian: async (guardian, deadline) => {
-          await markImplementationCompletionMergeStarted(
-            options.store,
-            options.binding.completionRef,
-            await options.repositoryHead(),
-            options.now,
+          const phase = "durable merge-started preparation";
+          const observedHead = await awaitBeforeLaunchDeadline(
+            options.repositoryHead(),
+            deadline,
+            phase,
           );
+          await awaitBeforeLaunchDeadline(
+            markImplementationCompletionMergeStarted(
+              options.store,
+              options.binding.completionRef,
+              observedHead,
+              options.now,
+            ),
+            deadline,
+            phase,
+          );
+          remainingLaunchDeadlineMs(deadline, phase);
+          const confirmedHead = await awaitBeforeLaunchDeadline(
+            options.repositoryHead(),
+            deadline,
+            phase,
+          );
+          if (confirmedHead !== observedHead) {
+            throw new Error("repository HEAD changed during durable merge-started preparation");
+          }
           await underlying.shareWithGuardian(guardian, deadline);
         },
         markSettled: async () => {

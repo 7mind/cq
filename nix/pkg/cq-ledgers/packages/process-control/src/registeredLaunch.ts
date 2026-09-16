@@ -42,6 +42,8 @@ export interface RegisteredLaunchBootstrapSpecification<TStdio> {
   readonly env: NodeJS.ProcessEnv;
   readonly detached: true;
   readonly stdio: TStdio;
+  /** Absolute boundary consumed by both the launcher and bootstrap. */
+  readonly launchDeadlineMs: number;
 }
 
 export interface RegisteredTargetOutcome {
@@ -272,7 +274,7 @@ async function waitForBootstrapStatus(
     if (exit.settled) {
       if (exit.error !== undefined) throw exit.error;
       throw new Error(
-        "@cq/process-control: registered-launch bootstrap exited before target launch acknowledgement",
+        "@cq/process-control: registered-launch target launch acknowledgement failed because the bootstrap exited",
       );
     }
     if (Date.now() >= deadline) {
@@ -430,6 +432,7 @@ async function failClosed<TProcess, TExit>(
   registration: ProcessGroupRegistration | null,
 ): Promise<never> {
   let settlementFailure: unknown;
+  let bootstrapExitOutcome = "unobserved";
   try {
     if (registration !== null) {
       const result = await settleProcessGroups([registration], {
@@ -442,7 +445,15 @@ async function failClosed<TProcess, TExit>(
         );
       }
       if (bootstrap !== null) {
-        await Promise.all([bootstrap.exited.catch(() => undefined), bootstrap.outputDrained]);
+        const outcome = await bootstrap.exited.then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
+        bootstrapExitOutcome =
+          outcome.status === "rejected"
+            ? `rejected(${errorMessage(outcome.error)})`
+            : formatBootstrapExitOutcome(outcome.value);
+        await bootstrap.outputDrained;
       }
     } else if (bootstrap !== null) {
       await bootstrap.terminate("SIGKILL");
@@ -452,13 +463,35 @@ async function failClosed<TProcess, TExit>(
   } catch (error) {
     settlementFailure = error;
   }
+  const reportedCause =
+    registration === null
+      ? cause
+      : new Error(
+          `${errorMessage(cause)}; authenticated guardian/bootstrap exit outcome ` +
+            `for ${String(registration.leader.pid)}@${registration.leader.startTime}: ${bootstrapExitOutcome}`,
+          { cause },
+        );
   if (settlementFailure !== undefined) {
     throw new AggregateError(
-      [cause, settlementFailure],
-      `@cq/process-control: registered launch failed and fenced-group settlement failed: ${errorMessage(cause)}`,
+      [reportedCause, settlementFailure],
+      `@cq/process-control: registered launch failed and fenced-group settlement failed: ${errorMessage(reportedCause)}`,
     );
   }
-  throw cause;
+  throw reportedCause;
+}
+
+function formatBootstrapExitOutcome(outcome: unknown): string {
+  if (typeof outcome === "number") return `exitCode=${String(outcome)}, signal=null`;
+  if (typeof outcome === "object" && outcome !== null) {
+    const value = outcome as Record<string, unknown>;
+    const exitCode = value["exitCode"];
+    const signal = value["signal"];
+    if ((typeof exitCode === "number" || exitCode === null) &&
+        (typeof signal === "string" || signal === null)) {
+      return `exitCode=${String(exitCode)}, signal=${String(signal)}`;
+    }
+  }
+  return `value=${String(outcome)}`;
 }
 
 /**
@@ -474,8 +507,10 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
   options: LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio>,
 ): Promise<LaunchedRegisteredProcessGroup<TProcess, TExit>> {
   assertTarget(options.argv, options.cwd);
-  validateLaunchDeadlineMs(options.launchDeadlineMs);
-  remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch bootstrap creation");
+  const launchDeadlineMs =
+    options.launchDeadlineMs ?? Date.now() + REGISTERED_LAUNCH_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS;
+  validateLaunchDeadlineMs(launchDeadlineMs);
+  remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch bootstrap creation");
   const cwd = targetCwd(options.cwd);
   const configuredLauncherHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
   const launcherDarwinHelper =
@@ -512,6 +547,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
         String(launcher.pid),
         launcher.startTime,
         launcherDarwinHelper ?? "",
+        String(launchDeadlineMs),
         cwd,
         ...options.argv,
       ],
@@ -519,6 +555,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       env: { ...options.env },
       detached: true,
       stdio: options.stdio,
+      launchDeadlineMs,
     };
     bootstrap = options.launchBootstrap(specification);
     const exit: ExitObservation = { settled: false, error: undefined };
@@ -546,23 +583,23 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       throw new Error("@cq/process-control: registered-launch bootstrap returned no PID");
     }
 
-    registration = await waitForLeaderIdentity(pid, exit, options.launchDeadlineMs);
+    registration = await waitForLeaderIdentity(pid, exit, launchDeadlineMs);
     await awaitBeforeLaunchDeadline(
       options.register(registration),
-      options.launchDeadlineMs,
+      launchDeadlineMs,
       "registered-launch durable registration",
     );
-    remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch durable registration");
+    remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch durable registration");
     if (!(await isProcessIdentityAlive(registration.leader))) {
       throw new Error("@cq/process-control: registered-launch bootstrap exited before release");
     }
     if (options.shareLeaseWithGuardian !== undefined) {
       await awaitBeforeLaunchDeadline(
         options.shareLeaseWithGuardian(registration),
-        options.launchDeadlineMs,
+        launchDeadlineMs,
         "registered-launch guardian share",
       );
-      remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch guardian share");
+      remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch guardian share");
       if (!(await isProcessIdentityAlive(registration.leader))) {
         throw new Error(
           "@cq/process-control: registered-launch guardian exited before target release",
@@ -574,8 +611,9 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
         nonce,
         pgid: registration.pgid,
         launcher,
+        launchDeadlineMs,
       }),
-      options.launchDeadlineMs,
+      launchDeadlineMs,
       "registered-launch target release",
     );
     await waitForBootstrapStatus(
@@ -583,7 +621,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       nonce,
       registration.pgid,
       exit,
-      options.launchDeadlineMs,
+      launchDeadlineMs,
     );
     const exited = completeRegisteredLaunch(
       bootstrap,

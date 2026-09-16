@@ -3,12 +3,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { remainingLaunchDeadlineMs, validateLaunchDeadlineMs } from "./launchDeadline.ts";
 import { readProcessIdentityWithDarwinHelper, type ProcessIdentity } from "./processGroup.ts";
 import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.ts";
 
 const START_POLL_MS = 2;
 const COMPLETION_POLL_MS = Math.min(25, REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS);
-const START_TIMEOUT_MS = 30_000;
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
@@ -93,8 +93,8 @@ async function waitForRelease(
   expectedLauncher: ProcessIdentity,
   launcherDarwinHelper: string | null,
   protocolDirectory: string,
+  launchDeadlineMs: number,
 ): Promise<void> {
-  const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
     if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
       await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, false);
@@ -108,7 +108,8 @@ async function waitForRelease(
         typeof launcher !== "object" ||
         launcher === null ||
         launcher["pid"] !== expectedLauncher.pid ||
-        launcher["startTime"] !== expectedLauncher.startTime
+        launcher["startTime"] !== expectedLauncher.startTime ||
+        value["launchDeadlineMs"] !== launchDeadlineMs
       ) {
         throw new Error("cq registered-launch bootstrap: release identity mismatch");
       }
@@ -119,9 +120,7 @@ async function waitForRelease(
     } catch (error) {
       if (!isNodeError(error, "ENOENT")) throw error;
     }
-    if (Date.now() >= deadline) {
-      throw new Error("cq registered-launch bootstrap: timed out before registration release");
-    }
+    remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch bootstrap release");
     await new Promise((resolve) => setTimeout(resolve, START_POLL_MS));
   }
 }
@@ -222,8 +221,9 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const launcherPidText = argv[2];
   const launcherStartTime = argv[3];
   const launcherDarwinHelperText = argv[4];
-  const commandCwd = argv[5];
-  const executable = argv[6];
+  const launchDeadlineText = argv[5];
+  const commandCwd = argv[6];
+  const executable = argv[7];
   if (
     protocolDirectory === undefined ||
     protocolDirectory === "" ||
@@ -234,6 +234,8 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
     launcherStartTime === undefined ||
     launcherStartTime === "" ||
     launcherDarwinHelperText === undefined ||
+    launchDeadlineText === undefined ||
+    !/^[0-9]+$/u.test(launchDeadlineText) ||
     commandCwd === undefined ||
     commandCwd === "" ||
     executable === undefined ||
@@ -247,6 +249,8 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const completionPath = join(protocolDirectory, "completion.json");
   const launcher = { pid: Number(launcherPidText), startTime: launcherStartTime };
   const launcherDarwinHelper = launcherDarwinHelperText === "" ? null : launcherDarwinHelperText;
+  const launchDeadlineMs = Number(launchDeadlineText);
+  validateLaunchDeadlineMs(launchDeadlineMs);
   try {
     await authenticateInitialLauncher(launcher, launcherDarwinHelper);
     await waitForRelease(
@@ -256,6 +260,7 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
       launcher,
       launcherDarwinHelper,
       protocolDirectory,
+      launchDeadlineMs,
     );
     await rm(releasePath, { force: true });
   } catch (error) {
@@ -266,7 +271,8 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   let child: ChildProcess;
   let exited: Promise<TargetOutcome>;
   try {
-    child = spawn(executable, argv.slice(7), {
+    remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch bootstrap target launch");
+    child = spawn(executable, argv.slice(8), {
       cwd: commandCwd,
       detached: false,
       stdio: "inherit",
