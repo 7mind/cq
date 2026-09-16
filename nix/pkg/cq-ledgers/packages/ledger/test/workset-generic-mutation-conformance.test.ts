@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { SQL } from "bun";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -11,8 +12,14 @@ import {
   classifyGenericItemUpdate,
   effectiveGenericMutationDelta,
   createInMemoryGenericMutationDataSource,
+  createInMemoryWorksetStore,
+  createWorksetGenericMutationGateway,
   createInMemoryWorksetManagementLedger,
+  InMemoryLedgerStore,
 } from "../src/index.js";
+import type { AdmittedGenericMutation } from "../src/worksetGenericMutation.js";
+import { PostgresOperationQueries } from "../src/store/postgres/operationAccess.js";
+import { resolvePostgresGenericRows } from "../src/store/postgres/genericRowOperation.js";
 import {
   GENERIC_MUTATION_DATA_SOURCE_ACTIVE_ITEMS,
   GENERIC_MUTATION_DATA_SOURCE_ARCHIVED_ITEMS,
@@ -113,6 +120,76 @@ describe("T1988 generic mutation conformance [Behavioral-Active Blackbox-Atomic]
       expect(ledger.activeAdmissionCount()).toBe(0);
     } finally {
       await ledger.dispose();
+    }
+  });
+});
+
+describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-Group]", () => {
+  test("D442 keeps semantic admission targets separate from the exact PostgreSQL row scope", async () => {
+    const rawStore = new InMemoryLedgerStore();
+    const worksetStore = createInMemoryWorksetStore();
+    await rawStore.init();
+    const fakeSql = (context: AdmittedGenericMutation): SQL =>
+      ({
+        array: (values: readonly string[]) => values,
+        unsafe: async (statement: string) => {
+          if (statement.includes("FROM workset_admissions")) {
+            return [
+              {
+                form: "ledger-mutation",
+                kind: context.admission.kind,
+                epoch: context.admission.epoch,
+                targets_json: JSON.stringify(context.admission.targets),
+              },
+            ];
+          }
+          if (statement.includes("FROM workset_roots")) {
+            return [
+              {
+                epoch: context.admission.epoch,
+                roots_json: JSON.stringify(context.admission.roots),
+              },
+            ];
+          }
+          return [];
+        },
+      }) as unknown as SQL;
+    const gateway = createWorksetGenericMutationGateway({
+      rawStore,
+      worksetStore,
+      runGenericTransaction: async (_mutate, _measurement, _scope, context) => {
+        expect(context).toBeDefined();
+        const admitted = context as AdmittedGenericMutation;
+        expect(admitted.admission.targets).toEqual([]);
+        expect(admitted.scope.targetRefs).toEqual([`${IDEAS_LEDGER}:I1`]);
+        const queries = new PostgresOperationQueries(
+          fakeSql(admitted),
+          "t6569-binding",
+          admitted.scope.operation,
+          null,
+          () => 0,
+          null,
+        );
+        const resolution = await resolvePostgresGenericRows(queries, admitted);
+        if (resolution.plan.kind === "rejected") throw resolution.plan.error;
+        return {
+          id: "I1",
+          milestoneId: "M-AMBIENT",
+          status: "raw",
+          fields: { title: "updated" },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+      },
+    });
+
+    try {
+      const updated = await gateway.updateItem(IDEAS_LEDGER, "I1", {
+        fields: { title: "updated" },
+      });
+      expect(updated).toMatchObject({ id: "I1" });
+    } finally {
+      await rawStore.dispose();
     }
   });
 });
