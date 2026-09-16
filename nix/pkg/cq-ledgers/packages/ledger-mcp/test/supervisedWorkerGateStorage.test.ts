@@ -20,10 +20,13 @@ import {
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   PLAN_FINALIZED_MANIFEST_FIELD,
   assertManagedWorktreeWipClosure,
+  continueManagedWorktreeRebase,
   createNodeSupervisedWorkerGateRunner,
   createInMemoryWorksetStore,
+  gitRebaseConflictStateDigest,
   listManagedLiveWorktrees,
   nodeSupervisedWorkerGateRunner,
+  observeManagedWorktreeConflictState,
   prepareManagedWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
@@ -338,10 +341,12 @@ async function fixtureWithDispatchBase(
     projectKey: `t2081-${sequence}`,
   };
   const store = new InMemoryAttestationStore(namespace);
+  const backend = new InMemoryAttestationBackend(store);
+  const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
   const capability = createDispatchCapability({
-    backend: new InMemoryAttestationBackend(store),
+    backend,
     promptArtifactStore: artifactStore(),
-    ...(withLedgerStore ? { ledgerStore: finalizedTaskStore() } : {}),
+    ...(ledgerStore === undefined ? {} : { ledgerStore }),
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
@@ -461,6 +466,8 @@ async function fixtureWithDispatchBase(
     receipt,
     output,
     store,
+    backend,
+    ledgerStore,
     runner,
     dispatchBaseCommit,
     expectedChild,
@@ -924,6 +931,169 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         "HEAD",
       ]),
     ).toBe("");
+  });
+
+  test("a fresh production coordinator replays one persisted conflict without gating or relaunching it", async () => {
+    const runner = new GateDummy();
+    const subject = await fixture(runner, true);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined ||
+      subject.ledgerStore === undefined
+    ) {
+      throw new Error("implementation candidate runtime is unavailable");
+    }
+    const correlationId = subject.expectedChild.childId.slice("implement-worker#".length);
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId,
+      childThreadId: "conflicted-child-thread",
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+    await fs.writeFile(path.join(subject.repositoryRoot, "file.txt"), "protected\n");
+    await git(subject.repositoryRoot, ["add", "file.txt"]);
+    await git(subject.repositoryRoot, ["commit", "-q", "-m", "conflict protected head"]);
+    await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
+    await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
+
+    const first = await subject.capability.coordinateImplementationCandidate({
+      partitionKey: qualified.partitionKey,
+      holderId: "production-conflict-coordinator",
+    });
+
+    expect(first).toMatchObject({
+      state: "blocked",
+      front: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+      frontState: "staged-rebase-retired",
+    });
+    expect(runner.requests).toHaveLength(0);
+    const retired = subject.store.rows().find(
+      (row) =>
+        row.attestationId === subject.prepared.attestationId &&
+        row.generation === subject.prepared.generation,
+    );
+    expect(retired?.implementationQueue).toMatchObject({
+      state: "staged-rebase-retired",
+      stagedRebaseDisposition: { state: "conflict-pending" },
+    });
+    const persistedControl = retired?.implementationQueue;
+
+    const restarted = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(subject.store),
+      promptArtifactStore: artifactStore(),
+      ledgerStore: subject.ledgerStore,
+      repositoryRoot: subject.repositoryRoot,
+      worktreeStateDir: subject.stateDir,
+      supervisedWorkerGateRunner: runner,
+      now: () => "2026-08-12T20:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(sequence * 64),
+    });
+    if (restarted.coordinateImplementationCandidate === undefined) {
+      throw new Error("restarted implementation coordinator is unavailable");
+    }
+
+    const replay = await restarted.coordinateImplementationCandidate({
+      partitionKey: qualified.partitionKey,
+      holderId: "restarted-conflict-coordinator",
+    });
+
+    expect(replay).toEqual(first);
+    expect(runner.requests).toHaveLength(0);
+    expect(
+      subject.store.rows().find(
+        (row) =>
+          row.attestationId === subject.prepared.attestationId &&
+          row.generation === subject.prepared.generation,
+      )?.implementationQueue,
+    ).toEqual(persistedControl);
+
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        allowDetachedRebase: true,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("conflicted managed binding did not resolve");
+    const conflict = await observeManagedWorktreeConflictState(binding, {
+      stateDir: subject.stateDir,
+    });
+    const resolvedBody = "protected + candidate\n";
+    await fs.writeFile(path.join(subject.managed.handle.absolutePath, "file.txt"), resolvedBody);
+    await continueManagedWorktreeRebase(
+      {
+        authorization: {
+          ...binding,
+          attestationId: "cq_attest_t2081_conflict_resolver",
+          generation: 1,
+          roleId: "implement-conflict-resolver",
+          surface: "codex",
+          childCancelAt: "2099-01-01T00:00:00.000Z",
+          conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+        },
+        operationId: "t2081-conflict-resolution",
+        expectedState: conflict,
+        resolutions: [
+          {
+            kind: "regular",
+            path: "file.txt",
+            newState: { mode: "100644", digest: sha256(resolvedBody) },
+          },
+        ],
+      },
+      { stateDir: subject.stateDir, authorize: async () => undefined },
+    );
+    const finalizedRestart = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(subject.store),
+      promptArtifactStore: artifactStore(),
+      ledgerStore: subject.ledgerStore,
+      repositoryRoot: subject.repositoryRoot,
+      worktreeStateDir: subject.stateDir,
+      supervisedWorkerGateRunner: runner,
+      now: () => "2026-08-12T20:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(sequence * 96),
+    });
+    if (finalizedRestart.coordinateImplementationCandidate === undefined) {
+      throw new Error("finalized-journal coordinator is unavailable");
+    }
+
+    expect(
+      await finalizedRestart.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "finalized-journal-coordinator",
+      }),
+    ).toEqual({
+      state: "successor-queued",
+      source: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+      successor: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation + 1,
+      },
+    });
+    expect(runner.requests).toHaveLength(0);
+    expect(
+      subject.store.rows().filter(
+        (row) =>
+          row.attestationId === subject.prepared.attestationId &&
+          row.generation === subject.prepared.generation + 1,
+      ),
+    ).toHaveLength(1);
   });
 
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {

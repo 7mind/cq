@@ -182,6 +182,7 @@ export class ImplementationCandidateQueueAdapter {
 
   inspectPendingStagedRebase(
     partitionKey: string,
+    disposition: "undisposed" | "conflict-pending" = "undisposed",
   ): Promise<PendingStagedRebaseCheckpoint | undefined> {
     return this.backend.transact({ kind: "namespace" }, (store) => {
       const rows = store.rows();
@@ -194,7 +195,9 @@ export class ImplementationCandidateQueueAdapter {
             control === undefined ||
             source === undefined ||
             control.state !== "staged-rebase-retired" ||
-            control.stagedRebaseDisposition !== undefined ||
+            (disposition === "undisposed"
+              ? control.stagedRebaseDisposition !== undefined
+              : control.stagedRebaseDisposition?.state !== "conflict-pending") ||
             control.partition.partitionKey !== partitionKey
           ) {
             return [];
@@ -413,6 +416,33 @@ export class ImplementationCandidateCoordinator {
       });
     }
     const acquired = await this.queue.acquire(request);
+    if (acquired.state === "empty") {
+      const deferredConflict = await this.queue.inspectPendingStagedRebase(
+        request.partitionKey,
+        "conflict-pending",
+      );
+      if (deferredConflict !== undefined) {
+        if (this.operations.reconcileRetiredSource === undefined) {
+          throw new Error("retired staged-rebase recovery is unavailable");
+        }
+        const reconciled = await this.operations.reconcileRetiredSource(deferredConflict);
+        if (reconciled.state === "conflict-pending") {
+          const parked = await this.queue.parkRetiredStagedRebaseConflict(deferredConflict);
+          return Object.freeze({
+            state: "blocked" as const,
+            partitionKey: deferredConflict.source.partitionKey,
+            partitionRevision: parked.partitionRevision,
+            front: Object.freeze({ ...deferredConflict.source.source }),
+            frontState: "staged-rebase-retired" as const,
+          });
+        }
+        return Object.freeze({
+          state: "successor-queued" as const,
+          source: Object.freeze({ ...deferredConflict.source.source }),
+          successor: Object.freeze({ ...reconciled.successor }),
+        });
+      }
+    }
     if (acquired.state !== "leased") return acquired;
     const control = await this.queue.inspectLease(acquired.lease);
     const protectedHead = await this.operations.observeProtectedHead(control);

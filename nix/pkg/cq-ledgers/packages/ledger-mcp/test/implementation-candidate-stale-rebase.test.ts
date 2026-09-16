@@ -122,8 +122,17 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
     let conflictParkCalls = 0;
     let laterGateCalls = 0;
     const conflictedQueue = {
-      inspectPendingStagedRebase: async () =>
-        conflictParked ? undefined : { control, source },
+      inspectPendingStagedRebase: async (
+        _partitionKey: string,
+        disposition: "undisposed" | "conflict-pending" = "undisposed",
+      ) =>
+        disposition === "conflict-pending"
+          ? conflictParked
+            ? { control, source }
+            : undefined
+          : conflictParked
+            ? undefined
+            : { control, source },
       parkRetiredStagedRebaseConflict: async () => {
         conflictParkCalls += 1;
         conflictParked = true;
@@ -141,6 +150,13 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
       },
       acquire: async () => {
         acquireCalls += 1;
+        if (acquireCalls > 1) {
+          return {
+            state: "empty" as const,
+            partitionKey: laterQualified.queue.partition.partitionKey,
+            partitionRevision: control.partitionRevision + 2,
+          };
+        }
         return {
           state: "leased" as const,
           lease: laterLease,
@@ -201,6 +217,21 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
     });
     expect(acquireCalls).toBe(1);
     expect(laterGateCalls).toBe(1);
+
+    expect(
+      await conflicted.run({
+        partitionKey: qualified.queue.partition.partitionKey,
+        holderId: "restart-conflict-coordinator",
+      }),
+    ).toEqual({
+      state: "blocked",
+      partitionKey: source.partitionKey,
+      partitionRevision: control.partitionRevision + 1,
+      front: source.source,
+      frontState: "staged-rebase-retired",
+    });
+    expect(acquireCalls).toBe(2);
+    expect(conflictParkCalls).toBe(2);
   });
 
   // regression: T6519 — a staged row with no durable completion proof must not block forever.
