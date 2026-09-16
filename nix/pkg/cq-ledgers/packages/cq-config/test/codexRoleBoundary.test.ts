@@ -18,6 +18,7 @@ import {
   createCodexRoleBoundaryPlan,
   calculateCodexParentFirstAttemptMs,
   calculateCodexStagedTimingBasis,
+  executeCodexImplementationCandidateQualifier,
   executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -102,6 +103,52 @@ function trustedStoredStream(finalMessage: string): string {
 }
 
 describe("T1330 Codex role process boundary", () => {
+  test("candidate qualification replays one exact request after a lost acknowledgement [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-candidate-qualification-replay-"));
+    const runner = join(root, "qualifier");
+    const attempts = join(root, "attempts");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `if test ! -f ${JSON.stringify(attempts)}; then`,
+        `  printf 1 >${JSON.stringify(attempts)}`,
+        "  echo 'acknowledgement lost after durable qualification' >&2",
+        "  exit 1",
+        "fi",
+        `printf 2 >${JSON.stringify(attempts)}`,
+        `printf %s ${JSON.stringify(JSON.stringify({
+          state: "queued",
+          attestationId: HANDLE.attestationId,
+          generation: HANDLE.generation,
+          outputDigest: "a".repeat(64),
+          qualificationDigest: "b".repeat(64),
+        }))}`,
+      ].join("\n"),
+    );
+    chmodSync(runner, 0o755);
+    try {
+      await executeCodexImplementationCandidateQualifier({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        handle: HANDLE,
+        roleId: "implement-worker",
+        correlationId: "candidate-correlation",
+        childThreadId: "candidate-thread",
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: "2026-09-16T12:00:00.000Z",
+        promptDigest: "c".repeat(64),
+        timeoutMs: 2_000,
+      });
+      expect(readFileSync(attempts, "utf8")).toBe("2");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("D444 keeps global evidence auditors capability-scoped while ordinary roles retain workset admission [Behavioral-Active Blackbox-Atomic]", async () => {
     const worksetProvider = {
       acquire: async () => {

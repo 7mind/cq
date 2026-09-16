@@ -234,20 +234,13 @@ export interface CodexImplementationCandidateQualifierRequest {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-/** Persist the exact process observation as a qualified queued candidate without starting a gate. */
-export async function executeCodexImplementationCandidateQualifier(
+const CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS = 2;
+
+async function executeCodexImplementationCandidateQualifierAttempt(
   input: CodexImplementationCandidateQualifierRequest,
+  request: Readonly<Record<string, unknown>>,
+  timeoutMs: number,
 ): Promise<void> {
-  const request = {
-    ...input.handle,
-    roleId: input.roleId,
-    correlationId: input.correlationId,
-    childThreadId: input.childThreadId,
-    outcome: input.outcome,
-    exitStatus: input.exitStatus,
-    observedAt: input.observedAt,
-    promptDigest: input.promptDigest,
-  };
   const child = Bun.spawn(
     [
       input.command,
@@ -274,7 +267,7 @@ export async function executeCodexImplementationCandidateQualifier(
   const timer = setTimeout(() => {
     timedOut = true;
     child.kill("SIGKILL");
-  }, input.timeoutMs);
+  }, timeoutMs);
   const [exitStatus, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -282,7 +275,7 @@ export async function executeCodexImplementationCandidateQualifier(
   ]).finally(() => clearTimeout(timer));
   if (timedOut) {
     throw new CodexRoleBoundaryError(
-      `implementation candidate qualification exceeded ${String(input.timeoutMs)} ms`,
+      `implementation candidate qualification exceeded ${String(timeoutMs)} ms`,
     );
   }
   if (exitStatus !== 0) {
@@ -312,6 +305,46 @@ export async function executeCodexImplementationCandidateQualifier(
     throw new CodexRoleBoundaryError(
       "implementation candidate qualification emitted a foreign acknowledgement",
     );
+  }
+}
+
+/** Persist the exact process observation as a qualified queued candidate without starting a gate. */
+export async function executeCodexImplementationCandidateQualifier(
+  input: CodexImplementationCandidateQualifierRequest,
+): Promise<void> {
+  const request = Object.freeze({
+    ...input.handle,
+    roleId: input.roleId,
+    correlationId: input.correlationId,
+    childThreadId: input.childThreadId,
+    outcome: input.outcome,
+    exitStatus: input.exitStatus,
+    observedAt: input.observedAt,
+    promptDigest: input.promptDigest,
+  });
+  const deadlineMs = Date.now() + input.timeoutMs;
+  let firstFailure: unknown;
+  for (let attempt = 1; attempt <= CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS; attempt += 1) {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      throw new CodexRoleBoundaryError(
+        `implementation candidate qualification exceeded ${String(input.timeoutMs)} ms`,
+      );
+    }
+    try {
+      await executeCodexImplementationCandidateQualifierAttempt(input, request, remainingMs);
+      return;
+    } catch (error) {
+      if (attempt === 1) {
+        firstFailure = error;
+        continue;
+      }
+      const firstMessage = firstFailure instanceof Error ? firstFailure.message : String(firstFailure);
+      const replayMessage = error instanceof Error ? error.message : String(error);
+      throw new CodexRoleBoundaryError(
+        `implementation candidate qualification acknowledgement remained unavailable after exact replay: ${firstMessage}; ${replayMessage}`,
+      );
+    }
   }
 }
 
