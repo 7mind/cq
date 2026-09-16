@@ -166,6 +166,7 @@ function localInvestigationFixture(
   causeConfirmed: boolean,
   splitOwner = false,
   rootKind: "goal" | "members" = "goal",
+  ownerFault: "none" | "missing" | "cycle" | "revoked" = "none",
 ): LocalPrimaryFixture {
   const memberSpecs = ["D1", "D2"].map((id) => ({
     ref: `defects:${id}`,
@@ -174,7 +175,9 @@ function localInvestigationFixture(
   }));
   const snapshot = snapshotFor(memberSpecs, {});
   const goals = [
-    primaryItem("G1", "planned", { headline: "First investigation goal" }),
+    primaryItem("G1", ownerFault === "revoked" ? "achieved" : "planned", {
+      headline: "First investigation goal",
+    }),
     ...(splitOwner
       ? [primaryItem("G2", "planned", { headline: "Second investigation goal" })]
       : []),
@@ -185,7 +188,16 @@ function localInvestigationFixture(
       severity: "high",
       rootCause: "shared primary cause",
       sourceRefs: [`src/defects:${id}.ts`],
-      worksetOwnerRef: splitOwner && id === "D2" ? "goals:G2" : "goals:G1",
+      worksetOwnerRef:
+        ownerFault === "cycle"
+          ? id === "D1"
+            ? "defects:D2"
+            : "defects:D1"
+          : ownerFault === "missing" && id === "D1"
+            ? "goals:G-missing"
+            : splitOwner && id === "D2"
+              ? "goals:G2"
+              : "goals:G1",
       worksetOwnerEdgeKind: "review-filed-defect",
     }),
   );
@@ -761,11 +773,11 @@ describe("cohort admission observation", () => {
   });
 
   test.each([
-    ["confirmed", true, "goal"],
-    ["confirmed", true, "members"],
-    ["unconfirmed", false, "goal"],
-    ["unconfirmed", false, "members"],
-  ] as const)("fuses primary-backed %s investigations from %s roots through an independent repository witness", async (_label, causeConfirmed, rootKind) => {
+    ["confirmed goal-root", true, "goal"],
+    ["confirmed direct-root", true, "members"],
+    ["unconfirmed goal-root", false, "goal"],
+    ["unconfirmed direct-root", false, "members"],
+  ] as const)("fuses primary-backed %s investigations through an independent repository witness", async (_label, causeConfirmed, rootKind) => {
     const local = localInvestigationFixture(causeConfirmed, false, rootKind);
     const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
       repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
@@ -808,6 +820,28 @@ describe("cohort admission observation", () => {
     expect(constructCohortDecisionsV1(observation)[0]?.excluded[0]?.reason).toBe(
       "ownership-or-manifest",
     );
+  });
+
+  test.each([
+    ["missing", "primary ownership boundary goals:G-missing is unavailable"],
+    ["cycle", "has cyclic primary ownership"],
+    ["revoked", "does not authorise review-filed-defect"],
+  ] as const)("rejects %s primary investigation ownership", async (ownerFault, message) => {
+    const local = localInvestigationFixture(true, false, "members", ownerFault);
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    await expect(
+      produceCohortAdmissionObservationV1(
+        { memberRefs: ["defects:D1", "defects:D2"] },
+        source,
+      ),
+    ).rejects.toThrow(message);
   });
 
   test("resolves a TypeScript source behind a JavaScript import specifier", async () => {
