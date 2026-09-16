@@ -17,7 +17,6 @@ import {
 } from "@cq/config";
 import {
   awaitBeforeLaunchDeadline,
-  remainingLaunchDeadlineMs,
   type MergeEffectBinding,
   type WorksetEffectAdmissionProvider,
   type WorksetBrokerAdmissionHandle,
