@@ -3894,7 +3894,18 @@ export class ImplementationEvidenceService {
       throw new Error("completion is already bound to another activation transition");
     if (!object(completion.workerResult))
       throw new Error("protected completion omitted its consumed worker result");
-    const workerResult = completion.workerResult;
+    const worker = await this.deps.fetchWorker(completion.workerDispatch);
+    if (
+      worker.state !== "consumed" ||
+      !object(worker.input) ||
+      !object(worker.output) ||
+      canonical(worker.output) !== canonical(completion.workerResult)
+    )
+      throw new Error("protected completion worker dispatch is absent or changed");
+    const dispatchStartingCommit = worker.input["startingCommit"];
+    if (typeof dispatchStartingCommit !== "string" || !FULL_SHA.test(dispatchStartingCommit))
+      throw new Error("protected completion worker dispatch has a malformed starting commit");
+    const workerResult = worker.output;
     const gate = workerResult["supervisedGateEvidence"];
     if (
       !object(gate) ||
@@ -3902,7 +3913,7 @@ export class ImplementationEvidenceService {
       workerResult["gateDurationMs"] !== undefined ||
       gate["taskId"] !== taskIdFromRef(input.completedTaskRef) ||
       gate["baseCommit"] !== input.expectedFromHead ||
-      gate["startingCommit"] !== completion.startingCommit ||
+      gate["startingCommit"] !== dispatchStartingCommit ||
       gate["resultCommit"] !== repositoryHead ||
       gate["gateExitCode"] !== 0 ||
       gate["failCount"] !== 0 ||

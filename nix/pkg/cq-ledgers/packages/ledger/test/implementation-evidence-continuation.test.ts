@@ -13,6 +13,7 @@ import {
   type ImplementationEvidenceActivationRecord,
   type ImplementationEvidenceActivationRequirementRecord,
   type ImplementationEvidenceSnapshot,
+  type ImplementationWorkerObservation,
   type PackagedImplementationAuditRecord,
   type PackagedImplementationAuditManifest,
 } from "../src/index.js";
@@ -359,6 +360,7 @@ function fixture(
     finalizedManifest: "finalized-v2\n",
     activationTaskRefs: [...COHORT, COMPLETED_TASK_REF],
   },
+  workerObservation?: ImplementationWorkerObservation,
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
@@ -390,9 +392,12 @@ function fixture(
     executeExternalReview: async () => {
       throw new Error("unused");
     },
-    fetchWorker: async () => {
-      throw new Error("unused");
-    },
+    fetchWorker: async () =>
+      workerObservation ?? {
+        state: "consumed",
+        input: { startingCommit: initial.completions[COMPLETION_REF]!.startingCommit },
+        output: initial.completions[COMPLETION_REF]!.workerResult,
+      },
     readTaskAuthority: async (taskRef: string) =>
       COHORT.includes(taskRef as (typeof COHORT)[number])
         ? {
@@ -450,10 +455,16 @@ function fixtureAt(
   initial: ImplementationEvidenceSnapshot,
   currentManifest: PackagedImplementationAuditManifest,
   currentRepositoryHead: string,
-  _currentCompletedTaskRef: string,
+  currentCompletedTaskRef: string,
   currentTaskRefs: readonly string[],
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
+  const currentCompletion = Object.values(initial.completions).find(
+    (candidate) =>
+      candidate.taskRef === currentCompletedTaskRef && candidate.state !== "superseded",
+  );
+  if (currentCompletion === undefined)
+    throw new Error(`test completion is absent for ${currentCompletedTaskRef}`);
   const dependencies = {
     store,
     resolveReviewerRoster: () => [
@@ -483,9 +494,11 @@ function fixtureAt(
     executeExternalReview: async () => {
       throw new Error("unused");
     },
-    fetchWorker: async () => {
-      throw new Error("unused");
-    },
+    fetchWorker: async () => ({
+      state: "consumed",
+      input: { startingCommit: currentCompletion.startingCommit },
+      output: currentCompletion.workerResult,
+    }),
     readTaskAuthority: async (taskRef: string) => {
       if (COHORT.includes(taskRef as (typeof COHORT)[number]))
         return {
@@ -1086,7 +1099,11 @@ describe("implementation evidence activation continuation [BG]", () => {
 
     let continued;
     try {
-      continued = await fixture(corrected).service.continueEvidenceActivation(request);
+      continued = await fixture(corrected, undefined, undefined, undefined, {
+        state: "consumed",
+        input: { startingCommit: CORRECTION_START },
+        output: guardedCorrectionWorkerResult(),
+      }).service.continueEvidenceActivation(request);
     } catch (error) {
       throw new Error(`D490 reproduction rejected: ${String(error)}`);
     }
