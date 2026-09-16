@@ -15,9 +15,11 @@ const cleanup = (command: readonly string[], cwd: string, environment: NodeJS.Pr
 try {
   const args = process.argv.slice(2);
   if (args[0] === "--") args.shift();
+  const taskOnly = args[0] === "--task-only";
+  if (taskOnly) args.shift();
   const report = await runPostgresRequiredGate(args, process.cwd(), { ...process.env }, {
     run, openCluster: (environment) => openPostgresTestCluster(environment, run, cleanup),
-  });
+  }, { taskOnly });
   console.log(JSON.stringify(report));
 } catch (error) {
   console.error(error instanceof Error ? error.message : "required PostgreSQL gate failed");

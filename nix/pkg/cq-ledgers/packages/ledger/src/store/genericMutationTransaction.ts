@@ -100,6 +100,10 @@ export interface WorksetGenericMutationTx {
   createLedger(name: string, schema: LedgerSchema): FetchedLedger;
   reopenItem(ledgerId: string, itemId: string, toStatus: string): Item;
   unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Item;
+  collectArchiveTerminalItemRefs(
+    ledgerIds: readonly string[],
+    gatePolicy: ArchiveTerminalItemsGatePolicy,
+  ): readonly string[];
   archiveTerminalItems(
     ledgerIds: readonly string[],
     summary: string,
@@ -346,6 +350,68 @@ export function createGenericMutationTransaction(
       dirtyArchives.add(key);
       dirtyLedgers.add(ledgerId);
       return cloneItem(item);
+    },
+    collectArchiveTerminalItemRefs: (ledgerIds, gatePolicy) => {
+      if (gatePolicy !== "fail-on-active-gate" && gatePolicy !== "retain-active-gates") {
+        throw new LedgerError(`unknown terminal-item archive gate policy "${gatePolicy}"`);
+      }
+      const selectedLedgerIds = [...new Set(ledgerIds)].sort();
+      if (selectedLedgerIds.includes(MILESTONES_LEDGER)) {
+        throw new BootstrapViolationError(
+          `${MILESTONES_LEDGER} items are archived only through archiveMilestone`,
+        );
+      }
+      for (const ledgerId of selectedLedgerIds) getLedger(ledgerId);
+
+      const leavingUnsatisfied = new Map<string, string>();
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            if (terminal.has(item.status) && !statusSatisfiesDependency(ledger.schema, item.status)) {
+              leavingUnsatisfied.set(`${ledgerId}:${item.id}`, group.id);
+            }
+          }
+        }
+      }
+      const blockers = collectUnsatisfiedDependencyArchiveBlockers(
+        state.ledgers,
+        leavingUnsatisfied,
+      );
+      if (gatePolicy === "fail-on-active-gate") {
+        assertArchiveItemsDoNotDropUnsatisfyingGates(state.ledgers, leavingUnsatisfied);
+      }
+      const retained = new Set(blockers.map((blocker) => blocker.targetRef));
+      const ownersWithActiveChildren = new Set<string>();
+      for (const ledger of state.ledgers.values()) {
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            if (terminal.has(item.status)) continue;
+            const ownerRef = item.fields[WORKSET_OWNER_REF_FIELD];
+            if (typeof ownerRef === "string") ownersWithActiveChildren.add(ownerRef);
+          }
+        }
+      }
+      const affected: string[] = [];
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            const ref = `${ledgerId}:${item.id}`;
+            if (
+              terminal.has(item.status) &&
+              !retained.has(ref) &&
+              !ownersWithActiveChildren.has(ref)
+            ) {
+              affected.push(ref);
+            }
+          }
+        }
+      }
+      return affected.sort();
     },
     archiveTerminalItems: (ledgerIds, summary, gatePolicy) => {
       if (gatePolicy !== "fail-on-active-gate" && gatePolicy !== "retain-active-gates") {

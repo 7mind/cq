@@ -17,14 +17,20 @@ export interface PostgresRequiredServices {
 
 export interface PostgresRequiredReport {
   readonly status: "pass";
+  readonly mode: "task-only" | "task-and-full";
   readonly dsnFingerprint: string;
   readonly clusterOwnership: PostgresTestCluster["ownership"];
   readonly task: PostgresCaseEvidence;
-  readonly full: PostgresCaseEvidence;
+  readonly full: PostgresCaseEvidence | null;
+}
+
+export interface PostgresRequiredOptions {
+  readonly taskOnly: boolean;
 }
 
 export async function runPostgresRequiredGate(command: readonly string[], cwd: string,
-  environment: NodeJS.ProcessEnv, services: PostgresRequiredServices): Promise<PostgresRequiredReport> {
+  environment: NodeJS.ProcessEnv, services: PostgresRequiredServices,
+  options: PostgresRequiredOptions): Promise<PostgresRequiredReport> {
   if (command.length === 0) throw new Error("check:postgres-required requires a task command after --");
   const reports = await mkdtemp(join(tmpdir(), "cq-postgres-required-reports-"));
   let cluster: PostgresTestCluster | null = null;
@@ -39,12 +45,21 @@ export async function runPostgresRequiredGate(command: readonly string[], cwd: s
     if (taskExit !== 0) throw new Error(`required PostgreSQL task command exited ${taskExit}`);
     const task = taskIsBunTest ? postgresEvidenceFromJunit(await readFile(taskReport, "utf8"))
       : requirePostgresCases(JSON.parse(await readFile(taskReport, "utf8")) as PostgresCaseEvidence);
+    const common = {
+      status: "pass" as const,
+      dsnFingerprint: createHash("sha256").update(cluster.dsn).digest("hex"),
+      clusterOwnership: cluster.ownership,
+      task,
+    };
+    if (options.taskOnly) {
+      return { ...common, mode: "task-only", full: null };
+    }
     const fullReport = join(reports, "full.xml");
     const fullExit = await services.run([process.execPath, "run", "check"], cwd,
       { ...childEnvironment, CQ_TEST_JUNIT_PATH: fullReport });
     if (fullExit !== 0) throw new Error(`required PostgreSQL full check exited ${fullExit}`);
     const full = postgresEvidenceFromJunit(await readFile(fullReport, "utf8"));
-    return { status: "pass", dsnFingerprint: createHash("sha256").update(cluster.dsn).digest("hex"), clusterOwnership: cluster.ownership, task, full };
+    return { ...common, mode: "task-and-full", full };
   } finally {
     try { if (cluster !== null) await cluster.close(); }
     finally { await rm(reports, { recursive: true, force: true }); }

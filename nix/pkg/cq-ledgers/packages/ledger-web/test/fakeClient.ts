@@ -297,6 +297,7 @@ export class FakeClient implements WorksetCapableLedgerClient {
   }> = [];
   readonly createItemCalls: Array<{ ledgerId: string; milestoneId: string }> = [];
   readonly updateItemCalls: Array<{ ledgerId: string; itemId: string }> = [];
+  readonly updateItemPatches: ItemPatch[] = [];
   readonly createMilestoneCalls: string[] = [];
   readonly updateMilestoneCalls: string[] = [];
   readonly worksetCalls: WorksetRequest[] = [];
@@ -734,6 +735,7 @@ export class FakeClient implements WorksetCapableLedgerClient {
   }
   async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.updateItemCalls.push({ ledgerId, itemId });
+    this.updateItemPatches.push(structuredClone(patch));
     const it = this.find(ledgerId, itemId);
     if (patch.status !== undefined) it.status = patch.status;
     if (patch.fields !== undefined) for (const [k, v] of Object.entries(patch.fields)) it.fields[k] = v as FieldValue;

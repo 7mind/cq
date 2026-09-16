@@ -224,6 +224,8 @@ export {
   buildActiveStateFromLedgerStore,
   worksetMemberRefSet,
   introducedClosureRefs,
+  effectiveGenericMutationDelta,
+  classifyGenericItemUpdate,
   createWorksetGenericMutationGateway,
   createWorksetGuardedLedger,
   createWorksetManagementLedger,
@@ -237,6 +239,9 @@ export {
 export type {
   WorksetGenericMutationOperationKind,
   WorksetGenericMutationRestrictivePolicy,
+  WorksetGenericMutationSemanticExemption,
+  WorksetGenericMutationSemanticClass,
+  WorksetGenericMutationEffectiveDelta,
   WorksetGenericMutationOperationClause,
   WorksetGenericMutationFieldKind,
   WorksetGenericMutationFieldRestrictivePolicy,

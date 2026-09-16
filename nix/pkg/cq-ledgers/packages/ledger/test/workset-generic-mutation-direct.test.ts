@@ -6,7 +6,9 @@ import {
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   MILESTONES_AMBIENT_ID,
+  QUESTIONS_LEDGER,
   REVIEWS_LEDGER,
+  TASKS_LEDGER,
   WORKSET_OWNER_EDGE_KIND_FIELD,
   WORKSET_OWNER_REF_FIELD,
   WORKSET_GENERIC_MUTATION_RAW_WRITE_METHODS,
@@ -24,6 +26,63 @@ import {
 } from "./worksetGenericMutationMcpSupport.js";
 
 describe("workset-guarded generic mutation — direct MCP [Behavioral-Active Blackbox-Atomic]", () => {
+  it("D442 admits an ambient idea and web full-field question answer under unrelated roots", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    await store.createMilestone({ id: "M1", title: "D442 direct" });
+    await store.createItem(TASKS_LEDGER, "M1", {
+      id: "T1",
+      status: "planned",
+      fields: { headline: "restrictive root" },
+    });
+    await store.createItem(QUESTIONS_LEDGER, "M1", {
+      id: "Q1",
+      status: "open",
+      fields: { question: "Ship?", context: "unchanged", recommendation: "yes" },
+    });
+    await store.worksetStore().setRoots(["tasks:T1"]);
+    const tools = createLedgerMcpTools(store);
+    const create = tools.find(({ name }) => name === "create_item");
+    const update = tools.find(({ name }) => name === "update_item");
+    if (create === undefined || update === undefined) throw new Error("mutation tools not found");
+
+    try {
+      const created = await create.handler(
+        {
+          ledger_id: IDEAS_LEDGER,
+          id: "I2",
+          status: "open",
+          fields: { title: "ambient intake" },
+          author: "user",
+        } as never,
+        null,
+      );
+      expect(created.isError).not.toBe(true);
+      expect(store.fetchItem(IDEAS_LEDGER, "I2").milestoneId).toBe(MILESTONES_AMBIENT_ID);
+
+      const answered = await update.handler(
+        {
+          ledger_id: QUESTIONS_LEDGER,
+          item_id: "Q1",
+          status: "answered",
+          fields: {
+            question: "Ship?",
+            context: "unchanged",
+            recommendation: "yes",
+            answer: "yes",
+          },
+          author: "user",
+        } as never,
+        null,
+      );
+      expect(answered.isError).not.toBe(true);
+      expect(store.fetchItem(QUESTIONS_LEDGER, "Q1").status).toBe("answered");
+      expect(await store.worksetStore().snapshot()).toEqual({ roots: ["tasks:T1"], epoch: 1 });
+    } finally {
+      await store.dispose();
+    }
+  });
+
   it("routes an explicit owner-scoped create through the guarded lifecycle", async () => {
     const store = new InMemoryLedgerStore();
     await store.init();

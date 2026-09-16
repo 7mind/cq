@@ -387,6 +387,15 @@ describe("ledger-tui App", () => {
     const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
+    expect(h.client.updateItemCalls.at(-1)).toEqual({
+      ledgerId: "questions",
+      itemId: "Q1",
+      patch: {
+        status: "answered",
+        fields: { answer: "ship it" },
+        author: "user",
+      },
+    });
     h.unmount();
   });
 

@@ -22,6 +22,9 @@ import {
 } from "../src/index.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
+if ((PG_URL === undefined || PG_URL.length === 0) && process.env.CQ_TEST_REQUIRE_PG === "1") {
+  throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+}
 
 function openNarrowPool(dsn: string): SQL {
   return new SQL({ url: dsn, max: 1 });

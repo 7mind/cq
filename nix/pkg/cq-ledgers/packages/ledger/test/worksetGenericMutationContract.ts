@@ -27,6 +27,7 @@ import {
   WORKSET_OWNER_EDGE_KIND_FIELD,
   IDEAS_LEDGER,
   MILESTONES_AMBIENT_ID,
+  QUESTIONS_LEDGER,
   TASKS_LEDGER,
   MILESTONES_LEDGER,
   type WorksetGuardedLedger,
@@ -234,16 +235,16 @@ export function runWorksetGenericMutationContract(
       });
       expect(admitted.id).toBe("I9001");
       await ledger.setRoots([`${IDEAS_LEDGER}:${admitted.id}`]);
-      const before = ledger.fetch(IDEAS_LEDGER);
-
-      await expectGatewayRejection(
-        ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+      const restrictedIdea = await ledger.mutations.createItem(
+        IDEAS_LEDGER,
+        MILESTONES_AMBIENT_ID,
+        {
           id: "I9002",
           status: "open",
           fields: { title: "restricted idea" },
-        }),
-        "creation-denied",
+        },
       );
+      expect(restrictedIdea.milestoneId).toBe(MILESTONES_AMBIENT_ID);
       await expectGatewayRejection(
         ledger.mutations.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
           id: "T9001",
@@ -252,7 +253,9 @@ export function runWorksetGenericMutationContract(
         }),
         "creation-denied",
       );
-      expect(ledger.fetch(IDEAS_LEDGER)).toEqual(before);
+      expect(ledger.fetchItem(IDEAS_LEDGER, restrictedIdea.id).fields.title).toBe(
+        "restricted idea",
+      );
     });
 
     caseIt(factory, "D442 admits idea maintenance while unrelated excluded updates remain denied", async () => {
@@ -279,21 +282,150 @@ export function runWorksetGenericMutationContract(
       });
       expect(unrestricted.fields.title).toBe("unrestricted control");
       await ledger.setRoots([`${TASKS_LEDGER}:${admittedTask.id}`]);
-      const beforeIdea = ledger.fetchItem(IDEAS_LEDGER, idea.id);
       const beforeTask = ledger.fetchItem(TASKS_LEDGER, excludedTask.id);
 
-      await expectGatewayRejection(
-        ledger.mutations.updateItem(IDEAS_LEDGER, idea.id, {
-          fields: { title: "restricted maintenance" },
-        }),
-        "target-excluded",
-      );
+      const maintained = await ledger.mutations.updateItem(IDEAS_LEDGER, idea.id, {
+        status: "postponed",
+        fields: {
+          title: "restricted maintenance",
+          ledgerRefs: [`${TASKS_LEDGER}:${excludedTask.id}`],
+        },
+      });
+      expect(maintained.status).toBe("postponed");
+      expect(maintained.fields.ledgerRefs).toEqual([`${TASKS_LEDGER}:${excludedTask.id}`]);
       await expectGatewayRejection(
         ledger.mutations.updateItem(TASKS_LEDGER, excludedTask.id, { status: "wip" }),
         "target-excluded",
       );
-      expect(ledger.fetchItem(IDEAS_LEDGER, idea.id)).toEqual(beforeIdea);
+      expect(ledger.fetchItem(IDEAS_LEDGER, idea.id).fields.title).toBe(
+        "restricted maintenance",
+      );
       expect(ledger.fetchItem(TASKS_LEDGER, excludedTask.id)).toEqual(beforeTask);
+    });
+
+    caseIt(factory, "D442 admits only effective pure question-answer deltas", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "D442 answers" });
+      const root = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T9006",
+        status: "planned",
+        fields: { headline: "unrelated restrictive root" },
+      });
+      const createQuestion = (id: string, fields: Record<string, string | string[]>) =>
+        ledger.mutations.createItem(QUESTIONS_LEDGER, milestone.id, {
+          id,
+          status: "open",
+          fields: { question: `question ${id}`, ...fields },
+        });
+      const answerOnly = await createQuestion("Q9001", {});
+      const fullField = await createQuestion("Q9002", {
+        context: "unchanged context",
+        suggestions: ["yes", "no"],
+        recommendation: "yes",
+      });
+      const statusOnly = await createQuestion("Q9003", { answer: "drafted earlier" });
+      const withdrawal = await createQuestion("Q9004", {});
+      const questionEdit = await createQuestion("Q9005", {});
+      const mixedEdit = await createQuestion("Q9006", { context: "old context" });
+      await ledger.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+      const roots = await ledger.snapshotRoots();
+
+      const answeredDraft = await ledger.mutations.updateItem(
+        QUESTIONS_LEDGER,
+        answerOnly.id,
+        { fields: { answer: "draft answer" } },
+      );
+      expect(answeredDraft.status).toBe("open");
+      expect(answeredDraft.fields.answer).toBe("draft answer");
+      const answeredFull = await ledger.mutations.updateItem(
+        QUESTIONS_LEDGER,
+        fullField.id,
+        {
+          status: "answered",
+          fields: { ...fullField.fields, answer: "yes" },
+          author: "user",
+        },
+      );
+      expect(answeredFull.status).toBe("answered");
+      const answeredStatus = await ledger.mutations.updateItem(
+        QUESTIONS_LEDGER,
+        statusOnly.id,
+        { status: "answered" },
+      );
+      expect(answeredStatus.fields.answer).toBe("drafted earlier");
+
+      for (const [id, patch] of [
+        [withdrawal.id, { status: "withdrawn" }],
+        [questionEdit.id, { fields: { question: "changed question" } }],
+        [mixedEdit.id, { fields: { answer: "answer", context: "changed context" } }],
+      ] as const) {
+        const before = ledger.fetchItem(QUESTIONS_LEDGER, id);
+        await expectGatewayRejection(
+          ledger.mutations.updateItem(QUESTIONS_LEDGER, id, patch),
+          "target-excluded",
+        );
+        expect(ledger.fetchItem(QUESTIONS_LEDGER, id)).toEqual(before);
+      }
+      expect(await ledger.snapshotRoots()).toEqual(roots);
+    });
+
+    caseIt(factory, "D442 reopens and unarchives ideas without changing workset roots", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "D442 idea recovery" });
+      const root = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T9007",
+        status: "planned",
+        fields: { headline: "unrelated root" },
+      });
+      const idea = await ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: "I9007",
+        status: "discarded",
+        fields: { title: "recover idea" },
+      });
+      await ledger.mutations.archiveTerminalItems(
+        [IDEAS_LEDGER],
+        "seed idea archive",
+        "fail-on-active-gate",
+      );
+      await ledger.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+      const roots = await ledger.snapshotRoots();
+
+      const restored = await ledger.mutations.unarchiveItem(
+        IDEAS_LEDGER,
+        MILESTONES_AMBIENT_ID,
+        idea.id,
+      );
+      expect(restored.status).toBe("discarded");
+      const reopened = await ledger.mutations.reopenItem(IDEAS_LEDGER, idea.id, "open");
+      expect(reopened.status).toBe("open");
+      expect(await ledger.snapshotRoots()).toEqual(roots);
+    });
+
+    caseIt(factory, "D442 preserves idea schema and sealed-ownership validation", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const root = await ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: "I9008",
+        status: "open",
+        fields: { title: "validation root" },
+      });
+      await ledger.setRoots([`${IDEAS_LEDGER}:${root.id}`]);
+      const before = ledger.fetchItem(IDEAS_LEDGER, root.id);
+
+      await expect(
+        ledger.mutations.updateItem(IDEAS_LEDGER, root.id, {
+          fields: { ledgerRefs: "not-an-array" as never },
+        }),
+      ).rejects.toThrow();
+      await expectGatewayRejection(
+        ledger.mutations.updateItem(IDEAS_LEDGER, root.id, {
+          fields: { [WORKSET_OWNER_REF_FIELD]: "goals:G1" },
+        }),
+        "sealed-ownership",
+      );
+      expect(ledger.fetchItem(IDEAS_LEDGER, root.id)).toEqual(before);
     });
 
     caseIt(factory, "D442 admits idea-only terminal archive while mixed unrelated targets remain atomic", async () => {
@@ -314,21 +446,46 @@ export function runWorksetGenericMutationContract(
 
       const ledger = await factory.build();
       await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "D442 mixed archive" });
+      const admittedTask = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T9004",
+        status: "planned",
+        fields: { headline: "admitted active root" },
+      });
+      const excludedTask = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T9005",
+        status: "done",
+        fields: { headline: "excluded terminal target" },
+      });
       const idea = await ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
         id: "I9005",
         status: "planned",
         fields: { title: "restricted archive" },
       });
-      await ledger.setRoots([`${IDEAS_LEDGER}:${idea.id}`]);
+      await ledger.setRoots([`${TASKS_LEDGER}:${admittedTask.id}`]);
+      const restrictedArchive = await ledger.mutations.archiveTerminalItems(
+        [IDEAS_LEDGER],
+        "restricted idea archive",
+        "fail-on-active-gate",
+      );
+      expect(restrictedArchive.byLedger).toEqual({ [IDEAS_LEDGER]: 1 });
+      expect(() => ledger.fetchItem(IDEAS_LEDGER, idea.id)).toThrow();
+
+      const mixedIdea = await ledger.mutations.createItem(
+        IDEAS_LEDGER,
+        MILESTONES_AMBIENT_ID,
+        { id: "I9006", status: "discarded", fields: { title: "mixed rollback" } },
+      );
       await expectGatewayRejection(
         ledger.mutations.archiveTerminalItems(
-          [IDEAS_LEDGER],
-          "restricted archive",
+          [IDEAS_LEDGER, TASKS_LEDGER],
+          "mixed archive",
           "fail-on-active-gate",
         ),
-        "archive-terminal-items-denied",
+        "mixed-or-excluded-targets",
       );
-      expect(ledger.fetchItem(IDEAS_LEDGER, idea.id).status).toBe("planned");
+      expect(ledger.fetchItem(IDEAS_LEDGER, mixedIdea.id).status).toBe("discarded");
+      expect(ledger.fetchItem(TASKS_LEDGER, excludedTask.id).status).toBe("done");
     });
 
     caseIt(factory, "rejects sealed ownership fields on generic update (zero mutation)", async () => {
@@ -497,7 +654,7 @@ export function runWorksetGenericMutationContract(
       }
     });
 
-    caseIt(factory, "refuses a terminal-item sweep under restrictive roots", async () => {
+    caseIt(factory, "archives terminal items when every affected target is admitted", async () => {
       const ledger = await factory.build();
       await ledger.init();
       const milestone = await ledger.mutations.createMilestone({ title: "restricted archive" });
@@ -507,15 +664,13 @@ export function runWorksetGenericMutationContract(
       });
       await ledger.setRoots([`${TASKS_LEDGER}:${finished.id}`]);
 
-      await expectGatewayRejection(
-        ledger.mutations.archiveTerminalItems(
-          [TASKS_LEDGER],
-          "denied sweep",
-          "fail-on-active-gate",
-        ),
-        "archive-terminal-items-denied",
+      const result = await ledger.mutations.archiveTerminalItems(
+        [TASKS_LEDGER],
+        "admitted sweep",
+        "fail-on-active-gate",
       );
-      expect(ledger.fetchItem(TASKS_LEDGER, finished.id).status).toBe("done");
+      expect(result.byLedger).toEqual({ [TASKS_LEDGER]: 1 });
+      expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
     });
 
     caseIt(factory, "refuses to archive an unsatisfying terminal item that still gates active work", async () => {

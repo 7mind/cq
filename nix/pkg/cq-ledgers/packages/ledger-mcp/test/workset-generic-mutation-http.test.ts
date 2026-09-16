@@ -4,10 +4,82 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it } from "bun:test";
-import { InMemoryLedgerStore, TASKS_LEDGER } from "@cq/ledger";
+import {
+  IDEAS_LEDGER,
+  InMemoryLedgerStore,
+  MILESTONES_AMBIENT_ID,
+  QUESTIONS_LEDGER,
+  TASKS_LEDGER,
+} from "@cq/ledger";
 import { attachMcpHttp } from "../src/main.js";
 
 describe("workset-guarded generic mutation — HTTP MCP [Behavioral-Active Blackbox-GoodCommunication]", () => {
+  it("D442 admits idea creation and a web full-field answer over HTTP", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    await store.createMilestone({ id: "M1", title: "D442 HTTP" });
+    await store.createItem(TASKS_LEDGER, "M1", {
+      id: "T1",
+      status: "planned",
+      fields: { headline: "restrictive root" },
+    });
+    await store.createItem(QUESTIONS_LEDGER, "M1", {
+      id: "Q1",
+      status: "open",
+      fields: { question: "Ship?", context: "unchanged", recommendation: "yes" },
+    });
+    await store.worksetStore().setRoots(["tasks:T1"]);
+    const handlers = attachMcpHttp(store, "d442-http", "");
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => handlers.handle(request),
+    });
+    const client = new Client(
+      { name: "d442-http-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${String(server.port)}/mcp`),
+      ) as unknown as Transport,
+    );
+    try {
+      const created = await client.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: IDEAS_LEDGER,
+          id: "I1",
+          status: "open",
+          fields: { title: "HTTP idea" },
+        },
+      });
+      expect(created.isError).not.toBe(true);
+      expect(store.fetchItem(IDEAS_LEDGER, "I1").milestoneId).toBe(MILESTONES_AMBIENT_ID);
+      const answered = await client.callTool({
+        name: "update_item",
+        arguments: {
+          ledger_id: QUESTIONS_LEDGER,
+          item_id: "Q1",
+          status: "answered",
+          fields: {
+            question: "Ship?",
+            context: "unchanged",
+            recommendation: "yes",
+            answer: "yes",
+          },
+          author: "user",
+        },
+      });
+      expect(answered.isError).not.toBe(true);
+      expect(store.fetchItem(QUESTIONS_LEDGER, "Q1").status).toBe("answered");
+    } finally {
+      await client.close();
+      await server.stop(true);
+      await store.dispose();
+    }
+  });
+
   it("rejects excluded update, creation, and ledger creation without mutation", async () => {
     const store = new InMemoryLedgerStore();
     await store.init();

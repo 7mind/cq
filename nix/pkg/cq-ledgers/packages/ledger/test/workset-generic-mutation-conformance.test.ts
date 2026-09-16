@@ -3,9 +3,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   TASKS_LEDGER,
+  IDEAS_LEDGER,
+  QUESTIONS_LEDGER,
   WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES,
   WORKSET_GENERIC_MUTATION_OPERATION_KINDS,
   WorksetGenericMutationError,
+  classifyGenericItemUpdate,
+  effectiveGenericMutationDelta,
   createInMemoryGenericMutationDataSource,
   createInMemoryWorksetManagementLedger,
 } from "../src/index.js";
@@ -37,6 +41,41 @@ describe("T1988 generic mutation conformance [Behavioral-Active Blackbox-Atomic]
     expect(
       new Set(WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map(({ method }) => method)).size,
     ).toBe(WORKSET_GENERIC_MUTATION_OPERATION_KINDS.length);
+  });
+
+  test("exports the same ledger/semantic classification enforced by the gateway", () => {
+    const question = {
+      id: "Q1",
+      milestoneId: "M1",
+      status: "open",
+      fields: { question: "Ship?", context: "unchanged", answer: "draft" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(
+      effectiveGenericMutationDelta(question, {
+        status: "answered",
+        fields: { question: "Ship?", context: "unchanged", answer: "final" },
+      }),
+    ).toEqual({ statusChanged: true, changedFields: ["answer"] });
+    expect(
+      classifyGenericItemUpdate(QUESTIONS_LEDGER, question, {
+        status: "answered",
+        fields: { question: "Ship?", context: "unchanged", answer: "final" },
+      }),
+    ).toBe("pure-question-answer");
+    expect(
+      classifyGenericItemUpdate(QUESTIONS_LEDGER, question, {
+        fields: { answer: "final", context: "changed" },
+      }),
+    ).toBe("ordinary");
+    expect(classifyGenericItemUpdate(IDEAS_LEDGER, question, { status: "answered" })).toBe(
+      "idea-only",
+    );
+    expect(
+      WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.find(({ kind }) => kind === "update-item")
+        ?.exemptions,
+    ).toEqual(["idea-only", "pure-question-answer"]);
   });
 
   test("recovers only an exact inactive root and preserves its archived sibling", async () => {

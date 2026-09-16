@@ -117,7 +117,7 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
         return 0;
       },
     };
-    const result = await runPostgresRequiredGate(["bun", "test", "selected.test.ts"], process.cwd(), { CQ_SERVE_TOKEN: "do-not-forward" }, services);
+    const result = await runPostgresRequiredGate(["bun", "test", "selected.test.ts"], process.cwd(), { CQ_SERVE_TOKEN: "do-not-forward" }, services, { taskOnly: false });
     expect(opens).toBe(1);
     expect(closes).toBe(1);
     expect(calls).toHaveLength(2);
@@ -128,7 +128,7 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
     }
     expect(calls[1]!.command).toEqual([process.execPath, "run", "check"]);
     expect(result.task.postgresCases).toBe(1);
-    expect(result.full.postgresCases).toBe(1);
+    expect(result.full?.postgresCases).toBe(1);
     expect(JSON.stringify(result)).not.toContain("opaque-password");
   });
 
@@ -143,7 +143,7 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
         await Bun.write(path, report('<testcase name="PostgreSQL"><skipped /></testcase>', 1));
         return 0;
       },
-    })).rejects.toThrow("skipped 1");
+    }, { taskOnly: false })).rejects.toThrow("skipped 1");
     expect(commands).toBe(1);
     expect(closed).toBe(true);
   });
@@ -158,8 +158,39 @@ describe("PostgreSQL required-wrapper evidence [T5916 Behavioral-Active Blackbox
         else await Bun.write(env.CQ_TEST_JUNIT_PATH!, report('<testcase name="PostgreSQL" />', 1));
         return 0;
       },
-    });
+    }, { taskOnly: false });
     expect(commands).toBe(2);
     expect(result.task.postgresCases).toBe(20);
+  });
+
+  test("task-only mode validates live PostgreSQL evidence without running the full check", async () => {
+    const calls: string[][] = [];
+    const result = await runPostgresRequiredGate(
+      ["bun", "test", "packages/ledger/test/workset-generic-mutation-postgres.test.ts"],
+      process.cwd(),
+      {},
+      {
+        openCluster: async () => ({
+          dsn: "postgresql://fixture/test",
+          ownership: "provided",
+          close: async () => {},
+        }),
+        run: async (command) => {
+          calls.push([...command]);
+          const path = command
+            .find((argument) => argument.startsWith("--reporter-outfile="))
+            ?.slice("--reporter-outfile=".length);
+          if (path === undefined) throw new Error("task-only run requires a JUnit path");
+          await Bun.write(path, report('<testcase name="real PostgreSQL semantic case" />', 1));
+          return 0;
+        },
+      },
+      { taskOnly: true },
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).not.toEqual([process.execPath, "run", "check"]);
+    expect(result.mode).toBe("task-only");
+    expect(result.task.postgresCases).toBe(1);
+    expect(result.full).toBeNull();
   });
 });

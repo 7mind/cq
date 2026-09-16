@@ -257,6 +257,16 @@ describe("ledger-web App", () => {
     const q = await fake.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
+    expect(fake.updateItemPatches.at(-1)).toEqual({
+      status: "answered",
+      fields: {
+        question: "Ship on Friday?",
+        context: "release train context",
+        recommendation: "yes, ship it",
+        answer: "ship it",
+      },
+      author: "user",
+    });
   });
 
   it("answers a question 'as recommended' with one click", async () => {

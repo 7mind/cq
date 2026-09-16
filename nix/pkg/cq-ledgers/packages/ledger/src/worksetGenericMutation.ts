@@ -13,8 +13,11 @@
  * WeakSet membership). The public surface exposes reads + gateway methods
  * only — never the underlying adapter's raw write methods.
  *
- * Under non-empty (restrictive) roots:
- *  - generic creation (`createItem` / `createMilestone`) is denied
+ * Under non-empty (restrictive) roots, ordinary mutations retain the default
+ * membership policy while two semantic worksets remain available:
+ *  - idea-only create/update/reopen/unarchive/archive operations are exempt
+ *  - a question update is exempt only when its effective delta is a pure answer
+ *  - other generic creation (`createItem` / `createMilestone`) is denied
  *  - `createLedger` is denied
  *  - `unarchiveItem` is limited to an exact configured inactive root
  *  - `archiveMilestone` requires every swept active member in the graph
@@ -33,8 +36,11 @@ import {
   WORKSET_OWNER_REF_FIELD,
   WORKSET_OWNED_FIELD_NAMES,
   GOALS_LEDGER,
+  IDEAS_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_LEDGER,
+  QUESTIONS_ANSWER_FIELD,
+  QUESTIONS_LEDGER,
 } from "./constants.js";
 import { closeWorkset, defaultWorksetPrefixRegistry, type WorksetGraph } from "./worksetGraph.js";
 import {
@@ -107,6 +113,8 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_KINDS = [
   "update-item",
   "reopen-item",
   "unarchive-item",
+  "archive-terminal-items",
+  "execute-finalize",
   "archive-milestone",
 ] as const;
 
@@ -119,16 +127,27 @@ export type WorksetGenericMutationOperationKind =
  * - `deny` — refused entirely while roots are non-empty
  * - `require-target-in-graph` — primary target must be a closed-graph member
  * - `require-exact-inactive-root` — target ref must equal one configured inactive root
+ * - `require-affected-targets-in-graph` — enumerate the batch before writing
+ *   and require every non-exempt affected ref to be admitted
  * - `require-sweep-in-graph` — every archive sweep member must be in the graph
  */
 export type WorksetGenericMutationRestrictivePolicy =
-  "deny" | "require-target-in-graph" | "require-exact-inactive-root" | "require-sweep-in-graph";
+  | "deny"
+  | "require-target-in-graph"
+  | "require-exact-inactive-root"
+  | "require-affected-targets-in-graph"
+  | "require-sweep-in-graph";
+
+export type WorksetGenericMutationSemanticExemption =
+  | "idea-only"
+  | "pure-question-answer";
 
 export interface WorksetGenericMutationOperationClause {
   readonly kind: WorksetGenericMutationOperationKind;
-  /** LedgerStore method name this clause covers. */
-  readonly method: keyof LedgerStore;
+  /** Guarded gateway method name this clause covers. */
+  readonly method: keyof Omit<WorksetGenericMutationGateway, "form">;
   readonly restrictive: WorksetGenericMutationRestrictivePolicy;
+  readonly exemptions: readonly WorksetGenericMutationSemanticExemption[];
   readonly unrestricted: "allow";
 }
 
@@ -142,48 +161,70 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES: readonly WorksetGeneric
       kind: "create-ledger",
       method: "createLedger",
       restrictive: "deny",
+      exemptions: [],
       unrestricted: "allow",
     },
     {
       kind: "create-milestone",
       method: "createMilestone",
       restrictive: "deny",
+      exemptions: [],
       unrestricted: "allow",
     },
     {
       kind: "create-item",
       method: "createItem",
       restrictive: "deny",
+      exemptions: ["idea-only"],
       unrestricted: "allow",
     },
     {
       kind: "update-milestone",
       method: "updateMilestone",
       restrictive: "require-target-in-graph",
+      exemptions: [],
       unrestricted: "allow",
     },
     {
       kind: "update-item",
       method: "updateItem",
       restrictive: "require-target-in-graph",
+      exemptions: ["idea-only", "pure-question-answer"],
       unrestricted: "allow",
     },
     {
       kind: "reopen-item",
       method: "reopenItem",
       restrictive: "require-target-in-graph",
+      exemptions: ["idea-only"],
       unrestricted: "allow",
     },
     {
       kind: "unarchive-item",
       method: "unarchiveItem",
       restrictive: "require-exact-inactive-root",
+      exemptions: ["idea-only"],
+      unrestricted: "allow",
+    },
+    {
+      kind: "archive-terminal-items",
+      method: "archiveTerminalItems",
+      restrictive: "require-affected-targets-in-graph",
+      exemptions: ["idea-only"],
+      unrestricted: "allow",
+    },
+    {
+      kind: "execute-finalize",
+      method: "executeFinalize",
+      restrictive: "require-affected-targets-in-graph",
+      exemptions: [],
       unrestricted: "allow",
     },
     {
       kind: "archive-milestone",
       method: "archiveMilestone",
       restrictive: "require-sweep-in-graph",
+      exemptions: [],
       unrestricted: "allow",
     },
   ] as const;
@@ -440,6 +481,60 @@ function asStringArray(value: FieldValue | undefined): string[] {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+function fieldValuesEqual(left: FieldValue | undefined, right: FieldValue | undefined): boolean {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+}
+
+export interface WorksetGenericMutationEffectiveDelta {
+  readonly statusChanged: boolean;
+  readonly changedFields: readonly string[];
+}
+
+/** Semantic item delta after removing fields resent unchanged by a client. */
+export function effectiveGenericMutationDelta(
+  existing: Item,
+  patch: UpdateItemPatch,
+): WorksetGenericMutationEffectiveDelta {
+  const changedFields = Object.entries(patch.fields ?? {})
+    .filter(([field, value]) => !fieldValuesEqual(existing.fields[field], value))
+    .map(([field]) => field)
+    .sort();
+  return {
+    statusChanged: patch.status !== undefined && patch.status !== existing.status,
+    changedFields,
+  };
+}
+
+export type WorksetGenericMutationSemanticClass =
+  | "ordinary"
+  | "idea-only"
+  | "pure-question-answer";
+
+/** Classify one item update from its stored value and effective semantic delta. */
+export function classifyGenericItemUpdate(
+  ledgerId: string,
+  existing: Item,
+  patch: UpdateItemPatch,
+): WorksetGenericMutationSemanticClass {
+  if (ledgerId === IDEAS_LEDGER) return "idea-only";
+  if (ledgerId !== QUESTIONS_LEDGER) return "ordinary";
+  const delta = effectiveGenericMutationDelta(existing, patch);
+  const answerOnly =
+    delta.changedFields.length === 1 && delta.changedFields[0] === QUESTIONS_ANSWER_FIELD;
+  if (!delta.statusChanged) return answerOnly ? "pure-question-answer" : "ordinary";
+  if (patch.status !== "answered") return "ordinary";
+  if (answerOnly) return "pure-question-answer";
+  if (delta.changedFields.length !== 0) return "ordinary";
+  const storedAnswer = existing.fields[QUESTIONS_ANSWER_FIELD];
+  return typeof storedAnswer === "string" && storedAnswer.trim().length > 0
+    ? "pure-question-answer"
+    : "ordinary";
+}
+
 function canonicalizeRefList(
   refs: readonly string[],
   prefixRegistry: ReadonlyMap<string, string>,
@@ -564,6 +659,25 @@ function assertTargetInGraph(ctx: ValidationContext, ref: string): void {
   }
 }
 
+function assertAffectedTargetsInGraph(
+  ctx: ValidationContext,
+  refs: readonly string[],
+  isExempt: (ref: string) => boolean,
+): void {
+  if (!ctx.restrictive) return;
+  const excluded = refs.filter(
+    (ref) =>
+      !isExempt(ref) &&
+      !ctx.members.has(ref) &&
+      !ctx.graph.inactiveRoots.includes(ref),
+  );
+  if (excluded.length === 0) return;
+  throw new WorksetGenericMutationError(
+    "mixed-or-excluded-targets",
+    `generic mutation rejects excluded target(s): ${excluded.join(", ")}`,
+  );
+}
+
 function assertIntroducedRefsInGraph(ctx: ValidationContext, introduced: readonly string[]): void {
   if (!ctx.restrictive) return;
   const excluded = introduced.filter((ref) => !ctx.members.has(ref));
@@ -666,6 +780,8 @@ export function createWorksetGenericMutationGateway(
       /** Map coordinator target-excluded into a gateway-specific code. */
       readonly onTargetExcluded?: (cause: WorksetAdmissionError) => WorksetGenericMutationError;
       readonly allocation?: NonNullable<AdmittedGenericMutation["allocation"]>;
+      /** Persistence read scope; independent from restrictive admission targets. */
+      readonly scopeTargetRefs?: readonly string[];
       readonly accessScope?: Omit<
         SqliteOperationAccessScope,
         "operation" | "accessClass" | "targetRefs"
@@ -683,7 +799,7 @@ export function createWorksetGenericMutationGateway(
     const accessScope: SqliteOperationAccessScope = {
       operation,
       accessClass,
-      targetRefs: targets,
+      targetRefs: options.scopeTargetRefs ?? targets,
       ledgerIds: options.accessScope?.ledgerIds ?? [],
       milestoneIds: options.accessScope?.milestoneIds ?? [],
       referenceCandidates: options.accessScope?.referenceCandidates ?? [],
@@ -810,6 +926,7 @@ export function createWorksetGenericMutationGateway(
           return tx.updateMilestone(milestoneId, patch);
         },
         {
+          scopeTargetRefs: [ref],
           accessScope: {
             ledgerIds: [MILESTONES_LEDGER],
             milestoneIds: [milestoneId],
@@ -822,27 +939,31 @@ export function createWorksetGenericMutationGateway(
     async updateItem(ledgerId, itemId, patch, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        [ref],
+        ledgerId === IDEAS_LEDGER || ledgerId === QUESTIONS_LEDGER ? [] : [ref],
         "update-item",
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
-          assertTargetInGraph(ctx, ref);
           let existing: Item | undefined;
           try {
             existing = tx.fetchItem(ledgerId, itemId);
           } catch {
             existing = undefined;
           }
+          const semanticClass =
+            existing === undefined
+              ? "ordinary"
+              : classifyGenericItemUpdate(ledgerId, existing, patch);
+          if (semanticClass === "ordinary") assertTargetInGraph(ctx, ref);
           assertSealedOwnershipAbsent(patch.fields, existing);
           const introduced = introducedClosureRefs(
             existing?.fields,
             patch.fields,
             ctx.prefixRegistry,
           );
-          assertIntroducedRefsInGraph(ctx, introduced);
+          if (semanticClass === "ordinary") assertIntroducedRefsInGraph(ctx, introduced);
           // Include introduced refs in the atomic mixed-target check.
-          if (ctx.restrictive) {
+          if (ctx.restrictive && semanticClass === "ordinary") {
             const all = [ref, ...introduced];
             const excluded = all.filter((t) => !ctx.members.has(t));
             if (excluded.length > 0) {
@@ -855,6 +976,7 @@ export function createWorksetGenericMutationGateway(
           return tx.updateItem(ledgerId, itemId, patch);
         },
         {
+          scopeTargetRefs: [ref],
           accessScope: {
             ledgerIds: [ledgerId],
             milestoneIds: [],
@@ -875,7 +997,7 @@ export function createWorksetGenericMutationGateway(
         "ordinary",
         measurement,
         (tx, adm) => {
-          if (adm.roots.length > 0) {
+          if (adm.roots.length > 0 && ledgerId !== IDEAS_LEDGER) {
             throw new WorksetGenericMutationError(
               "creation-denied",
               "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
@@ -960,15 +1082,16 @@ export function createWorksetGenericMutationGateway(
     async reopenItem(ledgerId, itemId, toStatus, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        [ref],
+        ledgerId === IDEAS_LEDGER ? [] : [ref],
         "reopen-item",
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
-          assertTargetInGraph(ctx, ref);
+          if (ledgerId !== IDEAS_LEDGER) assertTargetInGraph(ctx, ref);
           return tx.reopenItem(ledgerId, itemId, toStatus);
         },
         {
+          scopeTargetRefs: [ref],
           accessScope: {
             ledgerIds: [ledgerId, MILESTONES_LEDGER],
             milestoneIds: [],
@@ -981,12 +1104,12 @@ export function createWorksetGenericMutationGateway(
     async unarchiveItem(ledgerId, milestoneId, itemId, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        [ref],
+        ledgerId === IDEAS_LEDGER ? [] : [ref],
         "unarchive-item",
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
-          if (ctx.restrictive) {
+          if (ctx.restrictive && ledgerId !== IDEAS_LEDGER) {
             if (!ctx.graph.inactiveRoots.includes(ref)) {
               throw new WorksetGenericMutationError(
                 "unarchive-not-exact-inactive-root",
@@ -997,16 +1120,21 @@ export function createWorksetGenericMutationGateway(
           return tx.unarchiveItem(ledgerId, milestoneId, itemId);
         },
         {
+          scopeTargetRefs: [ref],
           accessScope: {
             ledgerIds: [ledgerId, MILESTONES_LEDGER],
             milestoneIds: [milestoneId],
             referenceCandidates: [],
           },
-          onTargetExcluded: (cause) =>
-            new WorksetGenericMutationError(
-              "unarchive-not-exact-inactive-root",
-              `unarchiveItem is limited to an exact configured inactive root; "${ref}" is not one (${cause.message})`,
-            ),
+          ...(ledgerId === IDEAS_LEDGER
+            ? {}
+            : {
+                onTargetExcluded: (cause: WorksetAdmissionError) =>
+                  new WorksetGenericMutationError(
+                    "unarchive-not-exact-inactive-root",
+                    `unarchiveItem is limited to an exact configured inactive root; "${ref}" is not one (${cause.message})`,
+                  ),
+              }),
         },
       );
     },
@@ -1017,13 +1145,13 @@ export function createWorksetGenericMutationGateway(
         "archive-terminal-items",
         "archive_terminal_items",
         measurement,
-        (tx, adm) => {
-          if (adm.roots.length > 0) {
-            throw new WorksetGenericMutationError(
-              "archive-terminal-items-denied",
-              "archiveTerminalItems is denied under non-empty workset roots",
-            );
-          }
+        (tx, _adm, ctx) => {
+          const affected = tx.collectArchiveTerminalItemRefs(ledgerIds, gatePolicy);
+          assertAffectedTargetsInGraph(
+            ctx,
+            affected,
+            (ref) => ref.startsWith(`${IDEAS_LEDGER}:`),
+          );
           return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
         },
         {
@@ -1312,7 +1440,7 @@ export function assertGenericMutationAdmissionNotCallerMinted(value: unknown): v
 
 /** Exhaustiveness helper used by the inventory test. */
 export function inventoriedLedgerStoreMutationMethods(): readonly (keyof LedgerStore)[] {
-  return WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.map((c) => c.method);
+  return WORKSET_GENERIC_MUTATION_RAW_WRITE_METHODS;
 }
 
 /** Sealed ownership field names covered by the inventory. */

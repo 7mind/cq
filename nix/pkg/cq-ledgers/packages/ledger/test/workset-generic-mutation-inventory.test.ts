@@ -46,6 +46,8 @@ describe("workset generic-mutation inventory [T1961]", () => {
       "update-item",
       "reopen-item",
       "unarchive-item",
+      "archive-terminal-items",
+      "execute-finalize",
       "archive-milestone",
     ]);
     expect(new Set(WORKSET_GENERIC_MUTATION_OPERATION_KINDS).size).toBe(
@@ -64,7 +66,13 @@ describe("workset generic-mutation inventory [T1961]", () => {
       expect(clause.kind).toBe(kind);
       expect(clause.unrestricted).toBe("allow");
       expect(
-        ["deny", "require-target-in-graph", "require-exact-inactive-root", "require-sweep-in-graph"],
+        [
+          "deny",
+          "require-target-in-graph",
+          "require-exact-inactive-root",
+          "require-affected-targets-in-graph",
+          "require-sweep-in-graph",
+        ],
       ).toContain(clause.restrictive);
     }
   });
@@ -83,12 +91,19 @@ describe("workset generic-mutation inventory [T1961]", () => {
       "deny",
     );
     expect(clauseForGenericMutationOperation("create-ledger").restrictive).toBe("deny");
+    expect(clauseForGenericMutationOperation("create-item").exemptions).toEqual([
+      "idea-only",
+    ]);
   });
 
   it("requires graph membership for update and reopen", () => {
     expect(clauseForGenericMutationOperation("update-item").restrictive).toBe(
       "require-target-in-graph",
     );
+    expect(clauseForGenericMutationOperation("update-item").exemptions).toEqual([
+      "idea-only",
+      "pure-question-answer",
+    ]);
     expect(clauseForGenericMutationOperation("update-milestone").restrictive).toBe(
       "require-target-in-graph",
     );
@@ -104,6 +119,13 @@ describe("workset generic-mutation inventory [T1961]", () => {
     expect(clauseForGenericMutationOperation("archive-milestone").restrictive).toBe(
       "require-sweep-in-graph",
     );
+    expect(
+      clauseForGenericMutationOperation("archive-terminal-items").restrictive,
+    ).toBe("require-affected-targets-in-graph");
+    expect(clauseForGenericMutationOperation("archive-terminal-items").exemptions).toEqual([
+      "idea-only",
+    ]);
+    expect(clauseForGenericMutationOperation("execute-finalize").exemptions).toEqual([]);
   });
 
   it("classifies status, closure-forming, advisory, and sealed-ownership fields", () => {

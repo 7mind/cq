@@ -168,6 +168,11 @@ const reviewsSchema: LedgerSchema = {
 
 export class FakeClient implements WorksetCapableLedgerClient {
   closed = false;
+  readonly updateItemCalls: Array<{
+    ledgerId: string;
+    itemId: string;
+    patch: ItemPatch;
+  }> = [];
   readonly worksetCalls: WorksetRequest[] = [];
   worksetDeferred: Promise<void> | null = null;
   worksetFailure: Error | null = null;
@@ -494,6 +499,7 @@ export class FakeClient implements WorksetCapableLedgerClient {
     itemId: string,
     patch: ItemPatch,
   ): Promise<ItemMutationAckDto> {
+    this.updateItemCalls.push({ ledgerId, itemId, patch: structuredClone(patch) });
     const it = this.find(ledgerId, itemId);
     if (patch.status !== undefined) it.status = patch.status;
     if (patch.fields !== undefined) {

@@ -26,6 +26,9 @@ import {
 import { runWorksetGenericMutationContract } from "./worksetGenericMutationContract.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
+if ((PG_URL === undefined || PG_URL.length === 0) && process.env.CQ_TEST_REQUIRE_PG === "1") {
+  throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+}
 
 /** One-connection pool per store — contract builds many ledgers; default pool width exhausts max_connections under parallel files. */
 function openNarrowPool(dsn: string): SQL {
