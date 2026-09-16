@@ -456,7 +456,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     }
   });
 
-  test("bounds durable merge-started preparation before guardian release [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("H354 completes delayed durable merge-started preparation before bounded real-process launch [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-h354-slow-journal-"));
     try {
       const f = await fixture();
@@ -472,17 +472,17 @@ describe("versioned protected implementation evidence [BG]", () => {
         operationId: "completion-slow-journal",
         author: "parent",
       });
-      let snapshots = 0;
+      let durableWrites = 0;
       const slowEvidence: ImplementationEvidenceStore = new Proxy(f.evidence, {
         get(target, property) {
-          if (property === "snapshot") {
-            return async () => {
-              snapshots += 1;
-              if (snapshots === 2) await Bun.sleep(120);
-              return await target.snapshot();
+          const value: unknown = Reflect.get(target, property, target);
+          if (typeof property === "symbol" && typeof value === "function") {
+            return async (...args: unknown[]) => {
+              durableWrites += 1;
+              if (durableWrites === 1) await Bun.sleep(120);
+              return await Reflect.apply(value, target, args);
             };
           }
-          const value: unknown = Reflect.get(target, property, target);
           return typeof value === "function" ? value.bind(target) : value;
         },
       });
@@ -505,45 +505,33 @@ describe("versioned protected implementation evidence [BG]", () => {
         provider,
         settlement: { termGraceMs: 0, killGraceMs: 1_000, pollIntervalMs: 2 },
       });
-      const error = await broker
-        .launch({
-          kind: "merge",
-          targetRef: "tasks:T2345",
-          argv: [
-            process.execPath,
-            "-e",
-            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
-          ],
-          cwd: root,
-          env: process.env,
-          stdio: "ignore" as const,
-          launchDeadlineMs: Date.now() + 50,
-          launchBootstrap: ignoredBootstrap,
-        })
-        .then(
-          () => null,
-          (failure: unknown) => failure,
-        );
+      let bootstrapLaunches = 0;
+      const launched = await broker.launch({
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        argv: [
+          process.execPath,
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+        cwd: root,
+        env: process.env,
+        stdio: "ignore" as const,
+        launchDeadlineMs: Date.now() + 80,
+        launchBootstrap: (specification) => {
+          bootstrapLaunches += 1;
+          return ignoredBootstrap(specification);
+        },
+      });
+      await launched.exited;
 
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain(
-        "launch/admission deadline expired during durable merge-started preparation",
-      );
-      expect((error as Error).message).toContain("authenticated guardian/bootstrap exit outcome");
-      expect(await Bun.file(marker).exists()).toBe(false);
+      expect(await Bun.file(marker).text()).toBe("ran");
+      expect(durableWrites).toBe(1);
+      expect(bootstrapLaunches).toBe(1);
       expect(underlying.activeAdmissionCount()).toBe(0);
       await expect(f.service.mergeAcknowledgement(completion.completionRef)).rejects.toThrow(
         "not durably merged",
       );
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if (
-          (await f.evidence.snapshot()).completions[completion.completionRef]!.state ===
-          "merge-started"
-        ) {
-          break;
-        }
-        await Bun.sleep(2);
-      }
       expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
         "merge-started",
       );
