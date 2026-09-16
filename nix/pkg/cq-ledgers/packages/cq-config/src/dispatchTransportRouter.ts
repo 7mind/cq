@@ -42,7 +42,6 @@ import {
   CodexRoleBoundaryError,
   CodexOperationalAbstentionError,
   createCodexRoleBoundaryPlan,
-  executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   type CodexRoleBoundaryRequest,
   type CodexRoleSandboxMode,
@@ -60,6 +59,7 @@ import {
   isNativeAdapterId,
   type NativeAdapterQualification,
 } from "./nativeDispatchQualification.js";
+import type { QualifyDispatchStagedCompletionOutcome } from "./dispatchImplementationQueue.js";
 
 export const DISPATCH_TRANSPORTS = ["native", "process"] as const;
 
@@ -337,16 +337,6 @@ export function createCodexProcessDispatchAdapter(
           targetRef: context.effectTargetRef,
         },
       );
-      if (context.prepared.parentGateCapability !== undefined) {
-        await executeCodexParentGateFinalizer({
-          command: binding.boundary.ledgerCommand,
-          ledgerCwd: binding.boundary.ledgerCwd,
-          promptRoot: binding.boundary.promptRoot,
-          handle: observed.handle,
-          parentGateCapability: context.prepared.parentGateCapability,
-          timeoutMs: plan.effectivePreturn.parentGateWindowMs,
-        });
-      }
       const observedAt = binding.now();
       const decision = decideCodexCompletion({
         handle,
@@ -613,7 +603,24 @@ export interface RunPreparedDispatchRequest extends DispatchTransportRouteReques
   readonly prepared: DispatchPrepared;
   /** Exact per-role token resolved by cq.toml before transport selection. */
   readonly resolvedModel: ReviewerToken;
+  /** Trusted queue composition invoked only after a parent-gated result is durably staged. */
+  readonly qualifyStagedCompletion?: RoutedStagedCompletionQualifier;
 }
+
+export interface RoutedStagedCompletionObservation {
+  readonly handle: DispatchHandle;
+  readonly stagedOutputDigest: string;
+  readonly expectedChild: {
+    readonly childId: string;
+    readonly runId: string;
+  };
+  readonly expectedProvenance: ReturnType<typeof provenanceBindingOf>;
+  readonly nativeCompletion: NativeCompletionProof;
+}
+
+export type RoutedStagedCompletionQualifier = (
+  observation: RoutedStagedCompletionObservation,
+) => QualifyDispatchStagedCompletionOutcome | Promise<QualifyDispatchStagedCompletionOutcome>;
 
 function assertResolvedModelBinding(token: ReviewerToken, targetHarness: Harness): void {
   if (token.harness !== targetHarness) {
@@ -697,7 +704,17 @@ export interface RoutedDispatchAborted {
   readonly abort: AbortedDispatchResult;
 }
 
-export type RoutedDispatchResult = RoutedDispatchConsumed | RoutedDispatchAborted;
+export interface RoutedDispatchQueued {
+  readonly outcome: "queued";
+  readonly route: DispatchTransportRoute;
+  readonly adapterId: `${Harness}:${DispatchTransport}`;
+  readonly handle: DispatchHandle;
+}
+
+export type RoutedDispatchResult =
+  | RoutedDispatchConsumed
+  | RoutedDispatchAborted
+  | RoutedDispatchQueued;
 
 const ABORT_REASON_SET: ReadonlySet<string> = new Set(DISPATCH_ABORT_REASONS);
 const DISPATCH_HANDLE_KEYS = ["attestationId", "generation"] as const;
@@ -999,6 +1016,48 @@ export async function runPreparedDispatch(
       return adapterAbort(request, route, adapter, handle, error.reason, error.details, deps);
     }
     throw error;
+  }
+
+  const staged = deps.store.read(handle);
+  if (staged === undefined || isAttestationTombstone(staged)) {
+    throw new DispatchTransportRoutingError(
+      `completed dispatch ${handle.attestationId}/${handle.generation} has no live envelope`,
+    );
+  }
+  if (staged.state === "gate-pending") {
+    if (
+      staged.gateSubmittedOutputDigest === undefined ||
+      request.qualifyStagedCompletion === undefined
+    ) {
+      throw new AttestationContractError(
+        "dispatch.qualification",
+        "a parent-gated completion requires a trusted staged-completion qualifier",
+      );
+    }
+    const qualification = await request.qualifyStagedCompletion(
+      Object.freeze({
+        handle,
+        stagedOutputDigest: staged.gateSubmittedOutputDigest,
+        expectedChild: Object.freeze({ ...staged.expectedChild }),
+        expectedProvenance: provenanceBindingOf(request.prepared),
+        nativeCompletion: result.nativeCompletion,
+      }),
+    );
+    if (qualification.state === "aborted") {
+      return Object.freeze({
+        outcome: "aborted" as const,
+        route,
+        adapterId: adapter.id,
+        handle,
+        abort: qualification.result,
+      });
+    }
+    return Object.freeze({
+      outcome: "queued" as const,
+      route,
+      adapterId: adapter.id,
+      handle,
+    });
   }
 
   let confirmation;

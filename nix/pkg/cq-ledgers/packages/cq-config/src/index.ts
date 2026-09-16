@@ -90,8 +90,11 @@ export type {
   CodexProcessAdapterBinding,
   CodexProcessAdapterBindingResolver,
   RunPreparedDispatchRequest,
+  RoutedStagedCompletionObservation,
+  RoutedStagedCompletionQualifier,
   RoutedDispatchConsumed,
   RoutedDispatchAborted,
+  RoutedDispatchQueued,
   RoutedDispatchResult,
 } from "./dispatchTransportRouter.js";
 export {
