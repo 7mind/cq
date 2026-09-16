@@ -11,7 +11,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",
-      "sha256": "fa29a970783593e61bd963625d76ed3b686806ee82d8fb5c21903410c804d378",
+      "sha256": "c86af95fd79a7b5409d6040210989c26b05e30dff27dce1c03c7c69bd96e4e10",
       "targets": []
     },
     {
@@ -2023,7 +2023,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-conformance.test.ts",
-      "sha256": "42feb7587c56ffe83526beadc2b27c5b0f874a457876c1bb7a75da5ef193f051",
+      "sha256": "de9541be21072399af484e095d521f4b6610badffb8e39c3b5d2b1f8dd6c5fae",
       "targets": []
     },
     {

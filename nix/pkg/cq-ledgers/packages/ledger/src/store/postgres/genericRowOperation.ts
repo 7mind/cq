@@ -1,7 +1,7 @@
 import { LedgerError, type ArchivePointer, type Item, type Ledger, type Milestone } from "../../types.js";
 import { MILESTONES_LEDGER } from "../../constants.js";
 import { isLiveWorksetAdmission, WorksetAdmissionError } from "../../worksetEffectAdmission.js";
-import type { AdmittedGenericMutation } from "../../worksetGenericMutation.js";
+import { isBoundAdmittedGenericMutation, type AdmittedGenericMutation } from "../../worksetGenericMutation.js";
 import { resolveAsyncGenericMutationClosure } from "../genericMutationDataSource.js";
 import { genericArchiveKey, type GenericArchiveEntry } from "../genericMutationTransaction.js";
 import { createPostgresGenericMutationDataSource } from "./genericMutationDataSource.js";
@@ -40,9 +40,8 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
     if (allocating !== (allocation !== null) || (allocation !== null && allocation.ledgerId !== allocationLedger)) {
       throw new LedgerError("generic operation has mismatched allocation coordinates");
     }
-    if (!isLiveWorksetAdmission(admission) || admission.kind !== "generic-write" ||
-      JSON.stringify(admission.targets) !== JSON.stringify(scope.targetRefs)) {
-      throw new WorksetAdmissionError("caller-minted-admission", "generic transaction requires its exact live operation targets admission");
+    if (!isBoundAdmittedGenericMutation(context) || !isLiveWorksetAdmission(admission) || admission.kind !== "generic-write") {
+      throw new WorksetAdmissionError("caller-minted-admission", "generic transaction requires its exact bound live admission and row scope");
     }
     if (!(await postgresAdmissionMatches(observed, admission))) {
       throw new WorksetAdmissionError("stale-epoch", "generic transaction admission is no longer the exact durable targets/roots epoch");

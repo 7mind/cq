@@ -128,7 +128,12 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
   test("D442 keeps semantic admission targets separate from the exact PostgreSQL row scope", async () => {
     const rawStore = new InMemoryLedgerStore();
     const worksetStore = createInMemoryWorksetStore();
+    const foreignWorksetStore = createInMemoryWorksetStore();
     await rawStore.init();
+    const foreignAdmission = await foreignWorksetStore.admitLedgerMutation({
+      kind: "generic-write",
+      targets: [],
+    });
     const fakeSql = (context: AdmittedGenericMutation): SQL =>
       ({
         array: (values: readonly string[]) => values,
@@ -172,6 +177,32 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
         );
         const resolution = await resolvePostgresGenericRows(queries, admitted);
         if (resolution.plan.kind === "rejected") throw resolution.plan.error;
+
+        const expectCallerMintedRejection = async (
+          candidate: AdmittedGenericMutation,
+        ): Promise<void> => {
+          const candidateQueries = new PostgresOperationQueries(
+            fakeSql(candidate),
+            "t6569-binding",
+            candidate.scope.operation,
+            null,
+            () => 0,
+            null,
+          );
+          const rejected = await resolvePostgresGenericRows(candidateQueries, candidate);
+          expect(rejected.plan).toMatchObject({
+            kind: "rejected",
+            error: { code: "caller-minted-admission" },
+          });
+        };
+        await expectCallerMintedRejection({
+          ...admitted,
+          scope: { ...admitted.scope, targetRefs: [`${TASKS_LEDGER}:T9999`] },
+        });
+        await expectCallerMintedRejection({
+          ...admitted,
+          admission: foreignAdmission,
+        });
         return {
           id: "I1",
           milestoneId: "M-AMBIENT",
@@ -189,6 +220,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
       });
       expect(updated).toMatchObject({ id: "I1" });
     } finally {
+      await foreignAdmission.acknowledge();
       await rawStore.dispose();
     }
   });

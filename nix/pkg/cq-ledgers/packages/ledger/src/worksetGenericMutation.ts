@@ -712,6 +712,36 @@ export interface AdmittedGenericMutation {
   readonly allocation: { readonly ledgerId: string; readonly requestedId: string | null } | null;
 }
 
+const boundAdmittedGenericMutations = new WeakSet<object>();
+
+function bindAdmittedGenericMutation(
+  admission: WorksetLedgerMutationAdmission,
+  scope: SqliteOperationAccessScope,
+  allocation: AdmittedGenericMutation["allocation"],
+): AdmittedGenericMutation {
+  const boundScope: SqliteOperationAccessScope = Object.freeze({
+    ...scope,
+    targetRefs: Object.freeze([...scope.targetRefs]),
+    ledgerIds: Object.freeze([...scope.ledgerIds]),
+    milestoneIds: Object.freeze([...scope.milestoneIds]),
+    referenceCandidates: Object.freeze([...scope.referenceCandidates]),
+  });
+  const bound: AdmittedGenericMutation = Object.freeze({
+    admission,
+    scope: boundScope,
+    allocation: allocation === null ? null : Object.freeze({ ...allocation }),
+  });
+  boundAdmittedGenericMutations.add(bound);
+  return bound;
+}
+
+/** True only for the immutable admission/scope pair minted by this gateway. */
+export function isBoundAdmittedGenericMutation(
+  value: unknown,
+): value is AdmittedGenericMutation {
+  return typeof value === "object" && value !== null && boundAdmittedGenericMutations.has(value);
+}
+
 export interface WorksetGenericMutationGatewayHost {
   /** Raw persistence adapter — never exposed on the public surface. */
   readonly rawStore: LedgerStore;
@@ -840,6 +870,11 @@ export function createWorksetGenericMutationGateway(
       if (afterGenericAdmit !== undefined) {
         await afterGenericAdmit();
       }
+      const boundContext = bindAdmittedGenericMutation(
+        admission,
+        accessScope,
+        options.allocation ?? null,
+      );
       result = await runGenericTransaction(
         (tx, snap) => {
           if (snap.epoch !== admission.epoch) {
@@ -865,8 +900,8 @@ export function createWorksetGenericMutationGateway(
           return validateAndRun(tx, admission, ctx);
         },
         measurement,
-        accessScope,
-        { admission, scope: accessScope, allocation: options.allocation ?? null },
+        boundContext.scope,
+        boundContext,
       );
     } catch (error) {
       failed = true;
