@@ -92,6 +92,7 @@ class InMemoryCohortPrimaryLedger implements CohortPrimaryLedgerReaderV1 {
 function localPrimaryFixture(
   nodeIdentity = "shared#CohortContract",
   primaryReferenceChain = false,
+  missingRepositorySource = false,
 ): LocalPrimaryFixture {
   const snapshot = snapshotFor([{ ref: "tasks:T1" }, { ref: "tasks:T2" }], {});
   const manifest = {
@@ -110,7 +111,7 @@ function localPrimaryFixture(
     primaryItem(id, "planned", {
       headline: `Task ${id}`,
       sourceRefs: [
-        `src/tasks:${id}.ts`,
+        missingRepositorySource && id === "T1" ? "src/missing-task.ts" : `src/tasks:${id}.ts`,
         ...(primaryReferenceChain ? ["reviews:R1"] : []),
       ],
       worksetOwnerRef: "goals:G1",
@@ -160,6 +161,7 @@ function localInvestigationFixture(causeConfirmed: boolean, splitOwner = false):
   const memberSpecs = ["D1", "D2"].map((id) => ({
     ref: `defects:${id}`,
     phase: "investigation" as const,
+    atoms: [{}, { cause: "planned primary cause witness" }],
   }));
   const snapshot = snapshotFor(memberSpecs, {});
   const goals = [
@@ -670,6 +672,24 @@ describe("cohort admission observation", () => {
     ]);
     expect(recording.reads).not.toContain("reviews:R1");
     expect(recording.reads).not.toContain(".cq/logs/review-R1.md");
+  });
+
+  test("still rejects a missing repository path beside valid primary references", async () => {
+    const local = localPrimaryFixture("shared#CohortContract", true, true);
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    await expect(
+      produceCohortAdmissionObservationV1(
+        { memberRefs: ["tasks:T1", "tasks:T2"] },
+        source,
+      ),
+    ).rejects.toThrow("src/missing-task.ts does not exist in the exact repository tree");
   });
 
   test.each([

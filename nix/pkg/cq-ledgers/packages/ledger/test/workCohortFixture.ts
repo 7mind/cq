@@ -170,6 +170,9 @@ export function snapshotFor(
       authorityBoundaryDigest: sha256(`authority:${spec.authority ?? "shared"}`),
       dependencyClosure: Object.freeze([...(spec.dependencies ?? [])]),
       sourceRefs: Object.freeze([sourceRef]),
+      sourceReferences: Object.freeze([
+        Object.freeze({ kind: "repository-path" as const, ref: sourceRef }),
+      ]),
       repository,
       environment: Object.freeze({
         environmentDigest: sha256(`environment:${options.environment ?? "test"}`),

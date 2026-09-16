@@ -131,6 +131,26 @@ export interface CohortUnavailableFactV1 {
   readonly reason: string;
 }
 
+export type CohortSourceReferenceV1 =
+  | {
+      readonly kind: "repository-path";
+      readonly ref: string;
+    }
+  | {
+      readonly kind: "primary-ledger";
+      readonly ref: string;
+      readonly revision: string;
+    }
+  | {
+      readonly kind: "opaque-authority";
+      readonly ref: string;
+    }
+  | {
+      readonly kind: "primary-log";
+      readonly ref: string;
+      readonly field: "sessionLogs" | "rawLogs";
+    };
+
 export type CohortSourceRelationshipV1 = "package" | "import" | "test";
 
 export interface CohortSourceGraphNodeV1 {
@@ -200,6 +220,7 @@ interface ResolvedCohortMemberBaseV1 {
   readonly authorityBoundaryDigest: string;
   readonly dependencyClosure: readonly string[];
   readonly sourceRefs: readonly string[];
+  readonly sourceReferences: readonly CohortSourceReferenceV1[];
   readonly repository: CohortRepositoryIdentityV1;
   readonly environment: CohortEnvironmentIdentityV1;
   readonly boundaryCandidates: readonly CohortBoundaryCandidateInputV1[];
@@ -598,6 +619,43 @@ function dependencyClosure(graph: WorksetGraph, memberRef: string): readonly str
   return sortedUnique(closure);
 }
 
+function investigationOwnershipRef(graph: WorksetGraph, memberRef: string): string {
+  const inbound = new Map<string, string>();
+  for (const edge of graph.edges) {
+    if (edge.kind === "prerequisite") continue;
+    const prior = inbound.get(edge.to);
+    if (prior !== undefined && prior !== edge.from) {
+      throw new Error(`${edge.to} has multiple primary ownership boundaries`);
+    }
+    inbound.set(edge.to, edge.from);
+  }
+  const visited = new Set<string>();
+  let current = memberRef;
+  while (true) {
+    if (visited.has(current)) throw new Error(`${memberRef} has cyclic primary ownership`);
+    visited.add(current);
+    const owner = inbound.get(current);
+    if (owner === undefined) return current;
+    current = owner;
+    if (current.startsWith(`${GOALS_LEDGER}:`)) return current;
+  }
+}
+
+function sourceReferenceOrder(
+  left: CohortSourceReferenceV1,
+  right: CohortSourceReferenceV1,
+): number {
+  return (
+    left.kind.localeCompare(right.kind) ||
+    left.ref.localeCompare(right.ref) ||
+    canonical(left).localeCompare(canonical(right))
+  );
+}
+
+function opaqueAuthorityReference(value: string): boolean {
+  return /^cq-[a-z0-9-]+:v[0-9]+:[0-9a-f]{64}$/u.test(value);
+}
+
 function readActivePrimaryItems(reader: CohortPrimaryLedgerReaderV1): ReadonlyMap<string, Item> {
   const ledgers = reader.enumerate().map((ledger) => {
     const fetched = reader.fetch(ledger);
@@ -691,6 +749,69 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
     });
     const plans = new Map(this.#plan.members.map((plan) => [plan.memberRef, plan]));
     const primaryBindings = new Map<string, string>();
+    const primaryLedgerIds = new Set(this.#ledger.enumerate());
+    const resolveSourceReferences = async (
+      memberRef: string,
+      roots: readonly Item[],
+    ): Promise<{
+      readonly repositoryPaths: readonly string[];
+      readonly references: readonly CohortSourceReferenceV1[];
+    }> => {
+      const repositoryPaths = new Set<string>();
+      const references = new Map<string, CohortSourceReferenceV1>();
+      const pending = [...roots];
+      const resolvedPrimaryRefs = new Set<string>();
+      while (pending.length > 0) {
+        const current = pending.shift();
+        if (current === undefined) continue;
+        for (const field of ["sessionLogs", "rawLogs"] as const) {
+          for (const ref of stringArrayField(current, field)) {
+            const reference = Object.freeze({ kind: "primary-log" as const, ref, field });
+            references.set(canonical(reference), reference);
+          }
+        }
+        for (const rawRef of stringArrayField(current, "sourceRefs")) {
+          const separator = rawRef.indexOf(":");
+          const isPrimaryRef =
+            separator > 0 &&
+            rawRef.indexOf(":", separator + 1) === -1 &&
+            primaryLedgerIds.has(rawRef.slice(0, separator));
+          if (isPrimaryRef) {
+            if (resolvedPrimaryRefs.has(rawRef)) continue;
+            const item = await readUniquePrimaryItem(this.#ledger, activeItems, rawRef);
+            const revision = itemRevision(rawRef, item);
+            primaryBindings.set(rawRef, revision);
+            const reference = Object.freeze({
+              kind: "primary-ledger" as const,
+              ref: rawRef,
+              revision,
+            });
+            references.set(canonical(reference), reference);
+            resolvedPrimaryRefs.add(rawRef);
+            pending.push(item);
+            continue;
+          }
+          if (opaqueAuthorityReference(rawRef)) {
+            const reference = Object.freeze({ kind: "opaque-authority" as const, ref: rawRef });
+            references.set(canonical(reference), reference);
+            continue;
+          }
+          const path = normalizedRepositoryPath(rawRef, `${memberRef} repository source path`);
+          repositoryPaths.add(path);
+          const reference = Object.freeze({ kind: "repository-path" as const, ref: path });
+          references.set(canonical(reference), reference);
+        }
+        if (references.size > LOCAL_COHORT_GRAPH_LIMIT) {
+          throw new Error(
+            `bounded cohort source provenance exceeds ${String(LOCAL_COHORT_GRAPH_LIMIT)} references`,
+          );
+        }
+      }
+      return Object.freeze({
+        repositoryPaths: sortedUnique(repositoryPaths),
+        references: Object.freeze([...references.values()].sort(sourceReferenceOrder)),
+      });
+    };
     const manifests: CohortManifestSnapshotV1[] = [];
     const members: ResolvedCohortMemberV1[] = [];
     for (const memberRef of request.memberRefs) {
@@ -700,10 +821,10 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
       if (item === undefined) throw new Error(`${memberRef} is not one active primary CQ member`);
       const revision = itemRevision(memberRef, item);
       primaryBindings.set(memberRef, revision);
-      const sourceRefs = Object.freeze([...stringArrayField(item, "sourceRefs")]);
       const dependencies = dependencyClosure(graph, memberRef);
       const { ledgerId } = canonicalRefParts(memberRef);
       if (ledgerId === TASKS_LEDGER) {
+        const sourceReferences = await resolveSourceReferences(memberRef, [item]);
         const ownership = readCanonicalOwnership(item);
         if (ownership?.edgeKind !== "finalized-manifest" || !ownership.ownerRef.startsWith(`${GOALS_LEDGER}:`)) {
           throw new Error(`${memberRef} implementation authority is not derived from trusted CQ state`);
@@ -752,7 +873,8 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
               authorityRevision,
             }),
             dependencyClosure: dependencies,
-            sourceRefs,
+            sourceRefs: sourceReferences.repositoryPaths,
+            sourceReferences: sourceReferences.references,
             repository,
             environment: this.#environment,
             boundaryCandidates: plan.boundaryCandidates,
@@ -779,6 +901,7 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
       }
       const hypothesisRevision = itemRevision(hypothesisRef, hypothesis);
       primaryBindings.set(hypothesisRef, hypothesisRevision);
+      const sourceReferences = await resolveSourceReferences(memberRef, [item, hypothesis]);
       const rootCause = stringField(item, "rootCause");
       const causeConfirmed = hypothesis.status === "confirmed" && rootCause !== null;
       const causeDigest = digest({
@@ -794,26 +917,33 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
         causeDigest,
         worksetRevision: workset.worksetRevision,
       });
-      const boundaryCandidates = plan.boundaryCandidates.map((candidate) =>
-        candidate.witness.kind === "confirmed-cause"
-          ? Object.freeze({
-              ...candidate,
-              witness: Object.freeze({ kind: "confirmed-cause" as const, causeDigest, receiptDigest }),
-            })
-          : candidate,
-      );
+      const boundaryCandidates = plan.boundaryCandidates.flatMap((candidate) => {
+        if (candidate.witness.kind !== "confirmed-cause") return [candidate];
+        if (!causeConfirmed) return [];
+        return [
+          Object.freeze({
+            ...candidate,
+            witness: Object.freeze({ kind: "confirmed-cause" as const, causeDigest, receiptDigest }),
+          }),
+        ];
+      });
+      const ownershipRef = investigationOwnershipRef(graph, memberRef);
+      const ownershipItem = activeItems.get(ownershipRef);
+      if (ownershipItem === undefined) {
+        throw new Error(`${memberRef} primary ownership boundary ${ownershipRef} is unavailable`);
+      }
+      const ownershipRevision = itemRevision(ownershipRef, ownershipItem);
+      primaryBindings.set(ownershipRef, ownershipRevision);
       const authorityRevision = digest({
+        authorityRef: workset.worksetRef,
         worksetRevision: workset.worksetRevision,
-        defectRevision: revision,
-        hypothesisRevision,
-        hypothesisOwnership,
       });
       members.push(
         Object.freeze({
           memberRef,
           memberRevision: revision,
           phase: "investigation",
-          ownershipBoundaryDigest: digest({ memberRef, hypothesisRef, hypothesisOwnership }),
+          ownershipBoundaryDigest: digest({ ownershipRef, ownershipRevision }),
           authorityRef: workset.worksetRef,
           authorityRevision,
           authorityBoundaryDigest: digest({
@@ -822,9 +952,8 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
             authorityRevision,
           }),
           dependencyClosure: dependencies,
-          sourceRefs: Object.freeze(
-            sortedUnique([...sourceRefs, ...stringArrayField(hypothesis, "sourceRefs")]),
-          ),
+          sourceRefs: sourceReferences.repositoryPaths,
+          sourceReferences: sourceReferences.references,
           repository,
           environment: this.#environment,
           boundaryCandidates: Object.freeze(boundaryCandidates),
@@ -1068,6 +1197,7 @@ interface CohortMemberObservationBaseV1 {
   readonly authorityBoundaryDigest: string;
   readonly dependencyClosure: readonly string[];
   readonly sourceRefs: readonly string[];
+  readonly sourceReferences: readonly CohortSourceReferenceV1[];
   readonly repository: CohortRepositoryIdentityV1;
   readonly environment: CohortEnvironmentIdentityV1;
   readonly attestations: readonly MemberCommonBoundaryAttestationV1[];
@@ -1421,6 +1551,10 @@ export async function produceCohortAdmissionObservationV1(
     assertDigest(member.authorityBoundaryDigest, `${member.memberRef} authority boundary`);
     assertUnique(member.dependencyClosure, `${member.memberRef} dependency closure`);
     assertUnique(member.sourceRefs, `${member.memberRef} source refs`);
+    assertUnique(
+      member.sourceReferences.map((reference) => canonical(reference)),
+      `${member.memberRef} source references`,
+    );
     for (const sourceRef of member.sourceRefs) {
       const path = normalizedRepositoryPath(sourceRef, `${member.memberRef} source ref`);
       if (!graph.nodeByPath.has(path)) throw new Error(`${member.memberRef} source ${path} was not inspected`);
@@ -1465,6 +1599,7 @@ export async function produceCohortAdmissionObservationV1(
       authorityBoundaryDigest: member.authorityBoundaryDigest,
       dependencyClosure: Object.freeze([...member.dependencyClosure].sort()),
       sourceRefs: Object.freeze([...member.sourceRefs].sort()),
+      sourceReferences: Object.freeze([...member.sourceReferences].sort(sourceReferenceOrder)),
       repository: member.repository,
       environment: member.environment,
       attestations: Object.freeze(
@@ -1591,6 +1726,12 @@ export function cohortObservationInvalidationsV1(
     }
     if (old === undefined || canonical(old.dependencyClosure) !== canonical(member.dependencyClosure)) {
       reasons.add("dependency-graph");
+    }
+    if (
+      old === undefined ||
+      canonical(old.sourceReferences) !== canonical(member.sourceReferences)
+    ) {
+      reasons.add("source-or-tree");
     }
     if (
       old === undefined ||
@@ -1756,7 +1897,18 @@ function pairExclusions(
   atoms: ReadonlyMap<string, CohortCommonBoundaryAtomV1>,
 ): readonly CohortExclusionReasonV1[] {
   const reasons: CohortExclusionReasonV1[] = [];
-  if (included.unavailableFacts.length > 0 || candidate.unavailableFacts.length > 0) {
+  const admissionBlockingUnavailableFact = (member: CohortMemberObservationV1): boolean => {
+    const hasRepositoryAttestation = member.attestations.some(
+      ({ applicability }) => applicability.kind === "repository-path",
+    );
+    return member.unavailableFacts.some(
+      ({ fact }) => fact !== "confirmed-cause" || !hasRepositoryAttestation,
+    );
+  };
+  if (
+    admissionBlockingUnavailableFact(included) ||
+    admissionBlockingUnavailableFact(candidate)
+  ) {
     reasons.push("stale-binding");
   }
   if (included.phase !== candidate.phase) reasons.push("phase-mismatch");
