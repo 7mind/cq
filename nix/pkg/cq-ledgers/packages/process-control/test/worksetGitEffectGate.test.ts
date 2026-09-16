@@ -123,6 +123,7 @@ describe("workset Git effect gate [T1984]", () => {
       expected: binding,
       resolve: async () => binding,
       provider,
+      launchDeadlineMs: Date.now() + 1_000,
     });
 
     expect(result).toEqual({ stdout: "", stderr: "", code: 0 });
@@ -156,9 +157,7 @@ describe("workset Git effect gate [T1984]", () => {
         expected,
         resolve: async () => {
           resolution += 1;
-          return resolution === 1
-            ? expected
-            : { ...expected, commit: "b".repeat(40) };
+          return resolution === 1 ? expected : { ...expected, commit: "b".repeat(40) };
         },
         provider,
       }),
@@ -366,7 +365,11 @@ describe("workset Git effect gate [T1984]", () => {
     controller.abort(new Error("test cancellation"));
     expect((await effect).code).not.toBe(0);
     for (const pid of pids) {
-      for (let attempt = 0; attempt < 1_000 && (await readProcessIdentity(pid)) !== null; attempt += 1) {
+      for (
+        let attempt = 0;
+        attempt < 1_000 && (await readProcessIdentity(pid)) !== null;
+        attempt += 1
+      ) {
         await Bun.sleep(2);
       }
       expect(await readProcessIdentity(pid)).toBeNull();
@@ -434,7 +437,7 @@ describe("workset Git effect gate [T1984]", () => {
     const hook = join(root, ".git", "hooks", "pre-rebase");
     await Bun.write(
       hook,
-      "#!/bin/sh\nprintf '%s|%s|%s' \"${CQ_SERVE_TOKEN-unset}\" \"${CQ_SERVE_MANAGEMENT_TOKEN-unset}\" \"${CQ_LEDGER_REMOTE_TOKEN-unset}\" > " +
+      '#!/bin/sh\nprintf \'%s|%s|%s\' "${CQ_SERVE_TOKEN-unset}" "${CQ_SERVE_MANAGEMENT_TOKEN-unset}" "${CQ_LEDGER_REMOTE_TOKEN-unset}" > ' +
         JSON.stringify(marker) +
         "\n",
     );

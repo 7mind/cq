@@ -23,14 +23,24 @@ import {
   type WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
-import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import {
+  DEFECTS_LEDGER,
+  GOALS_LEDGER,
+  QUESTIONS_LEDGER,
+  REVIEWS_LEDGER,
+  TASKS_LEDGER,
+} from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import type {
   SqliteOperationAccessScope,
   SqliteOperationMeasurement,
 } from "./store/sqlite/operationObservability.js";
-import { isLiveWorksetAdmission, type WorksetLedgerMutationAdmission, type WorksetRootsEpoch } from "./worksetEffectAdmission.js";
+import {
+  isLiveWorksetAdmission,
+  type WorksetLedgerMutationAdmission,
+  type WorksetRootsEpoch,
+} from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
 import { ItemNotFoundError, LedgerError, type Item } from "./types.js";
@@ -1531,8 +1541,13 @@ export type ImplementationEvidenceFaultInjector = (
 export interface ImplementationOperatorAdoptionCapability {
   readonly admit: (taskRef: string) => Promise<WorksetLedgerMutationAdmission>;
   readonly verify: (input: RecordImplementationAdoptionInput) => Promise<void>;
-  readonly taskRevision: (taskRef: string) => Promise<{ readonly updatedAt: string; readonly digest: string }>;
-  readonly recordLedger: (task: ImplementationTaskAuthority, adoption: ImplementationAdoptionRecord) => Promise<void>;
+  readonly taskRevision: (
+    taskRef: string,
+  ) => Promise<{ readonly updatedAt: string; readonly digest: string }>;
+  readonly recordLedger: (
+    task: ImplementationTaskAuthority,
+    adoption: ImplementationAdoptionRecord,
+  ) => Promise<void>;
 }
 
 export interface ImplementationEvidenceServiceDependencies {
@@ -1724,7 +1739,10 @@ function panelMatchesProtectedReviewRepair(
   record: PackagedImplementationAuditRecord,
   priorRepositoryHead: string,
 ): boolean {
-  if (!object(panel.auditInput) || !protectedCompletionReviewObservation(record.historicalReview, record))
+  if (
+    !object(panel.auditInput) ||
+    !protectedCompletionReviewObservation(record.historicalReview, record)
+  )
     return false;
   const prior = panel.auditInput;
   const observed = {
@@ -1741,11 +1759,14 @@ function panelMatchesProtectedReviewRepair(
     gateObservations: prior["gateObservations"],
     requiredObservations: prior["requiredObservations"],
   };
-  return canonical(observed) === canonical({
-    ...record,
-    historicalReview: null,
-    repositoryHead: priorRepositoryHead,
-  });
+  return (
+    canonical(observed) ===
+    canonical({
+      ...record,
+      historicalReview: null,
+      repositoryHead: priorRepositoryHead,
+    })
+  );
 }
 
 export async function implementationEvidenceActivationStatusFromStore(
@@ -1759,9 +1780,7 @@ export async function implementationEvidenceActivationStatusFromStore(
     (candidate) => candidate.goalRef === input.goalRef && candidate.manifestId === input.manifestId,
   );
   const lineageTips = activationRequirementLineageTips(requirementCandidates);
-  const armedRequirements = lineageTips.filter(
-    (candidate) => candidate.state === "armed",
-  );
+  const armedRequirements = lineageTips.filter((candidate) => candidate.state === "armed");
   if (armedRequirements.length > 1)
     throw new Error("multiple implementation evidence activation requirements are armed");
   const currentRequirements = lineageTips.filter(
@@ -1935,11 +1954,13 @@ function fulfilledContinuationRootForBaseCohort(
 function latestActivationRequirement(
   requirements: readonly ImplementationEvidenceActivationRequirementRecord[],
 ): ImplementationEvidenceActivationRequirementRecord | undefined {
-  return [...requirements].sort(
-    (left, right) =>
-      left.armedAt.localeCompare(right.armedAt) ||
-      left.requirementRef.localeCompare(right.requirementRef),
-  ).at(-1);
+  return [...requirements]
+    .sort(
+      (left, right) =>
+        left.armedAt.localeCompare(right.armedAt) ||
+        left.requirementRef.localeCompare(right.requirementRef),
+    )
+    .at(-1);
 }
 
 function finalizedReviewOutcome(attempt: ImplementationReviewAttemptRecord) {
@@ -2205,11 +2226,7 @@ export class ImplementationEvidenceService {
     });
     if (canonical(current) !== canonical(cohort))
       throw new Error("finalized implementation activation authority changed before arming");
-    await this.assertActivationTasksActionable(
-      goalRef,
-      current,
-      allowCompletedActivationTask,
-    );
+    await this.assertActivationTasksActionable(goalRef, current, allowCompletedActivationTask);
   }
 
   private async assertNativeAuditApprovalBound(
@@ -2919,10 +2936,7 @@ export class ImplementationEvidenceService {
     const armedAuthority = authorityTips.filter((entry) => entry.state === "armed");
     if (armedAuthority.length > 1)
       throw new Error("multiple current implementation evidence activation requirements are armed");
-    const current = authorityTips.filter(
-      (entry) =>
-        entry.boundaryCommit === repositoryHead,
-    );
+    const current = authorityTips.filter((entry) => entry.boundaryCommit === repositoryHead);
     if (current.length > 1)
       throw new Error("multiple current implementation evidence activation requirements exist");
     const requirement =
@@ -3033,33 +3047,29 @@ export class ImplementationEvidenceService {
           requirement.goalRef === input.goalRef && requirement.manifestId === input.manifestId,
       );
       const lineageTips = activationRequirementLineageTips(scopedRequirements);
-      const armedRequirements = lineageTips.filter(
-        (requirement) => requirement.state === "armed",
-      );
+      const armedRequirements = lineageTips.filter((requirement) => requirement.state === "armed");
       if (armedRequirements.length > 1)
         throw new Error("multiple implementation evidence activation requirements are armed");
       const fulfilledContinuationRoots = new Map<
         string,
         ImplementationEvidenceActivationRequirementRecord
       >();
-      const fulfilledTips = lineageTips.filter(
-        (requirement) => {
-          if (
-            requirement.state !== "fulfilled" ||
-            requirement.semanticManifestDigest !== semanticManifestDigest ||
-            requirement.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
-            requirement.evidenceTaskRef !== cohort.evidenceTaskRef ||
-            requirement.auditTaskRef !== cohort.auditTaskRef ||
-            requirement.activationTaskRef !== cohort.activationTaskRef
-          )
-            return false;
-          if (canonical(requirement.taskRefs) === canonical(taskRefs)) return true;
-          const root = fulfilledContinuationRootForBaseCohort(state, requirement, taskRefs);
-          if (root === undefined) return false;
-          fulfilledContinuationRoots.set(requirement.requirementRef, root);
-          return true;
-        },
-      );
+      const fulfilledTips = lineageTips.filter((requirement) => {
+        if (
+          requirement.state !== "fulfilled" ||
+          requirement.semanticManifestDigest !== semanticManifestDigest ||
+          requirement.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
+          requirement.evidenceTaskRef !== cohort.evidenceTaskRef ||
+          requirement.auditTaskRef !== cohort.auditTaskRef ||
+          requirement.activationTaskRef !== cohort.activationTaskRef
+        )
+          return false;
+        if (canonical(requirement.taskRefs) === canonical(taskRefs)) return true;
+        const root = fulfilledContinuationRootForBaseCohort(state, requirement, taskRefs);
+        if (root === undefined) return false;
+        fulfilledContinuationRoots.set(requirement.requirementRef, root);
+        return true;
+      });
       let fulfilledTip = fulfilledTips[0];
       if (fulfilledTips.length > 1) {
         if (this.deps.isCommitRetained === undefined)
@@ -3087,7 +3097,9 @@ export class ImplementationEvidenceService {
       }
       const blocking = armedRequirements[0] ?? fulfilledTip;
       const fulfilledContinuationRoot =
-        blocking === undefined ? undefined : fulfilledContinuationRoots.get(blocking.requirementRef);
+        blocking === undefined
+          ? undefined
+          : fulfilledContinuationRoots.get(blocking.requirementRef);
       let supersededRequirementRef: string | null = null;
       let allowCompletedActivationTask = false;
       if (blocking !== undefined) {
@@ -3110,9 +3122,10 @@ export class ImplementationEvidenceService {
             application.repositoryHead === blocking.boundaryCommit,
         );
         const attemptsFor = (panel: ImplementationAuditPanelRecord) =>
-          [...panel.attemptRefs, ...(panel.fallbackAttemptRef === null
-            ? []
-            : [panel.fallbackAttemptRef])].map((attemptRef) => state.auditAttempts[attemptRef]);
+          [
+            ...panel.attemptRefs,
+            ...(panel.fallbackAttemptRef === null ? [] : [panel.fallbackAttemptRef]),
+          ].map((attemptRef) => state.auditAttempts[attemptRef]);
         const panelsFor = (record: (typeof records)[number]) =>
           matchingPanels.filter(
             (panel) => panel.recordKey === record.recordKey && panel.taskRef === record.taskRef,
@@ -3171,21 +3184,13 @@ export class ImplementationEvidenceService {
                   attempt.terminalState !== null,
               ) &&
               attempts.some((attempt) => attempt?.terminalState === "disapproved") &&
-              panelMatchesProtectedReviewRepair(
-                panels[0]!,
-                currentRecord,
-                blocking.boundaryCommit,
-              )
+              panelMatchesProtectedReviewRepair(panels[0]!, currentRecord, blocking.boundaryCommit)
             );
           });
         const hasPreparedEvidence =
-          matchingPanels.length > 0 ||
-          matchingAudits.length > 0 ||
-          matchingApplications.length > 0;
+          matchingPanels.length > 0 || matchingAudits.length > 0 || matchingApplications.length > 0;
         const priorActivation =
-          blocking.activationRef === null
-            ? undefined
-            : state.activations[blocking.activationRef];
+          blocking.activationRef === null ? undefined : state.activations[blocking.activationRef];
         const fulfilledApplication = Object.values(state.auditManifestApplications).find(
           (application) =>
             application.requirementRef === blocking.requirementRef &&
@@ -3194,10 +3199,10 @@ export class ImplementationEvidenceService {
         );
         const retainedBoundary =
           this.deps.isCommitRetained !== undefined &&
-          await this.deps.isCommitRetained({
+          (await this.deps.isCommitRetained({
             repositoryHead,
             resultCommit: blocking.boundaryCommit,
-          });
+          }));
         if (
           (blocking.boundaryCommit === repositoryHead &&
             !terminalInconclusiveAuditCohort &&
@@ -3852,9 +3857,7 @@ export class ImplementationEvidenceService {
     const expectedActivationTaskRefs: string[] = [];
     for (const taskRef of expectedCurrentTaskRefs) {
       const authority =
-        taskRef === input.completedTaskRef
-          ? task
-          : await this.deps.readTaskAuthority(taskRef);
+        taskRef === input.completedTaskRef ? task : await this.deps.readTaskAuthority(taskRef);
       if (authority.taskRef !== taskRef || authority.status !== "done")
         throw new Error("prior activation task authority changed before continuation");
       if (authority.ownerGoalRef === input.goalRef) expectedActivationTaskRefs.push(taskRef);
@@ -5056,23 +5059,34 @@ export class ImplementationEvidenceService {
       input.approval.kind !== "explicit-operator-approval" ||
       !/^questions:Q[0-9]+$/u.test(input.approval.questionRef) ||
       input.approval.answer.trim().length === 0 ||
-      input.authorityLossReason.trim().length === 0 || input.completion.trim().length === 0 ||
-      input.author.trim().length === 0 || !Number.isFinite(Date.parse(input.expectedTaskUpdatedAt)) ||
+      input.authorityLossReason.trim().length === 0 ||
+      input.completion.trim().length === 0 ||
+      input.author.trim().length === 0 ||
+      !Number.isFinite(Date.parse(input.expectedTaskUpdatedAt)) ||
       !/^[0-9a-f]{64}$/u.test(input.expectedTaskDigest) ||
       input.validation.kind !== "operator-reported-validation" ||
       input.validation.validatedCommit !== input.expectedRepositoryHead ||
-      input.validation.exitCode !== 0 || input.validation.command.trim().length === 0 ||
-      input.validation.logPath.trim().length === 0 || !/^[0-9a-f]{64}$/u.test(input.validation.logSha256) ||
+      input.validation.exitCode !== 0 ||
+      input.validation.command.trim().length === 0 ||
+      input.validation.logPath.trim().length === 0 ||
+      !/^[0-9a-f]{64}$/u.test(input.validation.logSha256) ||
       input.supersedesCompletionRefs.some((ref) => !COMPLETION_REF.test(ref)) ||
       new Set(input.supersedesCompletionRefs).size !== input.supersedesCompletionRefs.length
-    ) throw new Error("operator adoption requires explicit approval, exact coordinates, and successful validation evidence");
+    )
+      throw new Error(
+        "operator adoption requires explicit approval, exact coordinates, and successful validation evidence",
+      );
     const capability = this.deps.operatorAdoption;
     if (capability === undefined) throw new Error("operator adoption capability is unavailable");
     const admission = await capability.admit(input.taskRef);
     if (!isLiveWorksetAdmission(admission))
       throw new Error("operator adoption requires an authentic workset admission");
     try {
-      if (admission.kind !== "owned-write" || admission.targets.length !== 1 || admission.targets[0] !== input.taskRef)
+      if (
+        admission.kind !== "owned-write" ||
+        admission.targets.length !== 1 ||
+        admission.targets[0] !== input.taskRef
+      )
         throw new Error("operator adoption workset admission targets a different mutation");
       return await this.recordAdoptionAdmitted(input, capability);
     } finally {
@@ -5084,15 +5098,19 @@ export class ImplementationEvidenceService {
     input: RecordImplementationAdoptionInput,
     capability: ImplementationOperatorAdoptionCapability,
   ) {
-    if (await this.deps.repositoryHead() !== input.expectedRepositoryHead)
+    if ((await this.deps.repositoryHead()) !== input.expectedRepositoryHead)
       throw new Error("expected_repository_head does not match the integration ref");
     await capability.verify(input);
     const task = await this.deps.readTaskAuthority(input.taskRef);
     const requestDigest = digest(input);
-    const adoptionRef = opaqueRef("cq-implementation-adoption", { taskRef: input.taskRef, operationId: input.operationId });
+    const adoptionRef = opaqueRef("cq-implementation-adoption", {
+      taskRef: input.taskRef,
+      operationId: input.operationId,
+    });
     const record = await this.deps.store[mutateEvidence](async (state) => {
-      const prior = Object.values(state.adoptions).find((entry) =>
-        entry.operationId === input.operationId || entry.taskRef === input.taskRef);
+      const prior = Object.values(state.adoptions).find(
+        (entry) => entry.operationId === input.operationId || entry.taskRef === input.taskRef,
+      );
       if (prior !== undefined) {
         if (prior.requestDigest !== requestDigest || prior.adoptionRef !== adoptionRef)
           throw new Error("operator adoption operation or task already binds different evidence");
@@ -5101,25 +5119,46 @@ export class ImplementationEvidenceService {
       if (task.status === "done" || task.status === "abandoned")
         throw new Error("operator adoption requires a nonterminal task");
       const revision = await capability.taskRevision(input.taskRef);
-      if (revision.updatedAt !== input.expectedTaskUpdatedAt || revision.digest !== input.expectedTaskDigest)
+      if (
+        revision.updatedAt !== input.expectedTaskUpdatedAt ||
+        revision.digest !== input.expectedTaskDigest
+      )
         throw new Error("operator adoption task revision changed");
-      const active = Object.values(state.completions).filter((entry) =>
-        entry.taskRef === input.taskRef && entry.state !== "superseded" && entry.state !== "recorded");
-      if (active.some((entry) => entry.state === "recording") ||
-        digest(active.map((entry) => entry.completionRef).sort()) !== digest([...input.supersedesCompletionRefs].sort()))
+      const active = Object.values(state.completions).filter(
+        (entry) =>
+          entry.taskRef === input.taskRef &&
+          entry.state !== "superseded" &&
+          entry.state !== "recorded",
+      );
+      if (
+        active.some((entry) => entry.state === "recording") ||
+        digest(active.map((entry) => entry.completionRef).sort()) !==
+          digest([...input.supersedesCompletionRefs].sort())
+      )
         throw new Error("operator adoption active completion journal set changed or is recording");
       const adoption: ImplementationAdoptionRecord = {
-        ...structuredClone(input), kind: "operator-adoption", version: 1,
-        adoptionRef, ownerGoalRef: task.ownerGoalRef, finalizedManifest: task.finalizedManifest,
-        requestDigest, state: "recording", preparedAt: this.now(), recordedAt: null,
+        ...structuredClone(input),
+        kind: "operator-adoption",
+        version: 1,
+        adoptionRef,
+        ownerGoalRef: task.ownerGoalRef,
+        finalizedManifest: task.finalizedManifest,
+        requestDigest,
+        state: "recording",
+        preparedAt: this.now(),
+        recordedAt: null,
       };
       state.adoptions[adoptionRef] = adoption;
-      for (const entry of active) state.completions[entry.completionRef] = { ...entry, state: "superseded" };
+      for (const entry of active)
+        state.completions[entry.completionRef] = { ...entry, state: "superseded" };
       return adoption;
     });
-    if (task.ownerGoalRef !== record.ownerGoalRef || task.finalizedManifest !== record.finalizedManifest)
+    if (
+      task.ownerGoalRef !== record.ownerGoalRef ||
+      task.finalizedManifest !== record.finalizedManifest
+    )
       throw new Error("operator adoption task authority changed");
-    if (await this.deps.repositoryHead() !== record.expectedRepositoryHead)
+    if ((await this.deps.repositoryHead()) !== record.expectedRepositoryHead)
       throw new Error("repository head changed before operator adoption recording");
     await capability.recordLedger(task, record);
     return await this.deps.store[mutateEvidence](async (state) => {
@@ -5127,11 +5166,16 @@ export class ImplementationEvidenceService {
       if (current === undefined || current.requestDigest !== requestDigest)
         throw new Error("operator adoption reservation changed during recording");
       const existing = current.state === "recorded";
-      state.adoptions[adoptionRef] = existing ? current : { ...current, state: "recorded", recordedAt: this.now() };
+      state.adoptions[adoptionRef] = existing
+        ? current
+        : { ...current, state: "recorded", recordedAt: this.now() };
       return {
-        status: existing ? "existing" as const : "recorded" as const,
-        kind: "operator-adoption" as const, adoptionRef, taskRef: record.taskRef,
-        resultCommit: record.resultCommit, repositoryHead: record.expectedRepositoryHead,
+        status: existing ? ("existing" as const) : ("recorded" as const),
+        kind: "operator-adoption" as const,
+        adoptionRef,
+        taskRef: record.taskRef,
+        resultCommit: record.resultCommit,
+        repositoryHead: record.expectedRepositoryHead,
       };
     });
   }
@@ -5435,11 +5479,17 @@ export async function recordProtectedImplementationAdoption(
   task: ImplementationTaskAuthority,
   adoption: ImplementationAdoptionRecord,
 ): Promise<void> {
-  if (adoption.kind !== "operator-adoption" || adoption.version !== 1 ||
-    (adoption.state !== "recording" && adoption.state !== "recorded"))
+  if (
+    adoption.kind !== "operator-adoption" ||
+    adoption.version !== 1 ||
+    (adoption.state !== "recording" && adoption.state !== "recorded")
+  )
     throw new Error("protected operator adoption requires a durable adoption reservation");
-  if (adoption.taskRef !== task.taskRef || adoption.ownerGoalRef !== task.ownerGoalRef ||
-    adoption.finalizedManifest !== task.finalizedManifest)
+  if (
+    adoption.taskRef !== task.taskRef ||
+    adoption.ownerGoalRef !== task.ownerGoalRef ||
+    adoption.finalizedManifest !== task.finalizedManifest
+  )
     throw new Error("operator adoption task authority mismatch");
   const taskId = taskIdFromRef(task.taskRef);
   const approvalQuestionId = adoption.approval.questionRef.slice(`${QUESTIONS_LEDGER}:`.length);
@@ -5451,41 +5501,67 @@ export async function recordProtectedImplementationAdoption(
   };
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
+    runAtomicOwnedMutation?<T>(
+      mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
+      context: DirectOwnedMutation,
+    ): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined)
     throw new Error("operator adoption requires an atomic ledger adapter");
-  await atomic.runAtomicOwnedMutation((tx) => {
-    const current = tx.fetchItem(TASKS_LEDGER, taskId);
-    const goal = tx.fetchItem(GOALS_LEDGER, task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length));
-    const approval = tx.fetchItem(QUESTIONS_LEDGER, approvalQuestionId);
-    if (approval.status !== "answered" || approval.fields["answer"] !== adoption.approval.answer)
-      throw new Error("operator adoption approval changed before task recording");
-    if (current.fields["worksetOwnerRef"] !== task.ownerGoalRef ||
-      current.fields["worksetOwnerEdgeKind"] !== "finalized-manifest" ||
-      goal.fields["planFinalizedManifest"] !== task.finalizedManifest)
-      throw new Error("operator adoption sealed task authority changed");
-    const sources = current.fields["sourceRefs"];
-    const logs = current.fields["sessionLogs"];
-    if (current.status === "done") {
-      if (current.fields["resultCommit"] !== adoption.resultCommit ||
-        current.fields["completion"] !== adoption.completion ||
-        !Array.isArray(sources) || !sources.includes(adoption.adoptionRef) ||
-        !Array.isArray(logs) || !logs.includes(adoption.validation.logPath))
-        throw new Error("done task carries different operator adoption evidence");
-      return;
-    }
-    if (current.updatedAt !== adoption.expectedTaskUpdatedAt ||
-      implementationAdoptionTaskDigest(current) !== adoption.expectedTaskDigest || current.status === "abandoned")
-      throw new Error("operator adoption task revision changed");
-    patch.fields = {
-      ...patch.fields,
-      sourceRefs: [...new Set([...(Array.isArray(sources) ? sources : []), adoption.adoptionRef])],
-      sessionLogs: [...new Set([...(Array.isArray(logs) ? logs : []), adoption.validation.logPath])],
-    };
-    tx.updateItem(TASKS_LEDGER, taskId, patch);
-  }, { direct: { kind: "implementation-adoption", taskId,
-    ownerGoalId: task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length), approvalQuestionId, taskPatch: patch } });
+  await atomic.runAtomicOwnedMutation(
+    (tx) => {
+      const current = tx.fetchItem(TASKS_LEDGER, taskId);
+      const goal = tx.fetchItem(GOALS_LEDGER, task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length));
+      const approval = tx.fetchItem(QUESTIONS_LEDGER, approvalQuestionId);
+      if (approval.status !== "answered" || approval.fields["answer"] !== adoption.approval.answer)
+        throw new Error("operator adoption approval changed before task recording");
+      if (
+        current.fields["worksetOwnerRef"] !== task.ownerGoalRef ||
+        current.fields["worksetOwnerEdgeKind"] !== "finalized-manifest" ||
+        goal.fields["planFinalizedManifest"] !== task.finalizedManifest
+      )
+        throw new Error("operator adoption sealed task authority changed");
+      const sources = current.fields["sourceRefs"];
+      const logs = current.fields["sessionLogs"];
+      if (current.status === "done") {
+        if (
+          current.fields["resultCommit"] !== adoption.resultCommit ||
+          current.fields["completion"] !== adoption.completion ||
+          !Array.isArray(sources) ||
+          !sources.includes(adoption.adoptionRef) ||
+          !Array.isArray(logs) ||
+          !logs.includes(adoption.validation.logPath)
+        )
+          throw new Error("done task carries different operator adoption evidence");
+        return;
+      }
+      if (
+        current.updatedAt !== adoption.expectedTaskUpdatedAt ||
+        implementationAdoptionTaskDigest(current) !== adoption.expectedTaskDigest ||
+        current.status === "abandoned"
+      )
+        throw new Error("operator adoption task revision changed");
+      patch.fields = {
+        ...patch.fields,
+        sourceRefs: [
+          ...new Set([...(Array.isArray(sources) ? sources : []), adoption.adoptionRef]),
+        ],
+        sessionLogs: [
+          ...new Set([...(Array.isArray(logs) ? logs : []), adoption.validation.logPath]),
+        ],
+      };
+      tx.updateItem(TASKS_LEDGER, taskId, patch);
+    },
+    {
+      direct: {
+        kind: "implementation-adoption",
+        taskId,
+        ownerGoalId: task.ownerGoalRef.slice(`${GOALS_LEDGER}:`.length),
+        approvalQuestionId,
+        taskPatch: patch,
+      },
+    },
+  );
 }
 
 /**
@@ -5548,49 +5624,64 @@ export async function recordProtectedImplementationCompletion(
   authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
+    runAtomicOwnedMutation?<T>(
+      mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
+      context: DirectOwnedMutation,
+    ): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new Error("protected implementation completion requires an atomic ledger adapter");
   }
-  return await atomic.runAtomicOwnedMutation((tx) => {
-    const currentTask = tx.fetchItem(TASKS_LEDGER, taskId);
-    let existingReview;
-    try {
-      existingReview = tx.fetchItem(REVIEWS_LEDGER, reviewId);
-    } catch (error) {
-      if (!(error instanceof ItemNotFoundError)) throw error;
-    }
-    if (existingReview === undefined) {
-      tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
-    } else if (
-      existingReview.status !== "go-ahead" ||
-      existingReview.fields["implementationEvidence"] !== implementationEvidence
-    ) {
-      throw new Error("terminal implementation review id belongs to different evidence");
-    }
-    if (currentTask.status !== "done") tx.updateItem(TASKS_LEDGER, taskId, patch);
-    else if (currentTask.fields["resultCommit"] !== completion.resultCommit)
-      throw new Error("done task carries a different resultCommit");
-    const defectRefs = currentTask.fields["ledgerRefs"];
-    if (Array.isArray(defectRefs)) {
-      for (const defectRef of new Set(defectRefs)) {
-        if (!defectRef.startsWith(`${DEFECTS_LEDGER}:`)) continue;
-        const defectId = defectRef.slice(DEFECTS_LEDGER.length + 1);
-        let defect;
-        try {
-          defect = tx.fetchItem(DEFECTS_LEDGER, defectId);
-        } catch (error) {
-          if (error instanceof ItemNotFoundError) continue;
-          throw error;
-        }
-        if (defect.status === "root-caused") {
-          tx.updateItem(DEFECTS_LEDGER, defectId, defectPatch);
+  return await atomic.runAtomicOwnedMutation(
+    (tx) => {
+      const currentTask = tx.fetchItem(TASKS_LEDGER, taskId);
+      let existingReview;
+      try {
+        existingReview = tx.fetchItem(REVIEWS_LEDGER, reviewId);
+      } catch (error) {
+        if (!(error instanceof ItemNotFoundError)) throw error;
+      }
+      if (existingReview === undefined) {
+        tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
+      } else if (
+        existingReview.status !== "go-ahead" ||
+        existingReview.fields["implementationEvidence"] !== implementationEvidence
+      ) {
+        throw new Error("terminal implementation review id belongs to different evidence");
+      }
+      if (currentTask.status !== "done") tx.updateItem(TASKS_LEDGER, taskId, patch);
+      else if (currentTask.fields["resultCommit"] !== completion.resultCommit)
+        throw new Error("done task carries a different resultCommit");
+      const defectRefs = currentTask.fields["ledgerRefs"];
+      if (Array.isArray(defectRefs)) {
+        for (const defectRef of new Set(defectRefs)) {
+          if (!defectRef.startsWith(`${DEFECTS_LEDGER}:`)) continue;
+          const defectId = defectRef.slice(DEFECTS_LEDGER.length + 1);
+          let defect;
+          try {
+            defect = tx.fetchItem(DEFECTS_LEDGER, defectId);
+          } catch (error) {
+            if (error instanceof ItemNotFoundError) continue;
+            throw error;
+          }
+          if (defect.status === "root-caused") {
+            tx.updateItem(DEFECTS_LEDGER, defectId, defectPatch);
+          }
         }
       }
-    }
-    return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
-  }, { direct: { kind: "implementation-completion", taskId, reviewId, reviewInit, taskPatch: patch, defectPatch } });
+      return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
+    },
+    {
+      direct: {
+        kind: "implementation-completion",
+        taskId,
+        reviewId,
+        reviewInit,
+        taskPatch: patch,
+        defectPatch,
+      },
+    },
+  );
 }
 
 export function canonicalImplementationCompletionMergeLine(
@@ -5625,6 +5716,40 @@ export function implementationCompletionMergeAdmissionProviderFromStore(
         await options.repositoryHead(),
       );
       const underlying = await options.provider.acquire(input);
+      let mergePrepared = false;
+      const prepareMerge = async (
+        guardian: Parameters<WorksetBrokerAdmissionHandle["shareWithGuardian"]>[0],
+        deadline?: number,
+      ): Promise<void> => {
+        if (mergePrepared) return;
+        const phase = "durable merge-started preparation";
+        const observedHead = await awaitBeforeLaunchDeadline(
+          options.repositoryHead(),
+          deadline,
+          phase,
+        );
+        await awaitBeforeLaunchDeadline(
+          markImplementationCompletionMergeStarted(
+            options.store,
+            options.binding.completionRef,
+            observedHead,
+            options.now,
+          ),
+          deadline,
+          phase,
+        );
+        remainingLaunchDeadlineMs(deadline, phase);
+        const confirmedHead = await awaitBeforeLaunchDeadline(
+          options.repositoryHead(),
+          deadline,
+          phase,
+        );
+        if (confirmedHead !== observedHead) {
+          throw new Error("repository HEAD changed during durable merge-started preparation");
+        }
+        await Promise.resolve(underlying.prepareGuardianShare?.(guardian, deadline));
+        mergePrepared = true;
+      };
       return {
         id: underlying.id,
         epoch: underlying.epoch,
@@ -5632,32 +5757,9 @@ export function implementationCompletionMergeAdmissionProviderFromStore(
         targetRef: underlying.targetRef,
         registerProcessGroup: async (registration, deadline) =>
           await underlying.registerProcessGroup(registration, deadline),
+        prepareGuardianShare: prepareMerge,
         shareWithGuardian: async (guardian, deadline) => {
-          const phase = "durable merge-started preparation";
-          const observedHead = await awaitBeforeLaunchDeadline(
-            options.repositoryHead(),
-            deadline,
-            phase,
-          );
-          await awaitBeforeLaunchDeadline(
-            markImplementationCompletionMergeStarted(
-              options.store,
-              options.binding.completionRef,
-              observedHead,
-              options.now,
-            ),
-            deadline,
-            phase,
-          );
-          remainingLaunchDeadlineMs(deadline, phase);
-          const confirmedHead = await awaitBeforeLaunchDeadline(
-            options.repositoryHead(),
-            deadline,
-            phase,
-          );
-          if (confirmedHead !== observedHead) {
-            throw new Error("repository HEAD changed during durable merge-started preparation");
-          }
+          await prepareMerge(guardian, deadline);
           await underlying.shareWithGuardian(guardian, deadline);
         },
         markSettled: async () => {

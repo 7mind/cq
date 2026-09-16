@@ -94,6 +94,11 @@ export interface WorksetBrokerAdmissionHandle {
     registration: WorksetBrokerProcessGroupRegistration,
     launchDeadlineMs?: number,
   ): void | Promise<void>;
+  /** Complete provider-specific durable preparation before guardian sharing begins. */
+  prepareGuardianShare?(
+    guardian: WorksetBrokerProcessGroupRegistration,
+    launchDeadlineMs?: number,
+  ): void | Promise<void>;
   /** Share the held admission with the already registered bootstrap guardian. */
   shareWithGuardian(
     guardian: WorksetBrokerProcessGroupRegistration,
@@ -161,6 +166,7 @@ export class WorksetEffectProtocolSession {
   private stageValue: WorksetEffectBrokerStage = "unacquired";
   private admission: WorksetBrokerAdmissionHandle | null = null;
   private registration: WorksetBrokerProcessGroupRegistration | null = null;
+  private guardianPrepared = false;
   private guardianShared = false;
   private terminationReason: WorksetBrokerTerminationReason | null = null;
   private effectCount = 0;
@@ -264,6 +270,29 @@ export class WorksetEffectProtocolSession {
     remainingLaunchDeadlineMs(launchDeadlineMs, "durable process-group registration");
   }
 
+  async prepareGuardianShare(launchDeadlineMs?: number): Promise<void> {
+    this.assertStage("process-group-registered", "shareWithGuardian");
+    if (this.admission === null || this.registration === null) {
+      throw new WorksetEffectProtocolError(
+        "registration-required",
+        "guardian sharing requires a registered process group",
+      );
+    }
+    if (this.guardianShared) {
+      throw new WorksetEffectProtocolError(
+        "multiple-effects",
+        "workset effect admission already has a guardian share",
+      );
+    }
+    if (this.guardianPrepared) return;
+    if (this.admission.prepareGuardianShare !== undefined) {
+      await Promise.resolve(
+        this.admission.prepareGuardianShare(this.registration, launchDeadlineMs),
+      );
+    }
+    this.guardianPrepared = true;
+  }
+
   async shareWithGuardian(launchDeadlineMs?: number): Promise<void> {
     this.assertStage("process-group-registered", "shareWithGuardian");
     if (this.admission === null || this.registration === null) {
@@ -278,6 +307,7 @@ export class WorksetEffectProtocolSession {
         "workset effect admission already has a guardian share",
       );
     }
+    await this.prepareGuardianShare(launchDeadlineMs);
     remainingLaunchDeadlineMs(launchDeadlineMs, "durable guardian share");
     await awaitBeforeLaunchDeadline(
       Promise.resolve(this.admission.shareWithGuardian(this.registration, launchDeadlineMs)),

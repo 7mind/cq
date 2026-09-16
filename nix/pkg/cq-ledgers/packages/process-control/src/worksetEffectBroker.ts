@@ -231,6 +231,15 @@ export class WorksetEffectBroker {
             options.launchDeadlineMs,
           );
         },
+        prepareGuardianShare: async (candidate) => {
+          if (registration?.pgid !== candidate.pgid) {
+            throw new WorksetEffectProtocolError(
+              "registration-required",
+              "registered-launch guardian identity changed before preparation",
+            );
+          }
+          await session.prepareGuardianShare(options.launchDeadlineMs);
+        },
         shareLeaseWithGuardian: async (candidate) => {
           if (registration?.pgid !== candidate.pgid) {
             throw new WorksetEffectProtocolError(

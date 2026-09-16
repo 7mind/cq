@@ -84,6 +84,11 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
   /** Publish the mandatory registration while the bootstrap leader is fenced. */
   readonly register: (registration: ProcessGroupRegistration) => Promise<void>;
   /**
+   * Complete provider-specific durable work before guardian sharing begins.
+   * The callback receives the shared absolute deadline and must enforce it.
+   */
+  readonly prepareGuardianShare?: (registration: ProcessGroupRegistration) => Promise<void>;
+  /**
    * Publish the admission's guardian share after registration and before the
    * bootstrap receives its target-release record.
    */
@@ -486,8 +491,10 @@ function formatBootstrapExitOutcome(outcome: unknown): string {
     const value = outcome as Record<string, unknown>;
     const exitCode = value["exitCode"];
     const signal = value["signal"];
-    if ((typeof exitCode === "number" || exitCode === null) &&
-        (typeof signal === "string" || signal === null)) {
+    if (
+      (typeof exitCode === "number" || exitCode === null) &&
+      (typeof signal === "string" || signal === null)
+    ) {
       return `exitCode=${String(exitCode)}, signal=${String(signal)}`;
     }
   }
@@ -593,10 +600,18 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     if (!(await isProcessIdentityAlive(registration.leader))) {
       throw new Error("@cq/process-control: registered-launch bootstrap exited before release");
     }
+    if (options.prepareGuardianShare !== undefined) {
+      await options.prepareGuardianShare(registration);
+      remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch guardian preparation");
+    }
     if (options.shareLeaseWithGuardian !== undefined) {
+      const guardianDiagnosticDeadlineMs = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        launchDeadlineMs + POLL_INTERVAL_MS,
+      );
       await awaitBeforeLaunchDeadline(
         options.shareLeaseWithGuardian(registration),
-        launchDeadlineMs,
+        guardianDiagnosticDeadlineMs,
         "registered-launch guardian share",
       );
       remainingLaunchDeadlineMs(launchDeadlineMs, "registered-launch guardian share");
@@ -616,13 +631,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       launchDeadlineMs,
       "registered-launch target release",
     );
-    await waitForBootstrapStatus(
-      statusPath,
-      nonce,
-      registration.pgid,
-      exit,
-      launchDeadlineMs,
-    );
+    await waitForBootstrapStatus(statusPath, nonce, registration.pgid, exit, launchDeadlineMs);
     const exited = completeRegisteredLaunch(
       bootstrap,
       registration,

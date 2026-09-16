@@ -184,6 +184,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
     const launcher = await readProcessIdentity(process.pid);
     if (launcher === null) throw new Error("test launcher identity disappeared");
+    const launchDeadlineMs = Date.now() + 30_000;
     const child = spawn(
       process.execPath,
       [
@@ -193,6 +194,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
         String(launcher.pid),
         launcher.startTime,
         process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+        String(launchDeadlineMs),
         root,
         process.execPath,
         "-e",
@@ -209,7 +211,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     if (pid === undefined) throw new Error("test bootstrap did not return a pid");
     await writeFile(
       join(protocolDirectory, "release.json"),
-      JSON.stringify({ nonce: "mismatched-nonce", pgid: pid, launcher }),
+      JSON.stringify({ nonce: "mismatched-nonce", pgid: pid, launcher, launchDeadlineMs }),
     );
     const exitCode = await new Promise<number | null>((resolve) =>
       child.once("exit", (code) => resolve(code)),

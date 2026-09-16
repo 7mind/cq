@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { DispatchHandle, DispatchPrepared } from "@cq/config";
-import { createStrictInMemoryWorksetEffectAdmissionProvider } from "@cq/process-control";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  WorksetEffectBroker,
+  createStrictInMemoryWorksetEffectAdmissionProvider,
+  type RegisteredLaunchBootstrapSpecification,
+} from "@cq/process-control";
 import {
   GOALS_LEDGER,
   InMemoryLedgerStore,
@@ -8,6 +16,7 @@ import {
   REVIEWS_LEDGER,
   TASKS_LEDGER,
   canonicalImplementationCompletionMergeLine,
+  createFsImplementationEvidenceStore,
   createInMemoryImplementationEvidenceStore,
   protectLedgerStoreWithImplementationEvidence,
   createLedgerMcpTools,
@@ -15,6 +24,7 @@ import {
   implementationCompletionMergeAdmissionProviderFromStore,
   recordProtectedImplementationCompletion,
   type ImplementationEvidenceServiceDependencies,
+  type ImplementationEvidenceStore,
   type ImplementationReviewerIdentity,
 } from "../src/index.js";
 
@@ -72,8 +82,9 @@ function approvedVerdict() {
   } as const;
 }
 
-async function fixture() {
-  const evidence = createInMemoryImplementationEvidenceStore();
+async function fixture(
+  evidence: ImplementationEvidenceStore = createInMemoryImplementationEvidenceStore(),
+) {
   let head = BASE;
   let ledgerWrites = 0;
   let verificationClean = true;
@@ -163,6 +174,42 @@ async function fixture() {
   };
 }
 
+async function journalEntryCount(path: string): Promise<number> {
+  return (await readdir(path)).filter((name) => /^[0-9]{16}-[0-9a-f]{64}\.json$/u.test(name))
+    .length;
+}
+
+function processExited(
+  child: ChildProcess,
+): Promise<{ readonly exitCode: number | null; readonly signal: NodeJS.Signals | null }> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
+  });
+}
+
+function ignoredBootstrap(specification: RegisteredLaunchBootstrapSpecification<StdioOptions>) {
+  const child = spawn(specification.argv[0], specification.argv.slice(1), {
+    cwd: specification.cwd,
+    env: specification.env,
+    detached: specification.detached,
+    stdio: specification.stdio,
+  });
+  return {
+    process: child,
+    pid: child.pid,
+    exited: processExited(child),
+    outputDrained: Promise.resolve(),
+    resultFromTargetOutcome: (outcome: {
+      readonly exitCode: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }) => outcome,
+    terminate: (signal: NodeJS.Signals) => {
+      child.kill(signal);
+    },
+  };
+}
+
 describe("versioned protected implementation evidence [BG]", () => {
   test("binds complete ordered review evidence before merge and records after durable merge", async () => {
     const f = await fixture();
@@ -240,6 +287,289 @@ describe("versioned protected implementation evidence [BG]", () => {
       ).status,
     ).toBe("existing");
     expect(f.getLedgerWrites()).toBe(1);
+  });
+
+  // Regression origin: H354 retained a merge-started completion after guardian
+  // sharing failed; replay must not append an identical durable snapshot.
+  test("retries the exact retained merge-started completion without a redundant journal append", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-h354-merge-replay-"));
+    const journal = join(root, "journal");
+    try {
+      const f = await fixture(createFsImplementationEvidenceStore({ path: journal }));
+      const completion = await f.service.prepareCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: BASE,
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        reviewAttemptRefs: [f.attemptRef],
+        completion: "implemented",
+        logPaths: [],
+        mergeOperationId: "merge-retained-retry",
+        operationId: "completion-retained-retry",
+        author: "parent",
+      });
+      const binding = {
+        kind: "merge" as const,
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: "merge-retained-retry",
+      };
+
+      const rejectedUnderlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+      const rejectedProvider = implementationCompletionMergeAdmissionProviderFromStore({
+        provider: {
+          acquire: async (input) => {
+            const underlying = await rejectedUnderlying.acquire(input);
+            return {
+              ...underlying,
+              shareWithGuardian: async () => {
+                throw new Error("controlled guardian share failure");
+              },
+            };
+          },
+        },
+        store: f.evidence,
+        binding,
+        repositoryHead: async () => f.getHead(),
+      });
+      const rejected = await rejectedProvider.acquire({
+        kind: "merge",
+        targetRef: "tasks:T2345",
+      });
+      await rejected.registerProcessGroup({ pgid: 321, leaderPid: 321 });
+      await expect(rejected.shareWithGuardian({ pgid: 321, leaderPid: 321 })).rejects.toThrow(
+        "controlled guardian share failure",
+      );
+      expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
+        "merge-started",
+      );
+      await expect(f.service.mergeAcknowledgement(completion.completionRef)).rejects.toThrow(
+        "not durably merged",
+      );
+      await rejected.markSettled();
+      await rejected.releaseAfterSettlement();
+      expect(rejectedUnderlying.activeAdmissionCount()).toBe(0);
+      const retainedEntryCount = await journalEntryCount(journal);
+
+      const retryUnderlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+      const retryProvider = implementationCompletionMergeAdmissionProviderFromStore({
+        provider: retryUnderlying,
+        store: f.evidence,
+        binding,
+        repositoryHead: async () => f.getHead(),
+      });
+      const retry = await retryProvider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+      await retry.registerProcessGroup({ pgid: 322, leaderPid: 322 });
+      await retry.shareWithGuardian({ pgid: 322, leaderPid: 322 });
+      expect(await journalEntryCount(journal)).toBe(retainedEntryCount);
+      f.setHead(RESULT);
+      await retry.markSettled();
+      await retry.releaseAfterSettlement();
+      expect(retryUnderlying.activeAdmissionCount()).toBe(0);
+      expect(
+        (await f.service.mergeAcknowledgement(completion.completionRef)).mergeOperationId,
+      ).toBe("merge-retained-retry");
+
+      const wrongOperationProvider = implementationCompletionMergeAdmissionProviderFromStore({
+        provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+        store: f.evidence,
+        binding: { ...binding, mergeOperationId: "merge-foreign-operation" },
+        repositoryHead: async () => f.getHead(),
+      });
+      await expect(
+        wrongOperationProvider.acquire({ kind: "merge", targetRef: "tasks:T2345" }),
+      ).rejects.toThrow("merge coordinates do not match");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("bounds durable merge-started preparation before guardian release [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-h354-slow-journal-"));
+    try {
+      const f = await fixture();
+      const completion = await f.service.prepareCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: BASE,
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        reviewAttemptRefs: [f.attemptRef],
+        completion: "implemented",
+        logPaths: [],
+        mergeOperationId: "merge-slow-journal",
+        operationId: "completion-slow-journal",
+        author: "parent",
+      });
+      let snapshots = 0;
+      const slowEvidence: ImplementationEvidenceStore = new Proxy(f.evidence, {
+        get(target, property) {
+          if (property === "snapshot") {
+            return async () => {
+              snapshots += 1;
+              if (snapshots === 2) await Bun.sleep(120);
+              return await target.snapshot();
+            };
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+      const provider = implementationCompletionMergeAdmissionProviderFromStore({
+        provider: underlying,
+        store: slowEvidence,
+        binding: {
+          kind: "merge",
+          targetRef: "tasks:T2345",
+          repositoryRoot: root,
+          commit: RESULT,
+          completionRef: completion.completionRef,
+          mergeOperationId: "merge-slow-journal",
+        },
+        repositoryHead: async () => f.getHead(),
+      });
+      const marker = join(root, "target-ran");
+      const broker = new WorksetEffectBroker({
+        provider,
+        settlement: { termGraceMs: 0, killGraceMs: 1_000, pollIntervalMs: 2 },
+      });
+      const error = await broker
+        .launch({
+          kind: "merge",
+          targetRef: "tasks:T2345",
+          argv: [
+            process.execPath,
+            "-e",
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+          ],
+          cwd: root,
+          env: process.env,
+          stdio: "ignore" as const,
+          launchDeadlineMs: Date.now() + 50,
+          launchBootstrap: ignoredBootstrap,
+        })
+        .then(
+          () => null,
+          (failure: unknown) => failure,
+        );
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "launch/admission deadline expired during durable merge-started preparation",
+      );
+      expect((error as Error).message).toContain("authenticated guardian/bootstrap exit outcome");
+      expect(await Bun.file(marker).exists()).toBe(false);
+      expect(underlying.activeAdmissionCount()).toBe(0);
+      await expect(f.service.mergeAcknowledgement(completion.completionRef)).rejects.toThrow(
+        "not durably merged",
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          (await f.evidence.snapshot()).completions[completion.completionRef]!.state ===
+          "merge-started"
+        ) {
+          break;
+        }
+        await Bun.sleep(2);
+      }
+      expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
+        "merge-started",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a repository-head CAS change after durable merge-started preparation", async () => {
+    const f = await fixture();
+    const completion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-head-cas",
+      operationId: "completion-head-cas",
+      author: "parent",
+    });
+    const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+    let reads = 0;
+    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+      provider: underlying,
+      store: f.evidence,
+      binding: {
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: "merge-head-cas",
+      },
+      repositoryHead: async () => {
+        reads += 1;
+        return reads === 3 ? "c".repeat(40) : BASE;
+      },
+    });
+    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+    await admission.registerProcessGroup({ pgid: 654, leaderPid: 654 });
+    await expect(admission.shareWithGuardian({ pgid: 654, leaderPid: 654 })).rejects.toThrow(
+      "repository HEAD changed during durable merge-started preparation",
+    );
+    expect(underlying.events()).not.toContain("guardian-shared");
+    await admission.markSettled();
+    await admission.releaseAfterSettlement();
+    expect(underlying.activeAdmissionCount()).toBe(0);
+  });
+
+  test("recovers an already-at-result HEAD and acknowledges only its durable merged state", async () => {
+    const f = await fixture();
+    const completion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-already-result",
+      operationId: "completion-already-result",
+      author: "parent",
+    });
+    f.setHead(RESULT);
+    await expect(f.service.mergeAcknowledgement(completion.completionRef)).rejects.toThrow(
+      "not durably merged",
+    );
+    const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+      provider: underlying,
+      store: f.evidence,
+      binding: {
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: "merge-already-result",
+      },
+      repositoryHead: async () => f.getHead(),
+    });
+    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+    await admission.registerProcessGroup({ pgid: 777, leaderPid: 777 });
+    await admission.shareWithGuardian({ pgid: 777, leaderPid: 777 });
+    expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
+      "merged",
+    );
+    await admission.markSettled();
+    await admission.releaseAfterSettlement();
+    expect(await f.service.mergeAcknowledgement(completion.completionRef)).toMatchObject({
+      completionRef: completion.completionRef,
+      mergeOperationId: "merge-already-result",
+      repositoryHead: RESULT,
+    });
   });
 
   test("rejects omitted, duplicated, reordered, and foreign attempt evidence without a journal", async () => {
@@ -336,9 +666,9 @@ describe("versioned protected implementation evidence [BG]", () => {
         fields: { resultCommit: RESULT, completion: "direct forged completion" },
       }),
     ).rejects.toThrow("protected implementation evidence");
-    await expect(
-      ledger.updateItem(TASKS_LEDGER, "T2345", { status: "abandoned" }),
-    ).rejects.toThrow("protected implementation evidence");
+    await expect(ledger.updateItem(TASKS_LEDGER, "T2345", { status: "abandoned" })).rejects.toThrow(
+      "protected implementation evidence",
+    );
     expect(
       await ledger.createItem(TASKS_LEDGER, milestone.id, {
         id: "T2346",

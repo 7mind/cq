@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { closeSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -538,6 +539,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const protocolDirectory = join(root, "protocol");
       await mkdir(protocolDirectory, { mode: 0o700 });
       const nonce = randomUUID();
+      const launchDeadlineMs = Date.now() + ORCHESTRATION_WAIT_MS;
       const child = spawn(
         process.execPath,
         [
@@ -547,6 +549,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           String(launcher.pid),
           launcher.startTime,
           process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+          String(launchDeadlineMs),
           root,
           process.execPath,
           "-e",
@@ -566,6 +569,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           nonce,
           pgid: bootstrapPid,
           launcher,
+          launchDeadlineMs,
         });
         const statusPath = join(protocolDirectory, "status.json");
         // No "launched" wait: status.state is non-monotonic — the bootstrap
@@ -834,6 +838,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const marker = join(protocolDirectory, "target-ran");
       await mkdir(protocolDirectory, { mode: 0o700 });
       const cleanupStarted = Date.now();
+      const launchDeadlineMs = cleanupStarted + ORCHESTRATION_WAIT_MS;
       const child = spawn(
         process.execPath,
         [
@@ -843,6 +848,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           String(mutation.launcher.pid),
           mutation.launcher.startTime,
           process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+          String(launchDeadlineMs),
           root,
           process.execPath,
           "-e",
@@ -860,6 +866,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           nonce: "expected-nonce",
           pgid: child.pid,
           launcher: mutation.launcher,
+          launchDeadlineMs,
         }),
       );
       await completeBootstrapIfTargetRan(child, protocolDirectory, "expected-nonce");
@@ -906,6 +913,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const protocolDirectory = join(root, mutation.name.replaceAll(" ", "-"));
       const marker = join(protocolDirectory, "target-ran");
       await mkdir(protocolDirectory, { mode: 0o700 });
+      const launchDeadlineMs = Date.now() + ORCHESTRATION_WAIT_MS;
       const child = spawn(
         process.execPath,
         [
@@ -915,6 +923,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           String(launcher.pid),
           launcher.startTime,
           process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+          String(launchDeadlineMs),
           root,
           process.execPath,
           "-e",
@@ -926,7 +935,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const outcomePromise = exited(child);
       await writeFile(
         join(protocolDirectory, "release.json"),
-        JSON.stringify({ ...mutation.release, pgid: child.pid }),
+        JSON.stringify({ ...mutation.release, pgid: child.pid, launchDeadlineMs }),
       );
       await completeBootstrapIfTargetRan(child, protocolDirectory, "expected-nonce");
       const outcome = await outcomePromise;
@@ -936,50 +945,56 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     }
   });
 
-  test("preserves exact argv, cwd, env, and Node stdin/stdout/stderr pipes", async () => {
+  test("preserves exact argv, cwd, env, and stdio bytes", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-semantics-"));
     roots.push(root);
     const cwd = join(root, "nested cwd");
     await mkdir(cwd);
     const target = [
-      "const chunks = [];",
-      "process.stdin.on('data', (chunk) => chunks.push(chunk));",
-      "process.stdin.on('end', () => {",
-      "  const input = Buffer.concat(chunks).toString();",
-      "  process.stdout.write(JSON.stringify({ argv: process.argv.slice(1), cwd: process.cwd(), env: process.env, input }));",
-      "  process.stderr.write('stderr:' + input);",
-      "});",
-    ].join("\n");
+      "IFS= read -r input",
+      'printf \'%s\\n\' "$0" "$1" "$2" "$PWD" "$T1624_VALUE" "$T1624_EMPTY" "$input"',
+      "printf 'stderr:%s' \"$input\" >&2",
+    ].join("; ");
     const env = {
       T1624_VALUE: "value with spaces",
       T1624_EMPTY: "",
     };
-    const launched = await launchRegisteredProcessGroup({
-      argv: [process.execPath, "-e", target, "argument with spaces", "", "--literal"],
-      cwd,
-      env,
-      stdio: ["pipe", "pipe", "pipe"] as const,
-      register: async () => {},
-      launchBootstrap: nodeBootstrap,
-    });
-    if (
-      launched.process.stdin === null ||
-      launched.process.stdout === null ||
-      launched.process.stderr === null
-    ) {
-      throw new Error("test bootstrap did not expose all three pipes");
+    const inputPath = join(root, "stdin.txt");
+    await writeFile(inputPath, "stdin payload\n");
+    const input = openSync(inputPath, "r");
+    const launched = await (async () => {
+      try {
+        return await launchRegisteredProcessGroup({
+          argv: ["/bin/sh", "-c", target, "argument with spaces", "", "--literal"],
+          cwd,
+          env,
+          stdio: [input, "pipe", "pipe"] as const,
+          register: async () => {},
+          launchBootstrap: nodeBootstrap,
+        });
+      } finally {
+        closeSync(input);
+      }
+    })();
+    if (launched.process.stdout === null || launched.process.stderr === null) {
+      throw new Error("test bootstrap did not expose output pipes");
     }
     const stdout = streamText(launched.process.stdout);
     const stderr = streamText(launched.process.stderr);
-    launched.process.stdin.end("stdin payload");
     const [outcome, stdoutText, stderrText] = await Promise.all([launched.exited, stdout, stderr]);
     expect(outcome.exitCode).toBe(0);
-    expect(JSON.parse(stdoutText)).toEqual({
-      argv: ["argument with spaces", "", "--literal"],
-      cwd,
-      env,
-      input: "stdin payload",
-    });
+    expect(stdoutText).toBe(
+      [
+        "argument with spaces",
+        "",
+        "--literal",
+        cwd,
+        "value with spaces",
+        "",
+        "stdin payload",
+        "",
+      ].join("\n"),
+    );
     expect(stderrText).toBe("stderr:stdin payload");
   });
 
@@ -990,13 +1005,13 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     const identityHelper = join(root, "identity-helper");
     await writeFile(
       identityHelper,
-      "#!/bin/sh\n[ \"$1\" = --list-groups ] && exit 0\nprintf '%s.0\\n' \"$1\"\n",
+      '#!/bin/sh\n[ "$1" = --list-groups ] && exit 0\nprintf \'%s.0\\n\' "$1"\n',
     );
     await chmod(identityHelper, 0o755);
     const targetIdentityHelper = join(root, "target-identity-helper");
     await writeFile(
       targetIdentityHelper,
-      "#!/bin/sh\n[ \"$1\" = --list-groups ] && exit 0\nprintf '%s.1\\n' \"$1\"\n",
+      '#!/bin/sh\n[ "$1" = --list-groups ] && exit 0\nprintf \'%s.1\\n\' "$1"\n',
     );
     await chmod(targetIdentityHelper, 0o755);
     const originalPlatform = process.platform;
@@ -1120,7 +1135,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       "}, 2);",
     ].join("\n");
     const launched = await launchRegisteredProcessGroup({
-      argv: ["node", "-e", target],
+      argv: [process.execPath, "-e", target],
       cwd: root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"] as const,
