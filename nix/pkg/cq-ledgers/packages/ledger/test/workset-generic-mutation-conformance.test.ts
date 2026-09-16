@@ -17,7 +17,7 @@ import {
   createInMemoryWorksetManagementLedger,
   InMemoryLedgerStore,
 } from "../src/index.js";
-import type { AdmittedGenericMutation } from "../src/worksetGenericMutation.js";
+import type { AdmittedGenericMutation, AdmittedGenericMutationBinding } from "../src/worksetGenericMutation.js";
 import { PostgresOperationQueries } from "../src/store/postgres/operationAccess.js";
 import { resolvePostgresGenericRows } from "../src/store/postgres/genericRowOperation.js";
 import {
@@ -162,7 +162,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
     const gateway = createWorksetGenericMutationGateway({
       rawStore,
       worksetStore,
-      runGenericTransaction: async (_mutate, _measurement, _scope, context) => {
+      runGenericTransaction: async (_mutate, _measurement, _scope, context, binding) => {
         expect(context).toBeDefined();
         const admitted = context as AdmittedGenericMutation;
         expect(admitted.admission.targets).toEqual([]);
@@ -175,7 +175,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
           () => 0,
           null,
         );
-        const resolution = await resolvePostgresGenericRows(queries, admitted);
+        const resolution = await resolvePostgresGenericRows(queries, admitted, binding);
         if (resolution.plan.kind === "rejected") throw resolution.plan.error;
 
         const expectCallerMintedRejection = async (
@@ -189,7 +189,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
             () => 0,
             null,
           );
-          const rejected = await resolvePostgresGenericRows(candidateQueries, candidate);
+          const rejected = await resolvePostgresGenericRows(candidateQueries, candidate, binding);
           expect(rejected.plan).toMatchObject({
             kind: "rejected",
             error: { code: "caller-minted-admission" },
@@ -221,6 +221,69 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
       expect(updated).toMatchObject({ id: "I1" });
     } finally {
       await foreignAdmission.acknowledge();
+      await rawStore.dispose();
+    }
+  });
+
+  test("D442 rejects a still-live descriptor owned by a different gateway instance", async () => {
+    const rawStore = new InMemoryLedgerStore();
+    const worksetStore = createInMemoryWorksetStore();
+    await rawStore.init();
+    let outerContext: AdmittedGenericMutation | undefined;
+
+    const fakeSql = (context: AdmittedGenericMutation): SQL =>
+      ({
+        array: (values: readonly string[]) => values,
+        unsafe: async (statement: string) => {
+          if (statement.includes("FROM workset_admissions")) {
+            return [{
+              form: "ledger-mutation", kind: context.admission.kind, epoch: context.admission.epoch,
+              targets_json: JSON.stringify(context.admission.targets),
+            }];
+          }
+          if (statement.includes("FROM workset_roots")) {
+            return [{ epoch: context.admission.epoch, roots_json: JSON.stringify(context.admission.roots) }];
+          }
+          return [];
+        },
+      }) as unknown as SQL;
+
+    const innerGateway = createWorksetGenericMutationGateway({
+      rawStore,
+      worksetStore,
+      runGenericTransaction: async (_mutate, _measurement, _scope, _context, binding: AdmittedGenericMutationBinding) => {
+        expect(outerContext).toBeDefined();
+        const foreign = outerContext as AdmittedGenericMutation;
+        const queries = new PostgresOperationQueries(
+          fakeSql(foreign), "t6569-foreign-binding", foreign.scope.operation, null, () => 0, null,
+        );
+        const rejected = await resolvePostgresGenericRows(queries, foreign, binding);
+        expect(rejected.plan).toMatchObject({
+          kind: "rejected",
+          error: { code: "caller-minted-admission" },
+        });
+        return {
+          id: "I1", milestoneId: "M-AMBIENT", status: "raw", fields: { title: "inner" },
+          createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+        } as never;
+      },
+    });
+    const outerGateway = createWorksetGenericMutationGateway({
+      rawStore,
+      worksetStore,
+      runGenericTransaction: async (_mutate, _measurement, _scope, context) => {
+        outerContext = context;
+        await innerGateway.updateItem(IDEAS_LEDGER, "I1", { fields: { title: "inner" } });
+        return {
+          id: "I1", milestoneId: "M-AMBIENT", status: "raw", fields: { title: "outer" },
+          createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+        } as never;
+      },
+    });
+
+    try {
+      await outerGateway.updateItem(IDEAS_LEDGER, "I1", { fields: { title: "outer" } });
+    } finally {
       await rawStore.dispose();
     }
   });

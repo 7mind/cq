@@ -15,9 +15,9 @@ async function genericFaultFixture(kind: GenericCase) {
   let failAt: number | null = null;
   try {
     const gateway = createWorksetGenericMutationGateway({ rawStore: store, worksetStore: store.worksetStore(),
-      runGenericTransaction: async (mutate, measurement, scope, context) => {
+      runGenericTransaction: async (mutate, measurement, scope, context, binding) => {
         if (failAt !== null) faults.armAt(failAt);
-        try { return await store.runAtomicGenericMutation(mutate, undefined, measurement, scope, context); }
+        try { return await store.runAtomicGenericMutation(mutate, undefined, measurement, scope, context, binding); }
         finally { faults.disarm(); }
       },
     });

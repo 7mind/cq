@@ -1,7 +1,7 @@
 import { LedgerError, type ArchivePointer, type Item, type Ledger, type Milestone } from "../../types.js";
 import { MILESTONES_LEDGER } from "../../constants.js";
 import { isLiveWorksetAdmission, WorksetAdmissionError } from "../../worksetEffectAdmission.js";
-import { isBoundAdmittedGenericMutation, type AdmittedGenericMutation } from "../../worksetGenericMutation.js";
+import { isBoundAdmittedGenericMutation, type AdmittedGenericMutation, type AdmittedGenericMutationBinding } from "../../worksetGenericMutation.js";
 import { resolveAsyncGenericMutationClosure } from "../genericMutationDataSource.js";
 import { genericArchiveKey, type GenericArchiveEntry } from "../genericMutationTransaction.js";
 import { createPostgresGenericMutationDataSource } from "./genericMutationDataSource.js";
@@ -26,7 +26,7 @@ type ResolvedGenericRows = { readonly kind: "loaded"; readonly rows: PostgresGen
 const GENERIC_OPERATIONS = new Set(["update-item", "update-milestone", "create-item", "create-milestone", "create-ledger",
   "reopen-item", "unarchive-item", "archive-terminal-items", "archive-milestone", "execute-finalize"]);
 
-export async function resolvePostgresGenericRows(queries: PostgresOperationQueries, context: AdmittedGenericMutation): Promise<PostgresOperationClosure<ResolvedGenericRows>> {
+export async function resolvePostgresGenericRows(queries: PostgresOperationQueries, context: AdmittedGenericMutation, binding: AdmittedGenericMutationBinding): Promise<PostgresOperationClosure<ResolvedGenericRows>> {
   const targets: PostgresLockTarget[] = [];
   const observed = queries.withReadTargets((target) => targets.push(target));
   const { scope, admission, allocation } = context;
@@ -40,7 +40,7 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
     if (allocating !== (allocation !== null) || (allocation !== null && allocation.ledgerId !== allocationLedger)) {
       throw new LedgerError("generic operation has mismatched allocation coordinates");
     }
-    if (!isBoundAdmittedGenericMutation(context) || !isLiveWorksetAdmission(admission) || admission.kind !== "generic-write") {
+    if (!isBoundAdmittedGenericMutation(binding, context) || !isLiveWorksetAdmission(admission) || admission.kind !== "generic-write") {
       throw new WorksetAdmissionError("caller-minted-admission", "generic transaction requires its exact bound live admission and row scope");
     }
     if (!(await postgresAdmissionMatches(observed, admission))) {

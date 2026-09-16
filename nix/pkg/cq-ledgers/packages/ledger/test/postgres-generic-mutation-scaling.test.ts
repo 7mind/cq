@@ -16,10 +16,10 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL generic scope [T5923 Be
       await store.replaceWorksetRoots(["questions:Q1"]);
       const before = await pool<{ xmin: string }[]>`SELECT xmin::text FROM items WHERE project_key = ${projectKey} AND ledger = 'questions' AND id = 'Q2'`;
       const gateway = createWorksetGenericMutationGateway({ rawStore: store, worksetStore: store.worksetStore(),
-        runGenericTransaction: (mutate, measurement, scope, context) => store.runAtomicGenericMutation((tx, roots) => {
+        runGenericTransaction: (mutate, measurement, scope, context, binding) => store.runAtomicGenericMutation((tx, roots) => {
           suppliedState.push([...tx.activeState().byRef.keys()]);
           return mutate(tx, roots);
-        }, undefined, measurement, scope, context),
+        }, undefined, measurement, scope, context, binding),
       });
       expect((await gateway.updateItem("questions", "Q1", { fields: { question: "updated" } })).fields.question).toBe("updated");
       const after = await pool<{ xmin: string }[]>`SELECT xmin::text FROM items WHERE project_key = ${projectKey} AND ledger = 'questions' AND id = 'Q2'`;

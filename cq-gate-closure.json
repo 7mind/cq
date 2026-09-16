@@ -2023,7 +2023,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-conformance.test.ts",
-      "sha256": "6f7e83b5f0a1df7b2ffe0f8e72dc8fa2ab23a2a8fa80ee4782b9662b9af1335a",
+      "sha256": "0c6c12156f51fca53d4ea51d76f8a475b7e9cf96f03c23f6d8ce6d01ee89a8c2",
       "targets": []
     },
     {

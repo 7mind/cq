@@ -113,7 +113,7 @@ import { SEARCH_PROJECTION_COMMAND_DEADLINE_MS, type SearchProjection, type Sear
 import { SearchProjectionRecovery, ProjectionUnavailableError, type ProjectionChangeFrame } from "../../search/SearchProjectionRecovery.js";
 import { postgresPublicPlanChanges, postgresPrivatePlanChanges, postgresSelectedRowChanges, postgresArchivedRowChanges, POSTGRES_GROUP_CONTROL_PREFIX, POSTGRES_POINTER_CONTROL_PREFIX, POSTGRES_LEDGER_CONTROL_ID } from "./coherenceChanges.js";
 import { persistPostgresGenericRows } from "./genericRowPersistence.js";
-import type { AdmittedGenericMutation } from "../../worksetGenericMutation.js";
+import type { AdmittedGenericMutation, AdmittedGenericMutationBinding } from "../../worksetGenericMutation.js";
 import type { SqliteOperationAccessScope, SqliteOperationMeasurement } from "../sqlite/operationObservability.js";
 import { assertKeyedPlanMutationChanges } from "../keyedWorksetPlanAuthorization.js";
 import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
@@ -2071,18 +2071,19 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   /** Run one generic mutation in one tenant-scoped PostgreSQL transaction. */
   async runAtomicGenericMutation<T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
-    _readRoots?: () => Promise<WorksetRootsEpoch>,
-    _measurement?: SqliteOperationMeasurement,
-    _scope?: SqliteOperationAccessScope,
-    context?: AdmittedGenericMutation,
+    _readRoots: (() => Promise<WorksetRootsEpoch>) | undefined,
+    _measurement: SqliteOperationMeasurement | undefined,
+    _scope: SqliteOperationAccessScope | undefined,
+    context: AdmittedGenericMutation | undefined,
+    binding: AdmittedGenericMutationBinding | undefined,
   ): Promise<T> {
     this.assertInit();
-    if (context === undefined) throw new LedgerError("PostgreSQL generic mutations require an admitted operation descriptor");
+    if (context === undefined || binding === undefined) throw new LedgerError("PostgreSQL generic mutations require an admitted operation descriptor and its binding");
     const committed = await runPostgresKeyedOperation(this.pool(), {
       projectKey: this.projectKey, observer: this.accessObserver, monotonicNow: () => performance.now(), onClosureRetry: null,
     }, {
       name: `generic_${context.scope.operation}`,
-      resolve: (queries) => resolvePostgresGenericRows(queries, context),
+      resolve: (queries) => resolvePostgresGenericRows(queries, context, binding),
       apply: async (queries, resolution) => {
         if (resolution.kind === "rejected") throw resolution.error;
         const { rows } = resolution;

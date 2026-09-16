@@ -712,34 +712,58 @@ export interface AdmittedGenericMutation {
   readonly allocation: { readonly ledgerId: string; readonly requestedId: string | null } | null;
 }
 
-const boundAdmittedGenericMutations = new WeakSet<object>();
+const admittedGenericMutationBindingBrand: unique symbol = Symbol("AdmittedGenericMutationBinding");
 
-function bindAdmittedGenericMutation(
-  admission: WorksetLedgerMutationAdmission,
-  scope: SqliteOperationAccessScope,
-  allocation: AdmittedGenericMutation["allocation"],
-): AdmittedGenericMutation {
-  const boundScope: SqliteOperationAccessScope = Object.freeze({
-    ...scope,
-    targetRefs: Object.freeze([...scope.targetRefs]),
-    ledgerIds: Object.freeze([...scope.ledgerIds]),
-    milestoneIds: Object.freeze([...scope.milestoneIds]),
-    referenceCandidates: Object.freeze([...scope.referenceCandidates]),
-  });
-  const bound: AdmittedGenericMutation = Object.freeze({
-    admission,
-    scope: boundScope,
-    allocation: allocation === null ? null : Object.freeze({ ...allocation }),
-  });
-  boundAdmittedGenericMutations.add(bound);
-  return bound;
+/** Opaque per-gateway authority used by a persistence adapter to verify descriptors. */
+export interface AdmittedGenericMutationBinding {
+  readonly [admittedGenericMutationBindingBrand]: true;
 }
 
-/** True only for the immutable admission/scope pair minted by this gateway. */
+class AdmittedGenericMutationBindingToken implements AdmittedGenericMutationBinding {
+  readonly [admittedGenericMutationBindingBrand] = true;
+  readonly owns: (value: unknown) => value is AdmittedGenericMutation;
+
+  constructor(owns: (value: unknown) => value is AdmittedGenericMutation) {
+    this.owns = owns;
+    Object.freeze(this);
+  }
+}
+
+class AdmittedGenericMutationBindingOwner {
+  readonly #bound = new WeakSet<object>();
+  readonly binding = new AdmittedGenericMutationBindingToken(
+    (value): value is AdmittedGenericMutation =>
+      typeof value === "object" && value !== null && this.#bound.has(value),
+  );
+
+  bind(
+    admission: WorksetLedgerMutationAdmission,
+    scope: SqliteOperationAccessScope,
+    allocation: AdmittedGenericMutation["allocation"],
+  ): AdmittedGenericMutation {
+    const boundScope: SqliteOperationAccessScope = Object.freeze({
+      ...scope,
+      targetRefs: Object.freeze([...scope.targetRefs]),
+      ledgerIds: Object.freeze([...scope.ledgerIds]),
+      milestoneIds: Object.freeze([...scope.milestoneIds]),
+      referenceCandidates: Object.freeze([...scope.referenceCandidates]),
+    });
+    const bound: AdmittedGenericMutation = Object.freeze({
+      admission,
+      scope: boundScope,
+      allocation: allocation === null ? null : Object.freeze({ ...allocation }),
+    });
+    this.#bound.add(bound);
+    return bound;
+  }
+}
+
+/** True only for an immutable descriptor minted by this exact gateway owner. */
 export function isBoundAdmittedGenericMutation(
+  binding: AdmittedGenericMutationBinding,
   value: unknown,
 ): value is AdmittedGenericMutation {
-  return typeof value === "object" && value !== null && boundAdmittedGenericMutations.has(value);
+  return binding instanceof AdmittedGenericMutationBindingToken && binding.owns(value);
 }
 
 export interface WorksetGenericMutationGatewayHost {
@@ -751,9 +775,10 @@ export interface WorksetGenericMutationGatewayHost {
   readonly invocationAuthority?: WorksetInvocationAuthority;
   readonly runGenericTransaction?: <T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
-    measurement?: SqliteOperationMeasurement,
-    accessScope?: SqliteOperationAccessScope,
-    context?: AdmittedGenericMutation,
+    measurement: SqliteOperationMeasurement | undefined,
+    accessScope: SqliteOperationAccessScope,
+    context: AdmittedGenericMutation,
+    binding: AdmittedGenericMutationBinding,
   ) => Promise<T>;
   /**
    * Test/instrumentation latch: runs after admit and before validation/write,
@@ -774,19 +799,22 @@ export function createWorksetGenericMutationGateway(
   const atomicStore = rawStore as LedgerStore & {
     runAtomicGenericMutation<T>(
       mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
-      readRoots?: () => Promise<WorksetRootsEpoch>,
-      measurement?: SqliteOperationMeasurement,
-      accessScope?: SqliteOperationAccessScope,
-      context?: AdmittedGenericMutation,
+      readRoots: (() => Promise<WorksetRootsEpoch>) | undefined,
+      measurement: SqliteOperationMeasurement | undefined,
+      accessScope: SqliteOperationAccessScope,
+      context: AdmittedGenericMutation,
+      binding: AdmittedGenericMutationBinding,
     ): Promise<T>;
   };
+  const bindingOwner = new AdmittedGenericMutationBindingOwner();
   const runGenericTransaction =
     host.runGenericTransaction ??
     (<T>(
       mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
-      measurement?: SqliteOperationMeasurement,
-      accessScope?: SqliteOperationAccessScope,
-      context?: AdmittedGenericMutation,
+      measurement: SqliteOperationMeasurement | undefined,
+      accessScope: SqliteOperationAccessScope,
+      context: AdmittedGenericMutation,
+      transactionBinding: AdmittedGenericMutationBinding,
     ) =>
       atomicStore.runAtomicGenericMutation(
         mutate,
@@ -794,6 +822,7 @@ export function createWorksetGenericMutationGateway(
         measurement,
         accessScope,
         context,
+        transactionBinding,
       ));
 
   async function withGenericAdmission<T>(
@@ -870,7 +899,7 @@ export function createWorksetGenericMutationGateway(
       if (afterGenericAdmit !== undefined) {
         await afterGenericAdmit();
       }
-      const boundContext = bindAdmittedGenericMutation(
+      const boundContext = bindingOwner.bind(
         admission,
         accessScope,
         options.allocation ?? null,
@@ -902,6 +931,7 @@ export function createWorksetGenericMutationGateway(
         measurement,
         boundContext.scope,
         boundContext,
+        bindingOwner.binding,
       );
     } catch (error) {
       failed = true;

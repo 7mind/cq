@@ -135,8 +135,8 @@ export async function createPostgresWorksetGuardedLedger(
   const surface = createWorksetGuardedLedger({
     rawStore,
     worksetStore,
-    runGenericTransaction: (mutate, measurement, scope, context) =>
-      rawStore.runAtomicGenericMutation(mutate, undefined, measurement, scope, context),
+    runGenericTransaction: (mutate, measurement, scope, context, binding) =>
+      rawStore.runAtomicGenericMutation(mutate, undefined, measurement, scope, context, binding),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),
