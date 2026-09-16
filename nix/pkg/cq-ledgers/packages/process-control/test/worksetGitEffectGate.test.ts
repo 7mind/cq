@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  WorksetEffectLaunchDeadlineError,
   createStrictInMemoryWorksetEffectAdmissionProvider,
   readProcessIdentity,
   runWorksetGitEffectGate,
@@ -13,6 +14,14 @@ import {
 
 const exec = promisify(execFile);
 const roots: string[] = [];
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const result = await exec("git", [...args], { cwd, encoding: "utf8" });
@@ -36,6 +45,68 @@ afterEach(async () => {
 });
 
 describe("workset Git effect gate [T1984]", () => {
+  // Regression origin: H354 showed that a stalled guardian share could outlive
+  // the intended launch window and still release the Git target.
+  test("bounds guardian sharing with the single Git-effect launch deadline [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await repository();
+    const head = await git(root, ["rev-parse", "HEAD"]);
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const shareEntered = deferred();
+    let launches = 0;
+    const binding: WorksetGitEffectBinding = {
+      kind: "branch-create",
+      targetRef: "tasks:T1984",
+      repositoryRoot: root,
+      branch: "implement/T1984",
+      commit: head,
+    };
+    const provider = {
+      acquire: async (input: Parameters<typeof strict.acquire>[0]) => {
+        const underlying = await strict.acquire(input);
+        return {
+          ...underlying,
+          shareWithGuardian: async (
+            registration: Parameters<typeof underlying.shareWithGuardian>[0],
+            launchDeadlineMs?: number,
+          ) => {
+            shareEntered.resolve();
+            if (launchDeadlineMs === undefined) {
+              await Bun.sleep(120);
+              launches += 1;
+              await underlying.shareWithGuardian(registration);
+              return;
+            }
+            await Bun.sleep(Math.max(0, launchDeadlineMs - Date.now()));
+            throw new WorksetEffectLaunchDeadlineError("durable guardian share");
+          },
+        };
+      },
+    };
+
+    const effect = runWorksetGitEffectGate({
+      expected: binding,
+      resolve: async () => binding,
+      provider,
+      launchDeadlineMs: Date.now() + 50,
+      settlement: { termGraceMs: 0, killGraceMs: 1_000, pollIntervalMs: 2 },
+    } as Parameters<typeof runWorksetGitEffectGate>[0]);
+    await shareEntered.promise;
+    const error = await effect.then(
+      () => null,
+      (failure: unknown) => failure,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "launch/admission deadline expired during durable guardian share",
+    );
+    expect((error as Error).message).toContain("authenticated guardian/bootstrap exit outcome");
+    expect(launches).toBe(0);
+    expect(await git(root, ["branch", "--list", "implement/T1984"])).toBe("");
+    expect(await git(root, ["rev-parse", "HEAD"])).toBe(head);
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
   test("runs one trusted branch effect under one admission [Behavioral-Active Blackbox-GoodCommunication]", async () => {
     const root = await repository();
     const head = await git(root, ["rev-parse", "HEAD"]);
