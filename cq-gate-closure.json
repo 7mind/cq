@@ -751,13 +751,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/process-control/test/registeredLaunch.test.ts",
-      "sha256": "2ea5a525fcfdbd3d55a37fb61629dce2bef85a14c69f5f74d8cc6ef08d29a8ac",
+      "sha256": "611d6a3749d85d96b2319f8fafff720232bc2c2b2e31f684fd33a2a53c5d99d4",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/process-control/test/registeredLaunch.test.ts",
-      "sha256": "2ea5a525fcfdbd3d55a37fb61629dce2bef85a14c69f5f74d8cc6ef08d29a8ac",
+      "sha256": "611d6a3749d85d96b2319f8fafff720232bc2c2b2e31f684fd33a2a53c5d99d4",
       "targets": []
     },
     {
@@ -769,19 +769,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetGitEffectGate.test.ts",
-      "sha256": "4c426abeafff7fdc6f136871161ec5fb3a67637b3af80ba6b9d9f09d4f5cc59e",
+      "sha256": "41f1f346e18a92c8d95910bfc0843b23600e9d7d16a4343f01ab79c8eec7103b",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/process-control/test/worktreeGate.test.ts",
-      "sha256": "1f43fc311af35e302f7afe718fa8ca6631d5e34eeb40a80d9005e42b7dba6de7",
+      "sha256": "98470f27de955dd32dcfb36be41dcf52df35548e706433f018929daf2663737c",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/process-control/test/worktreeGate.test.ts",
-      "sha256": "1f43fc311af35e302f7afe718fa8ca6631d5e34eeb40a80d9005e42b7dba6de7",
+      "sha256": "98470f27de955dd32dcfb36be41dcf52df35548e706433f018929daf2663737c",
       "targets": []
     },
     {
@@ -1579,7 +1579,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "4aad855f2fa2e6204a6fcb8d4cb1e65ec69ef417d325991a5fd04bf78ce82229",
+      "sha256": "ee780dc57407ec7abc4f10e3b02e290afef7d4bd9d6bca5c5886eb2c6bce6959",
       "targets": []
     },
     {
@@ -1808,6 +1808,18 @@
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-completion-recording-sqlite.test.ts",
       "sha256": "d5e2f5f18c77b0d47632f968535d272fa3d3b3d64f4b1d1d0bf7bfc2045e53f9",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
+      "sha256": "ab6c59d92a3fb8f4447703b30cafedc3365be7ac79f710c166c57d7542a291d7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
+      "sha256": "ab6c59d92a3fb8f4447703b30cafedc3365be7ac79f710c166c57d7542a291d7",
       "targets": []
     },
     {
@@ -2071,13 +2083,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/process-control/src/commandBootstrap.ts",
-      "sha256": "e4914aafe984f042610c7f6713d22b03cd5ad115ce33ad8955a15fe2f8ea356b",
+      "sha256": "a8bb55d2ed227697b911bd0863dc4d6127d076557328d316cd40dab278fdbd2e",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/process-control/src/commandBootstrap.ts",
-      "sha256": "e4914aafe984f042610c7f6713d22b03cd5ad115ce33ad8955a15fe2f8ea356b",
+      "sha256": "a8bb55d2ed227697b911bd0863dc4d6127d076557328d316cd40dab278fdbd2e",
       "targets": []
     },
     {
@@ -2101,19 +2113,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/process-control/src/registeredLaunch.ts",
-      "sha256": "859baebbf612a7631af5f7403fbe0351abaaf7a4626c6cea45772878b7e55bbc",
+      "sha256": "d403fe0d0ab0f2148d1dc685203db69e8a64ba10a6bf16fa4c250cd1e5c19bfa",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/process-control/src/registeredLaunch.ts",
-      "sha256": "859baebbf612a7631af5f7403fbe0351abaaf7a4626c6cea45772878b7e55bbc",
+      "sha256": "d403fe0d0ab0f2148d1dc685203db69e8a64ba10a6bf16fa4c250cd1e5c19bfa",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/process-control/src/worksetGitEffectGate.ts",
-      "sha256": "8bc57eb3a7b8568a575234c36094ce6653ffb102ff7ee9a90de28b5aaf4f8a57",
+      "sha256": "b3f71881d04b7242fe447a187b0d7924c005c6984e0fcfa0912fe880101b2501",
       "targets": []
     },
     {
