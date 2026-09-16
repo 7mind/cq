@@ -155,12 +155,20 @@ describe("T1330 Codex role process boundary", () => {
     const root = mkdtempSync(join(tmpdir(), "cq-candidate-coordinate-"));
     const runner = join(root, "coordinator");
     const request = join(root, "request");
+    const attempts = join(root, "attempts");
     writeFileSync(
       runner,
       [
         "#!/bin/sh",
         `cat >${JSON.stringify(request)}`,
-        "printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+        `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
+        "attempt=$((attempt + 1))",
+        `printf %s "$attempt" >${JSON.stringify(attempts)}`,
+        "if test \"$attempt\" -eq 1; then",
+        "  printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+        "else",
+        "  printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}'",
+        "fi",
       ].join("\n"),
     );
     chmodSync(runner, 0o755);
@@ -211,6 +219,42 @@ describe("T1330 Codex role process boundary", () => {
       });
       expect(outcome).toEqual({ state: "completed" });
       expect(readFileSync(attempts, "utf8")).toBe("2");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("candidate coordinator waits through a competing lease before draining [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-candidate-coordinate-competing-"));
+    const runner = join(root, "coordinator");
+    const attempts = join(root, "attempts");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
+        "attempt=$((attempt + 1))",
+        `printf %s "$attempt" >${JSON.stringify(attempts)}`,
+        "case \"$attempt\" in",
+        "  1) printf '%s' '{\"state\":\"blocked\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":1}' ;;",
+        "  2) printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}' ;;",
+        "  *) printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}' ;;",
+        "esac",
+      ].join("\n"),
+    );
+    chmodSync(runner, 0o755);
+    try {
+      const outcome = await executeCodexImplementationCandidateCoordinator({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        partitionKey: "cq-implementation-queue:v1:partition",
+        holderId: "installed-codex:partition",
+        timeoutMs: 2_000,
+      });
+      expect(outcome).toEqual({ state: "completed" });
+      expect(readFileSync(attempts, "utf8")).toBe("3");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -801,6 +845,11 @@ if (!state.committed) {
       parentGateTerminationGraceMs: 1_000,
       parentFirstAttemptMs: 9_580_000,
       parentGateWindowMs: 9_611_000,
+    });
+    expect(CODEX_STAGED_TIMING_BASIS).toMatchObject({
+      qualificationWindowMs: 300_000,
+      qualifiedQueueDwellConsumesAdmittedRunWindow: false,
+      admittedRunWindowMs: 9_611_000,
     });
 
     const replaceDuration = (

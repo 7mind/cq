@@ -116,6 +116,7 @@ import {
   ImplementationCandidateCoordinator,
   ImplementationCandidateQueueAdapter,
   type ImplementationCandidateCoordinatorOperations,
+  type PendingStagedRebaseCheckpoint,
 } from "./implementationCandidateQueue.js";
 
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
@@ -642,7 +643,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     )
       return false;
     try {
-      await materializeGuardedRebaseBridge({
+      await materializeGuardedRebase({
         reference: input.guardedRebase,
         prior: {
           ...prior,
@@ -1070,20 +1071,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     }
   }
 
-  interface StaleImplementationCandidateRun {
-    readonly source: Awaited<ReturnType<ImplementationCandidateQueueAdapter["retireStagedRebaseSource"]>>;
-    readonly guardedRebase: string;
-    readonly guardedRebaseJournalDigest: string;
-    readonly rebasedStartCommit: string;
-    readonly sourceRow: AttestationEnvelope;
-  }
-  const staleImplementationCandidateRuns = new Map<string, StaleImplementationCandidateRun>();
-
   async function retireAndRebaseStaleImplementationFront(input: {
     readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
     readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
     readonly ontoCommit: string;
-  }): Promise<{ readonly sourceReference: string }> {
+  }): Promise<{ readonly sourceReference: string; readonly conflictPending?: true }> {
     if (options.repositoryRoot === undefined || options.ledgerStore === undefined) {
       throw new Error(
         "stale implementation candidate coordination requires a local repository and task ledger",
@@ -1192,21 +1184,108 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           resolve: resolveExpected,
         }),
     });
-    if (rebase.kind !== "finalized") {
-      throw new Error("stale implementation candidate rebase stopped on a conflict");
-    }
     if (source === undefined) {
       throw new Error("stale implementation candidate rebase did not retire its source");
     }
-    const run: StaleImplementationCandidateRun = Object.freeze({
-      source,
-      guardedRebase: rebase.reference,
-      guardedRebaseJournalDigest: rebase.bridge.requestDigest,
-      rebasedStartCommit: rebase.bridge.rebasedStartCommit,
-      sourceRow,
+    return Object.freeze({
+      sourceReference: source.sourceReference,
+      ...(rebase.kind === "conflict-pending" ? { conflictPending: true as const } : {}),
     });
-    staleImplementationCandidateRuns.set(input.control.attempt.attemptId, run);
-    return Object.freeze({ sourceReference: source.sourceReference });
+  }
+
+  interface RetiredStagedRebaseContext {
+    readonly source: PendingStagedRebaseCheckpoint["source"];
+    readonly control: PendingStagedRebaseCheckpoint["control"];
+    readonly sourceRow: AttestationEnvelope;
+    readonly managed: ManagedWorktreeDispatchBinding;
+  }
+
+  async function loadRetiredStagedRebaseContext(
+    sourceReference: string,
+  ): Promise<RetiredStagedRebaseContext> {
+    const checkpoint = await options.backend.transact(
+      { kind: "namespace" },
+      (store): Omit<RetiredStagedRebaseContext, "managed"> => {
+        const matches = store
+          .rows()
+          .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
+          .flatMap((row) => {
+            const control = row.implementationQueue;
+            const source = row.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
+            return control?.state === "staged-rebase-retired" &&
+              source?.sourceReference === sourceReference
+              ? [{ source, control, sourceRow: row }]
+              : [];
+          });
+        if (matches.length !== 1) {
+          throw new Error("staged-rebase source does not resolve to one durable checkpoint");
+        }
+        return matches[0]!;
+      },
+    );
+    const binding = checkpoint.sourceRow.gitEffectBinding;
+    if (binding === undefined) {
+      throw new Error("retired staged-rebase source lost its managed worktree binding");
+    }
+    const managed = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: binding.repositoryRoot,
+        taskId: binding.taskId,
+        worktreePath: binding.worktreePath,
+        branch: binding.branch,
+        allowDetachedRebase: true,
+      },
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+    );
+    if (
+      managed === null ||
+      managed.handleToken !== binding.handleToken ||
+      managed.handleFingerprint !== binding.handleFingerprint
+    ) {
+      throw new Error("retired staged-rebase managed worktree authority changed");
+    }
+    return Object.freeze({ ...checkpoint, managed });
+  }
+
+  async function reconcileRetiredStagedRebase(context: RetiredStagedRebaseContext) {
+    if (options.ledgerStore === undefined) {
+      throw new Error("staged-rebase recovery requires the task ledger");
+    }
+    const operationId = `implementation-rebase-${dispatchPayloadDigest({
+      enrollmentId: context.control.enrollment.enrollmentId,
+      attemptId: context.control.attempt.attemptId,
+    }).slice(0, 32)}`;
+    const expected = Object.freeze({
+      kind: "rebase" as const,
+      targetRef: `tasks:${context.managed.taskId}`,
+      repositoryRoot: context.managed.repositoryRoot,
+      worktreePath: context.managed.worktreePath,
+      ontoCommit: context.source.ontoCommit,
+    });
+    return await runGuardedRebase({
+      binding: context.managed,
+      operationId,
+      ontoCommit: context.source.ontoCommit,
+      ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+      runEffect: async () =>
+        await runLedgerWorksetGitEffect({
+          store: options.ledgerStore!,
+          expected,
+          resolve: async () => {
+            await assertManagedWorktreeDispatchBindingLive(
+              context.managed,
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            );
+            if (
+              (await readOnlyGit(context.managed.repositoryRoot, ["rev-parse", "HEAD"])) !==
+              context.source.ontoCommit
+            ) {
+              throw new Error("stale implementation candidate protected head moved before rebase");
+            }
+            return expected;
+          },
+        }),
+    });
   }
 
   async function rebaseRetiredImplementationFront(input: {
@@ -1214,15 +1293,63 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     readonly retirement: { readonly sourceReference: string };
     readonly ontoCommit: string;
   }): Promise<{ readonly guardedRebase: string }> {
-    const run = staleImplementationCandidateRuns.get(input.control.attempt.attemptId);
+    const context = await loadRetiredStagedRebaseContext(input.retirement.sourceReference);
     if (
-      run === undefined ||
-      run.source.sourceReference !== input.retirement.sourceReference ||
-      run.source.ontoCommit !== input.ontoCommit
+      context.control.attempt.attemptId !== input.control.attempt.attemptId ||
+      context.source.ontoCommit !== input.ontoCommit
     ) {
-      throw new Error("stale implementation candidate rebase checkpoint is unavailable");
+      throw new Error("stale implementation candidate rebase checkpoint changed");
     }
-    return Object.freeze({ guardedRebase: run.guardedRebase });
+    const rebase = await reconcileRetiredStagedRebase(context);
+    if (rebase.kind !== "finalized") {
+      throw new Error("stale implementation candidate rebase remains conflict-pending");
+    }
+    return Object.freeze({ guardedRebase: rebase.reference });
+  }
+
+  async function prepareRetiredStagedRebaseSuccessor(
+    context: RetiredStagedRebaseContext,
+    guardedRebase: string,
+    rebasedStartCommit: string,
+  ): Promise<{ readonly attestationId: string; readonly generation: number }> {
+    if (
+      context.sourceRow.input === null ||
+      typeof context.sourceRow.input !== "object" ||
+      Array.isArray(context.sourceRow.input)
+    ) {
+      throw new Error("stale implementation candidate source input is malformed");
+    }
+    const sourceInput = context.sourceRow.input as Readonly<Record<string, DispatchJSONValue>>;
+    const round = sourceInput["round"];
+    if (!Number.isSafeInteger(round) || (round as number) < 0) {
+      throw new Error("stale implementation candidate source round is malformed");
+    }
+    const { guardedRebaseLineage: _guardedRebaseLineage, ...retainedInput } = sourceInput;
+    const timeoutMs =
+      attestationInstantMs(context.sourceRow.deadlines.childCancelAt, "deadlines.childCancelAt") -
+      attestationInstantMs(context.sourceRow.createdAt, "createdAt");
+    const prepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...retainedInput,
+        baseCommit: context.source.ontoCommit,
+        startingCommit: rebasedStartCommit,
+        priorResultCommit: context.control.attempt.resultCommit,
+        round: (round as number) + 1,
+      },
+      idempotencyKey: `implementation-successor-${dispatchPayloadDigest({
+        sourceReference: context.source.sourceReference,
+        guardedRebase,
+      })}`,
+      timeoutMs,
+      expectedChild: context.sourceRow.expectedChild,
+      reprepareOf: context.source.source,
+      guardedRebase,
+    });
+    if (!prepared.accepted) {
+      throw new Error(`stale implementation candidate successor was refused: ${prepared.detail}`);
+    }
+    return Object.freeze({ ...prepared.handle });
   }
 
   async function prepareStaleImplementationSuccessor(input: {
@@ -1232,59 +1359,55 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     readonly rebase: { readonly guardedRebase: string };
     readonly ontoCommit: string;
   }): Promise<{ readonly attestationId: string; readonly generation: number }> {
-    const run = staleImplementationCandidateRuns.get(input.control.attempt.attemptId);
+    const context = await loadRetiredStagedRebaseContext(input.retirement.sourceReference);
     if (
-      run === undefined ||
-      run.source.sourceReference !== input.retirement.sourceReference ||
-      run.guardedRebase !== input.rebase.guardedRebase ||
-      run.source.ontoCommit !== input.ontoCommit
+      context.control.attempt.attemptId !== input.control.attempt.attemptId ||
+      context.source.guardedRebase !== input.rebase.guardedRebase ||
+      context.source.ontoCommit !== input.ontoCommit
     ) {
-      throw new Error("stale implementation candidate successor checkpoint is unavailable");
+      throw new Error("stale implementation candidate successor checkpoint changed");
     }
-    if (
-      run.sourceRow.input === null ||
-      typeof run.sourceRow.input !== "object" ||
-      Array.isArray(run.sourceRow.input)
-    ) {
-      throw new Error("stale implementation candidate source input is malformed");
+    const rebase = await reconcileRetiredStagedRebase(context);
+    if (rebase.kind !== "finalized" || rebase.reference !== input.rebase.guardedRebase) {
+      throw new Error("stale implementation candidate successor rebase is not finalized");
     }
-    const sourceInput = run.sourceRow.input as Readonly<Record<string, DispatchJSONValue>>;
-    const round = sourceInput["round"];
-    if (!Number.isSafeInteger(round) || (round as number) < 0) {
-      throw new Error("stale implementation candidate source round is malformed");
+    return await prepareRetiredStagedRebaseSuccessor(
+      context,
+      rebase.reference,
+      rebase.bridge.rebasedStartCommit,
+    );
+  }
+
+  async function reconcileRetiredImplementationSource(
+    input: PendingStagedRebaseCheckpoint,
+  ): Promise<
+    | { readonly state: "conflict-pending" }
+    | {
+        readonly state: "successor-queued";
+        readonly successor: { readonly attestationId: string; readonly generation: number };
+      }
+  > {
+    const context = await loadRetiredStagedRebaseContext(input.source.sourceReference);
+    if (context.source.successor !== undefined) {
+      return Object.freeze({
+        state: "successor-queued" as const,
+        successor: Object.freeze({ ...context.source.successor }),
+      });
     }
-    const { guardedRebaseLineage: _guardedRebaseLineage, ...retainedInput } = sourceInput;
-    const timeoutMs =
-      attestationInstantMs(run.sourceRow.deadlines.childCancelAt, "deadlines.childCancelAt") -
-      attestationInstantMs(run.sourceRow.createdAt, "createdAt");
-    const prepared = await capability.prepare({
-      roleId: "implement-worker",
-      input: {
-        ...retainedInput,
-        baseCommit: input.ontoCommit,
-        startingCommit: run.rebasedStartCommit,
-        priorResultCommit: input.control.attempt.resultCommit,
-        round: (round as number) + 1,
-      },
-      idempotencyKey: `implementation-successor-${dispatchPayloadDigest({
-        sourceReference: run.source.sourceReference,
-        guardedRebase: run.guardedRebase,
-      })}`,
-      timeoutMs,
-      expectedChild: run.sourceRow.expectedChild,
-      reprepareOf: {
-        attestationId: input.lease.attestationId,
-        generation: input.lease.generation,
-      },
-      guardedRebase: run.guardedRebase,
-    });
-    if (!prepared.accepted) {
-      throw new Error(`stale implementation candidate successor was refused: ${prepared.detail}`);
+    const rebase = await reconcileRetiredStagedRebase(context);
+    if (rebase.kind !== "finalized") {
+      return Object.freeze({ state: "conflict-pending" as const });
     }
-    return Object.freeze({ ...prepared.handle });
+    const successor = await prepareRetiredStagedRebaseSuccessor(
+      context,
+      rebase.reference,
+      rebase.bridge.rebasedStartCommit,
+    );
+    return Object.freeze({ state: "successor-queued" as const, successor });
   }
 
   const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations = {
+    reconcileRetiredSource: reconcileRetiredImplementationSource,
     observeProtectedHead: async () => {
       if (options.repositoryRoot === undefined) {
         throw new Error("implementation candidate coordinator requires a local repository root");
@@ -2083,7 +2206,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             // the materialized lineage.
             let bridge;
             try {
-              bridge = await materializeGuardedRebaseBridge({
+              bridge = await materializeGuardedRebase({
                 reference: input.guardedRebase,
                 prior: {
                   ...priorBinding,
@@ -2533,6 +2656,33 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
       const goalRef = exactGoalRef(options.ledgerStore, binding.taskId);
+      const stagedRebaseSource = await options.backend.transact(
+        { kind: "namespace" },
+        (store) => {
+          const matches = store
+            .rows()
+            .map((candidate) => candidate.stagedRebaseSourceBinding)
+            .filter(
+              (source) =>
+                source?.successor?.attestationId === input.attestationId &&
+                source.successor.generation === input.generation,
+            );
+          if (matches.length > 1) {
+            throw new Error("implementation successor is claimed by multiple retired sources");
+          }
+          const source = matches[0];
+          return source === undefined
+            ? undefined
+            : Object.freeze({
+                sourceReference: source.sourceReference,
+                source: Object.freeze({ ...source.source }),
+                leaseGeneration: source.leaseGeneration,
+                guardedRebase: source.guardedRebase,
+                ontoCommit: source.ontoCommit,
+                guardedRebaseJournalDigest: source.guardedRebaseJournalDigest,
+              });
+        },
+      );
       const queue = await enqueueImplementationCandidateOn(
         options.backend,
         {
@@ -2555,6 +2705,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           gitReceipts: gitReceipts as unknown as readonly GitChangeBrokerReceipt[],
           gitEffectBinding: binding,
           stagedOutputDigest: row.gateSubmittedOutputDigest!,
+          ...(stagedRebaseSource === undefined ? {} : { stagedRebaseSource }),
         },
         { now },
       );

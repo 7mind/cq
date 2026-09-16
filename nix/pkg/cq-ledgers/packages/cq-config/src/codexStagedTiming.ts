@@ -34,6 +34,8 @@ export interface CodexStagedTimingBasis {
   readonly storeResultSubmissionBudgetMs: number;
   readonly ledgerToolTimeoutSec: number;
   readonly postStoreSubmissionFinalizationMs: number;
+  readonly qualificationWindowMs: number;
+  readonly qualifiedQueueDwellConsumesAdmittedRunWindow: false;
   readonly outerBoundaryReserveMs: number;
   readonly parentStartupBindingMs: number;
   readonly parentEffectLockAcquisitionMs: number;
@@ -43,6 +45,7 @@ export interface CodexStagedTimingBasis {
   readonly parentGateReconciliationReserveMs: number;
   readonly parentGateTerminationGraceMs: number;
   readonly parentGateWindowMs: number;
+  readonly admittedRunWindowMs: number;
   readonly parentFirstAttemptMs: number;
 }
 
@@ -187,6 +190,8 @@ export function calculateCodexStagedTimingBasis(
     storeResultSubmissionBudgetMs,
     ledgerToolTimeoutSec: exactSeconds(storeResultSubmissionBudgetMs),
     postStoreSubmissionFinalizationMs,
+    qualificationWindowMs: postStoreSubmissionFinalizationMs,
+    qualifiedQueueDwellConsumesAdmittedRunWindow: false,
     outerBoundaryReserveMs,
     parentStartupBindingMs,
     parentEffectLockAcquisitionMs,
@@ -196,6 +201,7 @@ export function calculateCodexStagedTimingBasis(
     parentGateReconciliationReserveMs,
     parentGateTerminationGraceMs,
     parentGateWindowMs,
+    admittedRunWindowMs: parentGateWindowMs,
     parentFirstAttemptMs,
   });
 }

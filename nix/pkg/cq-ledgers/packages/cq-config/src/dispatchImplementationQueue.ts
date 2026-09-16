@@ -32,6 +32,7 @@ import type {
   NativeCompletionProof,
 } from "./compactDispatchProtocol.js";
 import { IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND } from "./schemas/implement-worker.js";
+import { CODEX_STAGED_TIMING_BASIS } from "./codexStagedTiming.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
@@ -54,6 +55,7 @@ export type ImplementationCandidateDirectTerminalReason =
   | "native-failure"
   | "foreign-completion"
   | "mismatched-completion"
+  | "completion-unobserved"
   | "superseded";
 
 export type ImplementationCandidateTerminalReason =
@@ -69,6 +71,7 @@ const DIRECT_TERMINAL_ABORT_REASON: Readonly<
   "native-failure": "native-failure",
   "foreign-completion": "protocol-violation",
   "mismatched-completion": "protocol-violation",
+  "completion-unobserved": "native-failure",
   superseded: "cancelled",
 });
 
@@ -183,6 +186,7 @@ export interface ImplementationQueueControl {
   readonly state: ImplementationCandidateQueueState;
   readonly partitionRevision: number;
   readonly leaseGeneration: number;
+  readonly qualificationDeadline: string;
   readonly qualification?: ImplementationStagedCompletionQualification;
   readonly lease?: ImplementationQueueLease;
   readonly terminal?: ImplementationQueueTerminal;
@@ -569,6 +573,12 @@ export function enqueueImplementationCandidate(
       "queue enrollment does not bind the exact staged output bytes",
     );
   }
+  if (row.gateSubmittedAt === undefined) {
+    throw new AttestationContractError(
+      "row.gateSubmittedAt",
+      "implementation queue enrollment requires the durable staging instant",
+    );
+  }
   const binding = row.gitEffectBinding;
   if (binding === undefined || row.promptProvenance.roleId !== "implement-worker") {
     throw new AttestationContractError(
@@ -777,6 +787,10 @@ export function enqueueImplementationCandidate(
     state: "enqueued" as const,
     partitionRevision: nextPartitionRevision(deps.store, partition.partitionKey),
     leaseGeneration: 0,
+    qualificationDeadline: new Date(
+      attestationInstantMs(row.gateSubmittedAt, "gateSubmittedAt") +
+        CODEX_STAGED_TIMING_BASIS.qualificationWindowMs,
+    ).toISOString(),
   });
   const existing = row.implementationQueue;
   if (existing !== undefined) {
@@ -928,7 +942,7 @@ export type QualifyDispatchStagedCompletionOutcome =
     }
   | {
       readonly state: "aborted";
-      readonly result: AbortedDispatchResult<"protocol-violation">;
+      readonly result: AbortedDispatchResult<"protocol-violation" | "native-failure">;
     };
 
 export function qualifyDispatchStagedCompletion(
@@ -982,6 +996,23 @@ export function qualifyDispatchStagedCompletion(
     request.stagedOutputDigest === row.gateSubmittedOutputDigest &&
     provenanceMatches(request.expectedProvenance, exactProvenance);
   const at = deps.now();
+  if (
+    attestationInstantMs(at, "now") >
+    attestationInstantMs(control.qualificationDeadline, "queue.qualificationDeadline")
+  ) {
+    return Object.freeze({
+      state: "aborted" as const,
+      result: queuedAbort(
+        row,
+        control,
+        at,
+        "native-failure",
+        "completion-unobserved",
+        { qualificationDeadline: control.qualificationDeadline },
+        deps,
+      ),
+    });
+  }
   if (!completionMatches || !bindingsMatch) {
     const queueReason: ImplementationCandidateTerminalReason =
       proof.childId === row.expectedChild.childId ? "mismatched-completion" : "foreign-completion";
@@ -1036,8 +1067,33 @@ export function acquireImplementationCandidate(
     throw new AttestationContractError("holderId", "expected a non-empty lease holder identity");
   }
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
-  const revision = currentPartitionRevision(deps.store, request.partitionKey);
-  const front = frontRow(deps.store, request.partitionKey);
+  let revision = currentPartitionRevision(deps.store, request.partitionKey);
+  let front = frontRow(deps.store, request.partitionKey);
+  while (front !== undefined) {
+    const control = front.implementationQueue;
+    if (control === undefined) {
+      throw new Error("implementation queue front lost its durable control");
+    }
+    if (control.state !== "enqueued" || control.qualification !== undefined) break;
+    const observedAt = deps.now();
+    if (
+      attestationInstantMs(observedAt, "now") <=
+      attestationInstantMs(control.qualificationDeadline, "queue.qualificationDeadline")
+    ) {
+      break;
+    }
+    queuedAbort(
+      front,
+      control,
+      observedAt,
+      "native-failure",
+      "completion-unobserved",
+      { qualificationDeadline: control.qualificationDeadline },
+      deps,
+    );
+    revision = currentPartitionRevision(deps.store, request.partitionKey);
+    front = frontRow(deps.store, request.partitionKey);
+  }
   if (front === undefined) {
     return Object.freeze({
       state: "empty" as const,

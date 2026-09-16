@@ -14,6 +14,7 @@ import {
   type AcquireImplementationCandidateOutcome,
   type AttestationBackend,
   type DispatchProvenanceBinding,
+  type DispatchStagedRebaseSourceBinding,
   type EnqueueImplementationCandidateRequest,
   type ImplementationQueueControl,
   type ImplementationQueueLeaseBinding,
@@ -55,6 +56,11 @@ export interface QualifyNativeImplementationCandidateRequest {
 export interface QualifiedImplementationCandidate {
   readonly queue: ImplementationQueueControl;
   readonly qualification: QualifyDispatchStagedCompletionOutcome;
+}
+
+export interface PendingStagedRebaseCheckpoint {
+  readonly control: ImplementationQueueControl;
+  readonly source: DispatchStagedRebaseSourceBinding;
 }
 
 export interface ImplementationCandidateQueueAdapterOptions {
@@ -173,6 +179,46 @@ export class ImplementationCandidateQueueAdapter {
     });
   }
 
+  inspectPendingStagedRebase(
+    partitionKey: string,
+  ): Promise<PendingStagedRebaseCheckpoint | undefined> {
+    return this.backend.transact({ kind: "namespace" }, (store) => {
+      const rows = store.rows();
+      const checkpoints = rows
+        .filter((row) => !isAttestationTombstone(row))
+        .flatMap((row) => {
+          const control = row.implementationQueue;
+          const source = row.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
+          if (
+            control === undefined ||
+            source === undefined ||
+            control.state !== "staged-rebase-retired" ||
+            control.partition.partitionKey !== partitionKey
+          ) {
+            return [];
+          }
+          if (source.successor !== undefined) {
+            const successorHandle = source.successor;
+            const successor = rows.find(
+              (candidate) =>
+                candidate.attestationId === successorHandle.attestationId &&
+                candidate.generation === successorHandle.generation,
+            );
+            if (successor === undefined) {
+              throw new Error("staged-rebase source claimed a missing successor");
+            }
+            if (successor.implementationQueue !== undefined) return [];
+          }
+          return [{ control, source }];
+        })
+        .sort(
+          (left, right) =>
+            left.control.enrollment.admissionOrdinal - right.control.enrollment.admissionOrdinal,
+        );
+      return checkpoints[0];
+    });
+  }
+
   park(request: LeaseTransitionRequest): Promise<ImplementationQueueControl> {
     return parkImplementationCandidateOn(
       this.backend,
@@ -250,6 +296,13 @@ export class ImplementationCandidateQueueAdapter {
 }
 
 export interface ImplementationCandidateCoordinatorOperations {
+  reconcileRetiredSource?(input: PendingStagedRebaseCheckpoint): Promise<
+    | { readonly state: "conflict-pending" }
+    | {
+        readonly state: "successor-queued";
+        readonly successor: { readonly attestationId: string; readonly generation: number };
+      }
+  >;
   observeProtectedHead(control: ImplementationQueueControl): Promise<string>;
   finalizeQualifiedFront(input: {
     readonly lease: ImplementationQueueLeaseBinding;
@@ -264,7 +317,10 @@ export interface ImplementationCandidateCoordinatorOperations {
     readonly lease: ImplementationQueueLeaseBinding;
     readonly control: ImplementationQueueControl;
     readonly ontoCommit: string;
-  }): Promise<{ readonly sourceReference: string }>;
+  }): Promise<{
+    readonly sourceReference: string;
+    readonly conflictPending?: true;
+  }>;
   rebaseRetiredSource(input: {
     readonly lease: ImplementationQueueLeaseBinding;
     readonly control: ImplementationQueueControl;
@@ -304,6 +360,34 @@ export class ImplementationCandidateCoordinator {
   async run(
     request: AcquireRequest,
   ): Promise<CoordinateImplementationCandidateOutcome> {
+    const pending = await this.queue.inspectPendingStagedRebase(request.partitionKey);
+    if (pending !== undefined) {
+      if (pending.source.successor !== undefined) {
+        return Object.freeze({
+          state: "successor-queued" as const,
+          source: Object.freeze({ ...pending.source.source }),
+          successor: Object.freeze({ ...pending.source.successor }),
+        });
+      }
+      if (this.operations.reconcileRetiredSource === undefined) {
+        throw new Error("retired staged-rebase recovery is unavailable");
+      }
+      const reconciled = await this.operations.reconcileRetiredSource(pending);
+      if (reconciled.state === "conflict-pending") {
+        return Object.freeze({
+          state: "blocked" as const,
+          partitionKey: pending.source.partitionKey,
+          partitionRevision: pending.control.partitionRevision,
+          front: Object.freeze({ ...pending.source.source }),
+          frontState: "staged-rebase-retired" as const,
+        });
+      }
+      return Object.freeze({
+        state: "successor-queued" as const,
+        source: Object.freeze({ ...pending.source.source }),
+        successor: Object.freeze({ ...reconciled.successor }),
+      });
+    }
     const acquired = await this.queue.acquire(request);
     if (acquired.state !== "leased") return acquired;
     const control = await this.queue.inspectLease(acquired.lease);
@@ -331,6 +415,22 @@ export class ImplementationCandidateCoordinator {
       control,
       ontoCommit: protectedHead,
     });
+    if (retirement.conflictPending === true) {
+      const retired = await this.queue.inspectPendingStagedRebase(request.partitionKey);
+      if (
+        retired === undefined ||
+        retired.source.sourceReference !== retirement.sourceReference
+      ) {
+        throw new Error("conflicted staged-rebase retirement lost its durable checkpoint");
+      }
+      return Object.freeze({
+        state: "blocked" as const,
+        partitionKey: retired.source.partitionKey,
+        partitionRevision: retired.control.partitionRevision,
+        front: Object.freeze({ ...retired.source.source }),
+        frontState: "staged-rebase-retired" as const,
+      });
+    }
     const operationId = `implementation-rebase-${dispatchPayloadDigest({
       enrollmentId: control.enrollment.enrollmentId,
       attemptId: control.attempt.attemptId,

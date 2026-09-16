@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InMemoryAttestationBackend, InMemoryAttestationStore } from "@cq/config";
+import {
+  InMemoryAttestationBackend,
+  InMemoryAttestationStore,
+  enqueueImplementationCandidateOn,
+} from "@cq/config";
 import {
   ImplementationCandidateCoordinator,
   type ImplementationCandidateCoordinatorOperations,
@@ -93,6 +97,117 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
     });
     expect(reconciliationCalls).toBe(1);
     expect(acquireCalls).toBe(0);
+
+    const conflicted = new ImplementationCandidateCoordinator(
+      queue,
+      {
+        reconcileRetiredSource: async () => ({ state: "conflict-pending" as const }),
+      } as unknown as ImplementationCandidateCoordinatorOperations,
+    );
+    expect(
+      await conflicted.run({
+        partitionKey: qualified.queue.partition.partitionKey,
+        holderId: "restart-conflict-coordinator",
+      }),
+    ).toEqual({
+      state: "blocked",
+      partitionKey: source.partitionKey,
+      partitionRevision: control.partitionRevision,
+      front: source.source,
+      frontState: "staged-rebase-retired",
+    });
+    expect(acquireCalls).toBe(0);
+  });
+
+  // regression: T6519 — a staged row with no durable completion proof must not block forever.
+  test("an expired unqualified front terminalizes before the next qualified enrollment leases", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const first = await fixture.stage({
+      taskId: "T6519",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+    });
+    const firstQueue = await enqueueImplementationCandidateOn(
+      backend,
+      { namespace, actor: "trusted-parent", ...first.candidate },
+      { now: fixture.clock.now },
+    );
+    fixture.clock.advance(300_001);
+    const second = await fixture.stage({
+      taskId: "T6520",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "c".repeat(64),
+    });
+    const secondQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: second.candidate,
+      ...second.qualification,
+    });
+    fixture.clock.advance(900_000);
+
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: firstQueue.partition.partitionKey,
+      holderId: "completion-unobserved-recovery",
+    });
+
+    expect(acquired).toMatchObject({
+      state: "leased",
+      lease: {
+        attestationId: second.prepared.attestationId,
+        generation: second.prepared.generation,
+        enrollmentId: secondQualified.queue.enrollment.enrollmentId,
+      },
+    });
+    expect(
+      backend.storedRows().find(
+        (row) =>
+          row.attestationId === first.prepared.attestationId &&
+          row.generation === first.prepared.generation,
+      ),
+    ).toMatchObject({
+      state: "aborted",
+      abortReason: "native-failure",
+      implementationQueue: {
+        state: "terminal",
+        terminal: { reason: "completion-unobserved" },
+      },
+    });
+  });
+
+  test("a genuinely late native proof is refused at the qualification boundary", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const staged = await fixture.stage({
+      taskId: "T6521",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "d".repeat(64),
+    });
+    await enqueueImplementationCandidateOn(
+      backend,
+      { namespace, actor: "trusted-parent", ...staged.candidate },
+      { now: fixture.clock.now },
+    );
+    fixture.clock.advance(300_001);
+
+    const late = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+
+    expect(late.qualification).toMatchObject({
+      state: "aborted",
+      result: { reason: "native-failure" },
+    });
+    expect(late.queue).toMatchObject({
+      state: "terminal",
+      terminal: { reason: "completion-unobserved" },
+    });
   });
 
   // specified: T6519 — no gate is allowed before the retired source is rebased and succeeded.

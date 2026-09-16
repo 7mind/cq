@@ -376,8 +376,7 @@ export async function executeCodexImplementationCandidateQualifier(
   );
 }
 
-/** Run one trusted local qualified-front coordinator after child qualification. */
-export async function executeCodexImplementationCandidateCoordinator(
+async function executeCodexImplementationCandidateCoordinatorAttempt(
   input: CodexImplementationCandidateCoordinatorRequest,
 ): Promise<CodexImplementationCandidateCoordination> {
   const child = Bun.spawn(
@@ -447,6 +446,30 @@ export async function executeCodexImplementationCandidateCoordinator(
     );
   }
   return Object.freeze({ state });
+}
+
+/** Drain qualified fronts through separate admitted-run windows after child qualification. */
+export async function executeCodexImplementationCandidateCoordinator(
+  input: CodexImplementationCandidateCoordinatorRequest,
+): Promise<CodexImplementationCandidateCoordination> {
+  let completed: CodexImplementationCandidateCoordination | undefined;
+  let blockedDeadlineMs = Date.now() + input.timeoutMs;
+  for (;;) {
+    const outcome = await executeCodexImplementationCandidateCoordinatorAttempt(input);
+    if (outcome.state === "completed") {
+      completed = outcome;
+      blockedDeadlineMs = Date.now() + input.timeoutMs;
+      continue;
+    }
+    if (outcome.state === "blocked") {
+      const remainingMs = blockedDeadlineMs - Date.now();
+      if (remainingMs <= 0) return outcome;
+      await Bun.sleep(Math.min(25, remainingMs));
+      continue;
+    }
+    if (outcome.state === "empty" && completed !== undefined) return completed;
+    return outcome;
+  }
 }
 
 export interface CodexParentGateFinalizerRequest {
