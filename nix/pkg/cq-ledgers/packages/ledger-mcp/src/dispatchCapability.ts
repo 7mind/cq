@@ -16,7 +16,9 @@ import {
   DispatchStateConflictError,
   abortDispatchOn,
   claimParentGateOn,
+  claimQualifiedParentGateOn,
   completeParentGateOn,
+  completeQualifiedParentGateOn,
   discoverDispatchContinuationOn,
   discoverDispatchRecovery,
   authorizeDispatchGitConflictOn,
@@ -75,6 +77,7 @@ import {
   resolveManagedWorktreeLineageBinding,
   observeManagedWorktreeLiveTip,
   resolveInheritedGitChangeReceipts,
+  runGuardedRebase,
   runLedgerWorksetGitEffect,
   SupervisedWorkerGateRejectedError,
   withManagedWorktreeEffectLock,
@@ -89,6 +92,7 @@ import {
   type CurrentRecoverySealJournalStore,
   type DispatchLineageCutoverFence,
   type DispatchCapability,
+  type CoordinateImplementationCandidateOutcome,
   type GitChangeBrokerReceipt,
   type QualifyImplementationCandidateInput,
   type GitChangeBrokerResultEvidence,
@@ -108,6 +112,11 @@ import {
   captureCurrentDispatchRecoverySealUnderLock,
   currentRecoveryTaskEvidence,
 } from "./dispatchRecoverySeal.js";
+import {
+  ImplementationCandidateCoordinator,
+  ImplementationCandidateQueueAdapter,
+  type ImplementationCandidateCoordinatorOperations,
+} from "./implementationCandidateQueue.js";
 
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
@@ -129,6 +138,24 @@ async function readOnlyGit(repositoryRoot: string, args: readonly string[]): Pro
   const value = stdout.trim();
   if (value === "") throw new Error("read-only Git observation returned an empty value");
   return value;
+}
+
+async function readOnlyGitAllowEmpty(
+  repositoryRoot: string,
+  args: readonly string[],
+): Promise<string> {
+  const child = Bun.spawn(["git", "-C", repositoryRoot, ...args], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [status, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (status !== 0) throw new Error(`read-only Git observation failed: ${stderr.trim()}`);
+  return stdout.trim();
 }
 
 function exactGoalRef(store: LedgerStore, taskId: string): string {
@@ -909,7 +936,373 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     );
   }
 
-  return {
+  const implementationCandidateQueue = new ImplementationCandidateQueueAdapter({
+    backend: options.backend,
+    actor: "trusted-extension",
+    now,
+  });
+
+  async function finalizeQualifiedImplementationFront(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+  }): Promise<void> {
+    const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input.lease);
+    if (binding === undefined) {
+      throw new Error("qualified implementation front requires a managed worktree binding");
+    }
+    await withManagedWorktreeEffectLock(
+      binding,
+      {
+        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+        effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+      },
+      async () => {
+        const claimed = await claimQualifiedParentGateOn(
+          options.backend,
+          { ...input.lease, queueLease: input.lease },
+          { now },
+        );
+        if (claimed.state === "result-stored") return;
+        if (claimed.state === "aborted") {
+          throw new Error(`qualified implementation front gate is ${claimed.result.reason}`);
+        }
+        let output: DispatchJSONValue;
+        try {
+          output = await superviseImplementWorkerGate(
+            { context: claimed.context, output: claimed.output },
+            {
+              ...(options.worktreeStateDir === undefined
+                ? {}
+                : { stateDir: options.worktreeStateDir }),
+              ...(options.supervisedWorkerGateRunner === undefined
+                ? {}
+                : { runner: options.supervisedWorkerGateRunner }),
+            },
+          );
+        } catch (error) {
+          if (error instanceof SupervisedWorkerGateRejectedError) {
+            await abortWithRecovery(
+              {
+                attestationId: input.lease.attestationId,
+                generation: input.lease.generation,
+                reason: "gate-rejected",
+                details: error.details as unknown as DispatchJSONValue,
+              },
+              binding,
+              true,
+            );
+          }
+          throw error;
+        }
+        await completeQualifiedParentGateOn(
+          options.backend,
+          {
+            ...input.lease,
+            queueLease: input.lease,
+            gateEpoch: claimed.gateEpoch,
+            output,
+          },
+          { now },
+        );
+      },
+    );
+  }
+
+  async function confirmAndFetchQualifiedImplementationFront(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+    readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
+    readonly nativeCompletion: Parameters<DispatchCapability["confirmCompletion"]>[0]["nativeCompletion"];
+  }): Promise<void> {
+    if (input.control.qualification === undefined) {
+      throw new Error("qualified implementation front lost its completion qualification");
+    }
+    const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input.lease);
+    const confirm = async () => {
+      let continuationContext;
+      if (binding !== undefined && binding.conflictStateDigest === undefined) {
+        const liveTip = await observeManagedWorktreeLiveTip(
+          binding,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        const gitReceipts = await resolveInheritedGitChangeReceipts(
+          { ...binding, ...input.lease },
+          liveTip,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        continuationContext = { liveTip, gitReceipts };
+      }
+      return await confirmDispatchCompletionOn(
+        options.backend,
+        {
+          namespace,
+          attestationId: input.lease.attestationId,
+          generation: input.lease.generation,
+          nativeCompletion: input.nativeCompletion,
+          expectedProvenance: input.control.qualification!.expectedProvenance,
+          ...(continuationContext === undefined ? {} : { continuationContext }),
+        },
+        { now },
+      );
+    };
+    const confirmation =
+      binding === undefined
+        ? await confirm()
+        : await withManagedWorktreeEffectLock(
+            binding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            confirm,
+          );
+    if (confirmation.state !== "consumed") {
+      throw new Error(`qualified implementation front confirmed as ${confirmation.state}`);
+    }
+    rememberTerminal(confirmation.result, confirmation.result.consumedAt);
+    const fetched = await fetchDispatchResultOn(
+      options.backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: input.lease.attestationId,
+        generation: input.lease.generation,
+      },
+      { now },
+    );
+    if (fetched.state !== "consumed") {
+      throw new Error(`qualified implementation front fetched as ${fetched.state}`);
+    }
+  }
+
+  interface StaleImplementationCandidateRun {
+    readonly source: Awaited<ReturnType<ImplementationCandidateQueueAdapter["retireStagedRebaseSource"]>>;
+    readonly guardedRebase: string;
+    readonly guardedRebaseJournalDigest: string;
+    readonly rebasedStartCommit: string;
+    readonly sourceRow: AttestationEnvelope;
+  }
+  const staleImplementationCandidateRuns = new Map<string, StaleImplementationCandidateRun>();
+
+  async function retireAndRebaseStaleImplementationFront(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+    readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
+    readonly ontoCommit: string;
+  }): Promise<{ readonly sourceReference: string }> {
+    if (options.repositoryRoot === undefined || options.ledgerStore === undefined) {
+      throw new Error(
+        "stale implementation candidate coordination requires a local repository and task ledger",
+      );
+    }
+    const sourceRow = await options.backend.transact(
+      { kind: "handle", handle: input.lease },
+      (store): AttestationEnvelope => {
+        const row = store.read(input.lease);
+        if (row === undefined || isAttestationTombstone(row)) {
+          throw new Error("stale implementation candidate source disappeared");
+        }
+        return row;
+      },
+    );
+    const dispatchBinding = sourceRow.gitEffectBinding;
+    if (dispatchBinding === undefined) {
+      throw new Error("stale implementation candidate has no managed worktree binding");
+    }
+    const managed = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: dispatchBinding.repositoryRoot,
+        taskId: dispatchBinding.taskId,
+        worktreePath: dispatchBinding.worktreePath,
+        branch: dispatchBinding.branch,
+        allowDetachedRebase: true,
+      },
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+    );
+    if (
+      managed === null ||
+      managed.handleToken !== dispatchBinding.handleToken ||
+      managed.handleFingerprint !== dispatchBinding.handleFingerprint
+    ) {
+      throw new Error("stale implementation candidate managed worktree authority changed");
+    }
+    const liveTip = await readOnlyGit(dispatchBinding.worktreePath, ["rev-parse", "HEAD"]);
+    const clean =
+      (await readOnlyGitAllowEmpty(dispatchBinding.worktreePath, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+      ])) === "";
+    if (!clean || liveTip !== input.control.attempt.resultCommit) {
+      throw new Error("stale implementation candidate is no longer the clean staged result");
+    }
+    const operationId = `implementation-rebase-${dispatchPayloadDigest({
+      enrollmentId: input.control.enrollment.enrollmentId,
+      attemptId: input.control.attempt.attemptId,
+    }).slice(0, 32)}`;
+    const expected = Object.freeze({
+      kind: "rebase" as const,
+      targetRef: `tasks:${dispatchBinding.taskId}`,
+      repositoryRoot: dispatchBinding.repositoryRoot,
+      worktreePath: dispatchBinding.worktreePath,
+      ontoCommit: input.ontoCommit,
+    });
+    const resolveExpected = async () => {
+      await assertManagedWorktreeDispatchBindingLive(
+        managed,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      if (
+        (await readOnlyGit(dispatchBinding.repositoryRoot, ["rev-parse", "HEAD"])) !==
+        input.ontoCommit
+      ) {
+        throw new Error("stale implementation candidate protected head moved before rebase");
+      }
+      return expected;
+    };
+    let source:
+      | Awaited<ReturnType<ImplementationCandidateQueueAdapter["retireStagedRebaseSource"]>>
+      | undefined;
+    const rebase = await runGuardedRebase({
+      binding: managed,
+      operationId,
+      ontoCommit: input.ontoCommit,
+      ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+      onIntent: async ({ reference, requestDigest }) => {
+        source = await implementationCandidateQueue.retireStagedRebaseSource({
+          ...input.lease,
+          expectedPartitionRevision: input.control.partitionRevision,
+          stagedOutputDigest: input.control.qualification!.outputDigest,
+          effectLock: {
+            kind: "managed-worktree-effect-lock",
+            bindingDigest: input.control.attempt.managedWorktreeBindingDigest,
+          },
+          live: {
+            clean,
+            liveTip,
+            resultCommit: input.control.attempt.resultCommit,
+            resultTree: input.control.attempt.resultTree,
+            repositoryId: input.control.attempt.repositoryId,
+            worktreePath: input.control.attempt.worktreePath,
+            gitReceipts: input.control.attempt.gitReceipts,
+          },
+          ontoCommit: input.ontoCommit,
+          guardedRebase: reference,
+          guardedRebaseJournalDigest: requestDigest,
+        });
+      },
+      runEffect: async () =>
+        await runLedgerWorksetGitEffect({
+          store: options.ledgerStore!,
+          expected,
+          resolve: resolveExpected,
+        }),
+    });
+    if (rebase.kind !== "finalized") {
+      throw new Error("stale implementation candidate rebase stopped on a conflict");
+    }
+    if (source === undefined) {
+      throw new Error("stale implementation candidate rebase did not retire its source");
+    }
+    const run: StaleImplementationCandidateRun = Object.freeze({
+      source,
+      guardedRebase: rebase.reference,
+      guardedRebaseJournalDigest: rebase.bridge.requestDigest,
+      rebasedStartCommit: rebase.bridge.rebasedStartCommit,
+      sourceRow,
+    });
+    staleImplementationCandidateRuns.set(input.control.attempt.attemptId, run);
+    return Object.freeze({ sourceReference: source.sourceReference });
+  }
+
+  async function rebaseRetiredImplementationFront(input: {
+    readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
+    readonly retirement: { readonly sourceReference: string };
+    readonly ontoCommit: string;
+  }): Promise<{ readonly guardedRebase: string }> {
+    const run = staleImplementationCandidateRuns.get(input.control.attempt.attemptId);
+    if (
+      run === undefined ||
+      run.source.sourceReference !== input.retirement.sourceReference ||
+      run.source.ontoCommit !== input.ontoCommit
+    ) {
+      throw new Error("stale implementation candidate rebase checkpoint is unavailable");
+    }
+    return Object.freeze({ guardedRebase: run.guardedRebase });
+  }
+
+  async function prepareStaleImplementationSuccessor(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+    readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
+    readonly retirement: { readonly sourceReference: string };
+    readonly rebase: { readonly guardedRebase: string };
+    readonly ontoCommit: string;
+  }): Promise<{ readonly attestationId: string; readonly generation: number }> {
+    const run = staleImplementationCandidateRuns.get(input.control.attempt.attemptId);
+    if (
+      run === undefined ||
+      run.source.sourceReference !== input.retirement.sourceReference ||
+      run.guardedRebase !== input.rebase.guardedRebase ||
+      run.source.ontoCommit !== input.ontoCommit
+    ) {
+      throw new Error("stale implementation candidate successor checkpoint is unavailable");
+    }
+    if (
+      run.sourceRow.input === null ||
+      typeof run.sourceRow.input !== "object" ||
+      Array.isArray(run.sourceRow.input)
+    ) {
+      throw new Error("stale implementation candidate source input is malformed");
+    }
+    const sourceInput = run.sourceRow.input as Readonly<Record<string, DispatchJSONValue>>;
+    const round = sourceInput["round"];
+    if (!Number.isSafeInteger(round) || (round as number) < 0) {
+      throw new Error("stale implementation candidate source round is malformed");
+    }
+    const { guardedRebaseLineage: _guardedRebaseLineage, ...retainedInput } = sourceInput;
+    const timeoutMs =
+      attestationInstantMs(run.sourceRow.deadlines.childCancelAt, "deadlines.childCancelAt") -
+      attestationInstantMs(run.sourceRow.createdAt, "createdAt");
+    const prepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...retainedInput,
+        baseCommit: input.ontoCommit,
+        startingCommit: run.rebasedStartCommit,
+        priorResultCommit: input.control.attempt.resultCommit,
+        round: (round as number) + 1,
+      },
+      idempotencyKey: `implementation-successor-${dispatchPayloadDigest({
+        sourceReference: run.source.sourceReference,
+        guardedRebase: run.guardedRebase,
+      })}`,
+      timeoutMs,
+      expectedChild: run.sourceRow.expectedChild,
+      reprepareOf: {
+        attestationId: input.lease.attestationId,
+        generation: input.lease.generation,
+      },
+      guardedRebase: run.guardedRebase,
+    });
+    if (!prepared.accepted) {
+      throw new Error(`stale implementation candidate successor was refused: ${prepared.detail}`);
+    }
+    return Object.freeze({ ...prepared.handle });
+  }
+
+  const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations = {
+    observeProtectedHead: async () => {
+      if (options.repositoryRoot === undefined) {
+        throw new Error("implementation candidate coordinator requires a local repository root");
+      }
+      return await readOnlyGit(options.repositoryRoot, ["rev-parse", "HEAD"]);
+    },
+    finalizeQualifiedFront: finalizeQualifiedImplementationFront,
+    confirmAndFetchQualifiedFront: confirmAndFetchQualifiedImplementationFront,
+    retireStaleSource: retireAndRebaseStaleImplementationFront,
+    rebaseRetiredSource: rebaseRetiredImplementationFront,
+    prepareSuccessor: prepareStaleImplementationSuccessor,
+  };
+  const implementationCandidateCoordinator = new ImplementationCandidateCoordinator(
+    implementationCandidateQueue,
+    implementationCandidateCoordinatorOperations,
+  );
+
+  const capability: DispatchCapability = {
     prepare: async (input) => {
       const callerFingerprint = callerPrepareFingerprint(input);
       const earlyCoordinates = managedPrepareCoordinates(input);
@@ -1712,7 +2105,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 error instanceof Error ? error.message : String(error),
               );
             }
-            gitEffectBinding = { ...resolvedGitEffectBinding, guardedRebaseBridge: bridge };
+            gitEffectBinding = {
+              ...resolvedGitEffectBinding,
+              baseCommit: bridge.ontoCommit,
+              guardedRebaseBridge: bridge,
+            };
             dispatchInput = {
               ...dispatchRecord,
               guardedRebaseLineage: guardedRebaseLineageOf(bridge),
@@ -2198,10 +2595,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         state: "queued" as const,
         attestationId: input.attestationId,
         generation: input.generation,
+        partitionKey: queue.partition.partitionKey,
         outputDigest: row.gateSubmittedOutputDigest!,
         qualificationDigest: qualification.qualification.qualificationDigest,
       });
     },
+    coordinateImplementationCandidate: async (
+      input,
+    ): Promise<CoordinateImplementationCandidateOutcome> =>
+      await implementationCandidateCoordinator.run(input),
     finalizeParentGate: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
       if (binding === undefined) {
@@ -2599,6 +3001,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       });
     },
   };
+  return capability;
 }
 
 export type DispatchRuntime =

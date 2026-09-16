@@ -120,6 +120,11 @@ export interface RunGuardedRebaseOptions {
   readonly ontoCommit: string;
   /** Launches the admitted `git rebase <ontoCommit>` effect exactly once. */
   readonly runEffect: () => Promise<GuardedRebaseEffectResult>;
+  /** Idempotent durable cut invoked after intent persistence and before the Git effect. */
+  readonly onIntent?: (intent: {
+    readonly reference: string;
+    readonly requestDigest: string;
+  }) => Promise<void>;
   readonly now?: () => Date;
   readonly stateDir?: string;
 }
@@ -647,6 +652,7 @@ export async function runGuardedRebase(
         });
         await writeJournal(journalFile, journal);
       }
+      await options.onIntent?.({ reference, requestDigest });
       const effect = await options.runEffect();
       if (effect.code !== 0) {
         if (await sequencerActive(binding)) {

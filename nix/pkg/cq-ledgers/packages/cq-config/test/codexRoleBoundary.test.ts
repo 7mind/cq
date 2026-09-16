@@ -18,6 +18,7 @@ import {
   createCodexRoleBoundaryPlan,
   calculateCodexParentFirstAttemptMs,
   calculateCodexStagedTimingBasis,
+  executeCodexImplementationCandidateCoordinator,
   executeCodexImplementationCandidateQualifier,
   executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
@@ -122,6 +123,7 @@ describe("T1330 Codex role process boundary", () => {
           state: "queued",
           attestationId: HANDLE.attestationId,
           generation: HANDLE.generation,
+          partitionKey: "cq-implementation-queue:v1:test",
           outputDigest: "a".repeat(64),
           qualificationDigest: "b".repeat(64),
         }))}`,
@@ -144,6 +146,34 @@ describe("T1330 Codex role process boundary", () => {
         timeoutMs: 2_000,
       });
       expect(readFileSync(attempts, "utf8")).toBe("2");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("candidate coordinator uses the dedicated trusted local command after qualification [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-candidate-coordinate-"));
+    const runner = join(root, "coordinator");
+    const request = join(root, "request");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        `cat >${JSON.stringify(request)}`,
+        "printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+      ].join("\n"),
+    );
+    chmodSync(runner, 0o755);
+    try {
+      const outcome = await executeCodexImplementationCandidateCoordinator({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        partitionKey: "cq-implementation-queue:v1:partition",
+        holderId: "installed-codex:partition",
+        timeoutMs: 2_000,
+      });
+      expect(outcome).toEqual({ state: "completed" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

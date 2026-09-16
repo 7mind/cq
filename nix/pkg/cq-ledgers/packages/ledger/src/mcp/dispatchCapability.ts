@@ -13,6 +13,7 @@ import type {
   MaterializedDispatchInput,
   NativeChildIdentity,
   NativeCompletionProof,
+  AcquireImplementationCandidateOutcome,
   ParentGateCapability,
   PrepareDispatchOutcome,
   ResultCapability,
@@ -97,11 +98,29 @@ export interface QualifyImplementationCandidateInput extends DispatchHandle {
   readonly promptDigest: string;
 }
 
+export interface CoordinateImplementationCandidateInput {
+  readonly partitionKey: string;
+  readonly holderId: string;
+}
+
+export type CoordinateImplementationCandidateOutcome =
+  | AcquireImplementationCandidateOutcome
+  | {
+      readonly state: "completed";
+      readonly handle: DispatchHandle;
+    }
+  | {
+      readonly state: "successor-queued";
+      readonly source: DispatchHandle;
+      readonly successor: DispatchHandle;
+    };
+
 export type QualifyImplementationCandidateOutcome =
   | {
       readonly state: "queued";
       readonly attestationId: string;
       readonly generation: number;
+      readonly partitionKey: string;
       readonly outputDigest: string;
       readonly qualificationDigest: string;
     }
@@ -169,6 +188,9 @@ export interface DispatchCapability {
   qualifyImplementationCandidate?(
     input: QualifyImplementationCandidateInput,
   ): Promise<QualifyImplementationCandidateOutcome>;
+  coordinateImplementationCandidate?(
+    input: CoordinateImplementationCandidateInput,
+  ): Promise<CoordinateImplementationCandidateOutcome>;
   finalizeParentGate?(input: FinalizeParentGateInput): Promise<StoreDispatchResultOutcome>;
   confirmCompletion(
     input: ConfirmDispatchCompletionToolInput,

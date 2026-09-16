@@ -234,6 +234,7 @@ export interface ParsedArgs {
   promptRoot: string | undefined;
   parentGateFinalize: boolean;
   implementationCandidateQualify: boolean;
+  implementationCandidateCoordinate: boolean;
 }
 
 /**
@@ -277,12 +278,15 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let promptRoot: string | undefined;
   let parentGateFinalize = false;
   let implementationCandidateQualify = false;
+  let implementationCandidateCoordinate = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--parent-gate-finalize") {
       parentGateFinalize = true;
     } else if (a === "--implementation-candidate-qualify") {
       implementationCandidateQualify = true;
+    } else if (a === "--implementation-candidate-coordinate") {
+      implementationCandidateCoordinate = true;
     } else if (a === "--management") {
       management = true;
     } else if (a === "--cwd") {
@@ -364,6 +368,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     promptRoot,
     parentGateFinalize,
     implementationCandidateQualify,
+    implementationCandidateCoordinate,
   };
 }
 
@@ -530,6 +535,70 @@ export async function readImplementationCandidateQualifyRequest(
     throw new Error("ledger-mcp: malformed implementation candidate request");
   }
   return request as unknown as ImplementationCandidateQualifyStdinRequest;
+}
+
+interface ImplementationCandidateCoordinateStdinRequest {
+  readonly partitionKey: string;
+  readonly holderId: string;
+}
+
+export async function readImplementationCandidateCoordinateRequest(
+  input: NodeJS.ReadableStream,
+): Promise<ImplementationCandidateCoordinateStdinRequest> {
+  const text = await new Promise<string>((resolveInput, rejectInput) => {
+    let buffered = Buffer.alloc(0);
+    const onData = (chunk: Buffer | string): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (buffered.length + bytes.length > PARENT_GATE_REQUEST_MAX_BYTES) {
+        cleanup();
+        rejectInput(new Error("ledger-mcp: implementation coordinator request exceeds 16384 bytes"));
+        return;
+      }
+      buffered = Buffer.concat([buffered, bytes]);
+    };
+    const onEnd = (): void => {
+      cleanup();
+      resolveInput(buffered.toString("utf8"));
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      rejectInput(error);
+    };
+    const cleanup = (): void => {
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      input.pause();
+    };
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+  });
+  if (!text.endsWith("\n") || text.indexOf("\n") !== text.length - 1) {
+    throw new Error(
+      "ledger-mcp: implementation coordinator request must be one bounded newline-terminated JSON value",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("ledger-mcp: implementation coordinator request must be valid JSON");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("ledger-mcp: implementation coordinator request must be an object");
+  }
+  const request = parsed as Record<string, unknown>;
+  if (
+    Object.keys(request).sort().join(",") !== "holderId,partitionKey" ||
+    typeof request["partitionKey"] !== "string" ||
+    request["partitionKey"].trim() === "" ||
+    typeof request["holderId"] !== "string" ||
+    request["holderId"].trim() === ""
+  ) {
+    throw new Error("ledger-mcp: malformed implementation coordinator request");
+  }
+  return request as unknown as ImplementationCandidateCoordinateStdinRequest;
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -1329,6 +1398,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     promptRoot,
     parentGateFinalize,
     implementationCandidateQualify,
+    implementationCandidateCoordinate,
   } = parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
@@ -1394,6 +1464,25 @@ export async function main(argv: readonly string[]): Promise<void> {
       }
       const outcome = await dispatchCapability.qualifyImplementationCandidate(
         await readImplementationCandidateQualifyRequest(process.stdin),
+      );
+      process.stdout.write(`${JSON.stringify(outcome)}\n`);
+    } finally {
+      resolved.backup?.close();
+      await dispatchRuntime.close();
+      await store.dispose();
+    }
+    return;
+  }
+
+  if (implementationCandidateCoordinate) {
+    try {
+      if (http !== null || dispatchCapability?.coordinateImplementationCandidate === undefined) {
+        throw new Error(
+          "ledger-mcp: implementation candidate coordination requires a local durable dispatch runtime",
+        );
+      }
+      const outcome = await dispatchCapability.coordinateImplementationCandidate(
+        await readImplementationCandidateCoordinateRequest(process.stdin),
       );
       process.stdout.write(`${JSON.stringify(outcome)}\n`);
     } finally {

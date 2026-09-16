@@ -3357,6 +3357,16 @@ export interface CompleteParentGateRequest extends ParentGateFinalizeRequest {
   readonly output: DispatchJSONValue;
 }
 
+/** Server-internal authority held only by the durable qualified-front coordinator. */
+export interface QualifiedParentGateFinalizeRequest extends DispatchHandle {
+  readonly queueLease: ImplementationQueueLeaseBinding;
+}
+
+export interface CompleteQualifiedParentGateRequest extends QualifiedParentGateFinalizeRequest {
+  readonly gateEpoch: number;
+  readonly output: DispatchJSONValue;
+}
+
 function requireParentGateRow(
   request: ParentGateFinalizeRequest,
   deps: DispatchServiceDeps,
@@ -3422,12 +3432,33 @@ function assertParentGateQueueLease(
   }
 }
 
-/** Claim or reclaim the durable parent-owned gate under the worktree effect lock. */
-export function claimParentGate(
-  request: ParentGateFinalizeRequest,
+function requireQualifiedParentGateRow(
+  request: QualifiedParentGateFinalizeRequest,
+  deps: DispatchServiceDeps,
+): AttestationEnvelope {
+  const row = requireRow(assertDispatchHandle(request), deps);
+  if (isAttestationTombstone(row)) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      "terminal-envelope-expired",
+      `attestation "${row.attestationId}" is terminal and its envelope has expired`,
+    );
+  }
+  if (row.parentGateCapabilityHash === undefined) {
+    throw new DispatchAuthorizationError(
+      STORE_RESULT,
+      "qualified-front coordination requires parent-gated dispatch authority",
+    );
+  }
+  assertParentGateQueueLease(row, request.queueLease);
+  return row;
+}
+
+function claimParentGateRow(
+  row: AttestationEnvelope,
+  queueLease: ImplementationQueueLeaseBinding | undefined,
   deps: DispatchServiceDeps,
 ): ClaimParentGateOutcome {
-  const row = requireParentGateRow(request, deps);
   if (row.state === "result-stored") {
     return Object.freeze({ state: "result-stored" as const, result: storedViewOf(row) });
   }
@@ -3444,7 +3475,7 @@ export function claimParentGate(
       `attestation "${row.attestationId}" has no staged parent gate`,
     );
   }
-  assertParentGateQueueLease(row, request.queueLease);
+  assertParentGateQueueLease(row, queueLease);
   if (row.output === undefined || row.gateSubmittedAt === undefined) {
     throw new AttestationContractError("row", "a staged parent gate must carry output and time");
   }
@@ -3469,12 +3500,32 @@ export function claimParentGate(
   });
 }
 
-/** Publish runner-owned gate evidence only for the exact claimed epoch. */
-export function completeParentGate(
-  request: CompleteParentGateRequest,
+/** Claim or reclaim the durable parent-owned gate under the worktree effect lock. */
+export function claimParentGate(
+  request: ParentGateFinalizeRequest,
+  deps: DispatchServiceDeps,
+): ClaimParentGateOutcome {
+  const row = requireParentGateRow(request, deps);
+  return claimParentGateRow(row, request.queueLease, deps);
+}
+
+/** Claim a gate through server-held qualified-front authority, never a caller token. */
+export function claimQualifiedParentGate(
+  request: QualifiedParentGateFinalizeRequest,
+  deps: DispatchServiceDeps,
+): ClaimParentGateOutcome {
+  return claimParentGateRow(requireQualifiedParentGateRow(request, deps), request.queueLease, deps);
+}
+
+function completeParentGateRow(
+  row: AttestationEnvelope,
+  request: {
+    readonly gateEpoch: number;
+    readonly output: DispatchJSONValue;
+    readonly queueLease?: ImplementationQueueLeaseBinding;
+  },
   deps: DispatchServiceDeps,
 ): StoredDispatchResultView {
-  const row = requireParentGateRow(request, deps);
   const outputDigest = dispatchPayloadDigest(request.output);
   if (row.state === "result-stored") {
     if (row.gateEpoch !== request.gateEpoch) {
@@ -3524,6 +3575,23 @@ export function completeParentGate(
   });
   deps.store.replace(row, next);
   return storedViewOf(next);
+}
+
+/** Publish runner-owned gate evidence only for the exact claimed epoch. */
+export function completeParentGate(
+  request: CompleteParentGateRequest,
+  deps: DispatchServiceDeps,
+): StoredDispatchResultView {
+  const row = requireParentGateRow(request, deps);
+  return completeParentGateRow(row, request, deps);
+}
+
+/** Publish gate evidence through the exact server-held qualified-front lease. */
+export function completeQualifiedParentGate(
+  request: CompleteQualifiedParentGateRequest,
+  deps: DispatchServiceDeps,
+): StoredDispatchResultView {
+  return completeParentGateRow(requireQualifiedParentGateRow(request, deps), request, deps);
 }
 
 /** Trusted pre-lock lookup used to serialize abort with a bound Git effect. */

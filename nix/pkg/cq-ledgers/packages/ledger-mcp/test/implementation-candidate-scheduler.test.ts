@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InMemoryAttestationBackend, InMemoryAttestationStore } from "@cq/config";
+import {
+  InMemoryAttestationBackend,
+  InMemoryAttestationStore,
+  claimQualifiedParentGateOn,
+} from "@cq/config";
 import {
   ImplementationCandidateCoordinator,
   type ImplementationCandidateCoordinatorOperations,
@@ -9,10 +13,54 @@ import { ImplementationCandidateQueueFixture } from "./implementationCandidateQu
 const namespace = { backend: "xdg" as const, projectKey: "candidate-scheduler" };
 
 describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]", () => {
-  test("unchanged qualified front gates, confirms, and fetches with its stored native proof", async () => {
-    const fixture = new ImplementationCandidateQueueFixture(
-      new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace)),
+  test("trusted runtime claims a parent gate only for the exact qualified lease", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const staged = await fixture.stage({
+      taskId: "T6519",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+    });
+    const qualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "trusted-runtime",
+    });
+    if (acquired.state !== "leased") throw new Error("expected qualified lease");
+
+    await expect(
+      claimQualifiedParentGateOn(
+        backend,
+        {
+          ...acquired.lease,
+          queueLease: { ...acquired.lease, leaseGeneration: acquired.lease.leaseGeneration + 1 },
+        },
+        { now: fixture.clock.now },
+      ),
+    ).rejects.toThrow("exact current implementation queue lease");
+    const claimed = await claimQualifiedParentGateOn(
+      backend,
+      { ...acquired.lease, queueLease: acquired.lease },
+      { now: fixture.clock.now },
     );
+
+    expect(claimed).toMatchObject({
+      state: "gate-running",
+      context: {
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+      },
+    });
+  });
+
+  test("unchanged qualified front gates, confirms, and fetches with its stored native proof", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
     const staged = await fixture.stage({
       taskId: "T6519",
       repositoryId: "a".repeat(64),
@@ -31,9 +79,14 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
         events.push("gate");
         expect(lease.attemptId).toBe(control.attempt.attemptId);
       },
-      confirmAndFetchQualifiedFront: async ({ nativeCompletion }) => {
+      confirmAndFetchQualifiedFront: async ({ lease, control, nativeCompletion }) => {
         events.push("confirm-fetch");
         expect(nativeCompletion).toEqual(staged.qualification.nativeCompletion);
+        await fixture.adapter.release({
+          ...lease,
+          expectedPartitionRevision: control.partitionRevision,
+          detail: { disposition: "gate-complete" },
+        });
       },
       retireStaleSource: async () => {
         throw new Error("unchanged front must not retire");
@@ -61,7 +114,7 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
     });
     expect(events).toEqual(["gate", "confirm-fetch"]);
     expect(
-      fixture.backend.storedRows().find(
+      backend.storedRows().find(
         (row) =>
           row.attestationId === staged.prepared.attestationId &&
           row.generation === staged.prepared.generation,

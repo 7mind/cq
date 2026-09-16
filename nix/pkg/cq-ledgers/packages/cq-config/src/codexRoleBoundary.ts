@@ -236,11 +236,34 @@ export interface CodexImplementationCandidateQualifierRequest {
 
 const CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS = 2;
 
+export interface CodexImplementationCandidateQualification {
+  readonly state: "queued";
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly partitionKey: string;
+  readonly outputDigest: string;
+  readonly qualificationDigest: string;
+}
+
+export interface CodexImplementationCandidateCoordinatorRequest {
+  readonly command: string;
+  readonly ledgerCwd: string;
+  readonly promptRoot: string;
+  readonly partitionKey: string;
+  readonly holderId: string;
+  readonly timeoutMs: number;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+export type CodexImplementationCandidateCoordination =
+  | { readonly state: "empty" | "blocked" }
+  | { readonly state: "completed" | "successor-queued" };
+
 async function executeCodexImplementationCandidateQualifierAttempt(
   input: CodexImplementationCandidateQualifierRequest,
   request: Readonly<Record<string, unknown>>,
   timeoutMs: number,
-): Promise<void> {
+): Promise<CodexImplementationCandidateQualification> {
   const child = Bun.spawn(
     [
       input.command,
@@ -295,10 +318,12 @@ async function executeCodexImplementationCandidateQualifierAttempt(
   const acknowledgement = parsed as Record<string, unknown>;
   if (
     Object.keys(acknowledgement).sort().join(",") !==
-      "attestationId,generation,outputDigest,qualificationDigest,state" ||
+      "attestationId,generation,outputDigest,partitionKey,qualificationDigest,state" ||
     acknowledgement["state"] !== "queued" ||
     acknowledgement["attestationId"] !== input.handle.attestationId ||
     acknowledgement["generation"] !== input.handle.generation ||
+    typeof acknowledgement["partitionKey"] !== "string" ||
+    acknowledgement["partitionKey"].trim() === "" ||
     typeof acknowledgement["outputDigest"] !== "string" ||
     typeof acknowledgement["qualificationDigest"] !== "string"
   ) {
@@ -306,12 +331,13 @@ async function executeCodexImplementationCandidateQualifierAttempt(
       "implementation candidate qualification emitted a foreign acknowledgement",
     );
   }
+  return Object.freeze(acknowledgement) as unknown as CodexImplementationCandidateQualification;
 }
 
 /** Persist the exact process observation as a qualified queued candidate without starting a gate. */
 export async function executeCodexImplementationCandidateQualifier(
   input: CodexImplementationCandidateQualifierRequest,
-): Promise<void> {
+): Promise<CodexImplementationCandidateQualification> {
   const request = Object.freeze({
     ...input.handle,
     roleId: input.roleId,
@@ -332,8 +358,7 @@ export async function executeCodexImplementationCandidateQualifier(
       );
     }
     try {
-      await executeCodexImplementationCandidateQualifierAttempt(input, request, remainingMs);
-      return;
+      return await executeCodexImplementationCandidateQualifierAttempt(input, request, remainingMs);
     } catch (error) {
       if (attempt === 1) {
         firstFailure = error;
@@ -346,6 +371,82 @@ export async function executeCodexImplementationCandidateQualifier(
       );
     }
   }
+  throw new CodexRoleBoundaryError(
+    `implementation candidate qualification exhausted without acknowledgement: ${String(firstFailure)}`,
+  );
+}
+
+/** Run one trusted local qualified-front coordinator after child qualification. */
+export async function executeCodexImplementationCandidateCoordinator(
+  input: CodexImplementationCandidateCoordinatorRequest,
+): Promise<CodexImplementationCandidateCoordination> {
+  const child = Bun.spawn(
+    [
+      input.command,
+      "mcp",
+      "--cwd",
+      input.ledgerCwd,
+      "--prompt-surface",
+      "codex",
+      "--prompt-root",
+      input.promptRoot,
+      "--implementation-candidate-coordinate",
+    ],
+    {
+      cwd: input.ledgerCwd,
+      env: withoutWorksetCredentials({ ...process.env, ...input.environment }),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  child.stdin.write(
+    `${JSON.stringify({ partitionKey: input.partitionKey, holderId: input.holderId })}\n`,
+  );
+  child.stdin.end();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, input.timeoutMs);
+  const [exitStatus, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]).finally(() => clearTimeout(timer));
+  if (timedOut) {
+    throw new CodexRoleBoundaryError(
+      `implementation candidate coordination exceeded ${String(input.timeoutMs)} ms`,
+    );
+  }
+  if (exitStatus !== 0) {
+    throw new CodexRoleBoundaryError(
+      `implementation candidate coordination exited ${String(exitStatus)}: ${stderr.trim()}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    throw new CodexRoleBoundaryError("implementation candidate coordination emitted non-JSON stdout");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CodexRoleBoundaryError(
+      "implementation candidate coordination emitted a malformed acknowledgement",
+    );
+  }
+  const state = (parsed as Record<string, unknown>)["state"];
+  if (
+    state !== "empty" &&
+    state !== "blocked" &&
+    state !== "completed" &&
+    state !== "successor-queued"
+  ) {
+    throw new CodexRoleBoundaryError(
+      "implementation candidate coordination emitted a foreign acknowledgement",
+    );
+  }
+  return Object.freeze({ state });
 }
 
 export interface CodexParentGateFinalizerRequest {

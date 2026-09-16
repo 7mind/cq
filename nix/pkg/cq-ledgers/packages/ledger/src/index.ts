@@ -916,6 +916,8 @@ export { DispatchNotImplementedError } from "./mcp/dispatchCapability.js";
 export type {
   AbortDispatchToolInput,
   ConfirmDispatchCompletionToolInput,
+  CoordinateImplementationCandidateInput,
+  CoordinateImplementationCandidateOutcome,
   DispatchCapability,
   DispatchWorktreeActivityObservation,
   DispatchRecoveryResolution,

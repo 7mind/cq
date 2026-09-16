@@ -1,5 +1,6 @@
 import {
   acquireImplementationCandidateOn,
+  dispatchPayloadDigest,
   enqueueImplementationCandidateOn,
   isAttestationTombstone,
   parkImplementationCandidateOn,
@@ -256,6 +257,7 @@ export interface ImplementationCandidateCoordinatorOperations {
   }): Promise<void>;
   confirmAndFetchQualifiedFront(input: {
     readonly lease: ImplementationQueueLeaseBinding;
+    readonly control: ImplementationQueueControl;
     readonly nativeCompletion: NativeCompletionProof;
   }): Promise<void>;
   retireStaleSource(input: {
@@ -313,12 +315,8 @@ export class ImplementationCandidateCoordinator {
       await this.operations.finalizeQualifiedFront({ lease: acquired.lease, control });
       await this.operations.confirmAndFetchQualifiedFront({
         lease: acquired.lease,
+        control,
         nativeCompletion: control.qualification.nativeCompletion,
-      });
-      await this.queue.release({
-        ...acquired.lease,
-        expectedPartitionRevision: control.partitionRevision,
-        detail: { disposition: "gate-complete" },
       });
       return Object.freeze({
         state: "completed" as const,
@@ -333,7 +331,10 @@ export class ImplementationCandidateCoordinator {
       control,
       ontoCommit: protectedHead,
     });
-    const operationId = `cq-implementation-rebase:${control.enrollment.enrollmentId}:${control.attempt.attemptId}`;
+    const operationId = `implementation-rebase-${dispatchPayloadDigest({
+      enrollmentId: control.enrollment.enrollmentId,
+      attemptId: control.attempt.attemptId,
+    }).slice(0, 32)}`;
     const rebase = await this.operations.rebaseRetiredSource({
       lease: acquired.lease,
       control,

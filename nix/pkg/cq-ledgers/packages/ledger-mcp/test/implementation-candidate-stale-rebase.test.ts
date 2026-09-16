@@ -49,9 +49,7 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
           ontoCommit: protectedHead,
           retirement: { sourceReference: "retired:T6519:1" },
         });
-        expect(input.operationId).toBe(
-          `cq-implementation-rebase:${qualified.queue.enrollment.enrollmentId}:${qualified.queue.attempt.attemptId}`,
-        );
+        expect(input.operationId).toMatch(/^implementation-rebase-[0-9a-f]{32}$/u);
         return { guardedRebase: `cq-guarded-rebase:v1:${"c".repeat(64)}` };
       },
       prepareSuccessor: async ({ retirement, rebase, ontoCommit }) => {

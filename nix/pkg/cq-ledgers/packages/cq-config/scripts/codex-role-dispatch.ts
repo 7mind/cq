@@ -9,6 +9,7 @@ import {
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
+  executeCodexImplementationCandidateCoordinator,
   executeCodexImplementationCandidateQualifier,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
@@ -137,7 +138,7 @@ export async function main(): Promise<void> {
     if (execution.observation.outcome !== "completed") {
       throw new Error("codex-role-dispatch: implement-worker process did not complete");
     }
-    await executeCodexImplementationCandidateQualifier({
+    const qualification = await executeCodexImplementationCandidateQualifier({
       command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
       ledgerCwd: invocation.ledgerCwd,
       promptRoot,
@@ -150,6 +151,14 @@ export async function main(): Promise<void> {
       observedAt: new Date().toISOString(),
       promptDigest: plan.effectivePreturn.rolePromptDigest,
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
+    });
+    await executeCodexImplementationCandidateCoordinator({
+      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+      ledgerCwd: invocation.ledgerCwd,
+      promptRoot,
+      partitionKey: qualification.partitionKey,
+      holderId: `installed-codex:${qualification.partitionKey}`,
+      timeoutMs: plan.effectivePreturn.parentGateWindowMs,
     });
   }
   if (observationPath !== undefined && "observation" in execution) {

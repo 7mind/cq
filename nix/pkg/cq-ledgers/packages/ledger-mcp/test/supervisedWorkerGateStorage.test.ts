@@ -18,8 +18,10 @@ import {
 import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  PLAN_FINALIZED_MANIFEST_FIELD,
   assertManagedWorktreeWipClosure,
   createNodeSupervisedWorkerGateRunner,
+  createInMemoryWorksetStore,
   listManagedLiveWorktrees,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
@@ -34,6 +36,7 @@ import {
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
+  type LedgerStore,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -83,6 +86,42 @@ function artifactStore(): PromptArtifactStore {
     }),
     readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
   };
+}
+
+function finalizedTaskStore(): LedgerStore {
+  const workset = createInMemoryWorksetStore();
+  const task = {
+    id: "T2081",
+    milestoneId: "M2081",
+    status: "wip",
+    fields: {
+      headline: "supervise exact tip",
+      description: "run the full gate outside the workspace-write sandbox",
+      acceptance: "only a green exact tip becomes consumable",
+      ledgerRefs: ["goals:G2081"],
+      worksetOwnerRef: "goals:G2081",
+      worksetOwnerEdgeKind: "active-current-draft",
+    },
+    createdAt: "2026-08-12T20:00:00.000Z",
+    updatedAt: "2026-08-12T20:00:00.000Z",
+    author: "planner",
+    session: "plan",
+  };
+  return {
+    worksetStore: () => workset,
+    fetchItem: (ledgerId: string) =>
+      ledgerId === "tasks"
+        ? task
+        : {
+            fields: {
+              [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify({
+                revision: 1,
+                milestones: [{ key: "managed", id: "M2081" }],
+                tasks: [{ key: "supervise", id: "T2081" }],
+              }),
+            },
+          },
+  } as unknown as LedgerStore;
 }
 
 class GateDummy implements SupervisedWorkerGateRunner {
@@ -225,6 +264,7 @@ async function fixtureWithDispatchBase(
   dispatchBaseMode: DispatchBaseMode,
   now: () => string = () => "2026-08-12T20:00:00.000Z",
   wipFixture: WipFixtureMode = false,
+  withLedgerStore = false,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -301,13 +341,17 @@ async function fixtureWithDispatchBase(
   const capability = createDispatchCapability({
     backend: new InMemoryAttestationBackend(store),
     promptArtifactStore: artifactStore(),
+    ...(withLedgerStore ? { ledgerStore: finalizedTaskStore() } : {}),
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
     now,
     randomBytes: sequentialDispatchRandomBytes(sequence * 32),
   });
-  const expectedChild = { childId: `child-${sequence}`, runId: `run-${sequence}` };
+  const expectedChild = {
+    childId: `implement-worker#candidate-correlation-${sequence}`,
+    runId: `run-${sequence}`,
+  };
   const prepared = await capability.prepare({
     roleId: "implement-worker",
     input: {
@@ -424,8 +468,17 @@ async function fixtureWithDispatchBase(
   };
 }
 
-async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
-  return await fixtureWithDispatchBase(runner, "managed");
+async function fixture(
+  runner: SupervisedWorkerGateRunner = new GateDummy(),
+  withLedgerStore = false,
+) {
+  return await fixtureWithDispatchBase(
+    runner,
+    "managed",
+    () => "2026-08-12T20:00:00.000Z",
+    false,
+    withLedgerStore,
+  );
 }
 
 type GateFixture = Awaited<ReturnType<typeof fixture>>;
@@ -750,6 +803,127 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     );
     expect(CODEX_STAGED_TIMING_BASIS.storeResultSubmissionBudgetMs).toBe(3_960_000);
     expect(CODEX_STAGED_TIMING_BASIS.parentGateWindowMs).toBe(9_611_000);
+  });
+
+  test("production coordinator gates, confirms, fetches, and releases one qualified managed front", async () => {
+    const runner = new GateDummy();
+    const subject = await fixture(runner, true);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("implementation candidate runtime is unavailable");
+    }
+    const correlationId = subject.expectedChild.childId.slice("implement-worker#".length);
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId,
+      childThreadId: "managed-child-thread",
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+
+    const outcome = await subject.capability.coordinateImplementationCandidate({
+      partitionKey: qualified.partitionKey,
+      holderId: "production-coordinator",
+    });
+
+    expect(outcome).toEqual({
+      state: "completed",
+      handle: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+    });
+    expect(runner.requests).toHaveLength(1);
+    expect(subject.store.rows()[0]).toMatchObject({
+      state: "consumed",
+      outputMaterializedAt: "2026-08-12T20:00:00.000Z",
+      implementationQueue: { state: "released", leaseGeneration: 1 },
+    });
+  });
+
+  test("production coordinator retires a stale front before one admitted guarded rebase and successor", async () => {
+    const runner = new GateDummy();
+    const subject = await fixture(runner, true);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("implementation candidate runtime is unavailable");
+    }
+    const correlationId = subject.expectedChild.childId.slice("implement-worker#".length);
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId,
+      childThreadId: "stale-child-thread",
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+    await fs.writeFile(path.join(subject.repositoryRoot, "advance.txt"), "advance protected head\n");
+    await git(subject.repositoryRoot, ["add", "advance.txt"]);
+    await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
+    await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
+    await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
+    const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+
+    const outcome = await subject.capability.coordinateImplementationCandidate({
+      partitionKey: qualified.partitionKey,
+      holderId: "production-stale-coordinator",
+    });
+
+    expect(outcome).toEqual({
+      state: "successor-queued",
+      source: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+      successor: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation + 1,
+      },
+    });
+    expect(runner.requests).toHaveLength(0);
+    const [source, successor] = [...subject.store.rows()]
+      .sort((left, right) => left.generation - right.generation);
+    expect(source).toMatchObject({
+      state: "aborted",
+      abortReason: "staged-rebase",
+      implementationQueue: { state: "staged-rebase-retired" },
+    });
+    expect(successor).toMatchObject({
+      state: "prepared",
+      generation: subject.prepared.generation + 1,
+      input: {
+        baseCommit: protectedHead,
+        priorResultCommit: subject.receipt.newHead,
+        round: 1,
+        guardedRebaseLineage: {
+          oldResultCommit: subject.receipt.newHead,
+          ontoCommit: protectedHead,
+        },
+      },
+    });
+    expect(
+      await git(subject.managed.handle.absolutePath, [
+        "merge-base",
+        "--is-ancestor",
+        protectedHead,
+        "HEAD",
+      ]),
+    ).toBe("");
   });
 
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {

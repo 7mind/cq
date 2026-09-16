@@ -82,7 +82,9 @@ import {
   confirmDispatchCompletion,
   replayConfirmedDispatchCompletion,
   claimParentGate,
+  claimQualifiedParentGate,
   completeParentGate,
+  completeQualifiedParentGate,
   discoverDispatchRecovery,
   discoverDispatchContinuation,
   fetchDispatchResult,
@@ -110,6 +112,7 @@ import {
   type ConfirmDispatchCompletionRequest,
   type ClaimParentGateOutcome,
   type CompleteParentGateRequest,
+  type CompleteQualifiedParentGateRequest,
   type DispatchNow,
   type DispatchRandomBytes,
   type FetchDispatchResultRequest,
@@ -120,6 +123,7 @@ import {
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type ParentGateFinalizeRequest,
+  type QualifiedParentGateFinalizeRequest,
   type StoreDispatchResultOutcome,
   type StoredDispatchResultView,
   type ResolveDispatchRecoveryRequest,
@@ -1014,6 +1018,16 @@ export async function claimParentGateOn(
   );
 }
 
+export async function claimQualifiedParentGateOn(
+  backend: AttestationBackend,
+  request: QualifiedParentGateFinalizeRequest,
+  deps: AttestationBackendDeps,
+): Promise<ClaimParentGateOutcome> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    claimQualifiedParentGate(request, { store, now: deps.now }),
+  );
+}
+
 export async function completeParentGateOn(
   backend: AttestationBackend,
   request: CompleteParentGateRequest,
@@ -1021,6 +1035,16 @@ export async function completeParentGateOn(
 ): Promise<StoredDispatchResultView> {
   return backend.transact(handleLoadScope(request), (store) =>
     completeParentGate(request, { store, now: deps.now }),
+  );
+}
+
+export async function completeQualifiedParentGateOn(
+  backend: AttestationBackend,
+  request: CompleteQualifiedParentGateRequest,
+  deps: AttestationBackendDeps,
+): Promise<StoredDispatchResultView> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    completeQualifiedParentGate(request, { store, now: deps.now }),
   );
 }
 
