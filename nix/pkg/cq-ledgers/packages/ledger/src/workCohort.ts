@@ -391,7 +391,6 @@ function makeAcceptancePlan(
     argv: [...command.argv],
     cwd,
     environment,
-    provenance: command.provenance,
   };
   const normalizedCommandDigest = digest(normalized);
   const payload = {
@@ -400,6 +399,7 @@ function makeAcceptancePlan(
     memberRef: member.memberRef,
     memberRevision: member.memberRevision,
     ...normalized,
+    provenance: command.provenance,
     normalizedCommandDigest,
   };
   return Object.freeze({ ...payload, planDigest: digest(payload) });
@@ -408,6 +408,7 @@ function makeAcceptancePlan(
 function validateSourceGraph(graph: CohortSourceGraphV1): {
   readonly nodeByPath: ReadonlyMap<string, CohortSourceGraphNodeV1>;
   readonly edgeKeys: ReadonlySet<string>;
+  readonly edges: readonly CohortSourceGraphEdgeV1[];
   readonly digest: string;
 } {
   const nodeByPath = new Map<string, CohortSourceGraphNodeV1>();
@@ -419,6 +420,7 @@ function validateSourceGraph(graph: CohortSourceGraphV1): {
     nodeByPath.set(path, Object.freeze({ ...raw, path, referencedBy }));
   }
   const edgeKeys = new Set<string>();
+  const edges: CohortSourceGraphEdgeV1[] = [];
   for (const edge of graph.edges) {
     const from = normalizedRepositoryPath(edge.from, "source graph edge source");
     const to = normalizedRepositoryPath(edge.to, "source graph edge target");
@@ -428,6 +430,7 @@ function validateSourceGraph(graph: CohortSourceGraphV1): {
     const key = `${from}\u0000${to}`;
     if (edgeKeys.has(key)) throw new Error(`source graph repeats edge ${from} -> ${to}`);
     edgeKeys.add(key);
+    edges.push(Object.freeze({ from, to, relationship: edge.relationship }));
   }
   const boundedRoots = new Set(
     [...nodeByPath.values()].flatMap((node) => node.referencedBy),
@@ -437,7 +440,15 @@ function validateSourceGraph(graph: CohortSourceGraphV1): {
       throw new Error(`${node.path} has an unbounded source reference`);
     }
   }
-  return Object.freeze({ nodeByPath, edgeKeys, digest: digest(graph) });
+  const normalized = {
+    nodes: [...nodeByPath.values()].sort((left, right) => left.path.localeCompare(right.path)),
+    edges: edges.sort((left, right) =>
+      `${left.from}\u0000${left.to}\u0000${left.relationship}`.localeCompare(
+        `${right.from}\u0000${right.to}\u0000${right.relationship}`,
+      ),
+    ),
+  };
+  return Object.freeze({ nodeByPath, edgeKeys, edges: normalized.edges, digest: digest(normalized) });
 }
 
 function witnessForMember(
@@ -606,6 +617,35 @@ export async function produceCohortAdmissionObservationV1(
   ) {
     throw new Error("member repository/environment identity differs from the exact snapshot");
   }
+  const memberRefs = new Set(members.map((member) => member.memberRef));
+  const adjacency = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    const targets = adjacency.get(edge.from) ?? [];
+    targets.push(edge.to);
+    adjacency.set(edge.from, targets);
+  }
+  for (const node of graph.nodeByPath.values()) {
+    if (node.referencedBy.length === 0 || node.referencedBy.some((ref) => !memberRefs.has(ref))) {
+      throw new Error(`${node.path} is outside the requested members' bounded source graph`);
+    }
+  }
+  for (const member of members) {
+    const reachable = new Set(member.sourceRefs);
+    const pending = [...member.sourceRefs];
+    while (pending.length > 0) {
+      const from = pending.shift()!;
+      for (const to of adjacency.get(from) ?? []) {
+        if (reachable.has(to)) continue;
+        reachable.add(to);
+        pending.push(to);
+      }
+    }
+    for (const node of graph.nodeByPath.values()) {
+      if (node.referencedBy.includes(member.memberRef) && !reachable.has(node.path)) {
+        throw new Error(`${node.path} is not reachable from ${member.memberRef}'s referenced files`);
+      }
+    }
+  }
 
   const atoms = new Map<string, CohortCommonBoundaryAtomV1>();
   const observedMembers: CohortMemberObservationV1[] = [];
@@ -728,9 +768,11 @@ export async function produceCohortAdmissionObservationV1(
 }
 
 export type CohortObservationInvalidationV1 =
+  | "workset"
   | "phase"
   | "revision"
   | "manifest"
+  | "ownership-or-manifest"
   | "source-or-tree"
   | "dependency-graph"
   | "command"
@@ -739,7 +781,9 @@ export type CohortObservationInvalidationV1 =
   | "deployment"
   | "finalization"
   | "cause-or-witness"
-  | "authority";
+  | "authority"
+  | "split-condition"
+  | "availability";
 
 /** Compare two freshly produced observations without treating their prose as authority. */
 export function cohortObservationInvalidationsV1(
@@ -748,6 +792,7 @@ export function cohortObservationInvalidationsV1(
 ): readonly CohortObservationInvalidationV1[] {
   if (prior.observationDigest === current.observationDigest) return Object.freeze([]);
   const reasons = new Set<CohortObservationInvalidationV1>();
+  if (canonical(prior.workset) !== canonical(current.workset)) reasons.add("workset");
   if (canonical(prior.manifest) !== canonical(current.manifest)) reasons.add("manifest");
   if (
     canonical(prior.repository) !== canonical(current.repository) ||
@@ -756,11 +801,32 @@ export function cohortObservationInvalidationsV1(
     reasons.add("source-or-tree");
   }
   if (canonical(prior.environment) !== canonical(current.environment)) reasons.add("environment");
+  if (
+    prior.producer !== current.producer ||
+    prior.producerRevision !== current.producerRevision
+  ) {
+    reasons.add("revision");
+  }
   const priorMembers = new Map(prior.members.map((member) => [member.memberRef, member]));
   for (const member of current.members) {
     const old = priorMembers.get(member.memberRef);
     if (old === undefined || old.phase !== member.phase) reasons.add("phase");
-    if (old === undefined || old.memberRevision !== member.memberRevision) reasons.add("revision");
+    if (
+      old === undefined ||
+      old.memberRevision !== member.memberRevision ||
+      (old.phase === "investigation" &&
+        member.phase === "investigation" &&
+        (old.defectRevision !== member.defectRevision ||
+          old.hypothesisRevision !== member.hypothesisRevision)) ||
+      (old.phase === "implementation" &&
+        member.phase === "implementation" &&
+        old.taskRevision !== member.taskRevision)
+    ) {
+      reasons.add("revision");
+    }
+    if (old === undefined || old.ownershipBoundaryDigest !== member.ownershipBoundaryDigest) {
+      reasons.add("ownership-or-manifest");
+    }
     if (old === undefined || canonical(old.dependencyClosure) !== canonical(member.dependencyClosure)) {
       reasons.add("dependency-graph");
     }
@@ -779,6 +845,12 @@ export function cohortObservationInvalidationsV1(
     ) {
       reasons.add("command");
     }
+    if (
+      old === undefined ||
+      canonical(old.unavailableFacts) !== canonical(member.unavailableFacts)
+    ) {
+      reasons.add("availability");
+    }
     const oldAtoms = oldAttestations.map((attestation) =>
       prior.atoms.find((atom) => atom.atomDigest === attestation.atomDigest),
     );
@@ -791,9 +863,18 @@ export function cohortObservationInvalidationsV1(
       canonical(oldAtoms.filter((atom): atom is CohortCommonBoundaryAtomV1 => atom !== undefined).map(project)) !==
       canonical(currentAtoms.filter((atom): atom is CohortCommonBoundaryAtomV1 => atom !== undefined).map(project));
     if (projectionChanged((atom) => atom.reviewerClass)) reasons.add("reviewer");
+    if (
+      projectionChanged((atom) => ({
+        sharedRegression: atom.sharedRegression,
+        canonicalFullGate: atom.canonicalFullGate,
+      }))
+    ) {
+      reasons.add("command");
+    }
     if (projectionChanged((atom) => atom.deploymentClass)) reasons.add("deployment");
     if (projectionChanged((atom) => atom.finalizationClass)) reasons.add("finalization");
     if (projectionChanged((atom) => atom.witness)) reasons.add("cause-or-witness");
+    if (projectionChanged((atom) => atom.splitConditions)) reasons.add("split-condition");
   }
   return Object.freeze(
     [...reasons].sort((left, right) => left.localeCompare(right)),
@@ -913,7 +994,9 @@ function pairExclusions(
   atoms: ReadonlyMap<string, CohortCommonBoundaryAtomV1>,
 ): readonly CohortExclusionReasonV1[] {
   const reasons: CohortExclusionReasonV1[] = [];
-  if (candidate.unavailableFacts.length > 0) reasons.push("stale-binding");
+  if (included.unavailableFacts.length > 0 || candidate.unavailableFacts.length > 0) {
+    reasons.push("stale-binding");
+  }
   if (included.phase !== candidate.phase) reasons.push("phase-mismatch");
   if (included.ownershipBoundaryDigest !== candidate.ownershipBoundaryDigest) {
     reasons.push("ownership-or-manifest");
@@ -990,11 +1073,16 @@ function firstExclusion(
     failures.push({ reason: "eligibility-tuple-empty", against: included[0]! });
   }
   if (failures.length === 0) return null;
+  const includedOrder = new Map(included.map((member, index) => [member.memberRef, index]));
   failures.sort((left, right) => {
     const priority =
       COHORT_EXCLUSION_PRIORITY_V1.indexOf(left.reason) -
       COHORT_EXCLUSION_PRIORITY_V1.indexOf(right.reason);
-    return priority || left.against.memberRef.localeCompare(right.against.memberRef);
+    return (
+      priority ||
+      (includedOrder.get(left.against.memberRef) ?? Number.MAX_SAFE_INTEGER) -
+        (includedOrder.get(right.against.memberRef) ?? Number.MAX_SAFE_INTEGER)
+    );
   });
   const first = failures[0]!;
   return Object.freeze({
@@ -1247,6 +1335,7 @@ export interface StagedCohortCandidateAttemptV1 extends CohortCandidateAttemptBa
     readonly partitionKey: string;
     readonly enrollmentId: string;
     readonly attemptId: string;
+    readonly observedBaseCommit: string;
     readonly resultCommit: string;
     readonly resultTree: string;
     readonly gitReceiptLineageDigest: string;
@@ -1301,6 +1390,7 @@ export function stageCohortCandidateAttemptV1(
     partitionKey: queue.partition.partitionKey,
     enrollmentId: queue.enrollment.enrollmentId,
     attemptId: queue.attempt.attemptId,
+    observedBaseCommit: queue.attempt.observedBaseCommit,
     resultCommit: queue.attempt.resultCommit,
     resultTree: queue.attempt.resultTree,
     gitReceiptLineageDigest: queue.attempt.gitReceiptLineageDigest,
@@ -1389,6 +1479,7 @@ function materializeSeal(request: CohortCandidateSealRequestV1): CohortCandidate
     throw new Error("candidate seal result tree must be a lowercase object id");
   }
   if (
+    request.attempt.g213.observedBaseCommit !== request.baseCommit ||
     request.attempt.g213.resultCommit !== request.resultCommit ||
     request.attempt.g213.resultTree !== request.resultTree
   ) {
@@ -1415,6 +1506,9 @@ function materializeSeal(request: CohortCandidateSealRequestV1): CohortCandidate
   }
   if (expected !== request.resultCommit) {
     throw new CohortCandidateSealConflictError("Git receipt bridge does not end at result commit");
+  }
+  if (receipts.length > 0 && receipts.at(-1)?.tree !== request.resultTree) {
+    throw new CohortCandidateSealConflictError("Git receipt bridge does not end at result tree");
   }
   const receiptDigest = digest(receipts);
   if (receiptDigest !== request.attempt.g213.gitReceiptLineageDigest) {
