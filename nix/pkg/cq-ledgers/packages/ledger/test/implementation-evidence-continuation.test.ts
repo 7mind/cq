@@ -18,6 +18,7 @@ import {
 } from "../src/index.js";
 
 const FROM_HEAD = "a".repeat(40);
+const GUARDED_REBASED_START = "d".repeat(40);
 const CORRECTION_START = "e".repeat(40);
 const REPOSITORY_HEAD = "b".repeat(40);
 const SECOND_REPOSITORY_HEAD = "f".repeat(40);
@@ -201,6 +202,27 @@ function guardedExactTipWorkerResult() {
       ontoCommit: FROM_HEAD,
       rebasedStartCommit: REPOSITORY_HEAD,
       exactTip: true,
+    },
+  };
+}
+
+function guardedCorrectionWorkerResult() {
+  return {
+    ...workerResultAt(CORRECTION_START, [
+      receipt(
+        GUARDED_REBASED_START,
+        CORRECTION_START,
+        "commit-t3003-guarded-initial",
+        "T3003",
+      ),
+      receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-guarded-correction", "T3003"),
+    ]),
+    gitLineage: {
+      kind: "guarded-rebase",
+      guardedRebase: `cq-guarded-rebase:v1:${"b".repeat(64)}`,
+      ontoCommit: FROM_HEAD,
+      rebasedStartCommit: GUARDED_REBASED_START,
+      exactTip: false,
     },
   };
 }
@@ -1052,6 +1074,28 @@ describe("implementation evidence activation continuation [BG]", () => {
           !(repositoryHead === CORRECTION_START && resultCommit === FROM_HEAD),
       ).service.continueEvidenceActivation(request),
     ).rejects.toThrow("starting commit is not retained on the protected transition");
+  });
+
+  test("continues a later guarded correction with a nonempty cumulative receipt suffix", async () => {
+    const corrected = mutableSnapshot();
+    corrected.completions[COMPLETION_REF] = {
+      ...corrected.completions[COMPLETION_REF]!,
+      startingCommit: GUARDED_REBASED_START,
+      workerResult: guardedCorrectionWorkerResult(),
+    };
+
+    let continued;
+    try {
+      continued = await fixture(corrected).service.continueEvidenceActivation(request);
+    } catch (error) {
+      throw new Error(`D490 reproduction rejected: ${String(error)}`);
+    }
+    expect(continued).toMatchObject({
+      status: "continued",
+      completionRef: COMPLETION_REF,
+      fromHead: FROM_HEAD,
+      repositoryHead: REPOSITORY_HEAD,
+    });
   });
 
   test("rejects altered prior activation and corresponding audit fingerprints", async () => {
