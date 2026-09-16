@@ -462,17 +462,26 @@ process.stdout.write([
         );
         const nativeCompletion = qualifiedRow.stagedCompletionQualification?.nativeCompletion;
         if (nativeCompletion === undefined) throw new Error("native completion was not durable");
-        expect(
-          confirmDispatchCompletion(
-            {
-              namespace: processNamespace,
-              ...prepared,
-              nativeCompletion,
-              expectedProvenance: provenanceBindingOf(prepared),
-            },
-            processDeps,
-          ),
-        ).toMatchObject({ state: "consumed", output: finalOutput });
+        const confirmed = confirmDispatchCompletion(
+          {
+            namespace: processNamespace,
+            ...prepared,
+            nativeCompletion,
+            expectedProvenance: provenanceBindingOf(prepared),
+            continuationContext: { liveTip: baseCommit, gitReceipts: [] },
+          },
+          processDeps,
+        );
+        expect(confirmed).toMatchObject({
+          state: "consumed",
+          result: {
+            state: "consumed",
+            attestationId: prepared.attestationId,
+            generation: prepared.generation,
+          },
+        });
+        if (confirmed.state !== "consumed") throw new Error("later confirmation did not consume");
+        expect(Object.hasOwn(confirmed.result, "output")).toBe(false);
         expect(
           fetchDispatchResult(
             {
