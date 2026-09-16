@@ -1342,6 +1342,7 @@ export interface StagedCohortCandidateAttemptV1 extends CohortCandidateAttemptBa
     readonly resultCommit: string;
     readonly resultTree: string;
     readonly gitReceiptLineageDigest: string;
+    readonly repositoryDiffDigest: string;
   };
 }
 
@@ -1368,9 +1369,14 @@ export function createPendingCohortCandidateAttemptV1(
   return Object.freeze({ ...payload, candidateAttemptDigest: digest(payload) });
 }
 
-export interface G213CandidateAttemptBindingV1 {
+export interface G213QualifiedCandidateRowV1 {
   readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
   readonly queue: ImplementationQueueControl;
+  readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
+}
+
+export interface G213CandidateAttemptBindingV1 {
+  readonly row: G213QualifiedCandidateRowV1;
 }
 
 /** Project, but never allocate, the candidate identity owned by G213. */
@@ -1378,17 +1384,26 @@ export function stageCohortCandidateAttemptV1(
   pending: PendingCohortCandidateAttemptV1,
   binding: G213CandidateAttemptBindingV1,
 ): StagedCohortCandidateAttemptV1 {
-  if (canonical(pending.preparedDispatch) !== canonical(binding.preparedDispatch)) {
-    throw new Error("G213 candidate binding substituted the prepared dispatch");
+  if (canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)) {
+    throw new Error("G213 candidate binding differs from the actual G213 row");
   }
-  const queue = binding.queue;
+  const queue = binding.row.queue;
   if (
     queue.state !== "qualified" ||
     queue.qualification === undefined ||
-    queue.attempt.taskId !== pending.preparedDispatch.taskId
+    queue.attempt.taskId !== pending.preparedDispatch.taskId ||
+    queue.enrollment.taskId !== queue.attempt.taskId ||
+    queue.enrollment.goalRef !== queue.attempt.goalRef ||
+    queue.enrollment.finalizedManifestDigest !== queue.attempt.finalizedManifestDigest ||
+    queue.partition.partitionKey !== queue.enrollment.partitionKey ||
+    queue.partition.partitionKey !== queue.qualification.partitionKey ||
+    queue.enrollment.enrollmentId !== queue.qualification.enrollmentId ||
+    queue.attempt.attemptId !== queue.qualification.attemptId ||
+    queue.partition.repositoryId !== queue.attempt.repositoryId
   ) {
     throw new Error("cohort binding requires G213's exact qualified candidate attempt");
   }
+  const repositoryDiff = normalizeWholeDiff(binding.row.repositoryDiff);
   const g213 = Object.freeze({
     partitionKey: queue.partition.partitionKey,
     enrollmentId: queue.enrollment.enrollmentId,
@@ -1397,6 +1412,7 @@ export function stageCohortCandidateAttemptV1(
     resultCommit: queue.attempt.resultCommit,
     resultTree: queue.attempt.resultTree,
     gitReceiptLineageDigest: queue.attempt.gitReceiptLineageDigest,
+    repositoryDiffDigest: digest(repositoryDiff),
   });
   const payload = {
     kind: pending.kind,
@@ -1414,6 +1430,20 @@ export interface CohortWholeDiffEntryV1 {
   readonly path: string;
   readonly mode: "100644" | "100755";
   readonly blobDigest: string;
+}
+
+function normalizeWholeDiff(
+  entries: readonly CohortWholeDiffEntryV1[],
+): readonly CohortWholeDiffEntryV1[] {
+  const wholeDiff = entries
+    .map((entry) => {
+      const path = normalizedRepositoryPath(entry.path, "candidate whole-diff path");
+      assertDigest(entry.blobDigest, `${path} whole-diff blob digest`);
+      return Object.freeze({ ...entry, path });
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+  assertUnique(wholeDiff.map((entry) => entry.path), "candidate whole-diff paths");
+  return Object.freeze(wholeDiff);
 }
 
 export interface CohortGitChangeReceiptV1 {
@@ -1488,14 +1518,10 @@ function materializeSeal(request: CohortCandidateSealRequestV1): CohortCandidate
   ) {
     throw new CohortCandidateSealConflictError("candidate seal substituted G213 result identity");
   }
-  const wholeDiff = [...request.wholeDiff]
-    .map((entry) => {
-      const path = normalizedRepositoryPath(entry.path, "candidate whole-diff path");
-      assertDigest(entry.blobDigest, `${path} whole-diff blob digest`);
-      return Object.freeze({ ...entry, path });
-    })
-    .sort((left, right) => left.path.localeCompare(right.path));
-  assertUnique(wholeDiff.map((entry) => entry.path), "candidate whole-diff paths");
+  const wholeDiff = normalizeWholeDiff(request.wholeDiff);
+  if (digest(wholeDiff) !== request.attempt.g213.repositoryDiffDigest) {
+    throw new CohortCandidateSealConflictError("candidate whole diff differs from G213 repository diff");
+  }
   const receipts = [...request.gitReceipts];
   if (receipts.length === 0 && request.baseCommit !== request.resultCommit) {
     throw new CohortCandidateSealConflictError("changed candidate lacks its Git receipt bridge");

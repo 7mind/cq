@@ -38,7 +38,11 @@ async function identityFixture() {
   const receipts = [receipt({ base, result, tree })];
   const pending = createPendingCohortCandidateAttemptV1(definition, dispatch);
   const queue = qualifiedQueue({ taskId: dispatch.taskId, base, result, tree, receipts });
-  const staged = stageCohortCandidateAttemptV1(pending, { preparedDispatch: dispatch, queue });
+  const repositoryDiff = [
+    { path: "src/result.ts", mode: "100644" as const, blobDigest: sha256("result blob") },
+  ];
+  const row = { preparedDispatch: dispatch, queue, repositoryDiff };
+  const staged = stageCohortCandidateAttemptV1(pending, { row });
   return {
     observation,
     decision,
@@ -50,6 +54,7 @@ async function identityFixture() {
     receipts,
     pending,
     queue,
+    row,
     staged,
   };
 }
@@ -102,7 +107,7 @@ describe("cohort candidate identity", () => {
         ...request,
         wholeDiff: [{ ...request.wholeDiff[0]!, blobDigest: sha256("altered") }],
       }),
-    ).toThrow("altered candidate seal replay");
+    ).toThrow(CohortCandidateSealConflictError);
     expect(() => store.seal({ ...request, resultTree: commit("other-tree") })).toThrow(
       CohortCandidateSealConflictError,
     );
@@ -173,7 +178,7 @@ describe("cohort candidate identity", () => {
       resultCommit: fixture.result,
       resultTree: fixture.tree,
       wholeDiff: [
-        { path: "src/result.ts", mode: "100644", blobDigest: sha256("one") },
+        { path: "src/result.ts", mode: "100644", blobDigest: sha256("result blob") },
       ],
       gitReceipts: fixture.receipts,
     }).seal;
@@ -193,8 +198,13 @@ describe("cohort candidate identity", () => {
       generation: 2,
     });
     const nextAttempt = stageCohortCandidateAttemptV1(nextPending, {
-      preparedDispatch: { ...fixture.dispatch, generation: 2 },
-      queue: nextQueue,
+      row: {
+        preparedDispatch: { ...fixture.dispatch, generation: 2 },
+        queue: nextQueue,
+        repositoryDiff: [
+          { path: "src/result.ts", mode: "100644", blobDigest: sha256("two") },
+        ],
+      },
     });
     const nextSeal = store.seal({
       definition: fixture.definition,
@@ -218,16 +228,19 @@ describe("cohort candidate identity", () => {
     const fixture = await identityFixture();
     expect(() =>
       stageCohortCandidateAttemptV1(fixture.pending, {
-        preparedDispatch: { ...fixture.dispatch, generation: 2 },
-        queue: qualifiedQueue({
-          taskId: fixture.dispatch.taskId,
-          base: fixture.base,
-          result: fixture.result,
-          tree: fixture.tree,
-          receipts: fixture.receipts,
-        }),
+        row: {
+          preparedDispatch: { ...fixture.dispatch, generation: 2 },
+          queue: qualifiedQueue({
+            taskId: fixture.dispatch.taskId,
+            base: fixture.base,
+            result: fixture.result,
+            tree: fixture.tree,
+            receipts: fixture.receipts,
+          }),
+          repositoryDiff: fixture.row.repositoryDiff,
+        },
       }),
-    ).toThrow("substituted the prepared dispatch");
+    ).toThrow("actual G213 row");
   });
 
   test("rejects an attestation substituted for the actual G213 row", async () => {
@@ -236,8 +249,7 @@ describe("cohort candidate identity", () => {
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
       stageCohortCandidateAttemptV1(pending, {
-        preparedDispatch: foreign,
-        queue: fixture.queue,
+        row: fixture.row,
       }),
     ).toThrow("actual G213 row");
   });
@@ -248,8 +260,7 @@ describe("cohort candidate identity", () => {
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
       stageCohortCandidateAttemptV1(pending, {
-        preparedDispatch: foreign,
-        queue: fixture.queue,
+        row: fixture.row,
       }),
     ).toThrow("actual G213 row");
   });
@@ -260,8 +271,7 @@ describe("cohort candidate identity", () => {
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
       stageCohortCandidateAttemptV1(pending, {
-        preparedDispatch: foreign,
-        queue: fixture.queue,
+        row: fixture.row,
       }),
     ).toThrow("actual G213 row");
   });
