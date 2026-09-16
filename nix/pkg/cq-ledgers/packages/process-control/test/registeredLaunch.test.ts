@@ -1118,8 +1118,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     const writer = [
       "const { writeFileSync } = require('node:fs');",
       "process.on('SIGTERM', () => {});",
-      "process.stdout.write('writer-stdout\\n');",
-      "process.stderr.write('writer-stderr\\n');",
+      "writeFileSync(1, 'writer-stdout\\n');",
+      "writeFileSync(2, 'writer-stderr\\n');",
       `writeFileSync(${JSON.stringify(writerReady)}, String(process.pid));`,
       "setInterval(() => {}, 1000);",
     ].join("\n");
@@ -1135,13 +1135,13 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       "const ready = setInterval(() => {",
       `  if (!existsSync(${JSON.stringify(writerReady)})) return;`,
       "  clearInterval(ready);",
-      "  process.stdout.write('target-stdout\\n');",
-      "  process.stderr.write('target-stderr\\n');",
+      "  writeFileSync(1, 'target-stdout\\n');",
+      "  writeFileSync(2, 'target-stderr\\n');",
       "  process.exitCode = 23;",
       "}, 2);",
     ].join("\n");
     const launched = await launchRegisteredProcessGroup({
-      argv: [process.execPath, "-e", target],
+      argv: ["node", "-e", target],
       cwd: root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"] as const,
