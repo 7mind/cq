@@ -208,7 +208,7 @@ describe("T6569 PostgreSQL semantic admission binding [Contract-Active Whitebox-
         const prototypeLookalike = Object.assign(
           Object.create(Object.getPrototypeOf(binding)) as object,
           { owns: () => true },
-        ) as AdmittedGenericMutationBinding;
+        ) as unknown as AdmittedGenericMutationBinding;
         await expectCallerMintedRejection(clonedScope, prototypeLookalike);
         const CapturedBindingToken = Object.getPrototypeOf(binding).constructor as new (
           owns: (value: unknown) => value is AdmittedGenericMutation,

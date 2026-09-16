@@ -713,6 +713,7 @@ export interface AdmittedGenericMutation {
 }
 
 const admittedGenericMutationBindingBrand: unique symbol = Symbol("AdmittedGenericMutationBinding");
+const admittedGenericMutationBindingKey: unique symbol = Symbol("AdmittedGenericMutationBindingKey");
 
 /** Opaque per-gateway authority used by a persistence adapter to verify descriptors. */
 export interface AdmittedGenericMutationBinding {
@@ -721,19 +722,47 @@ export interface AdmittedGenericMutationBinding {
 
 class AdmittedGenericMutationBindingToken implements AdmittedGenericMutationBinding {
   readonly [admittedGenericMutationBindingBrand] = true;
-  readonly owns: (value: unknown) => value is AdmittedGenericMutation;
+  readonly #bound = new WeakSet<object>();
 
-  constructor(owns: (value: unknown) => value is AdmittedGenericMutation) {
-    this.owns = owns;
+  constructor(key: typeof admittedGenericMutationBindingKey) {
+    if (key !== admittedGenericMutationBindingKey) {
+      throw new TypeError("generic mutation binding constructor is private");
+    }
     Object.freeze(this);
+  }
+
+  static bind(
+    key: typeof admittedGenericMutationBindingKey,
+    binding: AdmittedGenericMutationBindingToken,
+    value: AdmittedGenericMutation,
+  ): void {
+    if (key !== admittedGenericMutationBindingKey) {
+      throw new TypeError("generic mutation binding verifier is private");
+    }
+    binding.#bound.add(value);
+  }
+
+  static owns(
+    key: typeof admittedGenericMutationBindingKey,
+    binding: unknown,
+    value: unknown,
+  ): value is AdmittedGenericMutation {
+    return key === admittedGenericMutationBindingKey &&
+      typeof binding === "object" &&
+      binding !== null &&
+      #bound in binding &&
+      typeof value === "object" &&
+      value !== null &&
+      binding.#bound.has(value);
   }
 }
 
+Object.freeze(AdmittedGenericMutationBindingToken.prototype);
+Object.freeze(AdmittedGenericMutationBindingToken);
+
 class AdmittedGenericMutationBindingOwner {
-  readonly #bound = new WeakSet<object>();
   readonly binding = new AdmittedGenericMutationBindingToken(
-    (value): value is AdmittedGenericMutation =>
-      typeof value === "object" && value !== null && this.#bound.has(value),
+    admittedGenericMutationBindingKey,
   );
 
   bind(
@@ -753,7 +782,11 @@ class AdmittedGenericMutationBindingOwner {
       scope: boundScope,
       allocation: allocation === null ? null : Object.freeze({ ...allocation }),
     });
-    this.#bound.add(bound);
+    AdmittedGenericMutationBindingToken.bind(
+      admittedGenericMutationBindingKey,
+      this.binding,
+      bound,
+    );
     return bound;
   }
 }
@@ -763,7 +796,11 @@ export function isBoundAdmittedGenericMutation(
   binding: AdmittedGenericMutationBinding,
   value: unknown,
 ): value is AdmittedGenericMutation {
-  return binding instanceof AdmittedGenericMutationBindingToken && binding.owns(value);
+  return AdmittedGenericMutationBindingToken.owns(
+    admittedGenericMutationBindingKey,
+    binding,
+    value,
+  );
 }
 
 export interface WorksetGenericMutationGatewayHost {
