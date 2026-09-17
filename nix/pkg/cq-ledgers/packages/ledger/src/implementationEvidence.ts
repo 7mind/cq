@@ -5520,7 +5520,6 @@ export async function recordProtectedImplementationCompletion(
     version: 1,
     completionRef: completion.completionRef,
     taskRef: completion.taskRef,
-    ownerGoalRef: completion.ownerGoalRef,
     resultCommit: completion.resultCommit,
     evidenceFingerprint: completion.evidenceFingerprint,
     reviewAttemptRefs: completion.reviewAttemptRefs,
