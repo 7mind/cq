@@ -154,6 +154,7 @@ async function enqueue(
   effectBinding: DispatchGitEffectBinding,
   commit: string,
   tree: string,
+  observedBaseCommit: string,
   source?: EnqueueImplementationCandidateRequest["stagedRebaseSource"],
 ): Promise<ImplementationQueueControl> {
   return await enqueueImplementationCandidateOn(
@@ -166,7 +167,7 @@ async function enqueue(
       repositoryId: binding.repositoryId,
       integrationRef: "refs/heads/main",
       authority,
-      observedBaseCommit: effectBinding.baseCommit,
+      observedBaseCommit,
       resultCommit: commit,
       resultTree: tree,
       gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -195,7 +196,15 @@ async function qualifiedAndLeased(): Promise<{
     { now: clock.now },
   );
   if (stored.state !== "gate-pending") throw new Error("expected gate-pending staging");
-  const queue = await enqueue(backend, prepared, stored.result, binding, resultCommit, resultTree);
+  const queue = await enqueue(
+    backend,
+    prepared,
+    stored.result,
+    binding,
+    resultCommit,
+    resultTree,
+    baseCommit,
+  );
   await qualifyDispatchStagedCompletionOn(
     backend,
     {
@@ -376,7 +385,6 @@ describe("staged-rebase source retirement", () => {
     const successorTree = "f".repeat(40);
     const successorBinding: DispatchGitEffectBinding = {
       ...binding,
-      baseCommit: ontoCommit,
       guardedRebaseBridge: {
         guardedRebase,
         operationId: "staged-rebase-successor",
@@ -416,6 +424,7 @@ describe("staged-rebase source retirement", () => {
       successorBinding,
       successorResult,
       successorTree,
+      ontoCommit,
       sourceClaim,
     );
     expect(successorQueue.enrollment.enrollmentId).toBe(queue.enrollment.enrollmentId);
@@ -429,14 +438,24 @@ describe("staged-rebase source retirement", () => {
         successorBinding,
         successorResult,
         successorTree,
+        ontoCommit,
         sourceClaim,
       ),
     ).toEqual(successorQueue);
     await expect(
-      enqueue(backend, successor, stored.result, successorBinding, successorResult, successorTree, {
-        ...sourceClaim,
-        guardedRebaseJournalDigest: "0".repeat(64),
-      }),
+      enqueue(
+        backend,
+        successor,
+        stored.result,
+        successorBinding,
+        successorResult,
+        successorTree,
+        ontoCommit,
+        {
+          ...sourceClaim,
+          guardedRebaseJournalDigest: "0".repeat(64),
+        },
+      ),
     ).rejects.toThrow(DispatchStagedRebaseSourceError);
     const retired = backend.storedRows().find((row) => row.generation === prepared.generation);
     expect(retired).toMatchObject({
@@ -469,7 +488,6 @@ describe("staged-rebase source retirement", () => {
     const rebasedStartCommit = "d".repeat(40);
     const successorBinding: DispatchGitEffectBinding = {
       ...binding,
-      baseCommit: ontoCommit,
       guardedRebaseBridge: {
         guardedRebase,
         operationId: "staged-rebase-prepare-claim",

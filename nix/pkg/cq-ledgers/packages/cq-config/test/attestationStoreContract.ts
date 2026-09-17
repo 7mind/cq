@@ -1092,7 +1092,6 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         const rebasedStartCommit = "f".repeat(40);
         const successorBinding: DispatchGitEffectBinding = {
           ...PARENT_GATE_BINDING,
-          baseCommit: ontoCommit,
           guardedRebaseBridge: {
             guardedRebase,
             operationId: "shared-contract-successor",
