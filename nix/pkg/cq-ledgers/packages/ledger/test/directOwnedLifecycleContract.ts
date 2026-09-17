@@ -60,7 +60,25 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         await expect(supersedeOperatorAction(fixture.store, { ...DIRECT_SUPERSEDE_INPUT, reason: "different" })).rejects.toThrow("different evidence");
       } finally { await fixture.dispose(); }
     });
-    test("protected completion records deterministic review/task and only named root-caused defects, with replay and conflict control", async () => {
+    test("D492 collision: unrelated task-number review is preserved while completion allocates and binds another review", async () => {
+      const fixture = await build();
+      try {
+        await seedDirectOwnedTasks(fixture.store);
+        const task = fixture.store.fetchItem("tasks", "T2345");
+        await fixture.store.createItem("reviews", task.milestoneId, {
+          id: "R2345",
+          status: "go-ahead",
+          fields: { summary: "legitimate G215 plan review", ledgerRefs: ["goals:G1"] },
+        });
+        const incumbent = JSON.stringify(fixture.store.fetchItem("reviews", "R2345"));
+        const completion = await directCompletionRecord();
+        await expect(recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE))
+          .rejects.toThrow("terminal implementation review id belongs to different evidence");
+        expect(JSON.stringify(fixture.store.fetchItem("reviews", "R2345"))).toBe(incumbent);
+        expect(fixture.store.fetchItem("tasks", "T2345").status).toBe("wip");
+      } finally { await fixture.dispose(); }
+    });
+    test("D492 replay: protected completion uses only its persisted binding and refuses changed evidence", async () => {
       const fixture = await build();
       try {
         await seedDirectOwnedTasks(fixture.store);
