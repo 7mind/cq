@@ -1579,7 +1579,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "e56b14602f07bb7d18ee63ea934c77be8c1194a12f7eb98777cac06edd57d7ca",
+      "sha256": "d54f839906e6b2c92ab8c83e1e9d1628548cf9aaa03380d2939182d2d7e0de32",
       "targets": []
     },
     {
@@ -1645,13 +1645,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/restoreImporter.ts",
-      "sha256": "4e162913732aa26b89bca2c95f3c5317159ed0bc7010353cf1e49753c1b4886a",
+      "sha256": "f6a7164a5ca60b86678e37059bf4544121dd8adb696d5ec342fa87cd1354088b",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "d4a50bd46ad03a8592200f2e71e0fbf4a489efa7917b5f8eedacf7cc37f3ce5a",
+      "sha256": "7e539ef1c9da6f48e57c4a6f48aa8c1126c51b7eac316f6d79d9092758081577",
       "targets": []
     },
     {
@@ -1807,19 +1807,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-completion-recording-sqlite.test.ts",
-      "sha256": "d5e2f5f18c77b0d47632f968535d272fa3d3b3d64f4b1d1d0bf7bfc2045e53f9",
+      "sha256": "b73780db30e0bb7b5e7a2ab53d55992c2cfe621499810cc5de172f68b1ff3807",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
-      "sha256": "d64feda735d0bebea2a793384ed70ce1b66384190d06ed86c99425e39ec677dc",
+      "sha256": "1177ce47431ecdea7eb2ff9cdafaf9097471cdc9d0671f6aee1ca7181834b8f6",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
-      "sha256": "d64feda735d0bebea2a793384ed70ce1b66384190d06ed86c99425e39ec677dc",
+      "sha256": "1177ce47431ecdea7eb2ff9cdafaf9097471cdc9d0671f6aee1ca7181834b8f6",
       "targets": []
     },
     {
