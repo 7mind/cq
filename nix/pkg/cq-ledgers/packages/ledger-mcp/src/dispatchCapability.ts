@@ -2230,7 +2230,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             }
             gitEffectBinding = {
               ...resolvedGitEffectBinding,
-              baseCommit: bridge.ontoCommit,
               guardedRebaseBridge: bridge,
             };
             dispatchInput = {
@@ -2697,7 +2696,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             goalRef,
             finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
           },
-          observedBaseCommit: binding.baseCommit,
+          observedBaseCommit: binding.guardedRebaseBridge?.ontoCommit ?? binding.baseCommit,
           resultCommit,
           resultTree,
           gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,

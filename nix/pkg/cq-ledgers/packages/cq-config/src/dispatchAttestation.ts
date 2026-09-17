@@ -2539,6 +2539,25 @@ function claimStagedRebaseSuccessor(
       "the guarded-rebase source is not a retired implementation queue enrollment",
     );
   }
+  const priorManagerBinding = isAttestationTombstone(previous)
+    ? undefined
+    : previous.gitEffectBinding;
+  const managerBindingChanged =
+    priorManagerBinding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).some(
+      (field) => request.gitEffectBinding[field] !== priorManagerBinding[field],
+    );
   if (source.successor !== undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",
@@ -2568,7 +2587,7 @@ function claimStagedRebaseSuccessor(
     source.guardedRebaseJournalDigest !== bridge.requestDigest ||
     source.repositoryId !== request.gitEffectBinding.repositoryId ||
     source.worktreePath !== request.gitEffectBinding.worktreePath ||
-    request.gitEffectBinding.baseCommit !== source.ontoCommit ||
+    managerBindingChanged ||
     input?.["baseCommit"] !== source.ontoCommit ||
     input?.["startingCommit"] !== bridge.rebasedStartCommit
   ) {

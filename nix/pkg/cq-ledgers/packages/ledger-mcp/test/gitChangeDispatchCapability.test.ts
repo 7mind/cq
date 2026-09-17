@@ -16,6 +16,7 @@ import {
   xdgAttestationDbPath,
   TERMINAL_ENVELOPE_RETENTION_MS,
   codexCompletionActor,
+  resolveDispatchGitEffectBindingForHandleOn,
   sequentialDispatchRandomBytes,
   sweepAttestationsOn,
   type AttestationNamespace,
@@ -2409,6 +2410,14 @@ describe("dispatch-bound Git change capability", () => {
           `D334 rejected the exact guarded-rebase continuation at ${retry.path}: ${retry.detail}`,
         );
       }
+      const guardedBinding = await resolveDispatchGitEffectBindingForHandleOn(
+        restarted.backend,
+        retry.handle,
+      );
+      expect(guardedBinding).toMatchObject({
+        baseCommit: d334.baseCommit,
+        guardedRebaseBridge: { ontoCommit: d334OntoCommit },
+      });
       const context = {
         guardedRebase: d334GuardedRebase,
         oldResultCommit: d334.firstReceipt.newHead,
