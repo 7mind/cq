@@ -411,6 +411,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.itemArchives.clear();
     this.planClaims.clear();
     this.planOperations.clear();
+    this.implementationCompletionBindings.clear();
     this.mutexes.clear();
     this.initialised = false;
   }
@@ -1471,6 +1472,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.itemArchives.clear();
     this.planClaims.clear();
     this.planOperations.clear();
+    this.implementationCompletionBindings.clear();
     this.logArtifacts.clear();
     for (const [name, ledger] of parsed.ledgers) {
       this.ledgers.set(name, cloneLedger(ledger));
@@ -1516,6 +1518,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.itemArchives.clear();
     this.planClaims.clear();
     this.planOperations.clear();
+    this.implementationCompletionBindings.clear();
     this.logArtifacts.clear();
     this.initialised = false;
     await this.init();
