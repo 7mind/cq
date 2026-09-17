@@ -47,7 +47,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/direct-owned-lifecycle-sqlite.test.ts",
-      "sha256": "ef3998d28a3e16016bb3a9c60458a610144e31bbd25ef1d7e96f45e9b62946e8",
+      "sha256": "563e6c922a808e9282d34c3bfab880ad457d82b5784a66f6ef3d4dec2248a809",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger/test/directOwnedLifecyclePeer.ts"]
     },
     {
