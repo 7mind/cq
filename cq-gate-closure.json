@@ -2241,7 +2241,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
-      "sha256": "96f28d87e8687133a628f52b077e490b1ac5554d4c4701b05268b8df16dbd22d",
+      "sha256": "e95aff0a63e08f05193456127ddbb7f864f995d73e72c6a810b1333b9e0d4db8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
+      "sha256": "e95aff0a63e08f05193456127ddbb7f864f995d73e72c6a810b1333b9e0d4db8",
       "targets": []
     },
     {
