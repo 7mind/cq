@@ -2,11 +2,25 @@ import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, SqliteLedgerStore, supersedeOperatorAction } from "../src/index.js";
+import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, schemaCompatible, SqliteLedgerStore, supersedeOperatorAction, TASKS_SCHEMA, type LedgerSchema } from "../src/index.js";
 import { DIRECT_OPERATOR_INPUT, DIRECT_SUPERSEDE_INPUT, DIRECT_TASK_AUTHORITY, directCompletionRecord, runDirectOwnedLifecycleContract, seedDirectOwnedTasks } from "./directOwnedLifecycleContract.js";
 import { LIFECYCLE_NOW, LIFECYCLE_PROVENANCE, sqlitePlanLifecycleFixture } from "./sqlitePlanLifecycleFixture.js";
 
 runDirectOwnedLifecycleContract("real SQLite / GoodCommunication", sqlitePlanLifecycleFixture);
+
+test("D492 rollout: a candidate-created SQLite ledger remains reopenable by the previous runtime", async () => {
+  const fixture = await sqlitePlanLifecycleFixture();
+  try {
+    const row = fixture.db.query("SELECT schema_json FROM ledgers WHERE name = 'tasks'").get() as {
+      schema_json: string;
+    } | null;
+    expect(row).not.toBeNull();
+    const persisted = JSON.parse(row!.schema_json) as LedgerSchema;
+    const previousRuntimeSchema = structuredClone(TASKS_SCHEMA);
+    delete previousRuntimeSchema.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    expect(schemaCompatible(persisted, previousRuntimeSchema)).toBe(true);
+  } finally { await fixture.dispose(); }
+});
 
 test("malformed, missing, substituted, foreign, and changed completion bindings fail closed without writes", async () => {
   const cases = [
