@@ -79,7 +79,7 @@ async function directScaling(unrelated: number, completion: Awaited<ReturnType<t
     const complete = () => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE);
     await capture(complete);
     expect(accesses.filter(({ table, mode }) => table === "items" && mode === "write").flatMap(({ rowKeys }) => rowKeys).sort())
-      .toEqual(["defects:D1", "defects:D4", "reviews:R2345", "tasks:T2345"]);
+      .toEqual(["defects:D1", "defects:D4", "reviews:R1", "tasks:T2345"]);
     await store.dispose();
     const dsn = process.env.CQ_TEST_PG_URL;
     if (dsn === undefined) throw new Error("PostgreSQL fixture DSN missing");

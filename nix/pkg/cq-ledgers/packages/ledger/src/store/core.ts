@@ -42,6 +42,7 @@ import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
   IDEAS_LEDGER,
+  IMPLEMENTATION_COMPLETION_REVIEW_FIELD,
   isIsoTimestamp,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
@@ -464,6 +465,16 @@ export function applyUpdateItem(
     );
   }
   if (
+    ledger.id === TASKS_LEDGER &&
+    patch.fields !== undefined &&
+    Object.hasOwn(patch.fields, IMPLEMENTATION_COMPLETION_REVIEW_FIELD) &&
+    !isAuthorizedImplementationEvidenceMutation(patch)
+  ) {
+    throw new LedgerError(
+      "implementation completion review bindings may mutate only through completion recording",
+    );
+  }
+  if (
     currentOperatorDirective !== null &&
     patch.status !== undefined &&
     patch.status !== item.status &&
@@ -601,6 +612,15 @@ export function applyCreateItem(
   ) {
     throw new LedgerError(
       "implementationEvidence may be attached only through protected completion recording",
+    );
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    init.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] !== undefined &&
+    !isAuthorizedImplementationEvidenceMutation(init)
+  ) {
+    throw new LedgerError(
+      "implementation completion review bindings may be created only through completion recording",
     );
   }
   assertAmbientAttachment(ledger.id, milestoneId);

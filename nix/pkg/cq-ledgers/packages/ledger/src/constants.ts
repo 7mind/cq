@@ -113,6 +113,8 @@ export const GOALS_LEDGER = "goals" as const;
 export const QUESTIONS_ANSWER_FIELD = "answer" as const;
 export const REVIEWS_LEDGER = "reviews" as const;
 export const PLAN_REVIEW_DRAFT_FIELD = "planDraft" as const;
+/** Protected task-to-review association written only by completion recording. */
+export const IMPLEMENTATION_COMPLETION_REVIEW_FIELD = "implementationCompletionReview" as const;
 export const HANDOFFS_LEDGER = "handoffs" as const;
 export const OPERATOR_ACTIONS_LEDGER = "operatorActions" as const;
 export const OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD = "acknowledgementEpoch" as const;
@@ -210,6 +212,7 @@ export const TASKS_SCHEMA: LedgerSchema = {
     planDoc: { type: "string", required: false },
     resultCommit: { type: "string", required: false },
     completion: { type: "string", required: false },
+    [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: { type: "string", required: false },
     severity: { type: "string", required: false },
     /** Repo-relative paths to session log files (.cq/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },

@@ -831,16 +831,16 @@ describe("versioned protected implementation evidence [BG]", () => {
         completion,
         { author: "parent" },
       ),
-    ).toEqual({ reviewRef: "reviews:R2345" });
+    ).toEqual({ reviewRef: "reviews:R1" });
     expect(ledger.fetchItem(TASKS_LEDGER, "T2345")).toMatchObject({
       status: "done",
       fields: { resultCommit: RESULT, completion: "implemented" },
     });
-    expect(ledger.fetchItem(REVIEWS_LEDGER, "R2345").fields["implementationEvidence"]).toContain(
+    expect(ledger.fetchItem(REVIEWS_LEDGER, "R1").fields["implementationEvidence"]).toContain(
       preparedCompletion.completionRef,
     );
     await expect(
-      ledger.updateItem(REVIEWS_LEDGER, "R2345", {
+      ledger.updateItem(REVIEWS_LEDGER, "R1", {
         fields: { summary: "forged replacement" },
       }),
     ).rejects.toThrow("protected implementation evidence");
@@ -888,7 +888,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     );
   });
 
-  test("rolls back the terminal review when the paired task transition fails", async () => {
+  test("a done task missing its required replay binding fails without allocating a review", async () => {
     const f = await fixture();
     const preparedCompletion = await f.service.prepareCompletion({
       taskRef: "tasks:T2345",
@@ -931,7 +931,7 @@ describe("versioned protected implementation evidence [BG]", () => {
         completion,
         { author: "parent" },
       ),
-    ).rejects.toThrow("different resultCommit");
-    expect(() => ledger.fetchItem(REVIEWS_LEDGER, "R2345")).toThrow();
+    ).rejects.toThrow("missing its terminal implementation review binding");
+    expect(() => ledger.fetchItem(REVIEWS_LEDGER, "R1")).toThrow();
   });
 });

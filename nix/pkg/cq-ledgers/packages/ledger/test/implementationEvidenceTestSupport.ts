@@ -74,6 +74,7 @@ export async function createImplementationEvidenceFixture(
   options: {
     readonly repositoryHead?: string;
     readonly bootstrapHistoricalTaskId?: string;
+    readonly recordLedgerCompletion?: ImplementationEvidenceServiceDependencies["recordLedgerCompletion"];
   } = {},
 ) {
   let head = options.repositoryHead ?? IMPLEMENTATION_BASE;
@@ -129,10 +130,10 @@ export async function createImplementationEvidenceFixture(
       gateVerified: true,
       details: { cleanDiff: true, ffOnly: true },
     }),
-    recordLedgerCompletion: async () => {
+    recordLedgerCompletion: options.recordLedgerCompletion ?? (async () => {
       ledgerWrites += 1;
       return { reviewRef: "reviews:R2345" };
-    },
+    }),
     startupBuildCommit: head,
     implementationEvidenceProtocolVersion: 2,
     packagedManifestInventory: ["d347-implementation-evidence-activation-v1"],

@@ -22,7 +22,7 @@ import {
   type WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
-import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import { DEFECTS_LEDGER, GOALS_LEDGER, IMPLEMENTATION_COMPLETION_REVIEW_FIELD, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import type {
@@ -81,6 +81,7 @@ const ACTIVATION_REF = /^cq-implementation-evidence-activation:v1:[0-9a-f]{64}$/
 const ACTIVATION_CONTINUATION_REF =
   /^cq-implementation-evidence-activation-continuation:v1:[0-9a-f]{64}$/u;
 const GUARDED_REBASE_REF = /^cq-guarded-rebase:v1:[0-9a-f]{64}$/u;
+const IMPLEMENTATION_COMPLETION_REVIEW_REF = /^reviews:(R[0-9]+)$/u;
 
 export const IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 =
   "d347-implementation-evidence-activation-v2" as const;
@@ -5515,17 +5516,16 @@ export async function recordProtectedImplementationCompletion(
   if (completion.taskRef !== task.taskRef || completion.ownerGoalRef !== task.ownerGoalRef)
     throw new Error("protected ledger completion task authority mismatch");
   const taskId = taskIdFromRef(task.taskRef);
-  const reviewId = `R${taskId.slice(1)}`;
   const implementationEvidence = JSON.stringify({
     version: 1,
     completionRef: completion.completionRef,
     taskRef: completion.taskRef,
+    ownerGoalRef: completion.ownerGoalRef,
     resultCommit: completion.resultCommit,
     evidenceFingerprint: completion.evidenceFingerprint,
     reviewAttemptRefs: completion.reviewAttemptRefs,
   });
   const reviewInit: CreateItemInit = {
-    id: reviewId,
     status: "go-ahead",
     fields: {
       summary: completion.completion,
@@ -5556,7 +5556,6 @@ export async function recordProtectedImplementationCompletion(
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
   };
   authorizedImplementationEvidenceMutations.add(reviewInit);
-  authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
     runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
   };
@@ -5565,23 +5564,46 @@ export async function recordProtectedImplementationCompletion(
   }
   return await atomic.runAtomicOwnedMutation((tx) => {
     const currentTask = tx.fetchItem(TASKS_LEDGER, taskId);
-    let existingReview;
-    try {
-      existingReview = tx.fetchItem(REVIEWS_LEDGER, reviewId);
-    } catch (error) {
-      if (!(error instanceof ItemNotFoundError)) throw error;
+    const rawBinding = currentTask.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    if (rawBinding !== undefined) {
+      if (typeof rawBinding !== "string")
+        throw new Error("terminal implementation review binding is malformed");
+      const match = IMPLEMENTATION_COMPLETION_REVIEW_REF.exec(rawBinding);
+      if (match === null)
+        throw new Error("terminal implementation review binding is malformed");
+      let review: Item;
+      try {
+        review = tx.fetchItem(REVIEWS_LEDGER, match[1]!);
+      } catch (error) {
+        if (!(error instanceof ItemNotFoundError)) throw error;
+        throw new Error("terminal implementation review binding is missing its review");
+      }
+      if (
+        currentTask.status !== "done" ||
+        currentTask.fields["resultCommit"] !== completion.resultCommit ||
+        currentTask.fields["completion"] !== completion.completion ||
+        JSON.stringify(currentTask.fields["sessionLogs"]) !== JSON.stringify(completion.logPaths) ||
+        review.status !== "go-ahead" ||
+        review.fields["summary"] !== completion.completion ||
+        review.fields["implementationEvidence"] !== implementationEvidence ||
+        JSON.stringify(review.fields["ledgerRefs"]) !== JSON.stringify([completion.taskRef, completion.ownerGoalRef]) ||
+        JSON.stringify(review.fields["sourceRefs"]) !== JSON.stringify(completion.reviewAttemptRefs) ||
+        JSON.stringify(review.fields["sessionLogs"]) !== JSON.stringify(completion.logPaths)
+      ) {
+        throw new Error("terminal implementation review id belongs to different evidence");
+      }
+      return { reviewRef: rawBinding };
     }
-    if (existingReview === undefined) {
-      tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
-    } else if (
-      existingReview.status !== "go-ahead" ||
-      existingReview.fields["implementationEvidence"] !== implementationEvidence
-    ) {
-      throw new Error("terminal implementation review id belongs to different evidence");
-    }
-    if (currentTask.status !== "done") tx.updateItem(TASKS_LEDGER, taskId, patch);
-    else if (currentTask.fields["resultCommit"] !== completion.resultCommit)
-      throw new Error("done task carries a different resultCommit");
+    if (currentTask.status === "done")
+      throw new Error("done task is missing its terminal implementation review binding");
+    const review = tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
+    const reviewRef = `${REVIEWS_LEDGER}:${review.id}`;
+    const boundPatch: UpdateItemPatch = {
+      ...patch,
+      fields: { ...patch.fields, [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: reviewRef },
+    };
+    authorizedImplementationEvidenceMutations.add(boundPatch);
+    tx.updateItem(TASKS_LEDGER, taskId, boundPatch);
     const defectRefs = currentTask.fields["ledgerRefs"];
     if (Array.isArray(defectRefs)) {
       for (const defectRef of new Set(defectRefs)) {
@@ -5599,8 +5621,8 @@ export async function recordProtectedImplementationCompletion(
         }
       }
     }
-    return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
-  }, { direct: { kind: "implementation-completion", taskId, reviewId, reviewInit, taskPatch: patch, defectPatch } });
+    return { reviewRef };
+  }, { direct: { kind: "implementation-completion", taskId, reviewInit, taskPatch: patch, defectPatch } });
 }
 
 export function canonicalImplementationCompletionMergeLine(

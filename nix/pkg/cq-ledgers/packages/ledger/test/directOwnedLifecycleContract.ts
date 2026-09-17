@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { materializeOperatorAction, recordProtectedImplementationCompletion, supersedeOperatorAction, type LedgerStore } from "../src/index.js";
+import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, supersedeOperatorAction, type LedgerStore } from "../src/index.js";
 import { LIFECYCLE_NOW, LIFECYCLE_PROVENANCE } from "./sqlitePlanLifecycleFixture.js";
 import { IMPLEMENTATION_BASE, IMPLEMENTATION_RESULT, createImplementationEvidenceFixture, prepareImplementationCompletion } from "./implementationEvidenceTestSupport.js";
 
@@ -72,10 +72,14 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         });
         const incumbent = JSON.stringify(fixture.store.fetchItem("reviews", "R2345"));
         const completion = await directCompletionRecord();
-        await expect(recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE))
-          .rejects.toThrow("terminal implementation review id belongs to different evidence");
+        const result = await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE);
+        expect(result).toEqual({ reviewRef: "reviews:R2347" });
         expect(JSON.stringify(fixture.store.fetchItem("reviews", "R2345"))).toBe(incumbent);
-        expect(fixture.store.fetchItem("tasks", "T2345").status).toBe("wip");
+        expect(fixture.store.fetchItem("tasks", "T2345")).toMatchObject({
+          status: "done",
+          fields: { [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R2347" },
+        });
+        expect(await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE)).toEqual(result);
       } finally { await fixture.dispose(); }
     });
     test("D492 replay: protected completion uses only its persisted binding and refuses changed evidence", async () => {
@@ -84,9 +88,12 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         await seedDirectOwnedTasks(fixture.store);
         const completion = await directCompletionRecord();
         const result = await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE);
-        expect(result).toEqual({ reviewRef: "reviews:R2345" });
-        expect(fixture.store.fetchItem("tasks", "T2345")).toMatchObject({ status: "done", fields: { resultCommit: IMPLEMENTATION_RESULT } });
-        expect(fixture.store.fetchItem("reviews", "R2345").status).toBe("go-ahead");
+        expect(result).toEqual({ reviewRef: "reviews:R1" });
+        expect(fixture.store.fetchItem("tasks", "T2345")).toMatchObject({ status: "done", fields: {
+          resultCommit: IMPLEMENTATION_RESULT,
+          [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1",
+        } });
+        expect(fixture.store.fetchItem("reviews", "R1").status).toBe("go-ahead");
         expect(fixture.store.fetchItem("defects", "D1").status).toBe("resolved");
         expect(fixture.store.fetchItem("defects", "D4").status).toBe("resolved");
         expect(fixture.store.fetchItem("defects", "D2").status).toBe("open");
@@ -94,6 +101,45 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         expect(await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE)).toEqual(result);
         await expect(recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, { ...completion, resultCommit: "f".repeat(40) }, LIFECYCLE_PROVENANCE))
           .rejects.toThrow("terminal implementation review id belongs to different evidence");
+      } finally { await fixture.dispose(); }
+    });
+    test("generic callers cannot create or alter a protected completion review binding", async () => {
+      const fixture = await build();
+      try {
+        await seedDirectOwnedTasks(fixture.store);
+        const task = fixture.store.fetchItem("tasks", "T2345");
+        await expect(fixture.store.createItem("tasks", task.milestoneId, {
+          id: "T2346",
+          status: "wip",
+          fields: { headline: "forged", [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1" },
+        })).rejects.toThrow("may be created only through completion recording");
+        await expect(fixture.store.updateItem("tasks", "T2345", {
+          fields: { [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1" },
+        })).rejects.toThrow("may mutate only through completion recording");
+      } finally { await fixture.dispose(); }
+    });
+    test("completion allocation preserves archived review identities and the lifetime counter", async () => {
+      const fixture = await build();
+      try {
+        const archivedMilestone = await fixture.store.createMilestone({ title: "archived review" });
+        await fixture.store.createItem("reviews", archivedMilestone.id, {
+          id: "R2345",
+          status: "go-ahead",
+          fields: { summary: "historical review", ledgerRefs: ["goals:G1"] },
+        });
+        await fixture.store.updateMilestone(archivedMilestone.id, { status: "done" });
+        await fixture.store.archiveMilestone(archivedMilestone.id, "historical review");
+        await seedDirectOwnedTasks(fixture.store);
+        const completion = await directCompletionRecord();
+        await expect(recordProtectedImplementationCompletion(
+          fixture.store,
+          DIRECT_TASK_AUTHORITY,
+          completion,
+          LIFECYCLE_PROVENANCE,
+        )).resolves.toEqual({ reviewRef: "reviews:R2347" });
+        expect(fixture.store.fetch("reviews").counters.item).toBe(2347);
+        const archived = await fixture.store.fetchArchive("reviews", archivedMilestone.id);
+        expect(archived).toMatchObject({ kind: "group", milestone: { items: [{ id: "R2345" }] } });
       } finally { await fixture.dispose(); }
     });
   });

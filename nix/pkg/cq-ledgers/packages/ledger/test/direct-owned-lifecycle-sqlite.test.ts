@@ -2,11 +2,57 @@ import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { materializeOperatorAction, SqliteLedgerStore, supersedeOperatorAction } from "../src/index.js";
-import { DIRECT_OPERATOR_INPUT, DIRECT_SUPERSEDE_INPUT, runDirectOwnedLifecycleContract, seedDirectOwnedTasks } from "./directOwnedLifecycleContract.js";
-import { LIFECYCLE_NOW, sqlitePlanLifecycleFixture } from "./sqlitePlanLifecycleFixture.js";
+import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, SqliteLedgerStore, supersedeOperatorAction } from "../src/index.js";
+import { DIRECT_OPERATOR_INPUT, DIRECT_SUPERSEDE_INPUT, DIRECT_TASK_AUTHORITY, directCompletionRecord, runDirectOwnedLifecycleContract, seedDirectOwnedTasks } from "./directOwnedLifecycleContract.js";
+import { LIFECYCLE_NOW, LIFECYCLE_PROVENANCE, sqlitePlanLifecycleFixture } from "./sqlitePlanLifecycleFixture.js";
 
 runDirectOwnedLifecycleContract("real SQLite / GoodCommunication", sqlitePlanLifecycleFixture);
+
+test("malformed, missing, substituted, foreign, and changed completion bindings fail closed without writes", async () => {
+  const cases = [
+    { name: "malformed", expected: "binding is malformed", mutate: "malformed" },
+    { name: "missing review", expected: "binding is missing its review", mutate: "missing" },
+    { name: "substituted review", expected: "belongs to different evidence", mutate: "substituted" },
+    { name: "foreign review", expected: "belongs to different evidence", mutate: "foreign" },
+    { name: "changed evidence", expected: "belongs to different evidence", mutate: "evidence" },
+  ] as const;
+  for (const scenario of cases) {
+    const fixture = await sqlitePlanLifecycleFixture();
+    try {
+      await seedDirectOwnedTasks(fixture.store);
+      const completion = await directCompletionRecord();
+      await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE);
+      if (scenario.mutate === "substituted") {
+        const task = fixture.store.fetchItem("tasks", "T2345");
+        await fixture.store.createItem("reviews", task.milestoneId, {
+          id: "R2",
+          status: "go-ahead",
+          fields: { summary: "unrelated review", ledgerRefs: ["goals:G1"] },
+        });
+      }
+      const targetLedger = scenario.mutate === "foreign" || scenario.mutate === "evidence" ? "reviews" : "tasks";
+      const targetId = targetLedger === "reviews" ? "R1" : "T2345";
+      const fields = { ...fixture.store.fetchItem(targetLedger, targetId).fields };
+      if (scenario.mutate === "malformed") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "not-a-review-ref";
+      if (scenario.mutate === "missing") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "reviews:R999";
+      if (scenario.mutate === "substituted") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "reviews:R2";
+      if (scenario.mutate === "foreign") fields["ledgerRefs"] = ["tasks:T999", "goals:G999"];
+      if (scenario.mutate === "evidence") fields["implementationEvidence"] = "{}";
+      fixture.db.query("UPDATE items SET fields_json = ? WHERE ledger = ? AND id = ?")
+        .run(JSON.stringify(fields), targetLedger, targetId);
+      const snapshot = () => ({
+        ledgers: fixture.db.query("SELECT name, item_counter FROM ledgers ORDER BY name").all(),
+        items: fixture.db.query("SELECT ledger, id, status, fields_json, updated_at FROM items ORDER BY ledger, id").all(),
+      });
+      const before = snapshot();
+      await expect(
+        recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE),
+        scenario.name,
+      ).rejects.toThrow(scenario.expected);
+      expect(snapshot(), scenario.name).toEqual(before);
+    } finally { await fixture.dispose(); }
+  }
+});
 
 test("peer-process materialization and supersession commit one serial outcome [T5545 GoodCommunication]", async () => {
   const fixture = await sqlitePlanLifecycleFixture();

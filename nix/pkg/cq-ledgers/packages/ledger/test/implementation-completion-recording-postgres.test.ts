@@ -18,7 +18,7 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL protected completion re
         .rejects.toThrow("task authority mismatch");
       expect(fixture.accesses).toEqual([]);
       expect(fixture.store.fetchItem("tasks", "T2345").status).toBe("wip");
-      expect(() => fixture.store.fetchItem("reviews", "R2345")).toThrow();
+      expect(() => fixture.store.fetchItem("reviews", "R1")).toThrow();
     } finally { await fixture.dispose(); }
   });
 
@@ -38,10 +38,10 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL protected completion re
       expect(await snapshotPostgresLifecycleRows(fixture.pool, fixture.projectKey)).toEqual(before);
       expect(fixture.store.snapshot()).toEqual(cached);
       await fixture.pool.unsafe("DROP TRIGGER reject_completion_task ON items");
-      expect(await complete()).toEqual({ reviewRef: "reviews:R2345" });
-      expect(await complete()).toEqual({ reviewRef: "reviews:R2345" });
+      expect(await complete()).toEqual({ reviewRef: "reviews:R1" });
+      expect(await complete()).toEqual({ reviewRef: "reviews:R1" });
       expect(fixture.store.fetchItem("tasks", "T2345").status).toBe("done");
-      expect(fixture.store.fetchItem("reviews", "R2345").status).toBe("go-ahead");
+      expect(fixture.store.fetchItem("reviews", "R1").status).toBe("go-ahead");
       expect(fixture.store.fetchItem("defects", "D90000").status).toBe("root-caused");
     } finally { await fixture.dispose(); }
   });

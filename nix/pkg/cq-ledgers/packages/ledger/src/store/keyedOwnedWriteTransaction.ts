@@ -1,4 +1,4 @@
-import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, OPERATOR_ACTIONS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "../constants.js";
+import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_LEDGER, IMPLEMENTATION_COMPLETION_REVIEW_FIELD, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, OPERATOR_ACTIONS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "../constants.js";
 import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
 import { LedgerError, LedgerNotFoundError, type FieldValue, type Item, type Ledger } from "../types.js";
 import type { WorksetActiveState } from "../worksetGraph.js";
@@ -229,8 +229,15 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
     const task = yield* loadItem(TASKS_LEDGER, operation.taskId);
     if (task === undefined) return;
-    const review = yield* loadItem(REVIEWS_LEDGER, operation.reviewId);
-    if (review === undefined) yield* prepareCreate(REVIEWS_LEDGER, task.milestoneId, operation.reviewInit);
+    const reviewBinding = task.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    if (reviewBinding !== undefined) {
+      if (typeof reviewBinding === "string" && /^reviews:R[0-9]+$/u.test(reviewBinding)) {
+        yield* loadItem(REVIEWS_LEDGER, reviewBinding.slice(`${REVIEWS_LEDGER}:`.length));
+      }
+      return;
+    }
+    if (task.status === "done") return;
+    yield* prepareCreate(REVIEWS_LEDGER, task.milestoneId, operation.reviewInit);
     if (task.status !== "done") yield* prepareUpdate(TASKS_LEDGER, task.id, operation.taskPatch);
     const defectRefs = task.fields.ledgerRefs;
     if (Array.isArray(defectRefs)) for (const ref of new Set(defectRefs)) {
