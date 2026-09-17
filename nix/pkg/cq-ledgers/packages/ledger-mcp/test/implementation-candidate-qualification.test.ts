@@ -507,6 +507,9 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
           candidate.attestationId === prepared.prepared.attestationId &&
           candidate.generation === prepared.prepared.generation,
       );
+    if (row === undefined || row.kind !== "envelope") {
+      throw new Error("qualified guarded successor row disappeared");
+    }
     expect(row.gitEffectBinding).toMatchObject({
       baseCommit: managerBaseCommit,
       guardedRebaseBridge: { ontoCommit: rebasedStartCommit },

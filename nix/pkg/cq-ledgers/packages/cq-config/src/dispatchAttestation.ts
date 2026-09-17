@@ -2526,7 +2526,8 @@ function claimStagedRebaseSuccessor(
     }
     return;
   }
-  if (bridge === undefined || request.gitEffectBinding === undefined) {
+  const gitEffectBinding = request.gitEffectBinding;
+  if (bridge === undefined || gitEffectBinding === undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",
       isAttestationTombstone(previous) ? previous.terminalKind : previous.state,
@@ -2556,7 +2557,7 @@ function claimStagedRebaseSuccessor(
       "ref",
       "baseCommit",
     ] as const).some(
-      (field) => request.gitEffectBinding[field] !== priorManagerBinding[field],
+      (field) => gitEffectBinding[field] !== priorManagerBinding[field],
     );
   if (source.successor !== undefined) {
     throw new DispatchStateConflictError(
@@ -2585,8 +2586,8 @@ function claimStagedRebaseSuccessor(
     source.ontoCommit !== bridge.ontoCommit ||
     source.guardedRebase !== bridge.guardedRebase ||
     source.guardedRebaseJournalDigest !== bridge.requestDigest ||
-    source.repositoryId !== request.gitEffectBinding.repositoryId ||
-    source.worktreePath !== request.gitEffectBinding.worktreePath ||
+    source.repositoryId !== gitEffectBinding.repositoryId ||
+    source.worktreePath !== gitEffectBinding.worktreePath ||
     managerBindingChanged ||
     input?.["baseCommit"] !== source.ontoCommit ||
     input?.["startingCommit"] !== bridge.rebasedStartCommit
