@@ -2,7 +2,7 @@ import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_
 import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
 import { LedgerError, LedgerNotFoundError, type FieldValue, type Item, type Ledger } from "../types.js";
 import type { WorksetActiveState } from "../worksetGraph.js";
-import type { OwnedMutationOperation, WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
+import type { OwnedMutationOperation } from "../worksetOwnedLifecycle.js";
 import { readCanonicalOwnership } from "../worksetOwnerEdges.js";
 import type { CreateItemInit, CreateMilestoneItemInit, UpdateItemPatch } from "./LedgerStore.js";
 import type { ImplementationCompletionBindingRecord, LifecycleRowRepository } from "./lifecycleRowRepository.js";

@@ -331,6 +331,7 @@ export async function restoreDumpToXdg(opts: {
         }
         immediateWriteTransaction(db, () => {
           db.exec("DELETE FROM workset_admissions");
+          db.exec("DELETE FROM implementation_completion_bindings");
           db.exec("DELETE FROM plan_operations");
           db.exec("DELETE FROM plan_claims");
           db.exec("DELETE FROM archived_items");

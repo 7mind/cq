@@ -232,6 +232,7 @@ export async function restoreDumpToPostgres(opts: {
           // Wipe any pre-existing rows for THIS tenant only (children first, FK
           // order) — defense in depth even though isPostgresTenantEmpty already
           // gated above; mirrors restoreDumpToXdg's unconditional wipe-then-insert.
+          await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${pk}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${pk}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${pk}`;
           // T1959: clear non-exclusive durable admissions. The exclusive

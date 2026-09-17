@@ -74,6 +74,13 @@ describe("protected implementation completion SQLite transaction [Behavioral-Act
     ).rejects.toThrow("injected protected task completion failure");
     expect(ledger.fetchItem(TASKS_LEDGER, "T2345").status).toBe("wip");
     expect(() => ledger.fetchItem(REVIEWS_LEDGER, "R1")).toThrow();
+    const bindings = () => {
+      const db = openLedgerDb(dbPath);
+      try {
+        return db.query("SELECT task_id, review_ref FROM implementation_completion_bindings ORDER BY task_id").all();
+      } finally { db.close(); }
+    };
+    expect(bindings()).toEqual([]);
 
     const cleanup = openLedgerDb(dbPath);
     cleanup.exec("DROP TRIGGER fail_protected_task_completion");
@@ -88,5 +95,6 @@ describe("protected implementation completion SQLite transaction [Behavioral-Act
       fields: { resultCommit: IMPLEMENTATION_RESULT },
     });
     expect(ledger.fetchItem(REVIEWS_LEDGER, "R1").status).toBe("go-ahead");
+    expect(bindings()).toEqual([{ task_id: "T2345", review_ref: "reviews:R1" }]);
   });
 });

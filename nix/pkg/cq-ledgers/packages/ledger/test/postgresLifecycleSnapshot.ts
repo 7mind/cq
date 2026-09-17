@@ -12,6 +12,8 @@ export async function snapshotPostgresLifecycleRows(pool: SQL, projectKey: strin
       WHERE project_key = ${projectKey} ORDER BY source_ledger, source_id, field_name, target_ledger, target_id`],
     claims: [...await pool`SELECT scope, record_json FROM plan_claims WHERE project_key = ${projectKey} ORDER BY scope`],
     operations: [...await pool`SELECT scope, record_json FROM plan_operations WHERE project_key = ${projectKey} ORDER BY scope`],
+    completionBindings: [...await pool`SELECT task_id, review_ref FROM implementation_completion_bindings
+      WHERE project_key = ${projectKey} ORDER BY task_id`],
     coherenceState: [...await pool`SELECT version FROM coherence_state WHERE project_key = ${projectKey}`],
     coherenceVector: [...await pool`SELECT ledger, document_id, scope, kind, version, origin FROM coherence_vector
       WHERE project_key = ${projectKey} ORDER BY ledger, document_id, scope`],

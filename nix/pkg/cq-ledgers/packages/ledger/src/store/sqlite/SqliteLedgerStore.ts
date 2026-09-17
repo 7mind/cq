@@ -539,6 +539,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
             db.transaction(() => {
               const removed = db.query("SELECT name FROM ledgers").all() as Array<{ name: string }>;
               db.exec("DELETE FROM workset_admissions");
+              db.exec("DELETE FROM implementation_completion_bindings");
               db.exec("DELETE FROM plan_operations");
               db.exec("DELETE FROM plan_claims");
               db.exec("DELETE FROM archived_items");

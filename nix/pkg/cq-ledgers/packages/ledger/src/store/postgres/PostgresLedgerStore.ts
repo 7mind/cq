@@ -702,6 +702,11 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         SELECT ${shadowKey}, scope, record_json
         FROM plan_operations WHERE project_key = ${pk}
       `;
+      await tx`
+        INSERT INTO implementation_completion_bindings (project_key, task_id, review_ref)
+        SELECT ${shadowKey}, task_id, review_ref
+        FROM implementation_completion_bindings WHERE project_key = ${pk}
+      `;
       // T1959: roots/epoch are durable tenant state. Admission rows are live
       // coordination leases and never travel into a backup.
       await tx`
@@ -722,6 +727,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       `;
       await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
 
+      await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${pk}`;
       await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
       await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
       await tx`DELETE FROM items WHERE project_key = ${pk}`;
@@ -904,6 +910,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
               AND form NOT IN ('exclusive-set', 'exclusive-administrative')
           `;
           await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM archived_items WHERE project_key = ${this.projectKey}`;
@@ -1074,6 +1081,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         await writeTransaction(this.pool(), async (tx) => {
           await tx`DELETE FROM workset_admissions WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM mcp_usage_stats WHERE project_key = ${this.projectKey}`;
