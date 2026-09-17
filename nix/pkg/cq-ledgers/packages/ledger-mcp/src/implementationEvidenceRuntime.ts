@@ -300,7 +300,31 @@ export async function verifyProductionImplementation(
   if (typeof baseCommit !== "string" || !FULL_SHA.test(baseCommit)) {
     throw new Error("worker result base commit is malformed");
   }
+  if (
+    workerInput["baseCommit"] !== baseCommit ||
+    baseVerification["headCommit"] !== resultCommit ||
+    workerOutput["resultCommit"] !== resultCommit ||
+    workerOutput["taskId"] !== workerInput["taskId"]
+  ) {
+    throw new Error("worker result does not match its exact dispatch identity and tip");
+  }
   const startingCommitValue = workerOutput["gitLineage"];
+  const guardedRebaseLineage = workerInput["guardedRebaseLineage"];
+  const guardedRebase = object(guardedRebaseLineage);
+  if (guardedRebase) {
+    if (
+      !object(startingCommitValue) ||
+      startingCommitValue["kind"] !== "guarded-rebase" ||
+      startingCommitValue["guardedRebase"] !== guardedRebaseLineage["guardedRebase"] ||
+      startingCommitValue["ontoCommit"] !== guardedRebaseLineage["ontoCommit"] ||
+      startingCommitValue["rebasedStartCommit"] !== guardedRebaseLineage["rebasedStartCommit"] ||
+      startingCommitValue["exactTip"] !== guardedRebaseLineage["exactTip"]
+    ) {
+      throw new Error("worker result substituted its server-resolved guarded lineage");
+    }
+  } else if (startingCommitValue !== undefined) {
+    throw new Error("ordinary worker result carries unauthorized guarded lineage");
+  }
   const dispatchedStartingCommit = workerInput["startingCommit"];
   const supervisedGateStartingCommit =
     typeof dispatchedStartingCommit === "string" && FULL_SHA.test(dispatchedStartingCommit)
@@ -349,36 +373,28 @@ export async function verifyProductionImplementation(
     (await gitOutput(actualWorktreePath, ["status", "--porcelain", "--untracked-files=all"], "worker status")) ===
     "";
   const changed = strings(
-    (await gitOutput(repositoryRoot, ["diff", "--name-only", `${baseCommit}..${resultCommit}`], "result diff"))
-      .split("\n")
+    (await gitOutput(repositoryRoot, ["diff", "--name-only", "--no-renames", "-z", `${baseCommit}..${resultCommit}`, "--"], "result diff"))
+      .split("\0")
       .filter((entry) => entry !== ""),
   ).slice().sort();
-  const filesTouched = strings(workerOutput["filesTouched"]).slice().sort();
+  const reportedFilesTouched = strings(workerOutput["filesTouched"]);
+  const filesTouched = reportedFilesTouched.slice().sort();
+  const filesTouchedVerified =
+    JSON.stringify(reportedFilesTouched) === JSON.stringify([...new Set(filesTouched)]) &&
+    JSON.stringify(changed) === JSON.stringify(filesTouched);
   const receipts = workerOutput["gitReceipts"];
   const workerTaskId = workerInput["taskId"];
-  const guardedRebase =
-    object(startingCommitValue) && startingCommitValue["kind"] === "guarded-rebase";
-  const expectedReceiptPaths = guardedRebase
-    ? strings(
-        (
-          await gitOutput(
-            repositoryRoot,
-            ["diff", "--name-only", `${startingCommit}..${resultCommit}`],
-            "guarded receipt diff",
-          )
-        )
-          .split("\n")
-          .filter((entry) => entry !== ""),
-      ).slice().sort()
-    : filesTouched;
   let receiptsVerified = false;
+  let receiptAttestationId: string | undefined;
+  let latestReceiptGeneration = 0;
+  const guardedExactTip =
+    guardedRebase && object(startingCommitValue) && startingCommitValue["exactTip"] === true;
   if (Array.isArray(receipts)) {
-    const receiptPaths = new Set<string>();
-    let previousHead: string | undefined = guardedRebase ? startingCommit : undefined;
+    let previousHead: string | undefined = guardedRebase ? startingCommit : baseCommit;
     receiptsVerified =
       receipts.length > 0 ||
       (guardedRebase &&
-        startingCommitValue["exactTip"] === true &&
+        guardedExactTip &&
         resultCommit === startingCommit);
     for (const value of receipts) {
       if (!object(value)) {
@@ -390,16 +406,25 @@ export async function verifyProductionImplementation(
       const tree = value["tree"];
       const paths = strings(value["paths"]).slice().sort();
       const objectOids = strings(value["objectOids"]);
+      const attestationId = value["attestationId"];
+      const generation = value["generation"];
       if (
         value["kind"] !== "cq-git-change-receipt" ||
         value["version"] !== 1 ||
         typeof workerTaskId !== "string" ||
         value["taskId"] !== workerTaskId ||
+        typeof attestationId !== "string" ||
+        attestationId.length === 0 ||
+        (receiptAttestationId !== undefined && attestationId !== receiptAttestationId) ||
+        typeof generation !== "number" ||
+        !Number.isSafeInteger(generation) ||
+        generation < latestReceiptGeneration ||
         typeof value["operationId"] !== "string" ||
         typeof value["requestDigest"] !== "string" ||
         !/^[0-9a-f]{64}$/u.test(value["requestDigest"]) ||
         paths.length === 0 ||
         objectOids.length < 2 ||
+        new Set(objectOids).size !== objectOids.length ||
         typeof oldHead !== "string" ||
         typeof newHead !== "string" ||
         typeof tree !== "string" ||
@@ -417,15 +442,14 @@ export async function verifyProductionImplementation(
         break;
       }
       const commitPaths = strings(
-        (await gitOutput(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", oldHead, newHead], "receipt diff"))
-          .split("\n")
+        (await gitOutput(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", oldHead, newHead, "--"], "receipt diff"))
+          .split("\0")
           .filter((entry) => entry !== ""),
       ).slice().sort();
       if (JSON.stringify(commitPaths) !== JSON.stringify(paths)) {
         receiptsVerified = false;
         break;
       }
-      for (const path of paths) receiptPaths.add(path);
       for (const oid of objectOids) {
         if (!FULL_SHA.test(oid)) {
           receiptsVerified = false;
@@ -433,13 +457,11 @@ export async function verifyProductionImplementation(
         }
         await gitOutput(repositoryRoot, ["cat-file", "-e", oid], "receipt object");
       }
+      receiptAttestationId = attestationId;
+      latestReceiptGeneration = generation;
       previousHead = newHead;
     }
-    if (
-      receipts.length > 0 &&
-      (previousHead !== resultCommit ||
-        JSON.stringify([...receiptPaths].sort()) !== JSON.stringify(expectedReceiptPaths))
-    ) {
+    if (previousHead !== resultCommit) {
       receiptsVerified = false;
     }
   }
@@ -453,6 +475,15 @@ export async function verifyProductionImplementation(
     gate["baseCommit"] === baseCommit &&
     gate["startingCommit"] === supervisedGateStartingCommit &&
     gate["resultCommit"] === resultCommit;
+  if (
+    trustedGate &&
+    receiptAttestationId !== undefined &&
+    (gate["attestationId"] !== receiptAttestationId ||
+      typeof gate["generation"] !== "number" ||
+      latestReceiptGeneration > gate["generation"])
+  ) {
+    receiptsVerified = false;
+  }
   const legacyGate =
     typeof workerOutput["checkSummary"] === "string" &&
     workerOutput["checkSummary"].includes("REAL_CHECK_EXIT=0");
@@ -462,8 +493,7 @@ export async function verifyProductionImplementation(
     clean,
     ancestryVerified: true,
     receiptsVerified,
-    acceptanceVerified: workerOutput["status"] === "pass" &&
-      JSON.stringify(changed) === JSON.stringify(filesTouched),
+    acceptanceVerified: workerOutput["status"] === "pass" && filesTouchedVerified,
     gateVerified: trustedGate || legacyGate,
     details: {
       resultCommit,

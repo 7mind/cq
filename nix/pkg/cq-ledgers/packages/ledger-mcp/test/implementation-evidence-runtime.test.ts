@@ -219,6 +219,11 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     await git(root, ["add", "base.txt"]);
     await git(root, ["commit", "-q", "-m", "base"]);
     const baseCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "feature.ts"), "export const protectedEvidence = false;\n");
+    await git(root, ["add", "feature.ts"]);
+    await git(root, ["commit", "-q", "-m", "intermediate"]);
+    const intermediateCommit = await git(root, ["rev-parse", "HEAD"]);
+    const intermediateTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
     await writeFile(path.join(root, "feature.ts"), "export const protectedEvidence = true;\n");
     await git(root, ["add", "feature.ts"]);
     await git(root, ["commit", "-q", "-m", "result"]);
@@ -232,20 +237,30 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       round: 0,
       startingCommit: baseCommit,
     } as const;
-    const receipt = {
+    const firstReceipt = {
       kind: "cq-git-change-receipt",
       version: 1,
       attestationId: "att_runtime_receipt",
       generation: 1,
       taskId: "T2345",
-      operationId: "runtime-receipt",
+      operationId: "runtime-first-receipt",
       requestDigest: "d".repeat(64),
       oldHead: baseCommit,
+      newHead: intermediateCommit,
+      tree: intermediateTree,
+      objectOids: [intermediateCommit, intermediateTree],
+      paths: ["feature.ts"],
+      committedAt: "2026-08-24T00:00:00.000Z",
+    } as const;
+    const receipt = {
+      ...firstReceipt,
+      operationId: "runtime-second-receipt",
+      oldHead: intermediateCommit,
       newHead: resultCommit,
       tree,
       objectOids: [resultCommit, tree],
       paths: ["feature.ts"],
-      committedAt: "2026-08-24T00:00:00.000Z",
+      committedAt: "2026-08-24T00:00:01.000Z",
     } as const;
     const workerOutput = {
       taskId: "T2345",
@@ -254,7 +269,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       branch: "implement/T2345",
       actualWorktreePath: root,
       filesTouched: ["feature.ts"],
-      gitReceipts: [receipt],
+      gitReceipts: [firstReceipt, receipt],
       checkSummary: "REAL_CHECK_EXIT=0; 1 pass; 0 fail",
       gateDurationMs: 100,
       baseVerification: {
@@ -273,14 +288,29 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       (
         await verifyProductionImplementation(root, resultCommit, workerInput, {
           ...workerOutput,
-          gitReceipts: [{ ...receipt, tree: baseCommit }],
+          gitReceipts: [receipt],
+        })
+      ).receiptsVerified,
+    ).toBe(false);
+    expect(
+      (
+        await verifyProductionImplementation(root, resultCommit, workerInput, {
+          ...workerOutput,
+          gitReceipts: [{ ...firstReceipt, attestationId: "att_substituted" }, receipt],
+        })
+      ).receiptsVerified,
+    ).toBe(false);
+    expect(
+      (
+        await verifyProductionImplementation(root, resultCommit, workerInput, {
+          ...workerOutput,
+          gitReceipts: [firstReceipt, { ...receipt, tree: baseCommit }],
         })
       ).receiptsVerified,
     ).toBe(false);
   });
 
-  // expected-failure: tasks:T6571
-  test.failing("D491 production verification authenticates transient receipt paths independently of the net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("D491 production verification authenticates transient receipt paths independently of the net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-net-diff-"));
     roots.push(root);
     await git(root, ["init", "-q", "-b", "implement/T6571"]);
@@ -376,7 +406,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(verification.details.changedFiles).toEqual([]);
   });
 
-  test("accepts a guarded-rebase receipt suffix independently of the full result diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("accepts a guarded-rebase receipt suffix with transient paths independently of the net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-guarded-"));
     roots.push(root);
     await git(root, ["init", "-q", "-b", "implement/T453"]);
@@ -391,8 +421,14 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     await git(root, ["commit", "-q", "-m", "rebased prefix"]);
     const rebasedStartCommit = await git(root, ["rev-parse", "HEAD"]);
     await writeFile(path.join(root, "correction.ts"), "export const correction = true;\n");
-    await git(root, ["add", "correction.ts"]);
-    await git(root, ["commit", "-q", "-m", "guarded correction"]);
+    await writeFile(path.join(root, "transient.ts"), "export const transient = true;\n");
+    await git(root, ["add", "correction.ts", "transient.ts"]);
+    await git(root, ["commit", "-q", "-m", "guarded correction with transient path"]);
+    const transientCommit = await git(root, ["rev-parse", "HEAD"]);
+    const transientTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    await rm(path.join(root, "transient.ts"));
+    await git(root, ["add", "transient.ts"]);
+    await git(root, ["commit", "-q", "-m", "remove guarded transient path"]);
     const resultCommit = await git(root, ["rev-parse", "HEAD"]);
     const tree = await git(root, ["rev-parse", "HEAD^{tree}"]);
     const workerInput = {
@@ -402,21 +438,38 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       baseCommit: ontoCommit,
       round: 1,
       startingCommit: rebasedStartCommit,
+      guardedRebaseLineage: {
+        guardedRebase: `cq-guarded-rebase:v1:${"f".repeat(64)}`,
+        oldResultCommit: "e".repeat(40),
+        ontoCommit,
+        rebasedStartCommit,
+        exactTip: false,
+      },
     } as const;
-    const receipt = {
+    const firstReceipt = {
       kind: "cq-git-change-receipt",
       version: 1,
       attestationId: "att_runtime_guarded_receipt",
       generation: 1,
       taskId: "T453",
-      operationId: "runtime-guarded-receipt",
+      operationId: "runtime-guarded-transient",
       requestDigest: "e".repeat(64),
       oldHead: rebasedStartCommit,
+      newHead: transientCommit,
+      tree: transientTree,
+      objectOids: [transientCommit, transientTree],
+      paths: ["correction.ts", "transient.ts"],
+      committedAt: "2026-09-04T00:00:00.000Z",
+    } as const;
+    const receipt = {
+      ...firstReceipt,
+      operationId: "runtime-guarded-remove-transient",
+      oldHead: transientCommit,
       newHead: resultCommit,
       tree,
       objectOids: [resultCommit, tree],
-      paths: ["correction.ts"],
-      committedAt: "2026-09-04T00:00:00.000Z",
+      paths: ["transient.ts"],
+      committedAt: "2026-09-04T00:00:01.000Z",
     } as const;
     const workerOutput = {
       taskId: "T453",
@@ -425,7 +478,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       branch: "implement/T453",
       actualWorktreePath: root,
       filesTouched: ["correction.ts", "prefix.ts"],
-      gitReceipts: [receipt],
+      gitReceipts: [firstReceipt, receipt],
       gitLineage: {
         kind: "guarded-rebase",
         guardedRebase: `cq-guarded-rebase:v1:${"f".repeat(64)}`,
@@ -471,8 +524,9 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     const correctionStartingCommit = await git(root, ["rev-parse", "HEAD"]);
     const priorTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
     await writeFile(path.join(root, "current-correction.ts"), "export const current = true;\n");
-    await git(root, ["add", "current-correction.ts"]);
-    await git(root, ["commit", "-q", "-m", "current correction"]);
+    await rm(path.join(root, "prior-correction.ts"));
+    await git(root, ["add", "current-correction.ts", "prior-correction.ts"]);
+    await git(root, ["commit", "-q", "-m", "current correction removes prior transient path"]);
     const resultCommit = await git(root, ["rev-parse", "HEAD"]);
     const resultTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
     const guardedRebase = `cq-guarded-rebase:v1:${"f".repeat(64)}`;
@@ -498,7 +552,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       resultCommit,
       branch: "implement/T459",
       actualWorktreePath: root,
-      filesTouched: ["current-correction.ts", "prior-correction.ts", "rebased.ts"],
+      filesTouched: ["current-correction.ts", "rebased.ts"],
       gitReceipts: [
         {
           kind: "cq-git-change-receipt",
@@ -527,7 +581,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
           newHead: resultCommit,
           tree: resultTree,
           objectOids: [resultCommit, resultTree],
-          paths: ["current-correction.ts"],
+          paths: ["current-correction.ts", "prior-correction.ts"],
           committedAt: "2026-09-06T00:00:00.000Z",
         },
       ],

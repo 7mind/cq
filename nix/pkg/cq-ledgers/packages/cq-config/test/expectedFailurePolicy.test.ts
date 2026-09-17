@@ -18,7 +18,7 @@ const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
 const IMPLEMENT_ADVANCE = "commands/cq/implement/advance.md";
 const CLAUDE_POINTER =
   "Tasks that declare an expected failure follow §6a of\n  `nix/pkg/cq-assets/commands/cq/implement/advance.md`; the production scanner\n  and committed inventory enforce its marker convention.";
-const SUCCESS_SECTION_SHA256 = "ef2071b70d0102c33e1d81ea02990fb5d54c3623704160df837639b488528ca3";
+const SUCCESS_SECTION_SHA256 = "9387fb73591c4a6c1b25e0e0572832b51133be08d03501ade6af126982f8cffd";
 const SINGLETON_SENTENCES = [
   "§6a governs only a task that declares an expected failure.",
   "Form (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.",

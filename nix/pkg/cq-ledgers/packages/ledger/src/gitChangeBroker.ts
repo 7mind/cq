@@ -1212,10 +1212,16 @@ export async function validateGitChangeBrokerResultEvidence(
   }
   const evidenceGit = async (args: readonly string[]): Promise<Buffer> =>
     await checkedGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
-  const runEvidenceGit = async (args: readonly string[]): Promise<GitResult> =>
-    await runGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
+  const reportedFilesTouched = evidence.filesTouched.map((entryPath, index) =>
+    assertPath(entryPath, `filesTouched[${index}]`),
+  );
+  if (
+    canonical(reportedFilesTouched) !==
+    canonical([...new Set(reportedFilesTouched)].sort())
+  ) {
+    throw new Error("broker result filesTouched must be unique and sorted");
+  }
 
-  const receiptPaths = new Set<string>();
   let previousHead: string | undefined;
   for (const [index, receipt] of durableReceipts.entries()) {
     if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
@@ -1289,7 +1295,9 @@ export async function validateGitChangeBrokerResultEvidence(
     ) {
       throw new Error(`broker receipt chain entry ${index} omits its commit or tree object`);
     }
-    for (const entryPath of paths) receiptPaths.add(entryPath);
+    if (new Set(receipt.objectOids).size !== receipt.objectOids.length) {
+      throw new Error(`broker receipt chain entry ${index} repeats an object oid`);
+    }
     previousHead = receipt.newHead;
   }
 
@@ -1298,16 +1306,9 @@ export async function validateGitChangeBrokerResultEvidence(
   if (!FULL_OID.test(diffBaseCommit)) {
     throw new Error("broker result diff base is not a full Git oid");
   }
-  if (first !== undefined) {
-    const baseAncestry = await runEvidenceGit([
-      "merge-base",
-      "--is-ancestor",
-      diffBaseCommit,
-      first.oldHead,
-    ]);
-    if (baseAncestry.code !== 0) {
-      throw new Error("broker receipt chain begins outside the dispatch base ancestry");
-    }
+  const trustedOrigin = bridge?.rebasedStartCommit ?? diffBaseCommit;
+  if (first !== undefined && first.oldHead !== trustedOrigin) {
+    throw new Error("broker receipt chain does not begin at the exact trusted origin");
   }
   if (durableReceipts.length > 0 && previousHead !== evidence.resultCommit) {
     throw new Error("broker receipt chain head does not match resultCommit");
@@ -1330,11 +1331,18 @@ export async function validateGitChangeBrokerResultEvidence(
     .split("\0")
     .filter(Boolean)
     .sort();
-  if (bridge === undefined && canonical([...receiptPaths].sort()) !== canonical(actualResultPaths)) {
-    throw new Error("broker receipt paths do not equal the actual base-to-result diff");
+  if (canonical(reportedFilesTouched) !== canonical(actualResultPaths)) {
+    throw new Error("broker result filesTouched does not equal the actual net diff");
   }
   if ((await currentHead(authorization, deps.deadlineMs)) !== evidence.resultCommit) {
     throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");
+  }
+  if (
+    (
+      await evidenceGit(["status", "--porcelain", "--untracked-files=all"])
+    ).toString() !== ""
+  ) {
+    throw new Error("broker receipt result requires a clean managed tip");
   }
   return Object.freeze({
     ...evidence,

@@ -173,7 +173,7 @@ describe("H236 retained reproductions", () => {
 });
 
 describe("commitManagedWorktreeChanges", () => {
-  test("rejects receipt-only filesTouched when the actual base-to-result diff has an unreceipted path", async () => {
+  test("rejects an ordinary receipt chain that begins after the exact trusted base", async () => {
     const fixture = await seed();
     await fs.writeFile(path.join(fixture.worktreePath, "unreceipted.txt"), "outside broker\n");
     await git(fixture.worktreePath, ["add", "unreceipted.txt"]);
@@ -207,16 +207,92 @@ describe("commitManagedWorktreeChanges", () => {
           resultCommit: receipt.newHead,
           branch: fixture.authorization.branch,
           actualWorktreePath: fixture.worktreePath,
+          filesTouched: ["modify.txt", "unreceipted.txt"],
+          gitReceipts: [receipt],
+        },
+        { stateDir: fixture.stateDir },
+      ),
+    ).rejects.toThrow(/exact trusted origin/u);
+  });
+
+  test("rejects filesTouched that differs from the exact base-to-result net diff", async () => {
+    const fixture = await seed();
+    const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "brokered\n");
+    const receipt = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T6571-false-files-touched",
+        expectedHead: fixture.head,
+        message: "brokered change",
+        changes: [
+          {
+            kind: "modify",
+            path: "modify.txt",
+            oldState: { mode: "100644", digest: digest(beforeModify) },
+            newState: { mode: "100644", digest: digest("brokered\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
+
+    await expect(
+      validateGitChangeBrokerResultEvidence(
+        fixture.authorization,
+        {
+          taskId: fixture.authorization.taskId,
+          resultCommit: receipt.newHead,
+          branch: fixture.authorization.branch,
+          actualWorktreePath: fixture.worktreePath,
+          filesTouched: [],
+          gitReceipts: [receipt],
+        },
+        { stateDir: fixture.stateDir },
+      ),
+    ).rejects.toThrow(/filesTouched.*actual.*net diff/u);
+  });
+
+  test("rejects an authenticated receipt chain when the managed result tip is dirty", async () => {
+    const fixture = await seed();
+    const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "brokered\n");
+    const receipt = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T6571-dirty-result-tip",
+        expectedHead: fixture.head,
+        message: "brokered change",
+        changes: [
+          {
+            kind: "modify",
+            path: "modify.txt",
+            oldState: { mode: "100644", digest: digest(beforeModify) },
+            newState: { mode: "100644", digest: digest("brokered\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
+    await fs.writeFile(path.join(fixture.worktreePath, "dirty.txt"), "uncommitted\n");
+
+    await expect(
+      validateGitChangeBrokerResultEvidence(
+        fixture.authorization,
+        {
+          taskId: fixture.authorization.taskId,
+          resultCommit: receipt.newHead,
+          branch: fixture.authorization.branch,
+          actualWorktreePath: fixture.worktreePath,
           filesTouched: ["modify.txt"],
           gitReceipts: [receipt],
         },
         { stateDir: fixture.stateDir },
       ),
-    ).rejects.toThrow(/base.*result diff|filesTouched/u);
+    ).rejects.toThrow(/clean managed tip/u);
   });
 
-  // expected-failure: tasks:T6571
-  test.failing("D491 accepts authentic modify/restore and add/remove receipt histories with an empty net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("D491 accepts authentic modify/restore and add/remove receipt histories with an empty net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const fixture = await seed();
     const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
     await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "temporary\n");

@@ -37,10 +37,17 @@
 > binding, `clean === true`, `gateExitCode === 0`, `failCount === 0`, and
 > `passCount > 0`. A red, zero-test, timed-out, cancelled, dirty, moved-tip, or
 > replay attempt must remain unconsumable. Before accepting a passing result,
-> require a non-empty receipt chain in commit order; verify each old/new head
-> edge and receipt tree against Git, require the final new head to equal
-> `resultCommit`, and require the union of receipt paths to equal
-> `filesTouched`.
+> require the complete durable receipt chain in commit order from the exact
+> trusted origin (the ordinary dispatch base or server-resolved guarded
+> rebased-start anchor) through the exact clean `resultCommit` tip. Authenticate
+> every receipt's dispatch identity, contiguous old/new edge, actual commit
+> parent, tree, sorted paths, and object data against Git; reject omissions,
+> reorderings, substitutions, origin gaps, and unauthorized history.
+> Independently require exact sorted `filesTouched` to equal the ordinary
+> base-to-result or guarded onto-to-result net diff. Historical receipt paths
+> may strictly exceed that net diff when later commits restore or remove paths.
+> Only the server-resolved guarded exact-tip mode may use an empty fresh suffix,
+> with `resultCommit` equal to the rebased tip.
 >
 > **Guarded-rebase redispatch.** When a journaled guarded rebase rewrote the
 > managed tip, the worker redispatch prepare names the exact terminal prior

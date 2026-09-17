@@ -1184,8 +1184,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const dirtyRunner = new GateDummy();
     const dirty = await fixture(dirtyRunner);
     await fs.writeFile(path.join(dirty.managed.handle.absolutePath, "untracked.txt"), "dirty\n");
-    await expect(stage(dirty)).resolves.toMatchObject({ state: "gate-pending" });
-    await expect(finalize(dirty)).rejects.toThrow("clean result tree");
+    await expect(stage(dirty)).rejects.toThrow("clean managed tip");
     expect(dirtyRunner.requests).toHaveLength(0);
 
     const movingRunner = new MovingTipGateDummy();

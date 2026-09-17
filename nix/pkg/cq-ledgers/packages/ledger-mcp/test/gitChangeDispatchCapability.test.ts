@@ -1068,6 +1068,12 @@ describe("dispatch-bound Git change capability", () => {
         resultCapability: second.prepared.resultCapability,
         output: { ...output, filesTouched: [] } as unknown as DispatchJSONValue,
       }),
+    ).rejects.toThrow(/filesTouched.*actual.*net diff/u);
+    await expect(
+      capability.storeResult({
+        resultCapability: second.prepared.resultCapability,
+        output: output as unknown as DispatchJSONValue,
+      }),
     ).resolves.toMatchObject({ state: "gate-pending" });
     expect(gateRuns).toBe(0);
     if (capability.finalizeParentGate === undefined) {
@@ -1601,7 +1607,7 @@ describe("dispatch-bound Git change capability", () => {
       resultCommit: firstReceipt.newHead,
       branch: managed.handle.branch,
       actualWorktreePath: managed.handle.absolutePath,
-      filesTouched: [],
+      filesTouched: ["file.txt"],
       gitReceipts: [firstReceipt],
       checkSummary: "trusted gate delegated to result storage",
       baseVerification: {
@@ -2604,7 +2610,7 @@ describe("dispatch-bound Git change capability", () => {
           resultCommit: second.resultCommit,
           branch: d334.managed.handle.branch,
           actualWorktreePath: d334.managed.handle.absolutePath,
-          filesTouched: [],
+          filesTouched: [GUARDED_FIXTURE_PATH],
           gitReceipts: [],
           gitLineage: {
             kind: "guarded-rebase",
