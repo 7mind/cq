@@ -279,6 +279,103 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     ).toBe(false);
   });
 
+  // expected-failure: tasks:T6571
+  test.failing("D491 production verification authenticates transient receipt paths independently of the net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-net-diff-"));
+    roots.push(root);
+    await git(root, ["init", "-q", "-b", "implement/T6571"]);
+    await git(root, ["config", "user.name", "runtime-test"]);
+    await git(root, ["config", "user.email", "runtime-test@example.invalid"]);
+    await writeFile(path.join(root, "modify.txt"), "base\n");
+    await git(root, ["add", "modify.txt"]);
+    await git(root, ["commit", "-q", "-m", "base"]);
+    const baseCommit = await git(root, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(root, "modify.txt"), "temporary\n");
+    await git(root, ["add", "modify.txt"]);
+    await git(root, ["commit", "-q", "-m", "modify temporarily"]);
+    const modifiedCommit = await git(root, ["rev-parse", "HEAD"]);
+    const modifiedTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    await writeFile(path.join(root, "transient.txt"), "temporary\n");
+    await git(root, ["add", "transient.txt"]);
+    await git(root, ["commit", "-q", "-m", "add temporarily"]);
+    const addedCommit = await git(root, ["rev-parse", "HEAD"]);
+    const addedTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    await writeFile(path.join(root, "modify.txt"), "base\n");
+    await git(root, ["add", "modify.txt"]);
+    await git(root, ["commit", "-q", "-m", "restore modified path"]);
+    const restoredCommit = await git(root, ["rev-parse", "HEAD"]);
+    const restoredTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    await rm(path.join(root, "transient.txt"));
+    await git(root, ["add", "transient.txt"]);
+    await git(root, ["commit", "-q", "-m", "remove transient path"]);
+    const resultCommit = await git(root, ["rev-parse", "HEAD"]);
+    const resultTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+
+    const receipt = (
+      operationId: string,
+      oldHead: string,
+      newHead: string,
+      tree: string,
+      paths: readonly string[],
+    ) => ({
+      kind: "cq-git-change-receipt" as const,
+      version: 1 as const,
+      attestationId: "att_runtime_net_diff",
+      generation: 1,
+      taskId: "T6571",
+      operationId,
+      requestDigest: "d".repeat(64),
+      oldHead,
+      newHead,
+      tree,
+      objectOids: [newHead, tree],
+      paths,
+      committedAt: "2026-09-17T00:00:00.000Z",
+    });
+    const workerInput = {
+      taskId: "T6571",
+      acceptance: "separate receipt authentication from net change reporting",
+      branch: "implement/T6571",
+      baseCommit,
+      round: 0,
+      startingCommit: baseCommit,
+    } as const;
+    const workerOutput = {
+      taskId: "T6571",
+      status: "pass",
+      resultCommit,
+      branch: "implement/T6571",
+      actualWorktreePath: root,
+      filesTouched: [],
+      gitReceipts: [
+        receipt("modify", baseCommit, modifiedCommit, modifiedTree, ["modify.txt"]),
+        receipt("add", modifiedCommit, addedCommit, addedTree, ["transient.txt"]),
+        receipt("restore", addedCommit, restoredCommit, restoredTree, ["modify.txt"]),
+        receipt("remove", restoredCommit, resultCommit, resultTree, ["transient.txt"]),
+      ],
+      checkSummary: "REAL_CHECK_EXIT=0; 1 pass; 0 fail",
+      gateDurationMs: 100,
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit,
+        headCommit: resultCommit,
+      },
+      summary: "verified transient receipt history",
+    } as const;
+
+    const verification = await verifyProductionImplementation(
+      root,
+      resultCommit,
+      workerInput,
+      workerOutput,
+    );
+    expect(verification.receiptsVerified).toBe(true);
+    expect(verification.details.filesTouched).toEqual([]);
+    expect(verification.details.changedFiles).toEqual([]);
+  });
+
   test("accepts a guarded-rebase receipt suffix independently of the full result diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-guarded-"));
     roots.push(root);

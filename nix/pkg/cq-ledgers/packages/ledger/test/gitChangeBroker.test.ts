@@ -215,7 +215,8 @@ describe("commitManagedWorktreeChanges", () => {
     ).rejects.toThrow(/base.*result diff|filesTouched/u);
   });
 
-  test("rejects receipt paths that net back to the dispatch-base tree", async () => {
+  // expected-failure: tasks:T6571
+  test.failing("D491 accepts authentic modify/restore and add/remove receipt histories with an empty net diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const fixture = await seed();
     const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
     await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "temporary\n");
@@ -236,12 +237,29 @@ describe("commitManagedWorktreeChanges", () => {
       },
       { stateDir: fixture.stateDir, authorize: () => undefined },
     );
+    await fs.writeFile(path.join(fixture.worktreePath, "transient.txt"), "temporary\n");
+    const added = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T6571-add-transient-path",
+        expectedHead: changed.newHead,
+        message: "add transient path",
+        changes: [
+          {
+            kind: "add",
+            path: "transient.txt",
+            newState: { mode: "100644", digest: digest("temporary\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
     await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), beforeModify);
     const restored = await commitManagedWorktreeChanges(
       {
         authorization: fixture.authorization,
         operationId: "T2082-restore-base-bytes",
-        expectedHead: changed.newHead,
+        expectedHead: added.newHead,
         message: "restore base bytes",
         changes: [
           {
@@ -254,21 +272,38 @@ describe("commitManagedWorktreeChanges", () => {
       },
       { stateDir: fixture.stateDir, authorize: () => undefined },
     );
+    await fs.rm(path.join(fixture.worktreePath, "transient.txt"));
+    const removed = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T6571-remove-transient-path",
+        expectedHead: restored.newHead,
+        message: "remove transient path",
+        changes: [
+          {
+            kind: "delete",
+            path: "transient.txt",
+            oldState: { mode: "100644", digest: digest("temporary\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
 
-    await expect(
-      validateGitChangeBrokerResultEvidence(
-        fixture.authorization,
-        {
-          taskId: fixture.authorization.taskId,
-          resultCommit: restored.newHead,
-          branch: fixture.authorization.branch,
-          actualWorktreePath: fixture.worktreePath,
-          filesTouched: ["modify.txt"],
-          gitReceipts: [changed, restored],
-        },
-        { stateDir: fixture.stateDir },
-      ),
-    ).rejects.toThrow(/base.*result diff|filesTouched/u);
+    const verified = await validateGitChangeBrokerResultEvidence(
+      fixture.authorization,
+      {
+        taskId: fixture.authorization.taskId,
+        resultCommit: removed.newHead,
+        branch: fixture.authorization.branch,
+        actualWorktreePath: fixture.worktreePath,
+        filesTouched: [],
+        gitReceipts: [changed, added, restored, removed],
+      },
+      { stateDir: fixture.stateDir },
+    );
+    expect(verified.filesTouched).toEqual([]);
+    expect(verified.gitReceipts).toEqual([changed, added, restored, removed]);
   });
 
   test("admits only the requested tree from Git's batch-object boundary", () => {
