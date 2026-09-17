@@ -2,11 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND } from "@cq/config";
 import {
+  GOALS_LEDGER,
+  InMemoryLedgerStore,
   ImplementationEvidenceService,
+  REVIEWS_LEDGER,
+  TASKS_LEDGER,
   createInMemoryImplementationEvidenceStore,
   implementationAuditManifestDigest,
   implementationAuditManifestSemanticDigest,
+  recordProtectedImplementationCompletion,
   type ImplementationCompletionRecord,
+  type ImplementationCompletionReviewAuthority,
   type ImplementationAuditRecord,
   type ImplementationAuditManifestApplicationRecord,
   type ImplementationEvidenceActivationContinuationRecord,
@@ -361,6 +367,7 @@ function fixture(
     activationTaskRefs: [...COHORT, COMPLETED_TASK_REF],
   },
   workerObservation?: ImplementationWorkerObservation,
+  completionReview?: ImplementationCompletionReviewAuthority,
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
@@ -429,18 +436,23 @@ function fixture(
       taskRefs: taskAuthority.activationTaskRefs,
     }),
     isCommitRetained,
-    readCompletionReview: async () => ({
-      reviewRef: "reviews:R3003",
-      status: "go-ahead",
-      implementationEvidence: JSON.stringify({
-        version: 1,
-        completionRef: COMPLETION_REF,
-        taskRef: COMPLETED_TASK_REF,
-        resultCommit: REPOSITORY_HEAD,
-        evidenceFingerprint: "8".repeat(64),
-        reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"7".repeat(64)}`],
-      }),
-    }),
+    readCompletionReview: async (reviewRef: string) => {
+      const review = completionReview ?? {
+        reviewRef: "reviews:R3003",
+        status: "go-ahead",
+        implementationEvidence: JSON.stringify({
+          version: 1,
+          completionRef: COMPLETION_REF,
+          taskRef: COMPLETED_TASK_REF,
+          resultCommit: REPOSITORY_HEAD,
+          evidenceFingerprint: "8".repeat(64),
+          reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"7".repeat(64)}`],
+        }),
+      };
+      if (review.reviewRef !== reviewRef)
+        throw new Error("test completion review ref does not match the protected completion");
+      return review;
+    },
     faultInjector,
   } as never;
   const service = new ImplementationEvidenceService(dependencies);
@@ -634,6 +646,62 @@ describe("implementation evidence activation continuation [BG]", () => {
     expect(
       (await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF],
     ).toBeDefined();
+  });
+
+  // regression: D492 — activation must accept the version-one evidence emitted by the protected recorder.
+  test("continues activation with the version-one review emitted by the protected completion recorder", async () => {
+    const ledger = new InMemoryLedgerStore();
+    try {
+      await ledger.init();
+      const milestone = await ledger.createMilestone({ title: "protected completion" });
+      await ledger.createItem(GOALS_LEDGER, milestone.id, {
+        id: "G176",
+        status: "building",
+        fields: { title: "goal", description: "goal" },
+      });
+      await ledger.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T3003",
+        status: "wip",
+        fields: { headline: "activation continuation" },
+      });
+      const initial = mutableSnapshot();
+      const completion = initial.completions[COMPLETION_REF]!;
+      const recorded = await recordProtectedImplementationCompletion(
+        ledger,
+        {
+          taskRef: COMPLETED_TASK_REF,
+          ownerGoalRef: "goals:G176",
+          status: "wip",
+          finalizedManifest: "finalized-v2\n",
+        },
+        { ...completion, state: "recording" },
+        { author: "parent" },
+      );
+      const review = ledger.fetchItem(
+        REVIEWS_LEDGER,
+        recorded.reviewRef.slice(`${REVIEWS_LEDGER}:`.length),
+      );
+      const implementationEvidence = review.fields["implementationEvidence"];
+      if (typeof implementationEvidence !== "string")
+        throw new Error("protected recorder omitted implementation evidence");
+      initial.completions[COMPLETION_REF] = {
+        ...completion,
+        reviewRef: recorded.reviewRef,
+      };
+
+      await expect(
+        fixture(initial, undefined, undefined, undefined, undefined, {
+          reviewRef: recorded.reviewRef,
+          status: review.status,
+          implementationEvidence,
+        }).service.continueEvidenceActivation(request),
+      ).resolves.toMatchObject({
+        status: "continued",
+        completionRef: COMPLETION_REF,
+      });
+    } finally {
+      await ledger.dispose();
+    }
   });
 
   // regression: D454 — superseded preparation journals are not active completion candidates.
