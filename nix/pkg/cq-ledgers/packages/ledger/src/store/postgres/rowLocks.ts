@@ -9,6 +9,7 @@ export type PostgresLockTarget =
   | { readonly table: "items" | "groups" | "archive_pointers"; readonly ledgerId: string; readonly id: string }
   | { readonly table: "archived_items"; readonly ledgerId: string; readonly pointerId: string; readonly id: string }
   | { readonly table: "plan_claims" | "plan_operations"; readonly scope: string }
+  | { readonly table: "implementation_completion_bindings"; readonly taskId: string }
   | { readonly table: "item_references"; readonly sourceLedger: string; readonly sourceId: string;
       readonly fieldName: string; readonly targetLedger: string; readonly targetId: string };
 
@@ -39,9 +40,11 @@ function coordinates(target: PostgresLockTarget): LockCoordinates {
     };
     case "archived_items": return { rank: 7, key: `${target.ledgerId}:${target.pointerId}:${target.id}`,
       columns: ["ledger", "pointer_id", "id"], values: [target.ledgerId, target.pointerId, target.id] };
-    case "plan_claims": case "plan_operations": return { rank: target.table === "plan_claims" ? 8 : 9,
+    case "implementation_completion_bindings": return { rank: 8, key: target.taskId,
+      columns: ["task_id"], values: [target.taskId] };
+    case "plan_claims": case "plan_operations": return { rank: target.table === "plan_claims" ? 9 : 10,
       key: target.scope, columns: ["scope"], values: [encodePostgresPlanScope(target.scope)] };
-    case "item_references": return { rank: 10,
+    case "item_references": return { rank: 11,
       key: [target.sourceLedger, target.sourceId, target.fieldName, target.targetLedger, target.targetId].join(":"),
       columns: ["source_ledger", "source_id", "field_name", "target_ledger", "target_id"],
       values: [target.sourceLedger, target.sourceId, target.fieldName, target.targetLedger, target.targetId] };

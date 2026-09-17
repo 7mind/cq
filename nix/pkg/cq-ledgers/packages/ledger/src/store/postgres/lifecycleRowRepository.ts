@@ -1,6 +1,6 @@
 import { PlanOperationReplayRecordSchema, PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
 import type { AsyncLifecycleRowRepository } from "../asyncRowRepository.js";
-import type { LifecycleGroup, LifecyclePrivateRecordChanges } from "../lifecycleRowRepository.js";
+import type { ImplementationCompletionBindingRecord, LifecycleGroup, LifecyclePrivateRecordChanges } from "../lifecycleRowRepository.js";
 import { claimScopeKey, decodePostgresPlanScope, encodePostgresPlanScope, operationScopeKey } from "../planLifecycleDump.js";
 import { createPostgresGenericMutationDataSource } from "./genericMutationDataSource.js";
 import { PostgresOperationQueries, type PostgresStatement } from "./operationAccess.js";
@@ -74,7 +74,32 @@ export function createPostgresLifecycleRowRepository(queries: PostgresOperationQ
       const parsed = JSON.parse(rows[0].record_json) as { replay: unknown; acknowledgement: unknown };
       return { replay: PlanOperationReplayRecordSchema.parse(parsed.replay), acknowledgement: parsed.acknowledgement };
     },
+    async fetchImplementationCompletionBinding(taskId) {
+      queries.recordReadTarget({ table: "implementation_completion_bindings", taskId });
+      const rows = await read<{ task_id: string; review_ref: string }>("implementation_completion_bindings", [taskId], {
+        sql: "SELECT task_id, review_ref FROM implementation_completion_bindings WHERE project_key = $1 AND task_id = $2",
+        parameters: [projectKey, taskId],
+      }, ({ task_id }) => task_id);
+      const row = rows[0];
+      return row === undefined ? undefined : { taskId: row.task_id, reviewRef: row.review_ref };
+    },
   };
+}
+
+export async function persistPostgresImplementationCompletionBindings(
+  queries: PostgresOperationQueries,
+  changes: readonly ImplementationCompletionBindingRecord[],
+): Promise<void> {
+  for (const binding of changes) {
+    await queries.execute<{ task_id: string }>({
+      table: "implementation_completion_bindings", phase: "transaction", mode: "write",
+      predicate: { kind: "keys", keys: [binding.taskId] }, lockMode: "update",
+    }, {
+      sql: `INSERT INTO implementation_completion_bindings (project_key, task_id, review_ref)
+        VALUES ($1, $2, $3) RETURNING task_id`,
+      parameters: [queries.projectKey, binding.taskId, binding.reviewRef],
+    }, ({ task_id }) => task_id);
+  }
 }
 
 /** The caller owns the surrounding PostgreSQL transaction and its lock order. */

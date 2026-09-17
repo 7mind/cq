@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SQL } from "bun";
 import { randomUUID } from "node:crypto";
-import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, PostgresLedgerStore, recordProtectedImplementationCompletion, supersedeOperatorAction } from "../src/index.js";
+import { materializeOperatorAction, PostgresLedgerStore, recordProtectedImplementationCompletion, supersedeOperatorAction } from "../src/index.js";
 import { ownedLifecyclePostgresFixture } from "./ownedLifecyclePostgresFixture.js";
 import { DIRECT_OPERATOR_INPUT, DIRECT_SUPERSEDE_INPUT, DIRECT_TASK_AUTHORITY, directCompletionRecord, seedDirectOwnedTasks } from "./directOwnedLifecycleContract.js";
 import { waitForPostgresLock } from "./postgresLockWait.js";
@@ -48,8 +48,10 @@ describe.skipIf(!process.env.CQ_TEST_PG_URL)("PostgreSQL materialization/superse
         { reviewRef: "reviews:R1" },
       ]);
       await fixture.store.reloadCommittedState();
-      expect(fixture.store.fetchItem("tasks", "T2345").fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD])
-        .toBe("reviews:R1");
+      const bindings = await fixture.pool<Array<{ review_ref: string }>>`
+        SELECT review_ref FROM implementation_completion_bindings
+        WHERE project_key = ${fixture.projectKey} AND task_id = 'T2345'`;
+      expect(bindings).toEqual([{ review_ref: "reviews:R1" }]);
       expect(fixture.store.fetch("reviews").milestones.flatMap(({ items }) => items)).toHaveLength(1);
       const counters = await fixture.pool<Array<{ item_counter: number }>>`
         SELECT item_counter FROM ledgers WHERE project_key = ${fixture.projectKey} AND name = 'reviews'`;

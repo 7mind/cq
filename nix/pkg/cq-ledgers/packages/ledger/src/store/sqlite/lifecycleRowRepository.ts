@@ -86,6 +86,12 @@ export function createSqliteLifecycleRowRepository(
       const parsed = JSON.parse(row.record_json) as { replay: unknown; acknowledgement: unknown };
       return { replay: PlanOperationReplayRecordSchema.parse(parsed.replay), acknowledgement: parsed.acknowledgement };
     },
+    fetchImplementationCompletionBinding(taskId) {
+      const row = db.query("SELECT task_id, review_ref FROM implementation_completion_bindings WHERE task_id = ?")
+        .get(taskId) as { task_id: string; review_ref: string } | null;
+      record("implementation_completion_bindings", "read", taskId, row === null ? [] : [row.task_id]);
+      return row === null ? undefined : { taskId: row.task_id, reviewRef: row.review_ref };
+    },
     persistPrivateRecords(changes) {
       if (!db.inTransaction) throw new LedgerError("lifecycle row persistence requires a write transaction");
       for (const claim of changes.claims) {
@@ -99,6 +105,14 @@ export function createSqliteLifecycleRowRepository(
         const scope = operationScopeKey(key.goalId, key.claimId, key.generation, key.operation, key.operationId);
         db.query("INSERT INTO plan_operations (scope, record_json) VALUES (?, ?)").run(scope, JSON.stringify(operation));
         record("plan_operations", "write", scope, [scope]);
+      }
+    },
+    persistImplementationCompletionBindings(changes) {
+      if (!db.inTransaction) throw new LedgerError("completion binding persistence requires a write transaction");
+      for (const binding of changes) {
+        db.query("INSERT INTO implementation_completion_bindings (task_id, review_ref) VALUES (?, ?)")
+          .run(binding.taskId, binding.reviewRef);
+        record("implementation_completion_bindings", "write", binding.taskId, [binding.taskId]);
       }
     },
   };

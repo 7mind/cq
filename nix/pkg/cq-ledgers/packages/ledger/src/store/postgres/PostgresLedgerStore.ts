@@ -116,7 +116,7 @@ import { persistPostgresGenericRows } from "./genericRowPersistence.js";
 import type { AdmittedGenericMutation, AdmittedGenericMutationBinding } from "../../worksetGenericMutation.js";
 import type { SqliteOperationAccessScope, SqliteOperationMeasurement } from "../sqlite/operationObservability.js";
 import { assertKeyedPlanMutationChanges } from "../keyedWorksetPlanAuthorization.js";
-import { persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
+import { persistPostgresImplementationCompletionBindings, persistPostgresPrivateRecords } from "./lifecycleRowRepository.js";
 import { PostgresOperationQueries, type PostgresAccessObserver } from "./operationAccess.js";
 import { resolvePostgresOperatorRows } from "./operatorRowOperation.js";
 import type {
@@ -2029,6 +2029,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const value = mutate(owned.tx);
         const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
         const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
+        await persistPostgresImplementationCompletionBindings(queries, owned.implementationCompletionBindingChanges);
         if ("admission" in context) assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);
         const version = await recordPostgresCoherence(queries, this.coherenceOrigin, postgresPublicPlanChanges(plan, changed.ledgers));
         return { value, plan, dirty: changed.ledgers, version };

@@ -198,6 +198,15 @@ export async function ensureSchema(pool: SQL): Promise<void> {
     `;
 
     await locked`
+      CREATE TABLE IF NOT EXISTS implementation_completion_bindings (
+        project_key TEXT NOT NULL REFERENCES projects(project_key),
+        task_id     TEXT NOT NULL,
+        review_ref  TEXT NOT NULL,
+        PRIMARY KEY (project_key, task_id)
+      )
+    `;
+
+    await locked`
       CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL

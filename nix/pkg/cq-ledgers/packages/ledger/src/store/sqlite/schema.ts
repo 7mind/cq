@@ -85,6 +85,11 @@ export function ensureSchema(db: Database): void {
       PRIMARY KEY (ledger, id)
     );
 
+    CREATE TABLE IF NOT EXISTS implementation_completion_bindings (
+      task_id    TEXT PRIMARY KEY,
+      review_ref TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS items_milestone_membership
       ON items (milestone_id, ledger, id);
 

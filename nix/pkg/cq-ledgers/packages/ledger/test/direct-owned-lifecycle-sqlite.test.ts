@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, schemaCompatible, SqliteLedgerStore, supersedeOperatorAction, TASKS_SCHEMA, type LedgerSchema } from "../src/index.js";
+import { materializeOperatorAction, recordProtectedImplementationCompletion, schemaCompatible, SqliteLedgerStore, supersedeOperatorAction, TASKS_SCHEMA, type LedgerSchema } from "../src/index.js";
 import { DIRECT_OPERATOR_INPUT, DIRECT_SUPERSEDE_INPUT, DIRECT_TASK_AUTHORITY, directCompletionRecord, runDirectOwnedLifecycleContract, seedDirectOwnedTasks } from "./directOwnedLifecycleContract.js";
 import { LIFECYCLE_NOW, LIFECYCLE_PROVENANCE, sqlitePlanLifecycleFixture } from "./sqlitePlanLifecycleFixture.js";
 
@@ -17,7 +17,7 @@ test("D492 rollout: a candidate-created SQLite ledger remains reopenable by the 
     expect(row).not.toBeNull();
     const persisted = JSON.parse(row!.schema_json) as LedgerSchema;
     const previousRuntimeSchema = structuredClone(TASKS_SCHEMA);
-    delete previousRuntimeSchema.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    delete previousRuntimeSchema.fields["implementationCompletionReview"];
     expect(schemaCompatible(persisted, previousRuntimeSchema)).toBe(true);
   } finally { await fixture.dispose(); }
 });
@@ -44,19 +44,22 @@ test("malformed, missing, substituted, foreign, and changed completion bindings 
           fields: { summary: "unrelated review", ledgerRefs: ["goals:G1"] },
         });
       }
-      const targetLedger = scenario.mutate === "foreign" || scenario.mutate === "evidence" ? "reviews" : "tasks";
-      const targetId = targetLedger === "reviews" ? "R1" : "T2345";
-      const fields = { ...fixture.store.fetchItem(targetLedger, targetId).fields };
-      if (scenario.mutate === "malformed") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "not-a-review-ref";
-      if (scenario.mutate === "missing") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "reviews:R999";
-      if (scenario.mutate === "substituted") fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD] = "reviews:R2";
-      if (scenario.mutate === "foreign") fields["ledgerRefs"] = ["tasks:T999", "goals:G999"];
-      if (scenario.mutate === "evidence") fields["implementationEvidence"] = "{}";
-      fixture.db.query("UPDATE items SET fields_json = ? WHERE ledger = ? AND id = ?")
-        .run(JSON.stringify(fields), targetLedger, targetId);
+      if (scenario.mutate === "malformed" || scenario.mutate === "missing" || scenario.mutate === "substituted") {
+        const reviewRef = scenario.mutate === "malformed" ? "not-a-review-ref" :
+          scenario.mutate === "missing" ? "reviews:R999" : "reviews:R2";
+        fixture.db.query("UPDATE implementation_completion_bindings SET review_ref = ? WHERE task_id = ?")
+          .run(reviewRef, "T2345");
+      } else {
+        const fields = { ...fixture.store.fetchItem("reviews", "R1").fields };
+        if (scenario.mutate === "foreign") fields["ledgerRefs"] = ["tasks:T999", "goals:G999"];
+        if (scenario.mutate === "evidence") fields["implementationEvidence"] = "{}";
+        fixture.db.query("UPDATE items SET fields_json = ? WHERE ledger = 'reviews' AND id = 'R1'")
+          .run(JSON.stringify(fields));
+      }
       const snapshot = () => ({
         ledgers: fixture.db.query("SELECT name, item_counter FROM ledgers ORDER BY name").all(),
         items: fixture.db.query("SELECT ledger, id, status, fields_json, updated_at FROM items ORDER BY ledger, id").all(),
+        bindings: fixture.db.query("SELECT task_id, review_ref FROM implementation_completion_bindings ORDER BY task_id").all(),
       });
       const before = snapshot();
       await expect(

@@ -22,7 +22,7 @@ import {
   type WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
-import { DEFECTS_LEDGER, GOALS_LEDGER, IMPLEMENTATION_COMPLETION_REVIEW_FIELD, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import type {
@@ -31,7 +31,7 @@ import type {
 } from "./store/sqlite/operationObservability.js";
 import { isLiveWorksetAdmission, type WorksetLedgerMutationAdmission, type WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
-import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
+import type { DirectOwnedMutation, DirectOwnedWriteTx } from "./store/directOwnedMutation.js";
 import { ItemNotFoundError, LedgerError, type Item } from "./types.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 2 as const;
@@ -5556,15 +5556,16 @@ export async function recordProtectedImplementationCompletion(
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
   };
   authorizedImplementationEvidenceMutations.add(reviewInit);
+  authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: DirectOwnedWriteTx) => T | Promise<T>, context: DirectOwnedMutation): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new Error("protected implementation completion requires an atomic ledger adapter");
   }
   return await atomic.runAtomicOwnedMutation((tx) => {
     const currentTask = tx.fetchItem(TASKS_LEDGER, taskId);
-    const rawBinding = currentTask.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    const rawBinding = tx.fetchImplementationCompletionBinding(taskId);
     if (rawBinding !== undefined) {
       if (typeof rawBinding !== "string")
         throw new Error("terminal implementation review binding is malformed");
@@ -5598,12 +5599,8 @@ export async function recordProtectedImplementationCompletion(
       throw new Error("done task is missing its terminal implementation review binding");
     const review = tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
     const reviewRef = `${REVIEWS_LEDGER}:${review.id}`;
-    const boundPatch: UpdateItemPatch = {
-      ...patch,
-      fields: { ...patch.fields, [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: reviewRef },
-    };
-    authorizedImplementationEvidenceMutations.add(boundPatch);
-    tx.updateItem(TASKS_LEDGER, taskId, boundPatch);
+    tx.bindImplementationCompletionReview(taskId, reviewRef);
+    tx.updateItem(TASKS_LEDGER, taskId, patch);
     const defectRefs = currentTask.fields["ledgerRefs"];
     if (Array.isArray(defectRefs)) {
       for (const defectRef of new Set(defectRefs)) {

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   GOALS_LEDGER,
-  IMPLEMENTATION_COMPLETION_REVIEW_FIELD,
   InMemoryLedgerStore,
   REVIEWS_LEDGER,
   TASKS_LEDGER,
@@ -151,8 +150,7 @@ describe("implementation completion crash recovery [Behavioral-Active Sociable-A
       });
       await expect(record()).rejects.toThrow("injected cut after ledger commit");
       expect((await fixture.store.snapshot()).completions[prepared.completionRef]?.state).toBe("recording");
-      expect(ledger.fetchItem(TASKS_LEDGER, "T2345").fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD])
-        .toBe("reviews:R1");
+      expect(ledger.fetchItem(TASKS_LEDGER, "T2345").fields).not.toHaveProperty("implementationCompletionReview");
       expect(ledger.fetchItem(REVIEWS_LEDGER, "R1").status).toBe("go-ahead");
       const afterCut = JSON.stringify(ledger.enumerate().map((ledgerId) => ledger.fetch(ledgerId)));
       await expect(record()).resolves.toMatchObject({ status: "recorded", reviewRef: "reviews:R1" });

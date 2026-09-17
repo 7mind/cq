@@ -1848,13 +1848,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     try {
       const outcome = immediateWriteTransaction(this.db(), () => {
         const initialState = admitted === null ? null : this.loadOwnedAdmissionState(admitted, measurement);
+        const rows = createSqliteLifecycleRowRepository(this.db(), measurement ?? null);
+        const directOperation = context !== null && "direct" in context ? context.direct : null;
         const owned = createKeyedOwnedWriteTransaction(
-          createSqliteLifecycleRowRepository(this.db(), measurement ?? null), initialState, this.now,
+          rows, initialState, directOperation, this.now,
         );
         const result = mutate(owned.tx);
         const delta = this.persistGenericMutationState({
           ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
         }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: new Set() }, measurement);
+        rows.persistImplementationCompletionBindings(owned.implementationCompletionBindingChanges);
         if (admitted !== null) this.assertOwnedMutationDelta(admitted, owned.beforeLedgers, delta);
         const changes = this.coherenceChangesForDelta(delta);
         recordSqliteCoherence(this.db(), this.coherenceOrigin, changes);

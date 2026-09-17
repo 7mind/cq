@@ -1,35 +1,38 @@
-import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_LEDGER, IMPLEMENTATION_COMPLETION_REVIEW_FIELD, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, OPERATOR_ACTIONS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "../constants.js";
+import { DECISIONS_LEDGER, DEFECTS_LEDGER, GOALS_LEDGER, HANDOFFS_LEDGER, IDEAS_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER, OPERATOR_ACTIONS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "../constants.js";
 import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
 import { LedgerError, LedgerNotFoundError, type FieldValue, type Item, type Ledger } from "../types.js";
 import type { WorksetActiveState } from "../worksetGraph.js";
 import type { OwnedMutationOperation, WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import { readCanonicalOwnership } from "../worksetOwnerEdges.js";
 import type { CreateItemInit, CreateMilestoneItemInit, UpdateItemPatch } from "./LedgerStore.js";
-import type { LifecycleRowRepository } from "./lifecycleRowRepository.js";
+import type { ImplementationCompletionBindingRecord, LifecycleRowRepository } from "./lifecycleRowRepository.js";
 import { applyOperatorActionLifecycleRows, operatorActionReads } from "./operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "./ownedWriteTransaction.js";
 import type { AsyncLifecycleRowRepository } from "./asyncRowRepository.js";
 import type { GenericMutationLedgerMetadata } from "./genericMutationDataSource.js";
 import { repositoryRead, runRepositoryReads, runAsyncRepositoryReads, type RepositoryReadProgram } from "./readProgram.js";
-import type { DirectOwnedOperation } from "./directOwnedMutation.js";
+import type { DirectOwnedOperation, DirectOwnedWriteTx } from "./directOwnedMutation.js";
 import { actionIdForTask, handoffIdForTask, taskIdForAction } from "../operatorActions.js";
 
 export interface KeyedOwnedWriteTransaction {
-  readonly tx: WorksetOwnedWriteTx;
+  readonly tx: DirectOwnedWriteTx;
   readonly ledgers: Map<string, Ledger>;
   readonly beforeLedgers: Map<string, Ledger>;
   readonly dirtyLedgers: ReadonlySet<string>;
   readonly allocationLedgers: ReadonlySet<string>;
+  readonly implementationCompletionBindingChanges: readonly ImplementationCompletionBindingRecord[];
 }
 
 export function createKeyedOwnedWriteTransaction(
   rows: LifecycleRowRepository,
   admittedState: WorksetActiveState | null,
+  directOperation: DirectOwnedOperation | null,
   now: () => string,
 ): KeyedOwnedWriteTransaction {
   const plan = prepareOwnedRows(rows.publicRows.listLedgers());
   runRepositoryReads(rows, plan.includeState(admittedState));
-  return plan.transaction((program) => runRepositoryReads(rows, program), admittedState, now);
+  if (directOperation !== null) runRepositoryReads(rows, plan.prepareDirectOperation(directOperation, now));
+  return plan.transaction((program) => runRepositoryReads(rows, program), admittedState, directOperation, now);
 }
 
 export async function createAsyncKeyedOwnedWriteTransaction(rows: AsyncLifecycleRowRepository,
@@ -37,14 +40,14 @@ export async function createAsyncKeyedOwnedWriteTransaction(rows: AsyncLifecycle
   const plan = prepareOwnedRows(await rows.publicRows.listLedgers());
   await runAsyncRepositoryReads(rows, plan.includeState(admittedState));
   await runAsyncRepositoryReads(rows, plan.prepareOperation(operation, admittedState));
-  return plan.transaction(requirePreparedRows, admittedState, now);
+  return plan.transaction(requirePreparedRows, admittedState, null, now);
 }
 
 export async function createAsyncDirectOwnedWriteTransaction(rows: AsyncLifecycleRowRepository,
   operation: DirectOwnedOperation, now: () => string): Promise<KeyedOwnedWriteTransaction> {
   const plan = prepareOwnedRows(await rows.publicRows.listLedgers());
   await runAsyncRepositoryReads(rows, plan.prepareDirectOperation(operation, now));
-  return plan.transaction(requirePreparedRows, null, now);
+  return plan.transaction(requirePreparedRows, null, operation, now);
 }
 
 type OwnedReadSource = LifecycleRowRepository | AsyncLifecycleRowRepository;
@@ -72,6 +75,8 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
   const loadedGroups = new Set<string>();
   const archived = new Map<string, boolean>();
   const allocationLedgers = new Set<string>();
+  const completionBindings = new Map<string, string | undefined>();
+  const completionBindingChanges = new Map<string, string>();
   const requireLedger = (source: ReadonlyMap<string, Ledger>, id: string): Ledger => {
     const ledger = source.get(id);
     if (ledger === undefined) throw new LedgerNotFoundError(id);
@@ -109,6 +114,14 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     const item = yield* rows.fetchActiveItem(ref);
     loaded.add(ref);
     return item === undefined ? undefined : yield* includeItem(ledgerId, item);
+  }
+  function* loadImplementationCompletionBinding(taskId: string): OwnedReads<string | undefined> {
+    if (completionBindings.has(taskId)) return completionBindings.get(taskId);
+    const binding = yield* repositoryRead((source: OwnedReadSource) =>
+      source.fetchImplementationCompletionBinding(taskId));
+    const reviewRef = binding?.reviewRef;
+    completionBindings.set(taskId, reviewRef);
+    return reviewRef;
   }
   function* loadRef(raw: string, allowArchived: boolean): OwnedReads<void> {
     let ref: string;
@@ -229,7 +242,7 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
     const task = yield* loadItem(TASKS_LEDGER, operation.taskId);
     if (task === undefined) return;
-    const reviewBinding = task.fields[IMPLEMENTATION_COMPLETION_REVIEW_FIELD];
+    const reviewBinding = yield* loadImplementationCompletionBinding(task.id);
     if (reviewBinding !== undefined) {
       if (typeof reviewBinding === "string" && /^reviews:R[0-9]+$/u.test(reviewBinding)) {
         yield* loadItem(REVIEWS_LEDGER, reviewBinding.slice(`${REVIEWS_LEDGER}:`.length));
@@ -247,17 +260,38 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
   }
   function transaction(run: <T>(program: OwnedReads<T>) => T, admittedState: WorksetActiveState | null,
-    now: () => string): KeyedOwnedWriteTransaction {
+    directOperation: DirectOwnedOperation | null, now: () => string): KeyedOwnedWriteTransaction {
     const operatorDirty = new Set<string>();
     const owned = createOwnedWriteTransaction({
       ledgers, now,
       archivedRefExists: (ledgerId, itemId) => archived.get(`${ledgerId}:${itemId}`) === true,
     });
+    const completionTaskId = directOperation?.kind === "implementation-completion" ? directOperation.taskId : null;
+    const assertCompletionTask = (taskId: string): void => {
+      if (taskId !== completionTaskId) {
+        throw new LedgerError("implementation completion bindings require their exact protected operation");
+      }
+    };
     return {
       ledgers, beforeLedgers, allocationLedgers,
+      get implementationCompletionBindingChanges() {
+        return [...completionBindingChanges].map(([taskId, reviewRef]) => ({ taskId, reviewRef }));
+      },
       get dirtyLedgers() { return new Set([...owned.dirtyLedgers, ...operatorDirty]); },
       tx: {
         ...owned.tx,
+        fetchImplementationCompletionBinding: (taskId) => {
+          assertCompletionTask(taskId);
+          return run(loadImplementationCompletionBinding(taskId));
+        },
+        bindImplementationCompletionReview: (taskId, reviewRef) => {
+          assertCompletionTask(taskId);
+          if (run(loadImplementationCompletionBinding(taskId)) !== undefined) {
+            throw new LedgerError("terminal implementation review binding already exists");
+          }
+          completionBindings.set(taskId, reviewRef);
+          completionBindingChanges.set(taskId, reviewRef);
+        },
         activeState: () => {
           if (admittedState === null) throw new LedgerError("direct keyed owned transactions cannot enumerate active state");
           return owned.tx.activeState();

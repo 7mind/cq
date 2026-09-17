@@ -8,6 +8,7 @@ export type AsyncRepository<Repository> = {
 
 export type AsyncGenericMutationDataSource = AsyncRepository<GenericMutationDataSource>;
 
-export interface AsyncLifecycleRowRepository extends AsyncRepository<Omit<LifecycleRowRepository, "publicRows" | "persistPrivateRecords">> {
+export interface AsyncLifecycleRowRepository extends AsyncRepository<Omit<LifecycleRowRepository,
+  "publicRows" | "persistPrivateRecords" | "persistImplementationCompletionBindings">> {
   readonly publicRows: AsyncGenericMutationDataSource;
 }

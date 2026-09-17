@@ -161,6 +161,8 @@ export interface InMemoryOwnedWriteTx {
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
   mutateOperatorAction(mutation: OperatorActionLifecycleMutation): OperatorActionLifecycleMutationResult;
+  fetchImplementationCompletionBinding(taskId: string): string | undefined;
+  bindImplementationCompletionReview(taskId: string, reviewRef: string): void;
 }
 
 /**
@@ -208,6 +210,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly searchIndex = new LedgerSearchIndex();
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
+  private readonly implementationCompletionBindings = new Map<string, string>();
   private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
   private worksetHandle: WorksetAdmissionCoordinator | null = null;
@@ -676,8 +679,27 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.withLocksInOrder(ledgerIds, async () => {
         if (context !== null && "admission" in context) assertOwnedMutationAdmission(context);
         const beforeLedgers = cloneLedgerMap(this.ledgers);
+        const beforeCompletionBindings = new Map(this.implementationCompletionBindings);
         const dirty = new Set<string>();
+        const completionTaskId = context !== null && "direct" in context &&
+          context.direct.kind === "implementation-completion" ? context.direct.taskId : null;
+        const assertCompletionTask = (taskId: string): void => {
+          if (taskId !== completionTaskId) {
+            throw new LedgerError("implementation completion bindings require their exact protected operation");
+          }
+        };
         const tx: InMemoryOwnedWriteTx = {
+          fetchImplementationCompletionBinding: (taskId) => {
+            assertCompletionTask(taskId);
+            return this.implementationCompletionBindings.get(taskId);
+          },
+          bindImplementationCompletionReview: (taskId, reviewRef) => {
+            assertCompletionTask(taskId);
+            if (this.implementationCompletionBindings.has(taskId)) {
+              throw new LedgerError("terminal implementation review binding already exists");
+            }
+            this.implementationCompletionBindings.set(taskId, reviewRef);
+          },
           mutateOperatorAction: (mutation) => {
             const outcome = applyOperatorActionLifecycleMutation(this.ledgers, mutation, this.now);
             for (const ledgerId of outcome.dirtyLedgers) dirty.add(ledgerId);
@@ -794,6 +816,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           return { result, dirtyLedgers: [...dirty] };
         } catch (error) {
           replaceMap(this.ledgers, beforeLedgers);
+          replaceMap(this.implementationCompletionBindings, beforeCompletionBindings);
           throw error;
         }
       }),

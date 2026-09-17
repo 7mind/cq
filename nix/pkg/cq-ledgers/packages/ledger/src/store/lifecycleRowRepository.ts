@@ -20,6 +20,11 @@ export interface LifecyclePrivateRecordChanges {
   readonly operations: readonly InMemoryPlanOperationRecord[];
 }
 
+export interface ImplementationCompletionBindingRecord {
+  readonly taskId: string;
+  readonly reviewRef: string;
+}
+
 export interface LifecycleRowRepository {
   readonly publicRows: Pick<
     GenericMutationDataSource,
@@ -31,5 +36,7 @@ export interface LifecycleRowRepository {
   fetchClaimByIdentity(key: LifecycleClaimKey): PlanPrivateClaimRecord | undefined;
   fetchActiveClaim(goalId: string): PlanPrivateClaimRecord | undefined;
   fetchOperation(key: LifecycleOperationKey): InMemoryPlanOperationRecord | undefined;
+  fetchImplementationCompletionBinding(taskId: string): ImplementationCompletionBindingRecord | undefined;
   persistPrivateRecords(changes: LifecyclePrivateRecordChanges): void;
+  persistImplementationCompletionBindings(changes: readonly ImplementationCompletionBindingRecord[]): void;
 }

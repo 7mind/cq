@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { IMPLEMENTATION_COMPLETION_REVIEW_FIELD, materializeOperatorAction, recordProtectedImplementationCompletion, supersedeOperatorAction, type LedgerStore } from "../src/index.js";
+import { materializeOperatorAction, recordProtectedImplementationCompletion, supersedeOperatorAction, type LedgerStore } from "../src/index.js";
 import { LIFECYCLE_NOW, LIFECYCLE_PROVENANCE } from "./sqlitePlanLifecycleFixture.js";
 import { IMPLEMENTATION_BASE, IMPLEMENTATION_RESULT, createImplementationEvidenceFixture, prepareImplementationCompletion } from "./implementationEvidenceTestSupport.js";
 
@@ -75,10 +75,7 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         const result = await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE);
         expect(result).toEqual({ reviewRef: "reviews:R2347" });
         expect(JSON.stringify(fixture.store.fetchItem("reviews", "R2345"))).toBe(incumbent);
-        expect(fixture.store.fetchItem("tasks", "T2345")).toMatchObject({
-          status: "done",
-          fields: { [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R2347" },
-        });
+        expect(fixture.store.fetchItem("tasks", "T2345").status).toBe("done");
         expect(await recordProtectedImplementationCompletion(fixture.store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE)).toEqual(result);
       } finally { await fixture.dispose(); }
     });
@@ -91,7 +88,6 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         expect(result).toEqual({ reviewRef: "reviews:R1" });
         expect(fixture.store.fetchItem("tasks", "T2345")).toMatchObject({ status: "done", fields: {
           resultCommit: IMPLEMENTATION_RESULT,
-          [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1",
         } });
         expect(fixture.store.fetchItem("reviews", "R1").status).toBe("go-ahead");
         expect(fixture.store.fetchItem("defects", "D1").status).toBe("resolved");
@@ -103,7 +99,7 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
           .rejects.toThrow("terminal implementation review id belongs to different evidence");
       } finally { await fixture.dispose(); }
     });
-    test("generic callers cannot create or alter a protected completion review binding", async () => {
+    test("generic callers cannot create or alter a protected completion review binding through task fields", async () => {
       const fixture = await build();
       try {
         await seedDirectOwnedTasks(fixture.store);
@@ -111,11 +107,11 @@ export function runDirectOwnedLifecycleContract(name: string, build: () => Promi
         await expect(fixture.store.createItem("tasks", task.milestoneId, {
           id: "T2346",
           status: "wip",
-          fields: { headline: "forged", [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1" },
-        })).rejects.toThrow("may be created only through completion recording");
+          fields: { headline: "forged", implementationCompletionReview: "reviews:R1" },
+        })).rejects.toThrow('unknown field "implementationCompletionReview"');
         await expect(fixture.store.updateItem("tasks", "T2345", {
-          fields: { [IMPLEMENTATION_COMPLETION_REVIEW_FIELD]: "reviews:R1" },
-        })).rejects.toThrow("may mutate only through completion recording");
+          fields: { implementationCompletionReview: "reviews:R1" },
+        })).rejects.toThrow('unknown field "implementationCompletionReview"');
       } finally { await fixture.dispose(); }
     });
     test("completion allocation preserves archived review identities and the lifetime counter", async () => {

@@ -21,7 +21,8 @@ export async function resolvePostgresDirectOwnedRows(queries: PostgresOperationQ
     resolution = { kind: "rejected", error };
   }
   const locks: PostgresRowLock[] = targets.map((target) => ({ target,
-    mode: target.table === "items" && target.ledgerId !== MILESTONES_LEDGER ? "update" : "share",
+    mode: target.table === "implementation_completion_bindings" ||
+      (target.table === "items" && target.ledgerId !== MILESTONES_LEDGER) ? "update" : "share",
   }));
   if (resolution.kind === "loaded") {
     for (const ledgerId of resolution.owned.allocationLedgers) locks.push({ target: { table: "ledgers", ledgerId }, mode: "update" });
