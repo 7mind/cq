@@ -233,7 +233,7 @@ export async function directOwnedScalingFixture(unrelatedRows: number, completio
     expect(accesses.filter(({ mode }) => mode === "write")).toEqual([]);
     await capture(() => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE));
     const changedItems = accesses.filter(({ table, mode }) => table === "items" && mode === "write").flatMap(({ rowKeys }) => rowKeys).sort();
-    expect(changedItems).toEqual(["defects:D1", "defects:D4", "reviews:R2345", "tasks:T2345"]);
+    expect(changedItems).toEqual(["defects:D1", "defects:D4", "reviews:R1", "tasks:T2345"]);
     await store.dispose();
     await store.init();
     await capture(() => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE));

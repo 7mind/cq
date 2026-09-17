@@ -18,7 +18,7 @@ for (const materialized of [true, false]) {
       await capture(() => supersedeOperatorAction(store, DIRECT_SUPERSEDE_INPUT), [], []);
       const completion = await directCompletionRecord();
       await capture(() => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE),
-        ["tasks:T2345", "reviews:R2345", "defects:D1", "defects:D4"], []);
+        ["tasks:T2345", "reviews:R1", "defects:D1", "defects:D4"], []);
       await capture(() => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE), [], []);
       expect(fixture.peer.fetchItem("tasks", "T2345").status).toBe("done");
       expect(fixture.peer.fetchItem("defects", "D90000").status).toBe("root-caused");

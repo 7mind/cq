@@ -10,7 +10,7 @@ for (const operation of ["materialize", "materialized-supersede", "unmaterialize
     if (operation === "protected-completion") {
       const completion = await directCompletionRecord();
       return { invoke: () => recordProtectedImplementationCompletion(store, DIRECT_TASK_AUTHORITY, completion, LIFECYCLE_PROVENANCE),
-        documents: ["tasks:T2345", "reviews:R2345", "defects:D1", "defects:D4"], privateKeys: [] };
+        documents: ["tasks:T2345", "reviews:R1", "defects:D1", "defects:D4"], privateKeys: [] };
     }
     if (operation === "materialized-supersede") await materializeOperatorAction(store, DIRECT_OPERATOR_INPUT);
     return { invoke: () => supersedeOperatorAction(store, DIRECT_SUPERSEDE_INPUT),

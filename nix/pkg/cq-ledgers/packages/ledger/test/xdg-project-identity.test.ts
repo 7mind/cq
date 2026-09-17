@@ -264,6 +264,7 @@ describe("XDG project identity storage shape", () => {
           "coherence_state",
           "coherence_vector",
           "groups",
+          "implementation_completion_bindings",
           "item_references",
           "items",
           "ledgers",
