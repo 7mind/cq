@@ -316,13 +316,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "82e688a20bc0c66fabe4bf4835604fcbb5410e8ab832708cbcb3c4236fb13981",
+      "sha256": "8c5ea0c59eac8250f4bb5eebf6e42a6a0109d7b2e7f3f79424de2b7d93f6ab71",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "82e688a20bc0c66fabe4bf4835604fcbb5410e8ab832708cbcb3c4236fb13981",
+      "sha256": "8c5ea0c59eac8250f4bb5eebf6e42a6a0109d7b2e7f3f79424de2b7d93f6ab71",
       "targets": []
     },
     {
