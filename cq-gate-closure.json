@@ -8,8 +8,8 @@
   "opaqueEdges": [
     { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "a64c1e1657c6afb2711e913d57de727a274524fe9c94d6dfe961e7040a115454", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "112c8e5625e491b2e5615bb054a6dc0bb8798a2758e28c2665d2a6983bfde9ac", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "6e1018e676bd2e62ff98bfd41c0dd66633e61ff3e1319edd1ab4cc46ccc6f7b0", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "807ce7a6fe9c7b66b2929b1e2df7ee1b4df433d8b8cdbac6c26c657c1cdb131f", "targets": [] },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",
@@ -561,13 +561,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "ded0f5aebaa280641f084bb4d2d63909bcf1c727b722e9baf7ba1facafbeb9c6",
+      "sha256": "7212023c6e2f0b335b4e0977238c73915e9cc010449ba0da5284e3eda10c38ac",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "ded0f5aebaa280641f084bb4d2d63909bcf1c727b722e9baf7ba1facafbeb9c6",
+      "sha256": "7212023c6e2f0b335b4e0977238c73915e9cc010449ba0da5284e3eda10c38ac",
       "targets": []
     },
     {
