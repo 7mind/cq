@@ -29,6 +29,7 @@ function memoryFixture(): LifecycleRowsFixture {
   const active = new Map([...claims].map(([scope, claim]) => [claim.goalId, scope]));
   const existing = lifecycleOperation("existing");
   const operations = new Map([[operationIdentity(existing.replay), existing]]);
+  const completionBindings = new Map<string, string>();
   const taskGroups = new Map<string, string[]>();
   for (const { ledgerId, item } of LIFECYCLE_PUBLIC_ITEMS) {
     if (ledgerId !== "tasks") continue;
@@ -65,6 +66,10 @@ function memoryFixture(): LifecycleRowsFixture {
         return scope === undefined ? undefined : structuredClone(claims.get(scope));
       },
       fetchOperation: (key) => structuredClone(operations.get(operationIdentity(key))),
+      fetchImplementationCompletionBinding: (taskId) => {
+        const reviewRef = completionBindings.get(taskId);
+        return reviewRef === undefined ? undefined : { taskId, reviewRef };
+      },
       persistPrivateRecords(changes) {
         if (!inTransaction) throw new LedgerError("lifecycle row persistence requires a write transaction");
         for (const claim of changes.claims) {
@@ -89,10 +94,18 @@ function memoryFixture(): LifecycleRowsFixture {
           operations.set(scope, structuredClone(operation));
         }
       },
+      persistImplementationCompletionBindings(changes) {
+        if (!inTransaction) throw new LedgerError("completion binding persistence requires a write transaction");
+        for (const binding of changes) {
+          if (completionBindings.has(binding.taskId)) throw new LedgerError("duplicate completion binding");
+          completionBindings.set(binding.taskId, binding.reviewRef);
+        }
+      },
     },
     transaction(body) {
       if (inTransaction) throw new LedgerError("nested lifecycle fixture transaction");
-      const restore = [restorePoint(claims), restorePoint(byIdentity), restorePoint(active), restorePoint(operations)];
+      const restore = [restorePoint(claims), restorePoint(byIdentity), restorePoint(active), restorePoint(operations),
+        restorePoint(completionBindings)];
       inTransaction = true;
       try { return body(); }
       catch (error) { for (const reset of restore) reset(); throw error; }
