@@ -919,13 +919,26 @@ process.stdout.write(JSON.stringify(input.handle));
       launchRoot,
       { ...process.env, CQ_T2081_SUCCESSOR_MARKER: launchMarker },
     );
+    let successorLaunchInput:
+      | Parameters<
+          NonNullable<
+            Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
+          >
+        >[0]
+      | undefined;
+    const recordedSuccessorLauncher: NonNullable<
+      Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
+    > = async (input) => {
+      successorLaunchInput = input;
+      await implementationSuccessorLauncher(input);
+    };
     const subject = await fixtureWithDispatchBase(
       runner,
       "managed",
       () => "2026-08-12T20:00:00.000Z",
       false,
       true,
-      implementationSuccessorLauncher,
+      recordedSuccessorLauncher,
     );
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
@@ -972,6 +985,9 @@ process.stdout.write(JSON.stringify(input.handle));
       },
     });
     expect(runner.requests).toHaveLength(0);
+    if (subject.ledgerStore === undefined) {
+      throw new Error("stale successor restart requires the task ledger");
+    }
     const restarted = createDispatchCapability({
       backend: subject.backend,
       promptArtifactStore: artifactStore(),
@@ -979,7 +995,7 @@ process.stdout.write(JSON.stringify(input.handle));
       repositoryRoot: subject.repositoryRoot,
       worktreeStateDir: subject.stateDir,
       supervisedWorkerGateRunner: runner,
-      implementationSuccessorLauncher,
+      implementationSuccessorLauncher: recordedSuccessorLauncher,
       now: () => "2026-08-12T20:00:00.000Z",
       randomBytes: sequentialDispatchRandomBytes(sequence * 48),
     });
@@ -1011,6 +1027,34 @@ process.stdout.write(JSON.stringify(input.handle));
         argv: [],
       },
     ]);
+    if (successorLaunchInput === undefined) {
+      throw new Error("successor launcher did not receive the prepared private envelope");
+    }
+    const foreignRoleScript = path.join(launchRoot, "foreign-successor-role.ts");
+    await fs.writeFile(
+      foreignRoleScript,
+      `const input = JSON.parse(await Bun.stdin.text());
+process.stdout.write(JSON.stringify({
+  attestationId: input.handle.attestationId,
+  generation: input.handle.generation + 1,
+}));
+`,
+    );
+    const foreignLauncher = createImplementationSuccessorLauncher(
+      {
+        roleCommand: process.execPath,
+        roleScript: foreignRoleScript,
+        ledgerCommand: "/trusted/cq",
+        codexExecutable: "/trusted/codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+      },
+      launchRoot,
+    );
+    await expect(foreignLauncher(successorLaunchInput)).rejects.toThrow(
+      "implementation successor boundary returned a foreign handle",
+    );
     const [source, successor] = [...subject.store.rows()]
       .sort((left, right) => left.generation - right.generation);
     expect(source).toMatchObject({

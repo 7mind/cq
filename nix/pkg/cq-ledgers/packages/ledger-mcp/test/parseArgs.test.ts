@@ -9,7 +9,11 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { PassThrough } from "node:stream";
 import * as path from "node:path";
-import { parseArgs, readParentGateFinalizeRequest } from "../src/main.js";
+import {
+  parseArgs,
+  readImplementationCandidateCoordinateRequest,
+  readParentGateFinalizeRequest,
+} from "../src/main.js";
 
 const savedEnv = process.env["LEDGER_ROOT"];
 afterEach(() => {
@@ -181,6 +185,52 @@ describe("parent gate finalizer framing", () => {
       const reading = readParentGateFinalizeRequest(input);
       input.end(bytes);
       await expect(reading).rejects.toThrow(/parent gate request/);
+    }
+  });
+});
+
+describe("implementation successor coordinator framing", () => {
+  const request = {
+    attestationId: `att_${"a".repeat(32)}`,
+    generation: 2,
+    holderId: "installed-successor-owner",
+    parentGateCapability: {
+      scope: "parent-gate",
+      token: `cq_parent_gate_${"b".repeat(43)}`,
+    },
+    successorLaunch: {
+      roleCommand: "/nix/store/bun/bin/bun",
+      roleScript: "/nix/store/cq/codex-role-dispatch.ts",
+      ledgerCommand: "/nix/store/cq/bin/cq",
+      codexExecutable: "/nix/store/codex/bin/codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+    },
+  } as const;
+
+  it("accepts the closed capability-free successor launch profile", async () => {
+    const input = new PassThrough();
+    const reading = readImplementationCandidateCoordinateRequest(input);
+    input.end(`${JSON.stringify(request)}\n`);
+    await expect(reading).resolves.toEqual(request);
+  });
+
+  it("rejects malformed or surplus successor launch authority", async () => {
+    for (const invalid of [
+      {
+        ...request,
+        successorLaunch: { ...request.successorLaunch, sandboxMode: "danger-unbounded" },
+      },
+      {
+        ...request,
+        successorLaunch: { ...request.successorLaunch, inputCapability: "must-not-cross" },
+      },
+    ]) {
+      const input = new PassThrough();
+      const reading = readImplementationCandidateCoordinateRequest(input);
+      input.end(`${JSON.stringify(invalid)}\n`);
+      await expect(reading).rejects.toThrow("malformed implementation coordinator request");
     }
   });
 });
