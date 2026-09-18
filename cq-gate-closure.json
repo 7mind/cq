@@ -8,7 +8,7 @@
   "opaqueEdges": [
     { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "7e32129212acdf300d68aaeaf31ce39e5e23c4d644bc27965ebd14cc43fc3028", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "dd7461e8fd4e49c4b8ec49bdf41ff029d517c39e44b22332edf1e13b2a03c6a7", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "a7ad4b983f2e53402a5d16a11cc06bbf01b30a0fe36acc994ce02e9082ef27a7", "targets": [] },
     {
       "kind": "path",
@@ -585,7 +585,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "93cbb9b1c3d6171a58855090dcb88f383e39eb28dfaac28f56bd2edbebf4e4c8",
+      "sha256": "49fb13edd3f7e8c14ef057afdb565d9f39e5bb4338ef131e98b2668917816471",
       "targets": []
     },
     {
@@ -1419,7 +1419,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "93cbb9b1c3d6171a58855090dcb88f383e39eb28dfaac28f56bd2edbebf4e4c8",
+      "sha256": "49fb13edd3f7e8c14ef057afdb565d9f39e5bb4338ef131e98b2668917816471",
       "targets": []
     },
     {
