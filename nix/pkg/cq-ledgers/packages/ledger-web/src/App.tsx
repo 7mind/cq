@@ -3047,8 +3047,8 @@ function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement 
  * identity, IO model, configured model class + per-harness mappings, the
  * MECHANICALLY-DERIVED privilege as an RO/RW badge, the exposed-tools
  * descriptor, and the full prompt-template body folded inside a COLLAPSED
- * `<details>` (no `open` attribute) so the (possibly large) markdown stays
- * folded until the reader expands it. Per-role testids follow the documented
+ * `<details>` (no `open` attribute) so the (possibly large) markdown is mounted
+ * only while the reader has it expanded. Per-role testids follow the documented
  * scheme: `help-agent-<id>`, `-privilege`, `-tools`, `-prompt`.
  */
 function AgentsTab({
@@ -3097,13 +3097,30 @@ function AgentsTab({
               {role.exposedTools}
             </dd>
           </dl>
-          <details className="lw-agent-prompt" data-testid={`help-agent-${role.id}-prompt`}>
-            <summary>Prompt template</summary>
-            <Markdown text={role.promptTemplate} />
-          </details>
+          <AgentPromptDetails roleId={role.id} promptTemplate={role.promptTemplate} />
         </section>
       ))}
     </div>
+  );
+}
+
+function AgentPromptDetails({
+  roleId,
+  promptTemplate,
+}: {
+  roleId: string;
+  promptTemplate: string;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="lw-agent-prompt"
+      data-testid={`help-agent-${roleId}-prompt`}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Prompt template</summary>
+      {open ? <Markdown text={promptTemplate} /> : null}
+    </details>
   );
 }
 

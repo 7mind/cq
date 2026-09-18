@@ -230,8 +230,9 @@ describe("Agents tab (T279)", () => {
       await flush();
 
       expect(firstDetails.textContent).toContain(markers[0]!);
-      for (const marker of markers.slice(1)) {
-        expect(container.textContent).not.toContain(marker);
+      for (const [index, role] of AGENT_ROLES.entries()) {
+        if (index === 0) continue;
+        expect(testid(`help-agent-${role.id}-prompt`)!.textContent).not.toContain(markers[index]!);
       }
 
       click(firstSummary);
