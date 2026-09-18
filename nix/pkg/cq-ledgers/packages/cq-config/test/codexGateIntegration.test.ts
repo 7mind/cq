@@ -169,7 +169,6 @@ function launchDispatch(
       CQ_PROMPT_ROOT: fixture.promptRoot,
       CQ_CODEX_EXECUTABLE: fixture.fakeCodex,
       CQ_CODEX_LEDGER_COMMAND: fixture.ledgerCommand,
-      CQ_CODEX_ROLE_CORRELATION_ID: "gate-lifecycle-correlation",
       CQ_CODEX_ROLE_EXPECTED_RUN_ID: "gate-lifecycle-parent-run",
       CQ_TEST_CODEX_MODE: mode,
       CQ_TEST_CODEX_READY: fixture.codexReady,
@@ -177,12 +176,10 @@ function launchDispatch(
       CQ_TEST_CODEX_SIGNALS: fixture.codexSignals,
       CQ_TEST_CODEX_RELEASE: fixture.codexRelease,
     },
-    stdin: "pipe",
+    stdin: new Blob([invocation(fixture, timeoutMs)]),
     stdout: "pipe",
     stderr: "pipe",
   });
-  child.stdin.write(invocation(fixture, timeoutMs));
-  child.stdin.end();
   return {
     child,
     stdout: new Response(child.stdout).text(),
