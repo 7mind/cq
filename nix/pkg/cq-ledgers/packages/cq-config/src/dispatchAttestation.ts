@@ -2695,12 +2695,6 @@ function claimStagedRebaseSuccessor(
     ) ===
       dispatchPayloadDigest(retainedContinuation!.gitReceipts as unknown as DispatchJSONValue)
   ) {
-    if (continuationClaimedBy(retainedContinuation!.continuationReference, deps) !== undefined) {
-      throw new DispatchContinuationError(
-        "already-claimed",
-        "dispatch continuation has already allocated its successor generation",
-      );
-    }
     return supersedeRetainedQueue(queue!, retainedContinuation!.continuationReference);
   }
   if (
