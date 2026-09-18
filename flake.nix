@@ -807,10 +807,17 @@ if (typeof request.promptDigest !== "string" || !/^[0-9a-f]{64}$/.test(request.p
 const fs = require("node:fs");
 const request = JSON.parse(fs.readFileSync(0, "utf8"));
 const keys = Object.keys(request).sort().join(",");
-if (keys !== "attestationId,generation,holderId,parentGateCapability") process.exit(1);
+if (keys !== "attestationId,generation,holderId,parentGateCapability,successorLaunch") process.exit(1);
 if (request.attestationId !== "att_packaged_role_acknowledgement" || request.generation !== 7) process.exit(1);
 if (request.parentGateCapability?.scope !== "parent-gate" || request.parentGateCapability.token !== "cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG") process.exit(1);
-if (typeof request.holderId !== "string" || !request.holderId.includes(request.attestationId)) process.exit(1);
+if (request.holderId !== "att_packaged_role_acknowledgement:7:installed-parent") process.exit(1);
+const launch = request.successorLaunch;
+if (launch === null || typeof launch !== "object" || Array.isArray(launch)) process.exit(1);
+if (Object.keys(launch).sort().join(",") !== "codexExecutable,ledgerCommand,model,reasoningEffort,roleCommand,roleScript,sandboxMode") process.exit(1);
+if (launch.roleCommand !== "${pkgs.bun}/bin/bun") process.exit(1);
+if (launch.roleScript !== "$out/share/cq/packages/cq-config/scripts/codex-role-dispatch.ts") process.exit(1);
+if (launch.ledgerCommand !== "$fakeLedger" || launch.codexExecutable !== "$fakeCodex") process.exit(1);
+if (launch.model !== "test-model" || launch.reasoningEffort !== "high" || launch.sandboxMode !== "read-only") process.exit(1);
 '
     printf '%s\n' '{"state":"empty","partitionKey":"cq-implementation-queue:v1:packaged-role","partitionRevision":1}'
     ;;
