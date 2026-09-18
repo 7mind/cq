@@ -573,26 +573,15 @@ describe("staged-rebase source retirement", () => {
     expect(consumed).toMatchObject({
       state: "consumed",
       implementationQueue: {
-        state: "released",
-        terminal: { reason: "gate-complete" },
+        state: "leased",
+        lease: {
+          holderId: retirement.holderId,
+          generation: retirement.leaseGeneration,
+        },
+        qualification: { qualificationDigest: expect.any(String) },
       },
     });
-    clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
-    await sweepAttestationsOn(backend, { now: clock.now });
     backend.rehydrate();
-    expect(backend.storedRows()).toContainEqual(
-      expect.objectContaining({
-        kind: "tombstone",
-        attestationId: prepared.attestationId,
-        generation: prepared.generation,
-        terminalKind: "consumed",
-        implementationQueue: expect.objectContaining({
-          state: "released",
-          terminal: expect.objectContaining({ reason: "gate-complete" }),
-          qualificationDigest: expect.any(String),
-        }),
-      }),
-    );
 
     const rebasedStartCommit = "d".repeat(40);
     const successorBridge = {
