@@ -2536,9 +2536,6 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   ) {
     throw new Error("trusted attestation store returned a different G213 handle");
   }
-  if (row.state !== "gate-pending") {
-    throw new Error("trusted attestation store returned a stale G213 candidate");
-  }
   if (
     row.kind !== "envelope" ||
     row.promptProvenance.roleId !== "implement-worker" ||
@@ -2644,7 +2641,7 @@ export class G213CandidateAuthenticatorV1 {
     if (persisted === undefined) {
       throw new Error("trusted attestation store has no matching G213 candidate");
     }
-    if (persisted.kind !== "envelope") {
+    if (persisted.kind !== "envelope" || persisted.state !== "gate-pending") {
       throw new Error("trusted attestation store returned a stale G213 candidate");
     }
     if (canonical(persisted.namespace) !== canonical(this.#store.namespace)) {

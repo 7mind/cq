@@ -301,6 +301,23 @@ describe("cohort candidate identity", () => {
         }),
       ).rejects.toThrow("stale G213 candidate");
 
+      const tombstone = {
+        kind: "tombstone",
+        namespace: candidateNamespace,
+        attestationId: fixture.dispatch.attestationId,
+        generation: fixture.dispatch.generation,
+      } as unknown as AttestationRow;
+      const tombstoneAuthenticator = new G213CandidateAuthenticatorV1({
+        store: storeCase.create([tombstone]),
+        repository,
+      });
+      await expect(
+        tombstoneAuthenticator.resolve({
+          attestationId: fixture.dispatch.attestationId,
+          generation: fixture.dispatch.generation,
+        }),
+      ).rejects.toThrow("stale G213 candidate");
+
       const unqualified = {
         ...fixture.sourceRow,
         implementationQueue: {
@@ -656,14 +673,15 @@ describe("cohort candidate identity", () => {
         operation: "caller-resolved",
       }),
     ];
+    const forgedDiff = [
+      { path: "src/forged.ts", mode: "100644" as const, blobDigest: sha256("forged blob") },
+    ];
     const fabricated = candidateEnvelope({
       dispatch: fixture.dispatch,
       result: forgedResult,
       tree: forgedTree,
       receipts: forgedReceipts,
-      repositoryDiff: [
-        { path: "src/forged.ts", mode: "100644", blobDigest: sha256("forged blob") },
-      ],
+      repositoryDiff: forgedDiff,
       attempt: "attempt:caller-resolved",
     });
     const resolved = await fixture.authenticator.resolve({
@@ -671,7 +689,7 @@ describe("cohort candidate identity", () => {
       generation: fixture.dispatch.generation,
       row: fabricated.row,
       repository: {
-        resolveWholeDiff: async () => fabricated.row.output,
+        resolveWholeDiff: async () => forgedDiff,
       },
     } as unknown as { readonly attestationId: string; readonly generation: number });
     const staged = fixture.authenticator.stage(fixture.pending, { row: resolved });
