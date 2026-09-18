@@ -2518,9 +2518,7 @@ function claimStagedRebaseSuccessor(
   if (previous === undefined) return;
   const queue = previous.implementationQueue;
   const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
-  const retainedContinuation = isAttestationTombstone(previous)
-    ? previous.dispatchContinuationBinding
-    : undefined;
+  const retainedContinuation = previous.dispatchContinuationBinding;
   const priorManagerBinding = isAttestationTombstone(previous)
     ? retainedContinuation?.gitEffectBinding
     : previous.gitEffectBinding;
@@ -2539,6 +2537,131 @@ function claimStagedRebaseSuccessor(
         "ref",
         "baseCommit",
       ] as const).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
+  const input =
+    typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
+      ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const retainedQueueBindingsMatch =
+    !isAttestationTombstone(previous) &&
+    previous.state === "consumed" &&
+    queue?.state === "leased" &&
+    queue.lease !== undefined &&
+    queue.qualification !== undefined &&
+    previous.stagedCompletionQualification?.qualificationDigest ===
+      queue.qualification.qualificationDigest &&
+    previous.gateSubmittedOutputDigest === queue.qualification.outputDigest &&
+    retainedContinuation !== undefined &&
+    retainedContinuation.liveTip === queue.attempt.resultCommit &&
+    dispatchPayloadDigest(retainedContinuation.gitReceipts as unknown as DispatchJSONValue) ===
+      queue.attempt.gitReceiptLineageDigest &&
+    !managerBindingChanged;
+  if (
+    source === undefined &&
+    bridge !== undefined &&
+    gitEffectBinding !== undefined &&
+    retainedQueueBindingsMatch &&
+    retainedContinuation!.liveTip === bridge.oldResultCommit &&
+    queue!.attempt.taskId === gitEffectBinding.taskId &&
+    queue!.attempt.repositoryId === gitEffectBinding.repositoryId &&
+    queue!.attempt.worktreePath === gitEffectBinding.worktreePath &&
+    input?.["baseCommit"] === bridge.ontoCommit &&
+    input["startingCommit"] === bridge.rebasedStartCommit
+  ) {
+    const retainedQueue = queue!;
+    const retiredAt = deps.now();
+    const sourcePayload = {
+      source: Object.freeze({ ...reprepareOf }),
+      partitionKey: retainedQueue.partition.partitionKey,
+      enrollmentId: retainedQueue.enrollment.enrollmentId,
+      attemptId: retainedQueue.attempt.attemptId,
+      leaseGeneration: retainedQueue.leaseGeneration,
+      stagedOutputDigest: retainedQueue.qualification!.outputDigest,
+      sourceResultCommit: retainedQueue.attempt.resultCommit,
+      sourceResultTree: retainedQueue.attempt.resultTree,
+      gitReceiptLineageDigest: retainedQueue.attempt.gitReceiptLineageDigest,
+      repositoryId: retainedQueue.attempt.repositoryId,
+      worktreePath: retainedQueue.attempt.worktreePath,
+      ontoCommit: bridge.ontoCommit,
+      guardedRebase: bridge.guardedRebase,
+      guardedRebaseJournalDigest: bridge.requestDigest,
+      retiredAt,
+    };
+    const sourceReference = `cq-staged-rebase-source:v1:${dispatchPayloadDigest(
+      sourcePayload as unknown as DispatchJSONValue,
+    )}`;
+    const sourceWithoutServerDigest = {
+      kind: "cq-staged-rebase-source-binding" as const,
+      version: 1 as const,
+      sourceReference,
+      ...sourcePayload,
+    };
+    const claimedSource: DispatchStagedRebaseSourceBinding = Object.freeze({
+      ...sourceWithoutServerDigest,
+      serverBindingDigest: dispatchPayloadDigest(
+        sourceWithoutServerDigest as unknown as DispatchJSONValue,
+      ),
+      successor: Object.freeze({ ...successor }),
+    });
+    const detailsDigest = dispatchPayloadDigest({
+      sourceReference,
+      serverBindingDigest: claimedSource.serverBindingDigest,
+      ontoCommit: bridge.ontoCommit,
+    });
+    const { lease: _retiredLease, ...retiredQueueBase } = retainedQueue;
+    const retiredQueue: ImplementationQueueControl = Object.freeze({
+      ...retiredQueueBase,
+      state: "staged-rebase-retired" as const,
+      partitionRevision: nextImplementationQueuePartitionRevision(
+        deps.store,
+        retainedQueue.partition.partitionKey,
+      ),
+      terminal: Object.freeze({ reason: "staged-rebase" as const, terminalAt: retiredAt, detailsDigest }),
+      stagedRebaseSource: claimedSource,
+    });
+    deps.store.replace(
+      previous,
+      Object.freeze({
+        ...previous,
+        implementationQueue: retiredQueue,
+        stagedRebaseSourceBinding: claimedSource,
+      }),
+    );
+    return;
+  }
+  if (
+    source === undefined &&
+    request.continuationClaim !== undefined &&
+    retainedQueueBindingsMatch
+  ) {
+    const retainedQueue = queue!;
+    const supersededAt = deps.now();
+    const detailsDigest = dispatchPayloadDigest({
+      successor,
+      continuationReference: request.continuationClaim.continuationReference,
+    });
+    const { lease: _supersededLease, ...terminalQueueBase } = retainedQueue;
+    const terminalQueue: ImplementationQueueControl = Object.freeze({
+      ...terminalQueueBase,
+      state: "terminal" as const,
+      partitionRevision: nextImplementationQueuePartitionRevision(
+        deps.store,
+        retainedQueue.partition.partitionKey,
+      ),
+      terminal: Object.freeze({ reason: "superseded" as const, terminalAt: supersededAt, detailsDigest }),
+    });
+    deps.store.replace(previous, Object.freeze({ ...previous, implementationQueue: terminalQueue }));
+    return;
+  }
+  if (
+    source === undefined &&
+    request.continuationClaim !== undefined &&
+    queue?.state === "leased"
+  ) {
+    throw new AttestationBindingError(
+      "continuationClaim",
+      "dispatch continuation does not match the retained implementation queue authority",
+    );
+  }
   if (source === undefined) {
     const priorGuardedBridge = isAttestationTombstone(previous)
       ? retainedContinuation?.gitEffectBinding.guardedRebaseBridge
@@ -2598,10 +2721,6 @@ function claimStagedRebaseSuccessor(
       "the retired staged-rebase source already allocated a successor",
     );
   }
-  const input =
-    typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
-      ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
-      : undefined;
   const sourceQueueBinding = queue.stagedRebaseSource;
   if (
     source.source.attestationId !== reprepareOf.attestationId ||

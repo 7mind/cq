@@ -496,6 +496,40 @@ function isConsumedGuardedContinuationAncestor(
   );
 }
 
+function isConsumedOrdinaryContinuationAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+): boolean {
+  const control = candidate.implementationQueue;
+  const claim = successor.dispatchContinuationClaim;
+  const retained = candidate.dispatchContinuationBinding;
+  if (
+    control === undefined ||
+    claim === undefined ||
+    retained === undefined ||
+    candidate.attestationId !== successor.attestationId ||
+    candidate.generation + 1 !== successor.generation ||
+    claim.source.attestationId !== candidate.attestationId ||
+    claim.source.generation !== candidate.generation ||
+    claim.continuationReference !== retained.continuationReference ||
+    (isAttestationTombstone(candidate) ? candidate.terminalKind : candidate.state) !== "consumed" ||
+    control.state !== "terminal" ||
+    control.terminal?.reason !== "superseded" ||
+    digest(retained.gitEffectBinding) !== digest(successorBinding)
+  ) {
+    return false;
+  }
+  if (isAttestationTombstone(candidate)) {
+    return control.qualificationDigest !== undefined;
+  }
+  return (
+    control.qualification !== undefined &&
+    retained.liveTip === control.attempt.resultCommit &&
+    digest(retained.gitReceipts) === control.attempt.gitReceiptLineageDigest
+  );
+}
+
 function runnable(control: ImplementationQueueControl): boolean {
   return active(control) && control.state !== "parked" && control.state !== "yielded";
 }
@@ -763,7 +797,8 @@ export function enqueueImplementationCandidate(
       (candidate.attestationId !== row.attestationId ||
         candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired" &&
-      !isConsumedGuardedContinuationAncestor(candidate, row, binding),
+      !isConsumedGuardedContinuationAncestor(candidate, row, binding) &&
+      !isConsumedOrdinaryContinuationAncestor(candidate, row, binding),
   );
   if (terminalPrior !== undefined) {
     throw new ImplementationQueueConflictError(
@@ -772,9 +807,16 @@ export function enqueueImplementationCandidate(
     );
   }
   const retiredSourceRows = priorEnrollment.filter(
-    (candidate) =>
-      candidate.implementationQueue!.state === "staged-rebase-retired" &&
-      candidate.implementationQueue!.stagedRebaseSource !== undefined,
+    (candidate) => {
+      const control = candidate.implementationQueue!;
+      const claimed = control.stagedRebaseSource?.successor;
+      return (
+        control.state === "staged-rebase-retired" &&
+        control.stagedRebaseSource !== undefined &&
+        (claimed === undefined ||
+          (claimed.attestationId === row.attestationId && claimed.generation === row.generation))
+      );
+    },
   );
   const successorSource = request.stagedRebaseSource;
   if (retiredSourceRows.length > 0 && successorSource === undefined) {

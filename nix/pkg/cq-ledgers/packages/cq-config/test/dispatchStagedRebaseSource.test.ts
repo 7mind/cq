@@ -25,6 +25,7 @@ import {
   sweepAttestationsOn,
   terminalizeImplementationCandidateOn,
   type AttestationNamespace,
+  type DispatchGitChangeReceipt,
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
@@ -81,7 +82,10 @@ function input(base: string, startingCommit: string, round: number): DispatchJSO
   };
 }
 
-function stagedOutput(commit: string): Readonly<Record<string, DispatchJSONValue>> {
+function stagedOutput(
+  commit: string,
+  gitReceipts: readonly DispatchGitChangeReceipt[] = [],
+): Readonly<Record<string, DispatchJSONValue>> {
   return {
     taskId: "T6518",
     status: "pass",
@@ -89,7 +93,7 @@ function stagedOutput(commit: string): Readonly<Record<string, DispatchJSONValue
     branch: binding.branch,
     actualWorktreePath: binding.worktreePath,
     filesTouched: ["packages/cq-config/src/dispatchImplementationQueue.ts"],
-    gitReceipts: [],
+    gitReceipts,
     checkSummary: "focused checks passed",
     baseVerification: {
       status: "verified",
@@ -167,6 +171,7 @@ async function enqueue(
   tree: string,
   observedBaseCommit: string,
   source?: EnqueueImplementationCandidateRequest["stagedRebaseSource"],
+  gitReceipts: readonly DispatchGitChangeReceipt[] = [],
 ): Promise<ImplementationQueueControl> {
   return await enqueueImplementationCandidateOn(
     backend,
@@ -183,7 +188,7 @@ async function enqueue(
       resultTree: tree,
       gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
       packagedEnvironmentDigest,
-      gitReceipts: [],
+      gitReceipts,
       gitEffectBinding: effectBinding,
       stagedOutputDigest: pending.outputDigest,
       ...(source === undefined ? {} : { stagedRebaseSource: source }),
@@ -192,18 +197,41 @@ async function enqueue(
   );
 }
 
-async function qualifiedAndLeased(): Promise<{
+async function qualifiedAndLeased(withReceipt = false): Promise<{
   readonly backend: InMemoryAttestationBackend;
   readonly prepared: DispatchPrepared;
   readonly pending: GatePendingResultView;
   readonly queue: ImplementationQueueControl;
   readonly retirement: RetireDispatchStagedRebaseSourceRequest;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
 }> {
   const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
   const prepared = await prepare(backend);
+  const gitReceipts: readonly DispatchGitChangeReceipt[] = withReceipt
+    ? [
+        {
+          kind: "cq-git-change-receipt",
+          version: 1,
+          attestationId: prepared.attestationId,
+          generation: prepared.generation,
+          taskId: binding.taskId,
+          operationId: "consumed-ordinary-result",
+          requestDigest: "0".repeat(64),
+          oldHead: baseCommit,
+          newHead: resultCommit,
+          tree: resultTree,
+          objectOids: [resultCommit],
+          paths: ["file.txt"],
+          committedAt: clock.peek(),
+        },
+      ]
+    : [];
   const stored = await storeDispatchResultOn(
     backend,
-    { resultCapability: prepared.resultCapability, output: stagedOutput(resultCommit) },
+    {
+      resultCapability: prepared.resultCapability,
+      output: stagedOutput(resultCommit, gitReceipts),
+    },
     { now: clock.now },
   );
   if (stored.state !== "gate-pending") throw new Error("expected gate-pending staging");
@@ -215,6 +243,8 @@ async function qualifiedAndLeased(): Promise<{
     resultCommit,
     resultTree,
     baseCommit,
+    undefined,
+    gitReceipts,
   );
   await qualifyDispatchStagedCompletionOn(
     backend,
@@ -261,13 +291,13 @@ async function qualifiedAndLeased(): Promise<{
       resultTree,
       repositoryId: binding.repositoryId,
       worktreePath: binding.worktreePath,
-      gitReceipts: [],
+      gitReceipts,
     },
     ontoCommit,
     guardedRebase,
     guardedRebaseJournalDigest,
   };
-  return { backend, prepared, pending: stored.result, queue, retirement };
+  return { backend, prepared, pending: stored.result, queue, retirement, gitReceipts };
 }
 
 describe("staged-rebase source retirement", () => {
@@ -480,7 +510,7 @@ describe("staged-rebase source retirement", () => {
   });
 
   test("a consumed ordinary queue completion remains eligible for guarded continuation", async () => {
-    const { backend, prepared, retirement } = await qualifiedAndLeased();
+    const { backend, prepared, retirement, gitReceipts } = await qualifiedAndLeased(true);
     if (prepared.parentGateCapability === undefined) {
       throw new Error("managed worker omitted its parent gate capability");
     }
@@ -504,7 +534,7 @@ describe("staged-rebase source retirement", () => {
         queueLease: retirement,
         gateEpoch: claimed.gateEpoch,
         output: {
-          ...stagedOutput(resultCommit),
+          ...stagedOutput(resultCommit, gitReceipts),
           supervisedGateEvidence: {
             kind: "cq-supervised-gate-evidence",
             version: 1,
@@ -537,21 +567,6 @@ describe("staged-rebase source retirement", () => {
       },
       { now: clock.now },
     );
-    const continuationReceipt = {
-      kind: "cq-git-change-receipt" as const,
-      version: 1 as const,
-      attestationId: prepared.attestationId,
-      generation: prepared.generation,
-      taskId: binding.taskId,
-      operationId: "consumed-ordinary-result",
-      requestDigest: "0".repeat(64),
-      oldHead: baseCommit,
-      newHead: resultCommit,
-      tree: resultTree,
-      objectOids: [resultCommit],
-      paths: ["file.txt"],
-      committedAt: clock.peek(),
-    };
     await confirmDispatchCompletionOn(
       backend,
       {
@@ -562,7 +577,7 @@ describe("staged-rebase source retirement", () => {
         expectedProvenance: provenanceBindingOf(prepared),
         continuationContext: {
           liveTip: resultCommit,
-          gitReceipts: [continuationReceipt],
+          gitReceipts,
         },
       },
       { now: clock.now },
@@ -628,6 +643,46 @@ describe("staged-rebase source retirement", () => {
       },
     });
     expect(successor.generation).toBe(prepared.generation + 1);
+    backend.rehydrate();
+    const retiredSourceRow = backend
+      .storedRows()
+      .find(
+        (row) =>
+          row.attestationId === prepared.attestationId && row.generation === prepared.generation,
+      );
+    expect(retiredSourceRow).toMatchObject({
+      state: "consumed",
+      implementationQueue: {
+        state: "staged-rebase-retired",
+        terminal: { reason: "staged-rebase" },
+        stagedRebaseSource: {
+          successor: {
+            attestationId: successor.attestationId,
+            generation: successor.generation,
+          },
+        },
+      },
+    });
+    if (
+      retiredSourceRow?.implementationQueue === undefined ||
+      !("attempt" in retiredSourceRow.implementationQueue) ||
+      retiredSourceRow.implementationQueue.stagedRebaseSource === undefined
+    ) {
+      throw new Error("consumed source did not persist its guarded successor authority");
+    }
+    expect(retiredSourceRow.implementationQueue.lease).toBeUndefined();
+    const retiredSource = retiredSourceRow.implementationQueue.stagedRebaseSource;
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, rebasedStartCommit, 1),
+        idempotencyKey: "consumed-ordinary-second-successor",
+        reprepareOf: { attestationId: prepared.attestationId, generation: prepared.generation },
+        gitEffectBinding: {
+          ...binding,
+          guardedRebaseBridge: successorBridge,
+        },
+      }),
+    ).rejects.toThrow("already allocated a successor");
     const successorBinding: DispatchGitEffectBinding = {
       ...binding,
       guardedRebaseBridge: successorBridge,
@@ -651,6 +706,14 @@ describe("staged-rebase source retirement", () => {
       rebasedStartCommit,
       "e".repeat(40),
       ontoCommit,
+      {
+        sourceReference: retiredSource.sourceReference,
+        source: retiredSource.source,
+        leaseGeneration: retiredSource.leaseGeneration,
+        guardedRebase: retiredSource.guardedRebase,
+        ontoCommit: retiredSource.ontoCommit,
+        guardedRebaseJournalDigest: retiredSource.guardedRebaseJournalDigest,
+      },
     );
     expect(successorQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
     const successorQualification = await qualifyDispatchStagedCompletionOn(
@@ -752,6 +815,15 @@ describe("staged-rebase source retirement", () => {
       },
       { now: clock.now },
     );
+    const consumedSuccessor = backend
+      .storedRows()
+      .find(
+        (row) =>
+          row.attestationId === successor.attestationId && row.generation === successor.generation,
+      );
+    if (consumedSuccessor?.dispatchContinuationBinding === undefined) {
+      throw new Error("guarded successor omitted its ordinary continuation authority");
+    }
 
     const correctionResult = "f".repeat(40);
     const correction = await prepare(backend, {
@@ -759,7 +831,32 @@ describe("staged-rebase source retirement", () => {
       idempotencyKey: "consumed-guarded-correction",
       reprepareOf: { attestationId: successor.attestationId, generation: successor.generation },
       gitEffectBinding: successorBinding,
+      continuationClaim: {
+        continuationReference:
+          consumedSuccessor.dispatchContinuationBinding.continuationReference,
+        actor: "trusted-parent",
+        liveTip: rebasedStartCommit,
+      },
     });
+    const supersededSuccessor = backend
+      .storedRows()
+      .find(
+        (row) =>
+          row.attestationId === successor.attestationId && row.generation === successor.generation,
+      );
+    expect(supersededSuccessor).toMatchObject({
+      state: "consumed",
+      implementationQueue: {
+        state: "terminal",
+        terminal: { reason: "superseded" },
+      },
+    });
+    if (
+      supersededSuccessor?.implementationQueue !== undefined &&
+      "lease" in supersededSuccessor.implementationQueue
+    ) {
+      throw new Error("ordinary correction left its predecessor lease live");
+    }
     const correctionStored = await storeDispatchResultOn(
       backend,
       { resultCapability: correction.resultCapability, output: stagedOutput(correctionResult) },
