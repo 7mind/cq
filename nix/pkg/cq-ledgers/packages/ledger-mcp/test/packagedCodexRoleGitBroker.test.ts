@@ -2325,7 +2325,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             ) {
               throw new Error("installed guarded-rebase candidate input is unavailable");
             }
-            return row;
+            return { row, input: row.input };
           },
         );
         try {
@@ -2354,7 +2354,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             if (row?.kind !== "envelope") {
               throw new Error("installed guarded-rebase candidate row is unavailable");
             }
-            store.replace(row, canonicalCandidate);
+            store.replace(row, canonicalCandidate.row);
           });
         }
         const implementationEvidence = new ImplementationEvidenceService({
