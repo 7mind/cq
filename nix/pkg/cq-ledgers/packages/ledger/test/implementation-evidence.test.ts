@@ -137,6 +137,10 @@ async function fixture(
   options: {
     readonly reviewerRoster?: () => readonly ImplementationReviewerIdentity[];
     readonly resolveCandidateAuthority?: () => ImplementationCandidateAuthorityReceipt;
+    readonly recordLedgerCompletion?: ImplementationEvidenceServiceDependencies["recordLedgerCompletion"];
+    readonly releaseCandidateAuthority?: NonNullable<
+      ImplementationEvidenceServiceDependencies["releaseCandidateAuthority"]
+    >;
   } = {},
 ) {
   let head = BASE;
@@ -180,9 +184,11 @@ async function fixture(
       ? {}
       : {
           resolveCandidateAuthority: async () => options.resolveCandidateAuthority!(),
-          releaseCandidateAuthority: async () => {
-            candidateReleaseCount += 1;
-          },
+          releaseCandidateAuthority:
+            options.releaseCandidateAuthority ??
+            (async () => {
+              candidateReleaseCount += 1;
+            }),
         }),
     readTaskAuthority: async () => ({
       taskRef: "tasks:T2345",
@@ -201,10 +207,12 @@ async function fixture(
       gateVerified: true,
       details: { cleanDiff: true, ffOnly: true },
     }),
-    recordLedgerCompletion: async () => {
-      ledgerWrites += 1;
-      return { reviewRef: "reviews:R2345" };
-    },
+    recordLedgerCompletion:
+      options.recordLedgerCompletion ??
+      (async () => {
+        ledgerWrites += 1;
+        return { reviewRef: "reviews:R2345" };
+      }),
   };
   const service = new ImplementationEvidenceService(dependencies);
   const panel = await service.prepareReviewPanel({
@@ -235,6 +243,7 @@ async function fixture(
     },
     getLedgerWrites: () => ledgerWrites,
     getCandidateReleaseCount: () => candidateReleaseCount,
+    restart: () => new ImplementationEvidenceService(dependencies),
   };
 }
 
@@ -428,10 +437,19 @@ describe("versioned protected implementation evidence [BG]", () => {
       "reviewer roster changed",
     );
     roster = [reviewer];
-    authority = candidateAuthority({ leaseGeneration: 2 });
-    await expect(f.service.prepareCompletion(completionInput)).rejects.toThrow(
-      "candidate authority changed",
-    );
+    for (const changed of [
+      { leaseGeneration: 2 },
+      { resultCommit: "c".repeat(40) },
+      { resultTree: "d".repeat(40) },
+      { gateCommand: "bun run changed-check" },
+      { packagedEnvironmentDigest: "e".repeat(64) },
+      { taskRef: "tasks:T9999" },
+      { finalizedManifestDigest: "f".repeat(64) },
+      { managedWorktreeBindingDigest: "d".repeat(64) },
+    ] satisfies readonly Partial<ImplementationCandidateAuthorityReceipt>[]) {
+      authority = candidateAuthority(changed);
+      await expect(f.service.prepareCompletion(completionInput)).rejects.toThrow();
+    }
     authority = candidateAuthority();
     const completion = await f.service.prepareCompletion(completionInput);
     const binding = {
@@ -571,6 +589,147 @@ describe("versioned protected implementation evidence [BG]", () => {
       ).status,
     ).toBe("existing");
     expect(f.getLedgerWrites()).toBe(1);
+  });
+
+  test("every protected handoff cut restart-converges to one ledger completion and one queue release [Behavioral-Active Blackbox-Group]", async () => {
+    for (const cut of [
+      "before-merge-launch",
+      "after-merge-launch",
+      "after-ref-advancement",
+      "after-merged-persistence",
+      "after-ledger-recording",
+      "after-evidence-finalization",
+      "after-queue-release",
+    ] as const) {
+      const durableStore = createInMemoryImplementationEvidenceStore();
+      let injectEvidenceFinalization = false;
+      let evidenceFinalizationMutations = 0;
+      const evidence: ImplementationEvidenceStore = new Proxy(durableStore, {
+        get(target, property) {
+          const value: unknown = Reflect.get(target, property, target);
+          if (typeof property === "symbol" && typeof value === "function") {
+            return async (...args: unknown[]) => {
+              const result = await Reflect.apply(value, target, args);
+              if (injectEvidenceFinalization) {
+                evidenceFinalizationMutations += 1;
+                if (evidenceFinalizationMutations === 2) {
+                  injectEvidenceFinalization = false;
+                  throw new Error("injected fault after evidence finalization");
+                }
+              }
+              return result;
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      let ledgerEffects = 0;
+      let releaseEffects = 0;
+      let failAfterLedgerRecording = cut === "after-ledger-recording";
+      let failAfterQueueRelease = cut === "after-queue-release";
+      const f = await fixture(evidence, {
+        resolveCandidateAuthority: () => candidateAuthority(),
+        recordLedgerCompletion: async () => {
+          if (ledgerEffects === 0) ledgerEffects += 1;
+          if (failAfterLedgerRecording) {
+            failAfterLedgerRecording = false;
+            throw new Error("injected fault after ledger recording");
+          }
+          return { reviewRef: "reviews:R2345" };
+        },
+        releaseCandidateAuthority: async () => {
+          if (releaseEffects === 0) releaseEffects += 1;
+          if (failAfterQueueRelease) {
+            failAfterQueueRelease = false;
+            throw new Error("injected fault after queue release");
+          }
+        },
+      });
+      const completion = await f.service.prepareCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: BASE,
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        reviewAttemptRefs: [f.attemptRef],
+        completion: `implemented after ${cut}`,
+        logPaths: [],
+        mergeOperationId: `merge-${cut}`,
+        operationId: `completion-${cut}`,
+        author: "parent",
+      });
+      const binding = {
+        kind: "merge" as const,
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: `merge-${cut}`,
+      };
+
+      let recovered = f.restart();
+      if (cut === "after-merge-launch") {
+        await recovered.markMergeStarted(completion.completionRef, BASE);
+        recovered = f.restart();
+      }
+      if (cut === "before-merge-launch" || cut === "after-merge-launch") {
+        const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+        const provider = await implementationCompletionMergeAdmissionProviderFromStore({
+          provider: underlying,
+          store: evidence,
+          binding,
+          repositoryHead: async () => f.getHead(),
+          authorizeCandidate: async (receipt) => {
+            expect(receipt).toEqual(candidateAuthority());
+          },
+        });
+        const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+        await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
+        await admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });
+        f.setHead(RESULT);
+        await admission.markSettled();
+        await admission.releaseAfterSettlement();
+        expect(underlying.activeAdmissionCount()).toBe(0);
+        recovered = f.restart();
+      } else {
+        await recovered.markMergeStarted(completion.completionRef, BASE);
+        f.setHead(RESULT);
+        if (cut !== "after-ref-advancement") {
+          await recovered.markMerged(completion.completionRef, RESULT);
+        }
+        recovered = f.restart();
+      }
+
+      if (cut === "after-evidence-finalization") injectEvidenceFinalization = true;
+      const record = () =>
+        recovered.recordCompletion({
+          taskRef: "tasks:T2345",
+          expectedRepositoryHead: RESULT,
+          operationId: `record-${cut}`,
+          author: "parent",
+        });
+      if (
+        cut === "after-ledger-recording" ||
+        cut === "after-evidence-finalization" ||
+        cut === "after-queue-release"
+      ) {
+        await expect(record()).rejects.toThrow(`injected fault ${
+          cut === "after-ledger-recording"
+            ? "after ledger recording"
+            : cut === "after-evidence-finalization"
+              ? "after evidence finalization"
+              : "after queue release"
+        }`);
+        recovered = f.restart();
+      }
+      await expect(record()).resolves.toMatchObject({ status: expect.stringMatching(/recorded|existing/) });
+      await expect(record()).resolves.toMatchObject({ status: "existing" });
+      expect(ledgerEffects, cut).toBe(1);
+      expect(releaseEffects, cut).toBe(1);
+      expect((await evidence.snapshot()).completions[completion.completionRef]).toMatchObject({
+        state: "recorded",
+        reviewRef: "reviews:R2345",
+      });
+    }
   });
 
   // Regression origin: H354 retained a merge-started completion after guardian
