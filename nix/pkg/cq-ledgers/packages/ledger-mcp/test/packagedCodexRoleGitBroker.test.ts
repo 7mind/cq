@@ -1397,7 +1397,20 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         leaseGeneration: 1,
         terminal: { reason: "gate-complete" },
       });
-      const retryEvidence = await evidenceObserverOf(capability)(retryHandle);
+      await backend.close();
+      backend = new SqliteAttestationBackend({
+        namespace,
+        dbPath: attestationDbPath,
+      });
+      capability = createDispatchCapability({
+        backend,
+        promptArtifactStore: artifactStore("implement-worker"),
+        repositoryRoot,
+        ledgerStore: ledgerStore.store,
+        now: () => serviceNow,
+        randomBytes: dispatchRandomBytes,
+      });
+      const retryEvidence = await capability.fetch(retryHandle);
       if (retryEvidence.state !== "consumed") {
         throw new Error(`unexpected worker evidence ${retryEvidence.state}`);
       }
@@ -1424,6 +1437,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       expect(await capability.fetch(retryHandle)).toMatchObject({
         state: "output-already-materialized",
       });
+      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
       for (const reviewerMode of ["sandboxed", "non-sandboxed"] as const) {
         reviewerMatrix.push(
           await runPackagedReviewer({
