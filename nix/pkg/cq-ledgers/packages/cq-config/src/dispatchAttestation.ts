@@ -2503,7 +2503,8 @@ function claimStagedRebaseSuccessor(
   deps: PrepareDispatchDeps,
 ): void {
   const reprepareOf = request.reprepareOf;
-  const bridge = request.gitEffectBinding?.guardedRebaseBridge;
+  const gitEffectBinding = request.gitEffectBinding;
+  const bridge = gitEffectBinding?.guardedRebaseBridge;
   if (reprepareOf === undefined) {
     if (bridge !== undefined) {
       throw new AttestationBindingError(
@@ -2517,7 +2518,41 @@ function claimStagedRebaseSuccessor(
   if (previous === undefined) return;
   const queue = previous.implementationQueue;
   const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
+  const priorManagerBinding = isAttestationTombstone(previous)
+    ? undefined
+    : previous.gitEffectBinding;
+  const managerBindingChanged =
+    priorManagerBinding !== undefined &&
+    (gitEffectBinding === undefined ||
+      ([
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
   if (source === undefined) {
+    const consumedOrdinaryQueue =
+      bridge !== undefined &&
+      gitEffectBinding !== undefined &&
+      queue !== undefined &&
+      (isAttestationTombstone(previous) ? previous.terminalKind : previous.state) === "consumed" &&
+      queue.state === "released" &&
+      queue.terminal?.reason === "gate-complete" &&
+      !managerBindingChanged &&
+      (isAttestationTombstone(previous)
+        ? queue.qualificationDigest !== undefined
+        : queue.qualification !== undefined &&
+          queue.attempt.resultCommit === bridge.oldResultCommit &&
+          queue.attempt.taskId === gitEffectBinding.taskId &&
+          queue.attempt.repositoryId === gitEffectBinding.repositoryId &&
+          queue.attempt.worktreePath === gitEffectBinding.worktreePath);
+    if (consumedOrdinaryQueue) return;
     if (bridge !== undefined && queue !== undefined) {
       throw new AttestationBindingError(
         "reprepareOf",
@@ -2526,7 +2561,6 @@ function claimStagedRebaseSuccessor(
     }
     return;
   }
-  const gitEffectBinding = request.gitEffectBinding;
   if (bridge === undefined || gitEffectBinding === undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",
@@ -2540,25 +2574,6 @@ function claimStagedRebaseSuccessor(
       "the guarded-rebase source is not a retired implementation queue enrollment",
     );
   }
-  const priorManagerBinding = isAttestationTombstone(previous)
-    ? undefined
-    : previous.gitEffectBinding;
-  const managerBindingChanged =
-    priorManagerBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).some(
-      (field) => gitEffectBinding[field] !== priorManagerBinding[field],
-    );
   if (source.successor !== undefined) {
     throw new DispatchStateConflictError(
       "prepare_dispatch",

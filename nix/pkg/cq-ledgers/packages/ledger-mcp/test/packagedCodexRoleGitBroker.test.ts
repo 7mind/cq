@@ -1396,12 +1396,19 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       if (capability.coordinateImplementationCandidate === undefined) {
         throw new Error("installed worker coordinator is unavailable");
       }
-      expect(
-        await capability.coordinateImplementationCandidate({
-          partitionKey: queuedControl.partition.partitionKey,
-          holderId: "installed-process-later-coordinator",
-        }),
-      ).toEqual({ state: "completed", handle: retryHandle });
+      const priorGateCount = process.env["CQ_T2042_GATE_COUNT"];
+      process.env["CQ_T2042_GATE_COUNT"] = gateCountPath;
+      try {
+        expect(
+          await capability.coordinateImplementationCandidate({
+            partitionKey: queuedControl.partition.partitionKey,
+            holderId: "installed-process-later-coordinator",
+          }),
+        ).toEqual({ state: "completed", handle: retryHandle });
+      } finally {
+        if (priorGateCount === undefined) delete process.env["CQ_T2042_GATE_COUNT"];
+        else process.env["CQ_T2042_GATE_COUNT"] = priorGateCount;
+      }
       expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
       const retryEvidence = await evidenceObserverOf(capability)(retryHandle);
       if (retryEvidence.state !== "consumed") {

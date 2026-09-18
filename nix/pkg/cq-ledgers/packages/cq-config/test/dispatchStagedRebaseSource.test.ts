@@ -11,6 +11,8 @@ import {
   TERMINAL_ENVELOPE_RETENTION_MS,
   acquireImplementationCandidateOn,
   claimParentGateOn,
+  completeParentGateOn,
+  confirmDispatchCompletionOn,
   enqueueImplementationCandidateOn,
   fetchDispatchInputOn,
   fetchDispatchResultOn,
@@ -466,6 +468,137 @@ describe("staged-rebase source retirement", () => {
         },
       },
     });
+  });
+
+  test("a consumed ordinary queue completion remains eligible for guarded continuation", async () => {
+    const { backend, prepared, retirement } = await qualifiedAndLeased();
+    if (prepared.parentGateCapability === undefined) {
+      throw new Error("managed worker omitted its parent gate capability");
+    }
+    const claimed = await claimParentGateOn(
+      backend,
+      {
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        parentGateCapability: prepared.parentGateCapability,
+        queueLease: retirement,
+      },
+      { now: clock.now },
+    );
+    if (claimed.state !== "gate-running") throw new Error("expected claimed parent gate");
+    await completeParentGateOn(
+      backend,
+      {
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        parentGateCapability: prepared.parentGateCapability,
+        queueLease: retirement,
+        gateEpoch: claimed.gateEpoch,
+        output: {
+          ...stagedOutput(resultCommit),
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            version: 1,
+            attestationId: prepared.attestationId,
+            generation: prepared.generation,
+            roleId: "implement-worker",
+            roleVersion: prepared.promptProvenance.version,
+            surface: "codex",
+            promptDigest: prepared.promptProvenance.promptDigest,
+            catalogHash: prepared.promptProvenance.catalogHash,
+            inputDigest: prepared.promptProvenance.inputDigest,
+            taskId: binding.taskId,
+            worktreePath: binding.worktreePath,
+            branch: binding.branch,
+            baseCommit,
+            startingCommit: baseCommit,
+            resultCommit,
+            clean: true,
+            command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 1,
+            capturedAt: clock.now(),
+            filesTouchedDigest: "d".repeat(64),
+            gitReceiptsDigest: "e".repeat(64),
+            mutationTableDigest: "f".repeat(64),
+          },
+        },
+      },
+      { now: clock.now },
+    );
+    await confirmDispatchCompletionOn(
+      backend,
+      {
+        namespace,
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        nativeCompletion: completion(),
+        expectedProvenance: provenanceBindingOf(prepared),
+        continuationContext: {
+          liveTip: baseCommit,
+          gitReceipts: [],
+        },
+      },
+      { now: clock.now },
+    );
+    const consumed = await backend.transact({ kind: "namespace" }, (store) =>
+      store.read(prepared),
+    );
+    expect(consumed).toMatchObject({
+      state: "consumed",
+      implementationQueue: {
+        state: "released",
+        terminal: { reason: "gate-complete" },
+      },
+    });
+
+    const rebasedStartCommit = "d".repeat(40);
+    const successorBridge = {
+      guardedRebase,
+      operationId: "consumed-ordinary-guarded-successor",
+      requestDigest: guardedRebaseJournalDigest,
+      oldResultCommit: resultCommit,
+      ontoCommit,
+      rebasedStartCommit,
+      outcome: "clean" as const,
+      exactTip: true,
+      finalizedAt: clock.peek(),
+    };
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, rebasedStartCommit, 1),
+        idempotencyKey: "consumed-ordinary-foreign-result",
+        reprepareOf: { attestationId: prepared.attestationId, generation: prepared.generation },
+        gitEffectBinding: {
+          ...binding,
+          guardedRebaseBridge: { ...successorBridge, oldResultCommit: baseCommit },
+        },
+      }),
+    ).rejects.toThrow("not a retired implementation queue enrollment");
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, rebasedStartCommit, 1),
+        idempotencyKey: "consumed-ordinary-foreign-manager",
+        reprepareOf: { attestationId: prepared.attestationId, generation: prepared.generation },
+        gitEffectBinding: {
+          ...binding,
+          repositoryId: "0".repeat(64),
+          guardedRebaseBridge: successorBridge,
+        },
+      }),
+    ).rejects.toThrow("not a retired implementation queue enrollment");
+    const successor = await prepare(backend, {
+      input: input(ontoCommit, rebasedStartCommit, 1),
+      idempotencyKey: "consumed-ordinary-guarded-successor",
+      reprepareOf: { attestationId: prepared.attestationId, generation: prepared.generation },
+      gitEffectBinding: {
+        ...binding,
+        guardedRebaseBridge: successorBridge,
+      },
+    });
+    expect(successor.generation).toBe(prepared.generation + 1);
   });
 
   // regression: T6518 review round 3 — enqueue claimed the source after prepare and store_result.
