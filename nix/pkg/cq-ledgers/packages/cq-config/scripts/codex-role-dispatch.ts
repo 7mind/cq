@@ -10,6 +10,7 @@ import {
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
+  executeCodexImplementationCandidateCoordinator,
   executeCodexImplementationCandidateQualifier,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
@@ -158,6 +159,17 @@ export async function main(): Promise<void> {
       observedAt: new Date().toISOString(),
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
     });
+    process.stdout.write(`${JSON.stringify(handle)}\n`);
+    await executeCodexImplementationCandidateCoordinator({
+      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+      ledgerCwd: invocation.ledgerCwd,
+      promptRoot,
+      handle,
+      parentGateCapability: invocation.parentGateCapability,
+      holderId: `${handle.attestationId}:${String(handle.generation)}:installed-parent`,
+      timeoutMs: plan.effectivePreturn.parentGateWindowMs,
+    });
+    return;
   }
   process.stdout.write(`${JSON.stringify(handle)}\n`);
 }

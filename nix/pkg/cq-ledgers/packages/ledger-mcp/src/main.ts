@@ -541,8 +541,10 @@ export async function readImplementationCandidateQualifyRequest(
 }
 
 interface ImplementationCandidateCoordinateStdinRequest {
-  readonly partitionKey: string;
+  readonly attestationId: string;
+  readonly generation: number;
   readonly holderId: string;
+  readonly parentGateCapability: { readonly scope: "parent-gate"; readonly token: string };
 }
 
 export async function readImplementationCandidateCoordinateRequest(
@@ -592,12 +594,20 @@ export async function readImplementationCandidateCoordinateRequest(
     throw new Error("ledger-mcp: implementation coordinator request must be an object");
   }
   const request = parsed as Record<string, unknown>;
+  const parentGateCapability = request["parentGateCapability"] as
+    | Record<string, unknown>
+    | undefined;
   if (
-    Object.keys(request).sort().join(",") !== "holderId,partitionKey" ||
-    typeof request["partitionKey"] !== "string" ||
-    request["partitionKey"].trim() === "" ||
+    Object.keys(request).sort().join(",") !==
+      "attestationId,generation,holderId,parentGateCapability" ||
+    typeof request["attestationId"] !== "string" ||
+    !Number.isInteger(request["generation"]) ||
     typeof request["holderId"] !== "string" ||
-    request["holderId"].trim() === ""
+    request["holderId"].trim() === "" ||
+    parentGateCapability === undefined ||
+    Object.keys(parentGateCapability).sort().join(",") !== "scope,token" ||
+    parentGateCapability["scope"] !== "parent-gate" ||
+    typeof parentGateCapability["token"] !== "string"
   ) {
     throw new Error("ledger-mcp: malformed implementation coordinator request");
   }

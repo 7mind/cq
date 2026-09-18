@@ -99,10 +99,19 @@ export interface QualifyImplementationCandidateInput extends DispatchHandle {
   readonly promptDigest: string;
 }
 
-export interface CoordinateImplementationCandidateInput {
+export interface CoordinateImplementationCandidatePartitionInput {
   readonly partitionKey: string;
   readonly holderId: string;
 }
+
+export interface CoordinateImplementationCandidateHandleInput extends DispatchHandle {
+  readonly holderId: string;
+  readonly parentGateCapability: ParentGateCapability;
+}
+
+export type CoordinateImplementationCandidateInput =
+  | CoordinateImplementationCandidatePartitionInput
+  | CoordinateImplementationCandidateHandleInput;
 
 export type CoordinateImplementationCandidateOutcome =
   | AcquireImplementationCandidateOutcome

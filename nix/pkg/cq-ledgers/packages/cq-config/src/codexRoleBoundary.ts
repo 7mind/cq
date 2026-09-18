@@ -246,7 +246,8 @@ export interface CodexImplementationCandidateCoordinatorRequest {
   readonly command: string;
   readonly ledgerCwd: string;
   readonly promptRoot: string;
-  readonly partitionKey: string;
+  readonly handle: DispatchHandle;
+  readonly parentGateCapability: ParentGateCapability;
   readonly holderId: string;
   readonly timeoutMs: number;
   readonly environment?: NodeJS.ProcessEnv;
@@ -423,7 +424,11 @@ async function executeCodexImplementationCandidateCoordinatorAttempt(
     },
   );
   child.stdin.write(
-    `${JSON.stringify({ partitionKey: input.partitionKey, holderId: input.holderId })}\n`,
+    `${JSON.stringify({
+      ...input.handle,
+      holderId: input.holderId,
+      parentGateCapability: input.parentGateCapability,
+    })}\n`,
   );
   child.stdin.end();
   let timedOut = false;

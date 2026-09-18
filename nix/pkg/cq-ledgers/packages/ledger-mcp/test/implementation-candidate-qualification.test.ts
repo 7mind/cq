@@ -318,6 +318,20 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
         },
       },
     });
+    await expect(
+      capability.qualifyImplementationCandidate!({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        roleId: "implement-worker",
+        correlationId,
+        childThreadId: "substituted-child-thread-T6519",
+        expectedRunId: expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: clock.now(),
+        promptDigest: "5".repeat(64),
+      }),
+    ).rejects.toThrow("altered staged-completion proof");
   });
 
   for (const observation of [

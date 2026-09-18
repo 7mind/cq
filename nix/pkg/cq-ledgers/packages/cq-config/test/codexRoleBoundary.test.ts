@@ -108,8 +108,8 @@ function trustedStoredStream(finalMessage: string): string {
 }
 
 describe("T1330 Codex role process boundary", () => {
-  // specified: T6519 — qualification is the installed runner's terminal transport action.
-  test("installed runner returns the queued handle before any coordinator process starts [Behavioral-Active Blackbox Good-Communication]", async () => {
+  // regression: T6519 round 23 — the shipped runner must retain ownership after queued stdout.
+  test("installed runner returns the queued handle before its parent-owned coordinator settles [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-installed-queued-return-"));
     const worktree = join(root, "worktree");
     const promptRoot = join(root, "prompts");
@@ -166,7 +166,7 @@ if (process.argv.includes("--implementation-candidate-qualify")) {
 }
 if (process.argv.includes("--implementation-candidate-coordinate")) {
   appendFileSync(marker, JSON.stringify({ action: "coordinate", request }) + "\\n");
-  process.stdout.write(JSON.stringify({ state: "empty", partitionKey: request.partitionKey, partitionRevision: 1 }));
+  process.stdout.write(JSON.stringify({ state: "empty", partitionKey: "cq-implementation-queue:v1:installed", partitionRevision: 1 }));
   process.exit(0);
 }
 throw new Error("unexpected cq invocation");
@@ -233,7 +233,16 @@ throw new Error("unexpected cq invocation");
       expect(qualifications[0]?.request?.["childThreadId"]).not.toBe(
         qualifications[0]?.request?.["expectedRunId"],
       );
-      expect(observations.filter(({ action }) => action === "coordinate")).toHaveLength(0);
+      const coordinations = observations.filter(({ action }) => action === "coordinate");
+      expect(coordinations).toHaveLength(1);
+      expect(coordinations[0]?.request).toMatchObject({
+        ...HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+        holderId: expect.stringContaining(HANDLE.attestationId),
+      });
+      expect(observations.findIndex(({ action }) => action === "qualify")).toBeLessThan(
+        observations.findIndex(({ action }) => action === "coordinate"),
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -400,7 +409,8 @@ throw new Error("unexpected cq invocation");
         command: runner,
         ledgerCwd: root,
         promptRoot: root,
-        partitionKey: "cq-implementation-queue:v1:partition",
+        handle: HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
       });
@@ -436,7 +446,8 @@ throw new Error("unexpected cq invocation");
         command: runner,
         ledgerCwd: root,
         promptRoot: root,
-        partitionKey: "cq-implementation-queue:v1:partition",
+        handle: HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
       });
@@ -472,7 +483,8 @@ throw new Error("unexpected cq invocation");
         command: runner,
         ledgerCwd: root,
         promptRoot: root,
-        partitionKey: "cq-implementation-queue:v1:partition",
+        handle: HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
       });

@@ -35,6 +35,7 @@ import {
   fetchDispatchResultOn,
   isAttestationTombstone,
   loadConfig,
+  parentGateCapabilityMatches,
   prepareDispatchOn,
   prepareDispatchRequestDigest,
   qualifyDispatchStagedCompletionOn,
@@ -2782,6 +2783,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             inputDigest: row.promptProvenance.inputDigest,
           },
           nativeCompletion,
+          completionObservationDigest: dispatchPayloadDigest(
+            input as unknown as DispatchJSONValue,
+          ),
         },
         { now },
       );
@@ -2800,8 +2804,37 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     coordinateImplementationCandidate: async (
       input,
-    ): Promise<CoordinateImplementationCandidateOutcome> =>
-      await implementationCandidateCoordinator.run(input),
+    ): Promise<CoordinateImplementationCandidateOutcome> => {
+      if ("partitionKey" in input) {
+        return await implementationCandidateCoordinator.run(input);
+      }
+      const partitionKey = await options.backend.transact(
+        { kind: "handle", handle: input },
+        (store): string => {
+          const persisted = store.read(input);
+          if (persisted === undefined || isAttestationTombstone(persisted)) {
+            throw new Error("implementation candidate coordination requires a live dispatch");
+          }
+          if (
+            persisted.parentGateCapabilityHash === undefined ||
+            !parentGateCapabilityMatches(
+              input.parentGateCapability.token,
+              persisted.parentGateCapabilityHash,
+            )
+          ) {
+            throw new Error("implementation candidate coordination parent authority is invalid");
+          }
+          if (persisted.implementationQueue === undefined) {
+            throw new Error("implementation candidate coordination requires a queued dispatch");
+          }
+          return persisted.implementationQueue.partition.partitionKey;
+        },
+      );
+      return await implementationCandidateCoordinator.run({
+        partitionKey,
+        holderId: input.holderId,
+      });
+    },
     finalizeParentGate: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
       if (binding === undefined) {

@@ -303,6 +303,8 @@ export interface QualifyDispatchStagedCompletionRequest extends DispatchHandle {
   readonly expectedChild: NativeChildIdentity;
   readonly expectedProvenance: DispatchProvenanceBinding;
   readonly nativeCompletion: NativeCompletionProof;
+  /** Digest of additional trusted transport evidence not represented by NativeCompletionProof. */
+  readonly completionObservationDigest?: string;
 }
 
 export interface ImplementationQueueLeaseBinding extends DispatchHandle {
@@ -1046,6 +1048,15 @@ export function qualifyDispatchStagedCompletion(
   assertTrustedActor(request.actor);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
+  if (
+    request.completionObservationDigest !== undefined &&
+    !SHA256.test(request.completionObservationDigest)
+  ) {
+    throw new AttestationContractError(
+      "completionObservationDigest",
+      "expected a SHA-256 digest",
+    );
+  }
   const qualificationPayload = {
     partitionKey: request.partitionKey,
     enrollmentId: request.enrollmentId,
@@ -1054,6 +1065,8 @@ export function qualifyDispatchStagedCompletion(
     expectedChild: request.expectedChild,
     expectedProvenance: request.expectedProvenance,
     nativeCompletion: request.nativeCompletion,
+    completionObservationDigest:
+      request.completionObservationDigest ?? digest(request.nativeCompletion),
   };
   const replayDigest = digest(qualificationPayload);
   const existing = control.qualification ?? row.stagedCompletionQualification;
@@ -1130,7 +1143,12 @@ export function qualifyDispatchStagedCompletion(
     version: 1 as const,
     qualificationDigest: replayDigest,
     qualifiedAt: at,
-    ...qualificationPayload,
+    partitionKey: request.partitionKey,
+    enrollmentId: request.enrollmentId,
+    attemptId: request.attemptId,
+    outputDigest: request.stagedOutputDigest,
+    expectedChild: request.expectedChild,
+    expectedProvenance: request.expectedProvenance,
     nativeCompletion: proof,
   });
   const queue: ImplementationQueueControl = Object.freeze({
