@@ -16,6 +16,7 @@ import {
   serializeWipArtifact,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
+  type DispatchJSONValue,
 } from "@cq/config";
 import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
@@ -894,6 +895,43 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         parentGateCapability: subject.prepared.parentGateCapability,
       }),
     ).toMatchObject({ state: "empty", partitionKey: qualified.partitionKey });
+    expect(runner.requests).toHaveLength(1);
+
+    await subject.backend.transact({ kind: "handle", handle: subject.prepared }, (store) => {
+      const row = store.read(subject.prepared);
+      if (
+        row === undefined ||
+        isAttestationTombstone(row) ||
+        row.output === null ||
+        typeof row.output !== "object" ||
+        Array.isArray(row.output)
+      ) {
+        throw new Error("consumed candidate output is unavailable");
+      }
+      const output = row.output as Readonly<Record<string, DispatchJSONValue>>;
+      const gate = output["supervisedGateEvidence"];
+      if (gate === null || typeof gate !== "object" || Array.isArray(gate)) {
+        throw new Error("consumed candidate gate evidence is unavailable");
+      }
+      store.replace(
+        row,
+        Object.freeze({
+          ...row,
+          output: {
+            ...output,
+            supervisedGateEvidence: { ...gate, taskId: "T9999" },
+          } as DispatchJSONValue,
+        }),
+      );
+    });
+    await expect(
+      subject.capability.coordinateImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        holderId: "production-coordinator",
+        parentGateCapability: subject.prepared.parentGateCapability,
+      }),
+    ).rejects.toThrow("consumed implementation front lost its exact gate and lease authority");
     expect(runner.requests).toHaveLength(1);
 
     const fetched = await subject.capability.fetch({
