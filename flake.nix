@@ -670,7 +670,7 @@ EOF
 
           src = ./nix/pkg/cq-ledgers;
 
-          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
+          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper pkgs.git ];
 
           dontConfigure = true;
           buildPhase = "true";
