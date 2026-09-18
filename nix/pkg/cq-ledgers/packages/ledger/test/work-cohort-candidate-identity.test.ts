@@ -359,6 +359,34 @@ describe("cohort candidate identity", () => {
     ).toThrow("actual G213 row");
   });
 
+  test("rejects a fabricated candidate passed through caller-controlled resolution", async () => {
+    const fixture = await identityFixture();
+    const forgedResult = commit("caller-resolved-result");
+    const forgedTree = commit("caller-resolved-tree");
+    const forgedReceipts = [
+      receipt({
+        base: fixture.base,
+        result: forgedResult,
+        tree: forgedTree,
+        operation: "caller-resolved",
+      }),
+    ];
+    const fabricated = await authenticatedCandidateRow({
+      dispatch: fixture.dispatch,
+      result: forgedResult,
+      tree: forgedTree,
+      receipts: forgedReceipts,
+      repositoryDiff: [
+        { path: "src/forged.ts", mode: "100644", blobDigest: sha256("forged blob") },
+      ],
+      attempt: "attempt:caller-resolved",
+    });
+
+    expect(() =>
+      fabricated.authenticator.stage(fixture.pending, { row: fabricated.row }),
+    ).toThrow("trusted attestation store");
+  });
+
   test("rejects spread and descriptor clones of an authenticated G213 row", async () => {
     const fixture = await identityFixture();
     const replacementResult = commit("replacement-result");
