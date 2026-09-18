@@ -9,7 +9,7 @@
     { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "752b239c41c7a6b0fda497671760c72f54b280371e6d9c21dea9e198f82d34fb", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts", "sha256": "8eb321e1ddef715996cfa4beea72667c239340ad842247743c1cd724b61ebdab", "targets": [] },
+    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts", "sha256": "e38b791b06bbda2cf20f37c33734fcad91f7eca5c0d281182cfd019dc98718cc", "targets": [] },
     { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "a7ad4b983f2e53402a5d16a11cc06bbf01b30a0fe36acc994ce02e9082ef27a7", "targets": [] },
     {
       "kind": "path",
@@ -592,7 +592,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "32d63eeefc2d29259dc729ecf91d83d46494a97362b384a0d0ebc598eaceaffe",
+      "sha256": "e4853d2d6f1fa3ffb48764b78da1c1cece9fdbdad005557afe3a39dd829ee2d7",
       "targets": []
     },
     {
