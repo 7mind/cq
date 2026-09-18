@@ -331,7 +331,7 @@
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
             "x86_64-linux" = "sha256-1sSfN/YXwqs/HiDqZO+r3dkb2C3WaSLbahw37DvYmjM=";
-            "aarch64-darwin" = "sha256-/rHN4ia1qIOfOc/GsdfynDTHPg9AF8WlbePwsUez1kg=";
+            "aarch64-darwin" = "sha256-/WyRFJvv2P6u8304Td4UYwh1p9fEWqpfMWfULKyRVtc=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 
