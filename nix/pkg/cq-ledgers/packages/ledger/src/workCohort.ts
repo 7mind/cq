@@ -75,6 +75,33 @@ function digest(value: unknown): string {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
 
+function immutableSnapshot<T>(value: T): T {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((member) => immutableSnapshot(member))) as T;
+  }
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error("cohort snapshot contains a non-plain object");
+    }
+    const snapshot: Record<string, unknown> = {};
+    for (const [key, member] of Object.entries(value)) {
+      snapshot[key] = immutableSnapshot(member);
+    }
+    return Object.freeze(snapshot) as T;
+  }
+  throw new Error("cohort snapshot contains a non-data value");
+}
+
 function assertNonEmpty(value: string, label: string): void {
   if (value.trim() === "") throw new Error(`${label} must be non-empty`);
 }
@@ -2327,10 +2354,7 @@ export function createPendingCohortCandidateAttemptV1(
   return Object.freeze({ ...payload, candidateAttemptDigest: digest(payload) });
 }
 
-const AUTHENTICATED_G213_ROW_V1: unique symbol = Symbol("cq-authenticated-g213-row-v1");
-
 export interface G213QualifiedCandidateRowV1 {
-  readonly [AUTHENTICATED_G213_ROW_V1]: true;
   readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
   readonly queue: ImplementationQueueControl;
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
@@ -2340,15 +2364,11 @@ export interface G213CandidateAttemptBindingV1 {
   readonly row: G213QualifiedCandidateRowV1;
 }
 
-/** Project, but never allocate, the candidate identity owned by G213. */
-export function stageCohortCandidateAttemptV1(
+function stageAuthenticatedCohortCandidateAttemptV1(
   pending: PendingCohortCandidateAttemptV1,
   binding: G213CandidateAttemptBindingV1,
 ): StagedCohortCandidateAttemptV1 {
-  if (
-    binding.row[AUTHENTICATED_G213_ROW_V1] !== true ||
-    canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)
-  ) {
+  if (canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)) {
     throw new Error("G213 candidate binding differs from the actual G213 row");
   }
   const queue = binding.row.queue;
@@ -2499,12 +2519,11 @@ export class GitG213CandidateRepositoryV1 implements G213CandidateRepositoryV1 {
   }
 }
 
-/** Authenticate one persisted G213 row and its repository diff before cohort staging. */
-export async function resolveG213QualifiedCandidateRowV1(input: {
+async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   readonly row: AttestationEnvelope;
   readonly repository: G213CandidateRepositoryV1;
 }): Promise<G213QualifiedCandidateRowV1> {
-  const row = input.row;
+  const row = immutableSnapshot(input.row);
   const queue = row.implementationQueue;
   const binding = row.gitEffectBinding;
   if (
@@ -2566,7 +2585,6 @@ export async function resolveG213QualifiedCandidateRowV1(input: {
     throw new Error("actual G213 row filesTouched differs from the repository diff");
   }
   return Object.freeze({
-    [AUTHENTICATED_G213_ROW_V1]: true as const,
     preparedDispatch: Object.freeze({
       attestationId: row.attestationId,
       generation: row.generation,
@@ -2577,6 +2595,31 @@ export async function resolveG213QualifiedCandidateRowV1(input: {
     queue,
     repositoryDiff,
   });
+}
+
+/** Own the non-copyable identity of rows authenticated from persisted G213 state. */
+export class G213CandidateAuthenticatorV1 {
+  readonly #authenticatedRows = new WeakSet<G213QualifiedCandidateRowV1>();
+
+  async resolve(input: {
+    readonly row: AttestationEnvelope;
+    readonly repository: G213CandidateRepositoryV1;
+  }): Promise<G213QualifiedCandidateRowV1> {
+    const row = await resolveG213QualifiedCandidateRowSnapshotV1(input);
+    this.#authenticatedRows.add(row);
+    return row;
+  }
+
+  /** Project, but never allocate, the candidate identity owned by G213. */
+  stage(
+    pending: PendingCohortCandidateAttemptV1,
+    binding: G213CandidateAttemptBindingV1,
+  ): StagedCohortCandidateAttemptV1 {
+    if (!this.#authenticatedRows.has(binding.row)) {
+      throw new Error("G213 candidate binding differs from the actual G213 row");
+    }
+    return stageAuthenticatedCohortCandidateAttemptV1(pending, binding);
+  }
 }
 
 export interface CohortGitChangeReceiptV1 {

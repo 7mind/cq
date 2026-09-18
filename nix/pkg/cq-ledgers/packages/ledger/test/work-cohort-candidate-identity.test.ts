@@ -10,6 +10,7 @@ import type { AttestationEnvelope } from "@cq/config";
 
 import {
   CohortCandidateSealConflictError,
+  G213CandidateAuthenticatorV1,
   GitG213CandidateRepositoryV1,
   InMemoryCohortCandidateSealStoreV1,
   assertCohortLiveEffectCurrentV1,
@@ -21,8 +22,6 @@ import {
   createCohortEvidenceSubjectV1,
   createPendingCohortCandidateAttemptV1,
   isCohortEvidenceReceiptReusableV1,
-  resolveG213QualifiedCandidateRowV1,
-  stageCohortCandidateAttemptV1,
   type CohortGitChangeReceiptV1,
   type CohortWholeDiffEntryV1,
   type G213CandidateRepositoryV1,
@@ -93,7 +92,8 @@ async function authenticatedCandidateRow(input: {
     },
   } as unknown as AttestationEnvelope;
   input.observeSourceRow?.(row);
-  const authenticated = await resolveG213QualifiedCandidateRowV1({
+  const authenticator = new G213CandidateAuthenticatorV1();
+  const authenticated = await authenticator.resolve({
     row,
     repository:
       input.repository ??
@@ -101,7 +101,7 @@ async function authenticatedCandidateRow(input: {
         resolveWholeDiff: async () => input.repositoryDiff,
       } satisfies G213CandidateRepositoryV1),
   });
-  return { queue, row: authenticated, sourceRow: row };
+  return { authenticator, queue, row: authenticated, sourceRow: row };
 }
 
 function substitutePersistedCandidateResult(
@@ -152,7 +152,7 @@ async function identityFixture() {
   });
   const queue = authenticated.queue;
   const row = authenticated.row;
-  const staged = stageCohortCandidateAttemptV1(pending, { row });
+  const staged = authenticated.authenticator.stage(pending, { row });
   return {
     observation,
     decision,
@@ -163,8 +163,10 @@ async function identityFixture() {
     tree,
     receipts,
     pending,
+    authenticator: authenticated.authenticator,
     queue,
     row,
+    sourceRow: authenticated.sourceRow,
     staged,
   };
 }
@@ -308,7 +310,7 @@ describe("cohort candidate identity", () => {
       attempt: "attempt:next",
     });
     const nextPending = createPendingCohortCandidateAttemptV1(fixture.definition, nextDispatch);
-    const nextAttempt = stageCohortCandidateAttemptV1(nextPending, {
+    const nextAttempt = nextAuthenticated.authenticator.stage(nextPending, {
       row: nextAuthenticated.row,
     });
     const nextSeal = store.seal({
@@ -339,7 +341,7 @@ describe("cohort candidate identity", () => {
       repositoryDiff: fixture.row.repositoryDiff,
     });
     expect(() =>
-      stageCohortCandidateAttemptV1(fixture.pending, {
+      fixture.authenticator.stage(fixture.pending, {
         row: other.row,
       }),
     ).toThrow("actual G213 row");
@@ -353,7 +355,7 @@ describe("cohort candidate identity", () => {
       repositoryDiff: fixture.row.repositoryDiff,
     } as unknown as G213QualifiedCandidateRowV1;
     expect(() =>
-      stageCohortCandidateAttemptV1(fixture.pending, { row: callerAllocated }),
+      fixture.authenticator.stage(fixture.pending, { row: callerAllocated }),
     ).toThrow("actual G213 row");
   });
 
@@ -390,10 +392,10 @@ describe("cohort candidate identity", () => {
     ) as G213QualifiedCandidateRowV1;
 
     expect(() =>
-      stageCohortCandidateAttemptV1(fixture.pending, { row: spreadClone }),
+      fixture.authenticator.stage(fixture.pending, { row: spreadClone }),
     ).toThrow("actual G213 row");
     expect(() =>
-      stageCohortCandidateAttemptV1(fixture.pending, { row: descriptorClone }),
+      fixture.authenticator.stage(fixture.pending, { row: descriptorClone }),
     ).toThrow("actual G213 row");
   });
 
@@ -408,7 +410,7 @@ describe("cohort candidate identity", () => {
       resultTree: forgedTree,
     });
 
-    const staged = stageCohortCandidateAttemptV1(fixture.pending, { row: fixture.row });
+    const staged = fixture.authenticator.stage(fixture.pending, { row: fixture.row });
     expect(staged.g213.resultCommit).toBe(fixture.result);
     expect(staged.g213.resultTree).toBe(fixture.tree);
     expect(
@@ -455,7 +457,7 @@ describe("cohort candidate identity", () => {
     releaseRepository();
 
     const authenticated = await authentication;
-    const staged = stageCohortCandidateAttemptV1(fixture.pending, { row: authenticated.row });
+    const staged = authenticated.authenticator.stage(fixture.pending, { row: authenticated.row });
     expect(staged.g213.resultCommit).toBe(fixture.result);
     expect(staged.g213.resultTree).toBe(fixture.tree);
   });
@@ -465,7 +467,7 @@ describe("cohort candidate identity", () => {
     const foreign = { ...fixture.dispatch, attestationId: "att-foreign" };
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
-      stageCohortCandidateAttemptV1(pending, {
+      fixture.authenticator.stage(pending, {
         row: fixture.row,
       }),
     ).toThrow("actual G213 row");
@@ -476,7 +478,7 @@ describe("cohort candidate identity", () => {
     const foreign = { ...fixture.dispatch, generation: 99 };
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
-      stageCohortCandidateAttemptV1(pending, {
+      fixture.authenticator.stage(pending, {
         row: fixture.row,
       }),
     ).toThrow("actual G213 row");
@@ -487,7 +489,7 @@ describe("cohort candidate identity", () => {
     const foreign = { ...fixture.dispatch, branch: "implement/T-foreign" };
     const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
     expect(() =>
-      stageCohortCandidateAttemptV1(pending, {
+      fixture.authenticator.stage(pending, {
         row: fixture.row,
       }),
     ).toThrow("actual G213 row");
