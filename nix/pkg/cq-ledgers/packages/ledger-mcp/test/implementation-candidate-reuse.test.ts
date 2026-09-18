@@ -13,11 +13,19 @@ import {
   claimQualifiedParentGateOn,
   completeQualifiedParentGateOn,
   confirmDispatchCompletionOn,
+  dispatchPayloadDigest,
   fetchDispatchResultOn,
   releaseImplementationCandidateOn,
   sweepAttestationsOn,
   type DispatchJSONValue,
 } from "@cq/config";
+import {
+  ImplementationEvidenceService,
+  createInMemoryImplementationEvidenceStore,
+  implementationCompletionMergeAdmissionProviderFromStore,
+  type ImplementationCandidateAuthorityReceipt,
+  type ImplementationReviewerIdentity,
+} from "@cq/ledger";
 import { ImplementationCandidateCoordinator } from "../src/implementationCandidateQueue.js";
 import { ImplementationCandidateQueueFixture } from "./implementationCandidateQueueFixture.js";
 
@@ -202,12 +210,6 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
     await expect(coordinate()).resolves.toMatchObject({ state: "completed" });
     const gateCounts = [gateRuns];
 
-    await expect(coordinate()).resolves.toMatchObject({ state: "empty" });
-    gateCounts.push(gateRuns);
-    protectedHead = staged.candidate.resultCommit;
-    await expect(coordinate()).resolves.toMatchObject({ state: "empty" });
-    gateCounts.push(gateRuns);
-
     const row = await backend.transact({ kind: "handle", handle: staged.prepared }, (store) =>
       store.read(staged.prepared),
     );
@@ -223,39 +225,513 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       },
       output: { supervisedGateEvidence: gateEvidence },
     });
-    if (row?.kind !== "envelope" || row.implementationQueue?.state !== "leased") {
+    if (
+      row?.kind !== "envelope" ||
+      row.implementationQueue?.state !== "leased" ||
+      row.implementationQueue.qualification === undefined ||
+      gateEvidence === undefined
+    ) {
       throw new Error("protected candidate lost its completion lease");
     }
-    const release = {
-      attestationId: row.attestationId,
-      generation: row.generation,
-      partitionKey: row.implementationQueue.partition.partitionKey,
-      enrollmentId: row.implementationQueue.enrollment.enrollmentId,
-      attemptId: row.implementationQueue.attempt.attemptId,
-      holderId: "protected-handoff",
+    const control = row.implementationQueue;
+    const authority: ImplementationCandidateAuthorityReceipt = {
+      kind: "cq-implementation-candidate-authority",
+      version: 1,
+      workerDispatch: {
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+      },
+      partitionKey: control.partition.partitionKey,
+      enrollmentId: control.enrollment.enrollmentId,
+      attemptId: control.attempt.attemptId,
+      leaseHolderId: "protected-handoff",
       leaseGeneration: 1,
-      expectedPartitionRevision: row.implementationQueue.partitionRevision,
-      detail: { operation: "protected-completion" },
+      qualificationDigest: control.qualification!.qualificationDigest,
+      taskRef: "tasks:T6520",
+      taskDigest: "4".repeat(64),
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+      integrationRef: control.partition.integrationRef,
+      repositoryId: control.attempt.repositoryId,
+      worktreePath: control.attempt.worktreePath,
+      resultCommit: control.attempt.resultCommit,
+      resultTree: control.attempt.resultTree,
+      gateCommand: control.attempt.gateCommand,
+      packagedEnvironmentDigest: control.attempt.packagedEnvironmentDigest,
+      managedWorktreeBindingDigest: control.attempt.managedWorktreeBindingDigest,
+      gitReceiptLineageDigest: control.attempt.gitReceiptLineageDigest,
+      gateEvidenceDigest: dispatchPayloadDigest(gateEvidence),
     } as const;
-    const settleCompletion = async () => {
-      const current = await backend.transact({ kind: "handle", handle: staged.prepared }, (store) =>
-        store.read(staged.prepared),
-      );
-      if (current?.implementationQueue?.state === "released") return;
-      await releaseImplementationCandidateOn(
-        backend,
-        { namespace, actor: "trusted-parent", ...release },
-        { now: fixture.clock.now },
-      );
+    const reviewer: ImplementationReviewerIdentity = {
+      alias: "native",
+      harness: "codex",
+      model: "frontier",
+      provider: null,
+      launch: "native",
+      adapterId: "codex:native",
     };
-    await settleCompletion();
+    const evidence = createInMemoryImplementationEvidenceStore();
+    let ledgerWrites = 0;
+    const releaseEffects: string[] = [];
+    const service = new ImplementationEvidenceService({
+      store: evidence,
+      resolveReviewerRoster: () => [reviewer],
+      nativeFallback: reviewer,
+      now: fixture.clock.now,
+      prepareNativeReview: async ({ attemptRef }) => ({
+        attestationId: `att_${attemptRef.slice(-12)}`,
+        generation: 1,
+        responseStoreNow: "2099-01-01T00:00:00.000Z",
+        childCancelAt: "2099-01-01T00:01:00.000Z",
+        launchDeadline: "2098-12-31T23:59:00.000Z",
+        promptProvenance: {
+          roleId: "implement-reviewer",
+          version: 7,
+          surface: "codex",
+          promptDigest: "6".repeat(64),
+          catalogHash: "7".repeat(64),
+          inputDigest: "8".repeat(64),
+        },
+        inputCapability: { scope: "fetch-input", token: "input" },
+        resultCapability: { scope: "store-result", token: "result" },
+      }),
+      fetchNativeReview: async (dispatch) => ({
+        state: "consumed",
+        retainedAttestation: dispatch.attestationId,
+        output: {
+          taskId: "T6520",
+          verdict: "approve",
+          criticism: [],
+          questions: [],
+          defects: [],
+          rationale: "unchanged candidate remains qualified",
+          gateReRan: false,
+          gateDurationMs: 0,
+          resultCommitVerified: true,
+          resultCommitEvidence: {
+            status: "verified",
+            resultCommit: staged.candidate.resultCommit,
+            branchTip: staged.candidate.resultCommit,
+          },
+          baseAncestry: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: staged.binding.baseCommit,
+            resultCommit: staged.candidate.resultCommit,
+            mergeBase: staged.binding.baseCommit,
+          },
+        },
+      }),
+      executeExternalReview: async () => {
+        throw new Error("external review is not configured");
+      },
+      fetchWorker: async () => ({
+        state: "consumed",
+        input: { taskId: "T6520", baseCommit: staged.binding.baseCommit },
+        output: {
+          taskId: "T6520",
+          status: "pass",
+          resultCommit: staged.candidate.resultCommit,
+          branch: staged.binding.branch,
+          actualWorktreePath: staged.binding.worktreePath,
+          filesTouched: ["candidate.ts"],
+          gitReceipts: [],
+          checkSummary: "runner-supervised gate requested",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: staged.binding.baseCommit,
+            headCommit: staged.candidate.resultCommit,
+          },
+          supervisedGateEvidence: gateEvidence!,
+        },
+      }),
+      resolveCandidateAuthority: async (input) => {
+        if (
+          input.workerDispatch.attestationId !== authority.workerDispatch.attestationId ||
+          input.workerDispatch.generation !== authority.workerDispatch.generation ||
+          input.taskRef !== authority.taskRef ||
+          input.resultCommit !== authority.resultCommit
+        ) {
+          throw new Error("unchanged candidate authority target changed");
+        }
+        await fixture.adapter.inspectLease({
+          attestationId: authority.workerDispatch.attestationId,
+          generation: authority.workerDispatch.generation,
+          partitionKey: authority.partitionKey,
+          enrollmentId: authority.enrollmentId,
+          attemptId: authority.attemptId,
+          holderId: authority.leaseHolderId,
+          leaseGeneration: authority.leaseGeneration,
+        });
+        return authority;
+      },
+      releaseCandidateAuthority: async (receipt) => {
+        const current = await backend.transact(
+          { kind: "handle", handle: receipt.workerDispatch },
+          (store) => store.read(receipt.workerDispatch),
+        );
+        if (current?.implementationQueue?.state === "released") return;
+        if (current?.implementationQueue?.state !== "leased") {
+          throw new Error("completion release lost its live candidate lease");
+        }
+        releaseEffects.push("protected-completion-release");
+        await releaseImplementationCandidateOn(
+          backend,
+          {
+            namespace,
+            actor: "trusted-parent",
+            attestationId: receipt.workerDispatch.attestationId,
+            generation: receipt.workerDispatch.generation,
+            partitionKey: receipt.partitionKey,
+            enrollmentId: receipt.enrollmentId,
+            attemptId: receipt.attemptId,
+            holderId: receipt.leaseHolderId,
+            leaseGeneration: receipt.leaseGeneration,
+            expectedPartitionRevision: current.implementationQueue.partitionRevision,
+            detail: { operation: "protected-completion" },
+          },
+          { now: fixture.clock.now },
+        );
+      },
+      readTaskAuthority: async () => ({
+        taskRef: "tasks:T6520",
+        ownerGoalRef: "goals:G211",
+        status: "wip",
+        finalizedManifest: "manifest-v1\n",
+      }),
+      repositoryHead: async () => protectedHead,
+      verifyImplementation: async () => ({
+        baseCommit: staged.binding.baseCommit,
+        startingCommit: staged.binding.baseCommit,
+        clean: true,
+        ancestryVerified: true,
+        receiptsVerified: true,
+        acceptanceVerified: true,
+        gateVerified: true,
+        details: { exactCandidate: true },
+      }),
+      recordLedgerCompletion: async () => {
+        ledgerWrites += 1;
+        return { reviewRef: "reviews:R6520" };
+      },
+    });
+    const panelInput = {
+      taskRef: "tasks:T6520",
+      resultCommit: staged.candidate.resultCommit,
+      workerDispatch: authority.workerDispatch,
+      operationId: "unchanged-review-panel",
+      author: "parent",
+    } as const;
+    const panel = await service.prepareReviewPanel(panelInput);
     gateCounts.push(gateRuns);
-    await settleCompletion();
-    await expect(coordinate()).resolves.toMatchObject({ state: "empty" });
+    await expect(service.prepareReviewPanel(panelInput)).resolves.toMatchObject({
+      status: "existing",
+      panelRef: panel.panelRef,
+    });
+    gateCounts.push(gateRuns);
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "unchanged-review-attempt",
+      author: "parent",
+    });
+    await service.finalizeReviewAttempt({
+      attemptRef,
+      operationId: "unchanged-review-finalize",
+      author: "parent",
+    });
+    const completion = await service.prepareCompletion({
+      taskRef: "tasks:T6520",
+      expectedRepositoryHead: staged.binding.baseCommit,
+      resultCommit: staged.candidate.resultCommit,
+      workerDispatch: authority.workerDispatch,
+      reviewAttemptRefs: [attemptRef],
+      completion: "unchanged candidate reviewed",
+      logPaths: [],
+      mergeOperationId: "unchanged-ff-merge",
+      operationId: "unchanged-completion",
+      author: "parent",
+    });
+    gateCounts.push(gateRuns);
+    const mergeProvider = await implementationCompletionMergeAdmissionProviderFromStore({
+      provider: {
+        acquire: async (input) => ({
+          id: "unchanged-merge-admission",
+          epoch: 1,
+          kind: input.kind,
+          targetRef: input.targetRef,
+          registerProcessGroup: () => {},
+          shareWithGuardian: () => {},
+          markSettled: () => {},
+          releaseAfterSettlement: async () => {},
+          abandonBeforeRegistration: async () => {},
+        }),
+      },
+      store: evidence,
+      binding: {
+        kind: "merge",
+        targetRef: "tasks:T6520",
+        repositoryRoot: "/repo",
+        commit: staged.candidate.resultCommit,
+        completionRef: completion.completionRef,
+        mergeOperationId: "unchanged-ff-merge",
+      },
+      repositoryHead: async () => protectedHead,
+      authorizeCandidate: async (receipt) => {
+        if (
+          dispatchPayloadDigest(receipt as unknown as DispatchJSONValue) !==
+          dispatchPayloadDigest(authority as unknown as DispatchJSONValue)
+        ) {
+          throw new Error("merge candidate authority changed");
+        }
+      },
+    });
+    const admission = await mergeProvider.acquire({ kind: "merge", targetRef: "tasks:T6520" });
+    await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
+    await admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });
+    protectedHead = staged.candidate.resultCommit;
+    await admission.markSettled();
+    await admission.releaseAfterSettlement();
+    gateCounts.push(gateRuns);
+    await expect(
+      service.recordCompletion({
+        taskRef: "tasks:T6520",
+        expectedRepositoryHead: staged.candidate.resultCommit,
+        operationId: "unchanged-record",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "recorded" });
+    gateCounts.push(gateRuns);
+    await expect(
+      service.recordCompletion({
+        taskRef: "tasks:T6520",
+        expectedRepositoryHead: staged.candidate.resultCommit,
+        operationId: "unchanged-record-replay",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "existing" });
     gateCounts.push(gateRuns);
 
-    expect(gateCounts).toEqual([1, 1, 1, 1, 1]);
-    expect(gateCounts.at(-1)! - gateCounts[1]!).toBe(0);
+    expect(ledgerWrites).toBe(1);
+    expect(releaseEffects).toEqual(["protected-completion-release"]);
+    expect(gateCounts).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    expect(gateCounts.at(-1)! - gateCounts[0]!).toBe(0);
+    const released = await backend.transact(
+      { kind: "handle", handle: staged.prepared },
+      (store) => store.read(staged.prepared),
+    );
+    expect(released?.implementationQueue?.state).toBe("released");
+  });
+
+  // regression: T6520 round 13 — assertion-local counters did not prove that
+  // the production coordinator rejected stale dispatch identity and ran the
+  // gate for each newly qualified code identity.
+  test("changed tip, tree, command, and environment reject stale coordination before one fresh gate [Behavioral-Active Blackbox-Group]", async () => {
+    const replacements = [
+      { name: "tip", fields: { resultCommit: "3".repeat(40) }, invalidGateCommand: null },
+      { name: "tree", fields: { resultTree: "3".repeat(40) }, invalidGateCommand: null },
+      { name: "command", fields: {}, invalidGateCommand: "bun run replacement-check" },
+      {
+        name: "environment",
+        fields: { packagedEnvironmentDigest: "3".repeat(64) },
+        invalidGateCommand: null,
+      },
+    ] as const;
+
+    for (const replacement of replacements) {
+      const backend = new InMemoryAttestationBackend(
+        new InMemoryAttestationStore({
+          backend: "xdg",
+          projectKey: `candidate-change-${replacement.name}`,
+        }),
+      );
+      const fixture = new ImplementationCandidateQueueFixture(backend);
+      const common = {
+        taskId: "T6520",
+        repositoryId: "a".repeat(64),
+        integrationRef: "refs/heads/main",
+        goalRef: "goals:G211",
+        finalizedManifestDigest: "b".repeat(64),
+        resultCommit: "1".repeat(40),
+        resultTree: "2".repeat(40),
+        packagedEnvironmentDigest: "c".repeat(64),
+      } as const;
+      const candidates = new Map<number, Awaited<ReturnType<typeof fixture.stage>>>();
+      let gateRuns = 0;
+      const gatedHandles: Array<{ readonly attestationId: string; readonly generation: number }> = [];
+      const coordinator = new ImplementationCandidateCoordinator(fixture.adapter, {
+        observeProtectedHead: async (control) => control.attempt.observedBaseCommit,
+        finalizeQualifiedFront: async ({ lease, control }) => {
+          const staged = candidates.get(lease.generation);
+          if (staged === undefined) throw new Error("gate callback received an unknown candidate");
+          const claimed = await claimQualifiedParentGateOn(
+            backend,
+            { ...staged.prepared, queueLease: lease },
+            { now: fixture.clock.now },
+          );
+          if (claimed.state !== "gate-running") throw new Error("expected a fresh gate claim");
+          gateRuns += 1;
+          gatedHandles.push({
+            attestationId: staged.prepared.attestationId,
+            generation: staged.prepared.generation,
+          });
+          await completeQualifiedParentGateOn(
+            backend,
+            {
+              ...staged.prepared,
+              queueLease: lease,
+              gateEpoch: claimed.gateEpoch,
+              output: {
+                ...(claimed.output as Readonly<Record<string, DispatchJSONValue>>),
+                supervisedGateEvidence: {
+                  kind: "cq-supervised-gate-evidence",
+                  version: 1,
+                  attestationId: staged.prepared.attestationId,
+                  generation: staged.prepared.generation,
+                  roleId: "implement-worker",
+                  roleVersion: staged.prepared.promptProvenance.version,
+                  surface: "codex",
+                  promptDigest: staged.prepared.promptProvenance.promptDigest,
+                  catalogHash: staged.prepared.promptProvenance.catalogHash,
+                  inputDigest: staged.prepared.promptProvenance.inputDigest,
+                  taskId: staged.binding.taskId,
+                  worktreePath: control.attempt.worktreePath,
+                  branch: staged.binding.branch,
+                  baseCommit: control.attempt.observedBaseCommit,
+                  startingCommit: control.attempt.observedBaseCommit,
+                  resultCommit: control.attempt.resultCommit,
+                  clean: true,
+                  command: control.attempt.gateCommand,
+                  gateExitCode: 0,
+                  passCount: 1,
+                  failCount: 0,
+                  gateDurationMs: 1,
+                  capturedAt: fixture.clock.now(),
+                  filesTouchedDigest: "1".repeat(64),
+                  gitReceiptsDigest: "2".repeat(64),
+                  mutationTableDigest: "3".repeat(64),
+                },
+              },
+            },
+            { now: fixture.clock.now },
+          );
+        },
+        confirmQualifiedFront: async ({ lease, control, nativeCompletion }) => {
+          const staged = candidates.get(lease.generation);
+          if (staged === undefined || control.qualification === undefined) {
+            throw new Error("confirmation callback lost its qualified candidate");
+          }
+          await confirmDispatchCompletionOn(
+            backend,
+            {
+              namespace: backend.namespace,
+              ...staged.prepared,
+              nativeCompletion,
+              expectedProvenance: control.qualification.expectedProvenance,
+              continuationContext: {
+                liveTip: staged.binding.baseCommit,
+                gitReceipts: staged.candidate.gitReceipts,
+              },
+            },
+            { now: fixture.clock.now },
+          );
+        },
+        retireStaleSource: async () => {
+          throw new Error("a qualified replacement unexpectedly became stale");
+        },
+        rebaseRetiredSource: async () => {
+          throw new Error("a qualified replacement unexpectedly rebased");
+        },
+        prepareSuccessor: async () => {
+          throw new Error("a qualified replacement unexpectedly prepared a successor");
+        },
+      });
+
+      const original = await fixture.stage({
+        ...common,
+        idempotencyKey: `original-${replacement.name}`,
+      });
+      candidates.set(original.prepared.generation, original);
+      const originalQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: original.candidate,
+        ...original.qualification,
+      });
+      await expect(
+        coordinator.run({
+          partitionKey: originalQualified.queue.partition.partitionKey,
+          holderId: `original-${replacement.name}-holder`,
+          expectedCandidate: {
+            attestationId: original.prepared.attestationId,
+            generation: original.prepared.generation,
+          },
+        }),
+      ).resolves.toMatchObject({ state: "completed" });
+      expect(gateRuns, replacement.name).toBe(1);
+
+      const fresh = await fixture.stage({
+        ...common,
+        ...replacement.fields,
+        reprepareOf: original,
+        idempotencyKey: `fresh-${replacement.name}`,
+      });
+      candidates.set(fresh.prepared.generation, fresh);
+      if (replacement.invalidGateCommand !== null) {
+        await expect(
+          fixture.adapter.qualifyNativeCompletion({
+            candidate: {
+              ...fresh.candidate,
+              gateCommand: replacement.invalidGateCommand,
+            } as unknown as typeof fresh.candidate,
+            ...fresh.qualification,
+          }),
+        ).rejects.toThrow("implementation queue requires the canonical gate command");
+        expect(gateRuns, replacement.name).toBe(1);
+      }
+      const freshQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: fresh.candidate,
+        ...fresh.qualification,
+      });
+      await expect(
+        coordinator.run({
+          partitionKey: freshQualified.queue.partition.partitionKey,
+          holderId: `fresh-${replacement.name}-holder`,
+          expectedCandidate: {
+            attestationId: original.prepared.attestationId,
+            generation: original.prepared.generation,
+          },
+        }),
+      ).resolves.toMatchObject({
+        state: "blocked",
+        front: {
+          attestationId: fresh.prepared.attestationId,
+          generation: fresh.prepared.generation,
+        },
+      });
+      expect(gateRuns, replacement.name).toBe(1);
+      await expect(
+        coordinator.run({
+          partitionKey: freshQualified.queue.partition.partitionKey,
+          holderId: `fresh-${replacement.name}-holder`,
+          expectedCandidate: {
+            attestationId: fresh.prepared.attestationId,
+            generation: fresh.prepared.generation,
+          },
+        }),
+      ).resolves.toMatchObject({ state: "completed" });
+      expect(gateRuns, replacement.name).toBe(2);
+      expect(gatedHandles, replacement.name).toEqual([
+        {
+          attestationId: original.prepared.attestationId,
+          generation: original.prepared.generation,
+        },
+        {
+          attestationId: fresh.prepared.attestationId,
+          generation: fresh.prepared.generation,
+        },
+      ]);
+    }
   });
 
   // regression: T6520 round 9 — a consumed dispatch stays authoritative while

@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  SqliteAttestationBackend,
   claimQualifiedParentGateOn,
   completeQualifiedParentGateOn,
   confirmDispatchCompletionOn,
@@ -13,16 +17,103 @@ import {
 } from "@cq/config";
 import {
   ImplementationEvidenceService,
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  createInMemoryWorksetStore,
   createInMemoryImplementationEvidenceStore,
+  prepareManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
   type ImplementationCandidateAuthorityReceipt,
   type ImplementationReviewerIdentity,
+  type LedgerStore,
 } from "@cq/ledger";
+import { createDispatchCapability } from "../src/dispatchCapability.js";
+import { currentRecoveryTaskEvidence } from "../src/dispatchRecoverySeal.js";
+import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 import {
   ImplementationCandidateQueueFixture,
   type PreparedQueueCandidate,
 } from "./implementationCandidateQueueFixture.js";
 
 const namespace = { backend: "xdg" as const, projectKey: "candidate-stale-holder" };
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const process = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...globalThis.process.env,
+      GIT_AUTHOR_NAME: "T6520",
+      GIT_AUTHOR_EMAIL: "t6520@example.invalid",
+      GIT_COMMITTER_NAME: "T6520",
+      GIT_COMMITTER_EMAIL: "t6520@example.invalid",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  return stdout.trim();
+}
+
+function candidatePromptArtifacts(): PromptArtifactStore {
+  const metadata = {
+    roleId: "implement-worker",
+    roleKind: "dispatched-subagent" as const,
+    artifactPath: "roles/implement-worker.md",
+    sidecarSchemaRoleId: "implement-worker",
+    promptSurface: "codex" as const,
+    promptDigest: "a".repeat(64),
+    schemaVersion: 8,
+  };
+  return {
+    readManifest: () => ({
+      bytes: new Uint8Array(),
+      roles: [metadata],
+      promptSurface: "codex",
+      catalogHash: "b".repeat(64),
+    }),
+    readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
+  };
+}
+
+function finalizedCandidateTaskStore(): LedgerStore {
+  const workset = createInMemoryWorksetStore();
+  const manifest = JSON.stringify({
+    revision: 1,
+    milestones: [{ key: "candidate", id: "M6520" }],
+    tasks: [{ key: "handoff", id: "T6520" }],
+  });
+  return {
+    worksetStore: () => workset,
+    fetchItem: (ledgerId: string) =>
+      ledgerId === "tasks"
+        ? {
+            id: "T6520",
+            milestoneId: "M6520",
+            status: "wip",
+            fields: {
+              headline: "Queue one implementation candidate",
+              description: "Exercise the ledger-MCP implementation queue adapter.",
+              acceptance: "Queue state is durable and fenced.",
+              ledgerRefs: ["goals:G211"],
+              worksetOwnerRef: "goals:G211",
+              worksetOwnerEdgeKind: "active-current-draft",
+            },
+          }
+        : {
+            id: "G211",
+            milestoneId: "M6520",
+            status: "building",
+            fields: { [PLAN_FINALIZED_MANIFEST_FIELD]: manifest },
+          },
+  } as unknown as LedgerStore;
+}
 
 async function completeCandidate(
   backend: AttestationBackend,
@@ -31,6 +122,7 @@ async function completeCandidate(
   lease: ImplementationQueueLeaseBinding,
   baseCommit: string,
   startingCommit: string,
+  liveTip: string = startingCommit,
 ): Promise<void> {
   const claimed = await claimQualifiedParentGateOn(
     backend,
@@ -81,12 +173,12 @@ async function completeCandidate(
   await confirmDispatchCompletionOn(
     backend,
     {
-      namespace,
+      namespace: backend.namespace,
       ...staged.prepared,
       nativeCompletion: staged.qualification.nativeCompletion,
       expectedProvenance: staged.qualification.expectedProvenance,
       continuationContext: {
-        liveTip: startingCommit,
+        liveTip,
         gitReceipts: staged.candidate.gitReceipts,
       },
     },
@@ -447,6 +539,330 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
       author: "parent",
     });
     expect(completion).toMatchObject({ status: "prepared", resultCommit: rebasedStartCommit });
+  });
+
+  // regression: T6520 round 13 — a test-local resolver could merely return the
+  // successor it expected. This case uses the public capability over SQLite,
+  // a live managed worktree, and the durable source/successor rows.
+  test("public SQLite authority admits only the guarded-rebase successor after restart [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-t6520-public-successor-"));
+    const stateDir = join(root, ".manager-state");
+    await git(root, ["init", "-q", "-b", "main"]);
+    await writeFile(join(root, "candidate.ts"), "export const candidate = false;\n");
+    await git(root, ["add", "candidate.ts"]);
+    await git(root, ["commit", "-q", "-m", "candidate base"]);
+    const baseCommit = await git(root, ["rev-parse", "HEAD"]);
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot: root, taskId: "T6520", baseCommit },
+      { stateDir, skipInstall: true, bunWorkspaceRoot: root },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: root,
+        taskId: "T6520",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+      },
+      { stateDir },
+    );
+    if (binding === null) throw new Error("managed candidate binding did not resolve");
+    await writeFile(
+      join(managed.handle.absolutePath, "candidate.ts"),
+      "export const candidate = 'source';\n",
+    );
+    await git(managed.handle.absolutePath, ["add", "candidate.ts"]);
+    await git(managed.handle.absolutePath, ["commit", "-q", "-m", "source candidate"]);
+    const sourceResultCommit = await git(managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+    const sourceResultTree = await git(managed.handle.absolutePath, ["rev-parse", "HEAD^{tree}"]);
+    const sqliteNamespace = {
+      backend: "xdg" as const,
+      projectKey: "candidate-public-successor",
+    };
+    const backend = new SqliteAttestationBackend({
+      namespace: sqliteNamespace,
+      dbPath: join(root, "attestations.sqlite"),
+    });
+    try {
+      const ledgerStore = finalizedCandidateTaskStore();
+      const taskEvidence = currentRecoveryTaskEvidence(ledgerStore, "T6520");
+      const fixture = new ImplementationCandidateQueueFixture(backend);
+      const common = {
+        taskId: "T6520",
+        repositoryId: binding.repositoryId,
+        integrationRef: "refs/heads/main",
+        goalRef: "goals:G211",
+        finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
+      } as const;
+      const source = await fixture.stage({
+        ...common,
+        idempotencyKey: "public-source",
+        gitEffectBinding: binding,
+        resultCommit: sourceResultCommit,
+        resultTree: sourceResultTree,
+        withReceipt: true,
+      });
+      const sourceQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: source.candidate,
+        ...source.qualification,
+      });
+      const sourceLease = await fixture.adapter.acquire({
+        partitionKey: sourceQualified.queue.partition.partitionKey,
+        holderId: "public-source-holder",
+      });
+      if (sourceLease.state !== "leased") throw new Error("public source did not lease");
+      await completeCandidate(
+        backend,
+        fixture,
+        source,
+        sourceLease.lease,
+        baseCommit,
+        baseCommit,
+        sourceResultCommit,
+      );
+
+      await writeFile(join(root, "protected.txt"), "protected advance\n");
+      await git(root, ["add", "protected.txt"]);
+      await git(root, ["commit", "-q", "-m", "advance protected head"]);
+      const ontoCommit = await git(root, ["rev-parse", "HEAD"]);
+      await git(managed.handle.absolutePath, ["rebase", "main"]);
+      const rebasedStartCommit = await git(managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+      const rebasedTree = await git(managed.handle.absolutePath, ["rev-parse", "HEAD^{tree}"]);
+      const guardedRebase = `cq-guarded-rebase:v1:${"c".repeat(64)}` as const;
+      const successor = await fixture.stage({
+        ...common,
+        idempotencyKey: "public-successor",
+        reprepareOf: source,
+        guardedRebase: {
+          guardedRebase,
+          requestDigest: "c".repeat(64),
+          ontoCommit,
+          rebasedStartCommit,
+          resultTree: rebasedTree,
+        },
+      });
+      const successorQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: successor.candidate,
+        ...successor.qualification,
+      });
+      const successorLease = await fixture.adapter.acquire({
+        partitionKey: successorQualified.queue.partition.partitionKey,
+        holderId: "public-successor-holder",
+      });
+      if (successorLease.state !== "leased") throw new Error("public successor did not lease");
+      await completeCandidate(
+        backend,
+        fixture,
+        successor,
+        successorLease.lease,
+        ontoCommit,
+        rebasedStartCommit,
+      );
+      await backend.close();
+
+      const restartedBackend = new SqliteAttestationBackend({
+        namespace: sqliteNamespace,
+        dbPath: join(root, "attestations.sqlite"),
+      });
+      try {
+        const capability = createDispatchCapability({
+          backend: restartedBackend,
+          promptArtifactStore: candidatePromptArtifacts(),
+          ledgerStore,
+          repositoryRoot: root,
+          worktreeStateDir: stateDir,
+          now: fixture.clock.now,
+        });
+        if (capability.resolveImplementationCandidateAuthority === undefined) {
+          throw new Error("public implementation candidate authority is unavailable");
+        }
+        const resolveAuthority = capability.resolveImplementationCandidateAuthority;
+        await expect(
+          resolveAuthority({
+            workerDispatch: {
+              attestationId: source.prepared.attestationId,
+              generation: source.prepared.generation,
+            },
+            taskRef: "tasks:T6520",
+            resultCommit: sourceResultCommit,
+          }),
+        ).rejects.toThrow();
+        await expect(
+          resolveAuthority({
+            workerDispatch: {
+              attestationId: successor.prepared.attestationId,
+              generation: successor.prepared.generation,
+            },
+            taskRef: "tasks:T9999",
+            resultCommit: rebasedStartCommit,
+          }),
+        ).rejects.toThrow();
+        const authority = await resolveAuthority({
+          workerDispatch: {
+            attestationId: successor.prepared.attestationId,
+            generation: successor.prepared.generation,
+          },
+          taskRef: "tasks:T6520",
+          resultCommit: rebasedStartCommit,
+        });
+        expect(authority).toMatchObject({
+          workerDispatch: {
+            attestationId: successor.prepared.attestationId,
+            generation: successor.prepared.generation,
+          },
+          leaseHolderId: "public-successor-holder",
+          leaseGeneration: successorLease.lease.leaseGeneration,
+          taskRef: "tasks:T6520",
+          resultCommit: rebasedStartCommit,
+        });
+
+        const reviewer: ImplementationReviewerIdentity = {
+          alias: "native",
+          harness: "codex",
+          model: "frontier",
+          provider: null,
+          launch: "native",
+          adapterId: "codex:native",
+        };
+        const service = new ImplementationEvidenceService({
+          store: createInMemoryImplementationEvidenceStore(),
+          resolveReviewerRoster: () => [reviewer],
+          nativeFallback: reviewer,
+          now: fixture.clock.now,
+          prepareNativeReview: async ({ attemptRef }) => ({
+            attestationId: `att_${attemptRef.slice(-12)}`,
+            generation: 1,
+            responseStoreNow: "2099-01-01T00:00:00.000Z",
+            childCancelAt: "2099-01-01T00:01:00.000Z",
+            launchDeadline: "2098-12-31T23:59:00.000Z",
+            promptProvenance: {
+              roleId: "implement-reviewer",
+              version: 7,
+              surface: "codex",
+              promptDigest: "6".repeat(64),
+              catalogHash: "7".repeat(64),
+              inputDigest: "8".repeat(64),
+            },
+            inputCapability: { scope: "fetch-input", token: "input" },
+            resultCapability: { scope: "store-result", token: "result" },
+          }),
+          fetchNativeReview: async (dispatch) => ({
+            state: "consumed",
+            retainedAttestation: dispatch.attestationId,
+            output: {
+              taskId: "T6520",
+              verdict: "approve",
+              criticism: [],
+              questions: [],
+              defects: [],
+              rationale: "public successor authority resolved",
+              gateReRan: true,
+              gateDurationMs: 1,
+              resultCommitVerified: true,
+              resultCommitEvidence: {
+                status: "verified",
+                resultCommit: rebasedStartCommit,
+                branchTip: rebasedStartCommit,
+              },
+              baseAncestry: {
+                status: "verified",
+                relation: "descendant",
+                baseCommit: ontoCommit,
+                resultCommit: rebasedStartCommit,
+                mergeBase: ontoCommit,
+              },
+            },
+          }),
+          executeExternalReview: async () => {
+            throw new Error("external review is not configured");
+          },
+          fetchWorker: async () => ({
+            state: "consumed",
+            input: { taskId: "T6520", baseCommit: ontoCommit },
+            output: {
+              taskId: "T6520",
+              status: "pass",
+              resultCommit: rebasedStartCommit,
+              baseVerification: {
+                status: "verified",
+                relation: "descendant",
+                baseCommit: ontoCommit,
+                headCommit: rebasedStartCommit,
+              },
+            },
+          }),
+          resolveCandidateAuthority: resolveAuthority,
+          releaseCandidateAuthority: async () => {},
+          readTaskAuthority: async () => ({
+            taskRef: "tasks:T6520",
+            ownerGoalRef: "goals:G211",
+            status: "wip",
+            finalizedManifest: "manifest-v1\n",
+          }),
+          repositoryHead: async () => ontoCommit,
+          verifyImplementation: async () => ({
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            clean: true,
+            ancestryVerified: true,
+            receiptsVerified: true,
+            acceptanceVerified: true,
+            gateVerified: true,
+            details: { publicSuccessorAuthority: true },
+          }),
+          recordLedgerCompletion: async () => ({ reviewRef: "reviews:R6520" }),
+        });
+        await expect(
+          service.prepareReviewPanel({
+            taskRef: "tasks:T6520",
+            resultCommit: sourceResultCommit,
+            workerDispatch: {
+              attestationId: source.prepared.attestationId,
+              generation: source.prepared.generation,
+            },
+            operationId: "public-retired-source-review",
+            author: "parent",
+          }),
+        ).rejects.toThrow();
+        const panel = await service.prepareReviewPanel({
+          taskRef: "tasks:T6520",
+          resultCommit: rebasedStartCommit,
+          workerDispatch: authority.workerDispatch,
+          operationId: "public-successor-review",
+          author: "parent",
+        });
+        const attemptRef = panel.attemptRefs[0]!;
+        await service.prepareReviewAttempt({
+          panelRef: panel.panelRef,
+          attemptRef,
+          operationId: "public-successor-attempt",
+          author: "parent",
+        });
+        await service.finalizeReviewAttempt({
+          attemptRef,
+          operationId: "public-successor-finalize",
+          author: "parent",
+        });
+        const completion = await service.prepareCompletion({
+          taskRef: "tasks:T6520",
+          expectedRepositoryHead: ontoCommit,
+          resultCommit: rebasedStartCommit,
+          workerDispatch: authority.workerDispatch,
+          reviewAttemptRefs: [attemptRef],
+          completion: "public successor reviewed",
+          logPaths: [],
+          mergeOperationId: "public-successor-merge",
+          operationId: "public-successor-completion",
+          author: "parent",
+        });
+        expect(completion).toMatchObject({ status: "prepared", resultCommit: rebasedStartCommit });
+      } finally {
+        await restartedBackend.close();
+      }
+    } finally {
+      await backend.close().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("unqualified and staged-rebase-retired rows remain ineligible after durable replay", async () => {

@@ -519,75 +519,10 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(f.getCandidateReleaseCount()).toBe(2);
   });
 
-  // regression: T6520 round 11 — rejection-only assertions did not prove that
-  // a changed code candidate could earn fresh evidence while review-only
-  // invalidation retained the already-green code gate.
-  test("changed tip, tree, command, and environment each require exactly one fresh gate; roster and lease refresh remain review-only [Behavioral-Active Blackbox-Group]", async () => {
-    const replacementFields = [
-      { name: "tip", fields: { resultCommit: "c".repeat(40) } },
-      { name: "tree", fields: { resultTree: "d".repeat(40) } },
-      { name: "command", fields: { gateCommand: "bun run replacement-check" } },
-      {
-        name: "environment",
-        fields: { packagedEnvironmentDigest: "e".repeat(64) },
-      },
-    ] satisfies readonly {
-      readonly name: string;
-      readonly fields: Partial<ImplementationCandidateAuthorityReceipt>;
-    }[];
-    for (const replacement of replacementFields) {
-      let authority = candidateAuthority();
-      const stale = await fixture(createInMemoryImplementationEvidenceStore(), {
-        resolveCandidateAuthority: () => authority,
-      });
-      const staleInput = {
-        taskRef: "tasks:T2345",
-        expectedRepositoryHead: BASE,
-        resultCommit: stale.resultCommit,
-        workerDispatch: stale.workerDispatch,
-        reviewAttemptRefs: [stale.attemptRef],
-        completion: `stale ${replacement.name} evidence`,
-        logPaths: [] as string[],
-        mergeOperationId: `merge-stale-${replacement.name}`,
-        operationId: `completion-stale-${replacement.name}`,
-        author: "parent",
-      } as const;
-      authority = candidateAuthority(replacement.fields);
-      await expect(stale.service.prepareCompletion(staleInput)).rejects.toThrow();
-
-      let gateRuns = 1;
-      const freshWorker =
-        replacement.name === "tip"
-          ? { attestationId: "att_replacement_tip", generation: 2 }
-          : WORKER;
-      const freshResult = authority.resultCommit;
-      authority = candidateAuthority({
-        ...replacement.fields,
-        workerDispatch: freshWorker,
-        resultCommit: freshResult,
-        gateEvidenceDigest: `${String(gateRuns + 1).slice(-1)}`.repeat(64),
-      });
-      gateRuns += 1;
-      const fresh = await fixture(createInMemoryImplementationEvidenceStore(), {
-        resolveCandidateAuthority: () => authority,
-        resultCommit: freshResult,
-        workerDispatch: freshWorker,
-      });
-      await expect(
-        fresh.service.prepareCompletion({
-          ...staleInput,
-          resultCommit: freshResult,
-          workerDispatch: freshWorker,
-          reviewAttemptRefs: [fresh.attemptRef],
-          completion: `fresh ${replacement.name} evidence`,
-          mergeOperationId: `merge-fresh-${replacement.name}`,
-          operationId: `completion-fresh-${replacement.name}`,
-        }),
-      ).resolves.toMatchObject({ status: "prepared", resultCommit: freshResult });
-      expect(gateRuns, replacement.name).toBe(2);
-    }
-
-    const gateRuns = 1;
+  // regression: T6520 round 13 — code-identity gate counts belong at the
+  // production coordinator boundary; this service case isolates review-only
+  // roster and lease-authority invalidation.
+  test("roster and lease refresh invalidate review evidence without changing candidate code identity [Behavioral-Active Blackbox-Group]", async () => {
     let roster: readonly ImplementationReviewerIdentity[] = [reviewer];
     let authority = candidateAuthority();
     const reviewOnly = await fixture(createInMemoryImplementationEvidenceStore(), {
@@ -623,7 +558,6 @@ describe("versioned protected implementation evidence [BG]", () => {
         operationId: "completion-refreshed-review",
       }),
     ).resolves.toMatchObject({ status: "prepared", resultCommit: RESULT });
-    expect(gateRuns).toBe(1);
   });
 
   test("binds complete ordered review evidence before merge and records after durable merge", async () => {

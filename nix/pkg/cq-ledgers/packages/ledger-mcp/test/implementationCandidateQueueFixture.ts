@@ -2,6 +2,7 @@ import {
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  discoverDispatchContinuationOn,
   fetchDispatchInputOn,
   prepareDispatchOn,
   provenanceBindingOf,
@@ -36,6 +37,10 @@ export interface PrepareQueueCandidateOptions {
   readonly idempotencyKey?: string;
   readonly reprepareOf?: PreparedQueueCandidate;
   readonly withReceipt?: boolean;
+  readonly resultCommit?: string;
+  readonly resultTree?: string;
+  readonly packagedEnvironmentDigest?: string;
+  readonly gitEffectBinding?: DispatchGitEffectBinding;
   readonly guardedRebase?: {
     readonly guardedRebase: `cq-guarded-rebase:v1:${string}`;
     readonly requestDigest: string;
@@ -81,9 +86,14 @@ export class ImplementationCandidateQueueFixture {
     const sequence = this.sequence++;
     const prior = options.reprepareOf;
     const guarded = options.guardedRebase;
-    const baseCommit = guarded?.ontoCommit ?? prior?.binding.baseCommit ?? repeatedHex(sequence);
-    const resultCommit = guarded?.rebasedStartCommit ?? repeatedHex(sequence + 1);
-    const resultTree = guarded?.resultTree ?? repeatedHex(sequence + 2);
+    const baseCommit =
+      guarded?.ontoCommit ??
+      prior?.binding.baseCommit ??
+      options.gitEffectBinding?.baseCommit ??
+      repeatedHex(sequence);
+    const resultCommit =
+      guarded?.rebasedStartCommit ?? options.resultCommit ?? repeatedHex(sequence + 1);
+    const resultTree = guarded?.resultTree ?? options.resultTree ?? repeatedHex(sequence + 2);
     const expectedChild = {
       childId: `queue-child-${String(sequence)}`,
       runId: `queue-run-${String(sequence)}`,
@@ -104,7 +114,7 @@ export class ImplementationCandidateQueueFixture {
               finalizedAt: this.clock.peek(),
             },
           }
-        : (prior?.binding ?? {
+        : (prior?.binding ?? options.gitEffectBinding ?? {
             taskId: options.taskId,
             handleToken: `queue-worktree-${String(sequence)}`,
             handleFingerprint: (sequence % 16).toString(16).repeat(64),
@@ -128,6 +138,19 @@ export class ImplementationCandidateQueueFixture {
       startingCommit: guarded?.rebasedStartCommit ?? prior?.candidate.resultCommit ?? baseCommit,
       ...(prior === undefined ? {} : { priorResultCommit: prior.candidate.resultCommit }),
     };
+    const continuation =
+      prior === undefined || guarded !== undefined
+        ? undefined
+        : await discoverDispatchContinuationOn(
+            this.backend,
+            {
+              namespace: this.backend.namespace,
+              actor: "trusted-parent",
+              gitEffectBinding: binding,
+              liveTip: prior.candidate.resultCommit,
+            },
+            { now: this.clock.now },
+          );
     const outcome = await prepareDispatchOn(
       this.backend,
       {
@@ -148,6 +171,15 @@ export class ImplementationCandidateQueueFixture {
               reprepareOf: {
                 attestationId: prior.prepared.attestationId,
                 generation: prior.prepared.generation,
+              },
+            }),
+        ...(continuation === undefined
+          ? {}
+          : {
+              continuationClaim: {
+                continuationReference: continuation.continuationReference,
+                actor: "trusted-parent" as const,
+                liveTip: continuation.liveTip,
               },
             }),
       },
@@ -274,7 +306,7 @@ export class ImplementationCandidateQueueFixture {
       resultCommit: prepared.resultCommit,
       resultTree: prepared.resultTree,
       gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
-      packagedEnvironmentDigest: "c".repeat(64),
+      packagedEnvironmentDigest: options.packagedEnvironmentDigest ?? "c".repeat(64),
       gitReceipts,
       gitEffectBinding: prepared.binding,
       stagedOutputDigest: stored.result.outputDigest,
