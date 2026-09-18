@@ -504,19 +504,55 @@ function isConsumedOrdinaryContinuationAncestor(
   const control = candidate.implementationQueue;
   const claim = successor.dispatchContinuationClaim;
   const retained = candidate.dispatchContinuationBinding;
+  const retainedBinding = retained?.gitEffectBinding;
+  const claimsImmediatePredecessor =
+    claim !== undefined &&
+    claim.source.attestationId === successor.attestationId &&
+    claim.source.generation + 1 === successor.generation;
+  const candidateIsImmediatePredecessor = candidate.generation + 1 === successor.generation;
+  const sameManagerBinding =
+    retainedBinding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).every((field) => retainedBinding[field] === successorBinding[field]);
+  const sameLineageBridge =
+    retainedBinding?.guardedRebaseBridge === undefined
+      ? successorBinding.guardedRebaseBridge === undefined
+      : successorBinding.guardedRebaseBridge !== undefined &&
+        digest(retainedBinding.guardedRebaseBridge) ===
+          digest(successorBinding.guardedRebaseBridge);
+  const inheritedReceipts = successorBinding.inheritedGitReceipts ?? [];
+  const retainedReceiptPrefixMatches =
+    retained !== undefined &&
+    retained.gitReceipts.length <= inheritedReceipts.length &&
+    digest(retained.gitReceipts) ===
+      digest(inheritedReceipts.slice(0, retained.gitReceipts.length));
   if (
     control === undefined ||
     claim === undefined ||
     retained === undefined ||
     candidate.attestationId !== successor.attestationId ||
-    candidate.generation + 1 !== successor.generation ||
-    claim.source.attestationId !== candidate.attestationId ||
-    claim.source.generation !== candidate.generation ||
-    claim.continuationReference !== retained.continuationReference ||
+    candidate.generation >= successor.generation ||
+    !claimsImmediatePredecessor ||
+    (candidateIsImmediatePredecessor &&
+      (claim.source.attestationId !== candidate.attestationId ||
+        claim.source.generation !== candidate.generation ||
+        claim.continuationReference !== retained.continuationReference)) ||
     (isAttestationTombstone(candidate) ? candidate.terminalKind : candidate.state) !== "consumed" ||
     control.state !== "terminal" ||
     control.terminal?.reason !== "superseded" ||
-    digest(retained.gitEffectBinding) !== digest(successorBinding)
+    !sameManagerBinding ||
+    !sameLineageBridge ||
+    !retainedReceiptPrefixMatches
   ) {
     return false;
   }

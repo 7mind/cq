@@ -2271,7 +2271,11 @@ export function prepareDispatch(
     request.reprepareOf === undefined
       ? mintAttestationId(deps.randomBytes)
       : request.reprepareOf.attestationId;
-  claimStagedRebaseSuccessor(request, { attestationId, generation }, deps);
+  const inferredContinuationClaim = claimStagedRebaseSuccessor(
+    request,
+    { attestationId, generation },
+    deps,
+  );
 
   executed.push("mint-input-capability");
   const inputCapability = mintInputCapability(deps.randomBytes);
@@ -2350,16 +2354,18 @@ export function prepareDispatch(
     ...(implementationEvidenceBootstrapRef === undefined
       ? {}
       : { implementationEvidenceBootstrapRef }),
-    ...(request.continuationClaim === undefined
+    ...(inferredContinuationClaim === undefined && request.continuationClaim === undefined
       ? {}
       : {
-          dispatchContinuationClaim: Object.freeze({
-            continuationReference: request.continuationClaim.continuationReference,
-            source: Object.freeze({
-              attestationId: request.reprepareOf!.attestationId,
-              generation: request.reprepareOf!.generation,
+          dispatchContinuationClaim:
+            inferredContinuationClaim ??
+            Object.freeze({
+              continuationReference: request.continuationClaim!.continuationReference,
+              source: Object.freeze({
+                attestationId: request.reprepareOf!.attestationId,
+                generation: request.reprepareOf!.generation,
+              }),
             }),
-          }),
         }),
     createdAt: at,
   });
@@ -2501,7 +2507,7 @@ function claimStagedRebaseSuccessor(
   request: PrepareDispatchRequest,
   successor: DispatchHandle,
   deps: PrepareDispatchDeps,
-): void {
+): DispatchContinuationSourceClaim | undefined {
   const reprepareOf = request.reprepareOf;
   const gitEffectBinding = request.gitEffectBinding;
   const bridge = gitEffectBinding?.guardedRebaseBridge;
@@ -2522,6 +2528,12 @@ function claimStagedRebaseSuccessor(
   const priorManagerBinding = isAttestationTombstone(previous)
     ? retainedContinuation?.gitEffectBinding
     : previous.gitEffectBinding;
+  const priorGuardedBridge = priorManagerBinding?.guardedRebaseBridge;
+  const sameGuardedBridge =
+    bridge !== undefined &&
+    priorGuardedBridge !== undefined &&
+    dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue) ===
+      dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
   const managerBindingChanged =
     priorManagerBinding !== undefined &&
     (gitEffectBinding === undefined ||
@@ -2555,6 +2567,41 @@ function claimStagedRebaseSuccessor(
     dispatchPayloadDigest(retainedContinuation.gitReceipts as unknown as DispatchJSONValue) ===
       queue.attempt.gitReceiptLineageDigest &&
     !managerBindingChanged;
+  const supersedeRetainedQueue = (
+    retainedQueue: ImplementationQueueControl,
+    continuationReference: string,
+  ): DispatchContinuationSourceClaim => {
+    if (isAttestationTombstone(previous)) {
+      throw new AttestationContractError(
+        "reprepareOf",
+        "a retained implementation queue requires its consumed envelope",
+      );
+    }
+    const supersededAt = deps.now();
+    const sourceClaim = Object.freeze({
+      continuationReference,
+      source: Object.freeze({ ...reprepareOf }),
+    });
+    const detailsDigest = dispatchPayloadDigest({
+      successor: {
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+      },
+      continuationReference,
+    });
+    const { lease: _supersededLease, ...terminalQueueBase } = retainedQueue;
+    const terminalQueue: ImplementationQueueControl = Object.freeze({
+      ...terminalQueueBase,
+      state: "terminal" as const,
+      partitionRevision: nextImplementationQueuePartitionRevision(
+        deps.store,
+        retainedQueue.partition.partitionKey,
+      ),
+      terminal: Object.freeze({ reason: "superseded" as const, terminalAt: supersededAt, detailsDigest }),
+    });
+    deps.store.replace(previous, Object.freeze({ ...previous, implementationQueue: terminalQueue }));
+    return sourceClaim;
+  };
   if (
     source === undefined &&
     bridge !== undefined &&
@@ -2633,27 +2680,28 @@ function claimStagedRebaseSuccessor(
     request.continuationClaim !== undefined &&
     retainedQueueBindingsMatch
   ) {
-    const retainedQueue = queue!;
-    const supersededAt = deps.now();
-    const detailsDigest = dispatchPayloadDigest({
-      successor: {
-        attestationId: successor.attestationId,
-        generation: successor.generation,
-      },
-      continuationReference: request.continuationClaim.continuationReference,
-    });
-    const { lease: _supersededLease, ...terminalQueueBase } = retainedQueue;
-    const terminalQueue: ImplementationQueueControl = Object.freeze({
-      ...terminalQueueBase,
-      state: "terminal" as const,
-      partitionRevision: nextImplementationQueuePartitionRevision(
-        deps.store,
-        retainedQueue.partition.partitionKey,
-      ),
-      terminal: Object.freeze({ reason: "superseded" as const, terminalAt: supersededAt, detailsDigest }),
-    });
-    deps.store.replace(previous, Object.freeze({ ...previous, implementationQueue: terminalQueue }));
-    return;
+    return supersedeRetainedQueue(queue!, request.continuationClaim.continuationReference);
+  }
+  if (
+    source === undefined &&
+    request.continuationClaim === undefined &&
+    gitEffectBinding !== undefined &&
+    retainedQueueBindingsMatch &&
+    sameGuardedBridge &&
+    input?.["baseCommit"] === bridge.ontoCommit &&
+    input["startingCommit"] === retainedContinuation!.liveTip &&
+    dispatchPayloadDigest(
+      (gitEffectBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
+    ) ===
+      dispatchPayloadDigest(retainedContinuation!.gitReceipts as unknown as DispatchJSONValue)
+  ) {
+    if (continuationClaimedBy(retainedContinuation!.continuationReference, deps) !== undefined) {
+      throw new DispatchContinuationError(
+        "already-claimed",
+        "dispatch continuation has already allocated its successor generation",
+      );
+    }
+    return supersedeRetainedQueue(queue!, retainedContinuation!.continuationReference);
   }
   if (
     source === undefined &&
@@ -2666,14 +2714,6 @@ function claimStagedRebaseSuccessor(
     );
   }
   if (source === undefined) {
-    const priorGuardedBridge = isAttestationTombstone(previous)
-      ? retainedContinuation?.gitEffectBinding.guardedRebaseBridge
-      : previous.gitEffectBinding?.guardedRebaseBridge;
-    const sameGuardedBridge =
-      bridge !== undefined &&
-      priorGuardedBridge !== undefined &&
-      dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue) ===
-        dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
     const completedQueueBindingMatches =
       bridge !== undefined &&
       gitEffectBinding !== undefined &&

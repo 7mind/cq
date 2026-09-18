@@ -826,6 +826,7 @@ describe("staged-rebase source retirement", () => {
     }
 
     const correctionResult = "f".repeat(40);
+    const correctionTree = "0".repeat(40);
     // Regression: the public packaged runner sends this same-bridge correction
     // as a bare reprepareOf request, without a private continuation claim.
     const correction = await prepare(backend, {
@@ -853,9 +854,27 @@ describe("staged-rebase source retirement", () => {
     ) {
       throw new Error("ordinary correction left its predecessor lease live");
     }
+    const correctionReceipt: GitReceipts[number] = {
+      kind: "cq-git-change-receipt",
+      version: 1,
+      attestationId: correction.attestationId,
+      generation: correction.generation,
+      taskId: binding.taskId,
+      operationId: "consumed-guarded-correction-change",
+      requestDigest: "1".repeat(64),
+      oldHead: rebasedStartCommit,
+      newHead: correctionResult,
+      tree: correctionTree,
+      objectOids: [correctionResult],
+      paths: ["file.txt"],
+      committedAt: clock.peek(),
+    };
     const correctionStored = await storeDispatchResultOn(
       backend,
-      { resultCapability: correction.resultCapability, output: stagedOutput(correctionResult) },
+      {
+        resultCapability: correction.resultCapability,
+        output: stagedOutput(correctionResult, [correctionReceipt]),
+      },
       { now: clock.now },
     );
     if (correctionStored.state !== "gate-pending") {
@@ -867,29 +886,180 @@ describe("staged-rebase source retirement", () => {
       correctionStored.result,
       successorBinding,
       correctionResult,
-      "0".repeat(40),
+      correctionTree,
       ontoCommit,
+      undefined,
+      [correctionReceipt],
     );
     expect(correctionQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
-    expect(
-      await qualifyDispatchStagedCompletionOn(
-        backend,
-        {
-          namespace,
-          actor: "trusted-parent",
+    await qualifyDispatchStagedCompletionOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: correction.attestationId,
+        generation: correction.generation,
+        partitionKey: correctionQueue.partition.partitionKey,
+        enrollmentId: correctionQueue.enrollment.enrollmentId,
+        attemptId: correctionQueue.attempt.attemptId,
+        stagedOutputDigest: correctionStored.result.outputDigest,
+        expectedChild: child,
+        expectedProvenance: provenanceBindingOf(correction),
+        nativeCompletion: completion(),
+      },
+      { now: clock.now },
+    );
+    const correctionLease = await acquireImplementationCandidateOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        partitionKey: correctionQueue.partition.partitionKey,
+        holderId: "parent-gate-guarded-correction",
+      },
+      { now: clock.now },
+    );
+    if (correctionLease.state !== "leased") throw new Error("expected correction lease");
+    if (correction.parentGateCapability === undefined) {
+      throw new Error("guarded correction omitted its parent gate capability");
+    }
+    const correctionGate = await claimParentGateOn(
+      backend,
+      {
+        attestationId: correction.attestationId,
+        generation: correction.generation,
+        parentGateCapability: correction.parentGateCapability,
+        queueLease: correctionLease.lease,
+      },
+      { now: clock.now },
+    );
+    if (correctionGate.state !== "gate-running") throw new Error("expected correction gate");
+    await completeParentGateOn(
+      backend,
+      {
+        attestationId: correction.attestationId,
+        generation: correction.generation,
+        parentGateCapability: correction.parentGateCapability,
+        queueLease: correctionLease.lease,
+        gateEpoch: correctionGate.gateEpoch,
+        output: {
+          ...stagedOutput(correctionResult, [correctionReceipt]),
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            version: 1,
+            attestationId: correction.attestationId,
+            generation: correction.generation,
+            roleId: "implement-worker",
+            roleVersion: correction.promptProvenance.version,
+            surface: "codex",
+            promptDigest: correction.promptProvenance.promptDigest,
+            catalogHash: correction.promptProvenance.catalogHash,
+            inputDigest: correction.promptProvenance.inputDigest,
+            taskId: binding.taskId,
+            worktreePath: binding.worktreePath,
+            branch: binding.branch,
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            resultCommit: correctionResult,
+            clean: true,
+            command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 1,
+            capturedAt: clock.now(),
+            filesTouchedDigest: "2".repeat(64),
+            gitReceiptsDigest: "3".repeat(64),
+            mutationTableDigest: "4".repeat(64),
+          },
+        },
+      },
+      { now: clock.now },
+    );
+    await confirmDispatchCompletionOn(
+      backend,
+      {
+        namespace,
+        attestationId: correction.attestationId,
+        generation: correction.generation,
+        nativeCompletion: completion(),
+        expectedProvenance: provenanceBindingOf(correction),
+        continuationContext: { liveTip: correctionResult, gitReceipts: [correctionReceipt] },
+      },
+      { now: clock.now },
+    );
+
+    const furtherBinding: DispatchGitEffectBinding = {
+      ...successorBinding,
+      inheritedGitReceipts: [correctionReceipt],
+    };
+    await expect(
+      prepare(backend, {
+        input: input(ontoCommit, correctionResult, 3),
+        idempotencyKey: "consumed-guarded-mismatched-receipt-prefix",
+        reprepareOf: {
           attestationId: correction.attestationId,
           generation: correction.generation,
-          partitionKey: correctionQueue.partition.partitionKey,
-          enrollmentId: correctionQueue.enrollment.enrollmentId,
-          attemptId: correctionQueue.attempt.attemptId,
-          stagedOutputDigest: correctionStored.result.outputDigest,
-          expectedChild: child,
-          expectedProvenance: provenanceBindingOf(correction),
-          nativeCompletion: completion(),
         },
-        { now: clock.now },
-      ),
-    ).toMatchObject({ state: "qualified", replayed: false });
+        gitEffectBinding: {
+          ...successorBinding,
+          inheritedGitReceipts: [
+            { ...correctionReceipt, requestDigest: "9".repeat(64) },
+          ],
+        },
+      }),
+    ).rejects.toThrow("not a retired implementation queue enrollment");
+    const further = await prepare(backend, {
+      input: input(ontoCommit, correctionResult, 3),
+      idempotencyKey: "consumed-guarded-further-correction",
+      reprepareOf: {
+        attestationId: correction.attestationId,
+        generation: correction.generation,
+      },
+      gitEffectBinding: furtherBinding,
+    });
+    const furtherResult = "5".repeat(40);
+    const furtherTree = "6".repeat(40);
+    const furtherReceipt: GitReceipts[number] = {
+      kind: "cq-git-change-receipt",
+      version: 1,
+      attestationId: further.attestationId,
+      generation: further.generation,
+      taskId: binding.taskId,
+      operationId: "consumed-guarded-further-correction-change",
+      requestDigest: "5".repeat(64),
+      oldHead: correctionResult,
+      newHead: furtherResult,
+      tree: furtherTree,
+      objectOids: [furtherResult],
+      paths: ["file.txt"],
+      committedAt: clock.peek(),
+    };
+    const furtherReceipts = [correctionReceipt, furtherReceipt] as const;
+    const furtherStored = await storeDispatchResultOn(
+      backend,
+      {
+        resultCapability: further.resultCapability,
+        output: stagedOutput(furtherResult, furtherReceipts),
+      },
+      { now: clock.now },
+    );
+    if (furtherStored.state !== "gate-pending") {
+      throw new Error("expected further correction staging");
+    }
+    const furtherQueue = await enqueue(
+      backend,
+      further,
+      furtherStored.result,
+      furtherBinding,
+      furtherResult,
+      furtherTree,
+      ontoCommit,
+      undefined,
+      furtherReceipts,
+    );
+    expect(furtherQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
+    expect(furtherQueue.attempt.gitReceipts).toEqual(furtherReceipts);
   });
 
   // regression: T6518 review round 3 — enqueue claimed the source after prepare and store_result.
