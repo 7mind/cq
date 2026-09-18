@@ -280,7 +280,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexBoundaryDiagnostics.test.ts",
-      "sha256": "195be0387bff45de2ff2ee927c4347b8ed1c24423cdc364edf28a213d6cfa3ba",
+      "sha256": "cb533335af2c6d1845bb86e0386a4822dfa26c2e674486e7d8dfe7a2956df31c",
       "targets": []
     },
     {
@@ -298,7 +298,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
-      "sha256": "d0b4bd1dbef0331c754e3cc7e7378794b708f076ddeedd368d35c3245633b5a1",
+      "sha256": "abd80cbcacccbe43ed94fe8b79666d4339836578bef9f241389b11825b87976e",
       "targets": []
     },
     {
@@ -999,7 +999,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
-      "sha256": "d0b4bd1dbef0331c754e3cc7e7378794b708f076ddeedd368d35c3245633b5a1",
+      "sha256": "abd80cbcacccbe43ed94fe8b79666d4339836578bef9f241389b11825b87976e",
       "targets": []
     },
     {
