@@ -812,7 +812,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(CODEX_STAGED_TIMING_BASIS.parentGateWindowMs).toBe(9_611_000);
   });
 
-  test("production coordinator gates, confirms, fetches, and releases one qualified managed front", async () => {
+  test("production coordinator gates, confirms, and releases one qualified managed front for public fetch", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner, true);
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
@@ -850,11 +850,31 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       },
     });
     expect(runner.requests).toHaveLength(1);
-    expect(subject.store.rows()[0]).toMatchObject({
+    const confirmed = subject.store.rows()[0];
+    expect(confirmed).toMatchObject({
       state: "consumed",
-      outputMaterializedAt: "2026-08-12T20:00:00.000Z",
       implementationQueue: { state: "released", leaseGeneration: 1 },
     });
+    expect(confirmed).not.toHaveProperty("outputMaterializedAt");
+
+    const fetched = await subject.capability.fetch({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+    });
+    expect(fetched).toMatchObject({
+      state: "consumed",
+      output: {
+        status: "pass",
+        resultCommit: subject.receipt.newHead,
+      },
+    });
+    await expect(
+      subject.capability.fetch({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      }),
+    ).resolves.toMatchObject({ state: "output-already-materialized" });
+    expect(runner.requests).toHaveLength(1);
   });
 
   test("production coordinator retires a stale front before one admitted guarded rebase and successor", async () => {

@@ -50,6 +50,7 @@ test(
     const markers = path.join(root, "markers.jsonl");
     const codexCapture = path.join(root, "codex.json");
     const qualifierCapture = path.join(root, "qualifier.json");
+    const coordinatorCapture = path.join(root, "coordinator.json");
     try {
       await mkdir(worktree);
       const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
@@ -93,6 +94,12 @@ if (argv.includes("--implementation-candidate-qualify")) {
   process.stdout.write(JSON.stringify({state:"queued",attestationId:request.attestationId,generation:request.generation,partitionKey:"cq-implementation-queue:v1:t2844",outputDigest:"${"a".repeat(64)}",qualificationDigest:"${"b".repeat(64)}"}));
   process.exit(0);
 }
+if (argv.includes("--implementation-candidate-coordinate")) {
+  appendFileSync(markers, "coordinator\\n");
+  writeFileSync(process.env.T2844_COORDINATOR_CAPTURE, JSON.stringify({ argv, environment: process.env, request }));
+  process.stdout.write(JSON.stringify({state:"empty",partitionKey:"cq-implementation-queue:v1:t2844",partitionRevision:1}));
+  process.exit(0);
+}
 appendFileSync(markers, "unexpected:" + argv.join(" ") + "\\n");
 process.exit(1);
 `,
@@ -120,6 +127,7 @@ process.exit(1);
         T2844_MARKERS: markers,
         T2844_CODEX_CAPTURE: codexCapture,
         T2844_QUALIFIER_CAPTURE: qualifierCapture,
+        T2844_COORDINATOR_CAPTURE: coordinatorCapture,
         CQ_CODEX_ROLE_CORRELATION_ID: "t2844-correlation",
         CQ_CODEX_ROLE_EXPECTED_RUN_ID: "t2844-parent-run",
       };
@@ -142,11 +150,15 @@ process.exit(1);
       expect(markerLines.filter((line) => line === "provider:acquire:tasks:T2844")).toHaveLength(1);
       expect(markerLines.filter((line) => line === "codex")).toHaveLength(1);
       expect(markerLines.filter((line) => line === "qualifier")).toHaveLength(1);
+      expect(markerLines.filter((line) => line === "coordinator")).toHaveLength(1);
       expect(markerLines.filter((line) => line.startsWith("unexpected:"))).toHaveLength(0);
       expect(markerLines.indexOf("provider:acquire:tasks:T2844")).toBeLessThan(
         markerLines.indexOf("codex"),
       );
       expect(markerLines.indexOf("codex")).toBeLessThan(markerLines.indexOf("qualifier"));
+      expect(markerLines.indexOf("qualifier")).toBeLessThan(
+        markerLines.indexOf("coordinator"),
+      );
 
       const codexTransport = await readFile(codexCapture, "utf8");
       for (const forbidden of [
@@ -201,6 +213,26 @@ process.exit(1);
         "CQ_LEDGER_REMOTE_TOKEN",
       ]) {
         expect(qualifierTransport).not.toContain(forbidden);
+      }
+      const coordinator = JSON.parse(await readFile(coordinatorCapture, "utf8")) as {
+        readonly argv: readonly string[];
+        readonly environment: Readonly<Record<string, string>>;
+        readonly request: Readonly<Record<string, unknown>>;
+      };
+      expect(coordinator.argv).toContain("--implementation-candidate-coordinate");
+      expect(coordinator.request).toEqual({
+        ...HANDLE,
+        holderId: "att_t2844_boundary:1:installed-parent",
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+      });
+      for (const forbidden of [
+        "effectTargetRef",
+        "tasks:T2844",
+        "CQ_SERVE_TOKEN",
+        "CQ_SERVE_MANAGEMENT_TOKEN",
+        "CQ_LEDGER_REMOTE_TOKEN",
+      ]) {
+        expect(JSON.stringify(coordinator.environment)).not.toContain(forbidden);
       }
     } finally {
       await rm(root, { recursive: true, force: true });

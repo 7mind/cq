@@ -316,13 +316,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "0ff25f5301fed77a38e10797f006b153a2f46b97684bb9bd33cea9bb78a74a88",
+      "sha256": "705deae922ea92fbb3cccd345cf73e8d83781133668ca88f0cce4bfd460c1ac9",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
-      "sha256": "0ff25f5301fed77a38e10797f006b153a2f46b97684bb9bd33cea9bb78a74a88",
+      "sha256": "705deae922ea92fbb3cccd345cf73e8d83781133668ca88f0cce4bfd460c1ac9",
       "targets": []
     },
     {
@@ -591,7 +591,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "1e8b9d36244d300739b34431c47e091c4eac8bf0f6de9199dec372b3d4f872c1",
+      "sha256": "868933921ce2e4df0969b6f49a92762339036d7918b448b2c4f03b5c5ccd132f",
       "targets": []
     },
     {
