@@ -145,6 +145,9 @@ export class ImplementationCandidateQueueFixture {
         : await this.backend.transact({ kind: "handle", handle: prior.prepared }, (store) => {
             const row = store.read(prior.prepared);
             if (row === undefined) throw new Error("queue fixture prior dispatch disappeared");
+            if (row.kind !== "envelope") {
+              throw new Error("queue fixture prior dispatch was collapsed");
+            }
             return row.state;
           });
     const continuation =
