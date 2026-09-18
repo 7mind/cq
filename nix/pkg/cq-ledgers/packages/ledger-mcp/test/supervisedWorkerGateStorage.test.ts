@@ -1063,7 +1063,7 @@ process.stdout.write(JSON.stringify({
       implementationQueue: { state: "staged-rebase-retired" },
     });
     expect(successor).toMatchObject({
-      state: "prepared",
+      state: "consumed",
       generation: subject.prepared.generation + 1,
       input: {
         baseCommit: protectedHead,
@@ -1075,6 +1075,7 @@ process.stdout.write(JSON.stringify({
         },
       },
     });
+    expect(runner.requests).toHaveLength(1);
     expect(
       await git(subject.managed.handle.absolutePath, [
         "merge-base",
