@@ -35,7 +35,10 @@ import {
   MILESTONES_AMBIENT_ID,
   observeManagedRebaseConflict,
   PLAN_REVIEW_DRAFT_FIELD,
+  PLAN_FINALIZED_MANIFEST_FIELD,
   prepareManagedWorktree,
+  readCanonicalOwnership,
+  recordProtectedImplementationCompletion,
   releaseManagedWorktree,
   REVIEWS_LEDGER,
   resolveManagedWorktreeDispatchBinding,
@@ -1281,14 +1284,8 @@ describe("packaged cq-codex-role Git broker", () => {
       const retryCapturePath = path.join(fixtureRoot, "retry-capture.json");
       const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
       const gateCountPath = path.join(fixtureRoot, "retry-gate-count.log");
-      const qualificationAttemptsPath = path.join(
-        fixtureRoot,
-        "retry-qualification-attempts.log",
-      );
-      const qualificationCommittedPath = path.join(
-        fixtureRoot,
-        "retry-qualification-committed",
-      );
+      const qualificationAttemptsPath = path.join(fixtureRoot, "retry-qualification-attempts.log");
+      const qualificationCommittedPath = path.join(fixtureRoot, "retry-qualification-committed");
       const flakyLedgerCommand = path.join(fixtureRoot, "flaky-ledger-command");
       await writeFile(
         flakyLedgerCommand,
@@ -1385,18 +1382,29 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         firstResultCommit,
         String(retryCapture.output["resultCommit"]),
       ]);
-      const releasedControl = await backend.transact({ kind: "handle", handle: retryHandle }, (store) => {
+      const retained = await backend.transact({ kind: "handle", handle: retryHandle }, (store) => {
         const row = store.read(retryHandle);
-        if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
+        if (
+          row?.kind !== "envelope" ||
+          row.implementationQueue === undefined ||
+          row.stagedCompletionQualification === undefined
+        ) {
           throw new Error("installed worker did not durably qualify its staged result");
         }
-        return row.implementationQueue;
+        return {
+          control: row.implementationQueue,
+          qualification: row.stagedCompletionQualification,
+        };
       });
-      expect(releasedControl).toMatchObject({
-        state: "released",
+      expect(retained.control).toMatchObject({
+        state: "leased",
         leaseGeneration: 1,
-        terminal: { reason: "gate-complete" },
+        lease: {
+          holderId: `${retryHandle.attestationId}:${String(retryHandle.generation)}:installed-parent`,
+          generation: 1,
+        },
       });
+      expect(retained.control.qualification).toEqual(retained.qualification);
       await backend.close();
       backend = new SqliteAttestationBackend({
         namespace,
@@ -1680,9 +1688,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             priorConsumed: consumed,
             consumed: retryEvidence,
             release: released,
-            sandboxControls: sandboxControls.filter(
-              ({ roleId }) => roleId === "implement-worker",
-            ),
+            sandboxControls: sandboxControls.filter(({ roleId }) => roleId === "implement-worker"),
             completionRejection,
             cancelled,
             deadline: deadline.result,
@@ -1916,23 +1922,34 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
           output: Record<string, unknown>;
         };
-        const releasedControl = await backend.transact({ kind: "handle", handle }, (store) => {
+        const retained = await backend.transact({ kind: "handle", handle }, (store) => {
           const row = store.read(handle);
-          if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
+          if (
+            row?.kind !== "envelope" ||
+            row.implementationQueue === undefined ||
+            row.stagedCompletionQualification === undefined
+          ) {
             throw new Error("installed worker did not durably qualify its staged result");
           }
-          return row.implementationQueue;
+          return {
+            control: row.implementationQueue,
+            qualification: row.stagedCompletionQualification,
+          };
         });
-        expect(releasedControl).toMatchObject({
-          state: "released",
+        expect(retained.control).toMatchObject({
+          state: "leased",
           leaseGeneration: 1,
-          terminal: { reason: "gate-complete" },
+          lease: {
+            holderId: `${handle.attestationId}:${String(handle.generation)}:installed-parent`,
+            generation: 1,
+          },
         });
+        expect(retained.control.qualification).toEqual(retained.qualification);
         const consumed = await evidenceObserverOf(capability)(handle);
         if (consumed.state !== "consumed") {
           throw new Error(`unexpected worker evidence ${consumed.state}`);
         }
-        return { handle, capture, consumed };
+        return { handle, capture, consumed, retainedControl: retained.control };
       };
 
       const runGitEffect = async (
@@ -2278,6 +2295,12 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           launch: "native",
           adapterId: "codex:native",
         };
+        if (
+          capability.resolveImplementationCandidateAuthority === undefined ||
+          capability.releaseImplementationCandidateAuthority === undefined
+        ) {
+          throw new Error("installed guarded-rebase fixture lacks candidate authority controls");
+        }
         const implementationEvidence = new ImplementationEvidenceService({
           store: implementationEvidenceStore,
           resolveReviewerRoster: () => [reviewerIdentity],
@@ -2307,12 +2330,34 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
               output: observation.output,
             };
           },
-          readTaskAuthority: async (taskRef) => ({
-            taskRef,
-            ownerGoalRef: "goals:G2151",
-            status: "wip",
-            finalizedManifest: "T2151 installed guarded-rebase completion manifest\n",
-          }),
+          resolveCandidateAuthority: async (input) =>
+            await capability.resolveImplementationCandidateAuthority!(input),
+          releaseCandidateAuthority: async (receipt) =>
+            await capability.releaseImplementationCandidateAuthority!(receipt),
+          readTaskAuthority: async (taskRef) => {
+            const task = seededStore.store.fetchItem(
+              TASKS_LEDGER,
+              taskRef.slice(`${TASKS_LEDGER}:`.length),
+            );
+            const ownership = readCanonicalOwnership(task);
+            if (ownership === null || !ownership.ownerRef.startsWith(`${GOALS_LEDGER}:`)) {
+              throw new Error("installed guarded-rebase task lacks exact goal ownership");
+            }
+            const goal = seededStore.store.fetchItem(
+              GOALS_LEDGER,
+              ownership.ownerRef.slice(`${GOALS_LEDGER}:`.length),
+            );
+            const finalizedManifest = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+            if (typeof finalizedManifest !== "string") {
+              throw new Error("installed guarded-rebase goal lacks its finalized manifest");
+            }
+            return {
+              taskRef,
+              ownerGoalRef: ownership.ownerRef,
+              status: task.status,
+              finalizedManifest,
+            };
+          },
           repositoryHead: async () => await git(repositoryRoot, ["rev-parse", "HEAD"]),
           verifyImplementation: async () => ({
             baseCommit: ontoCommit,
@@ -2324,7 +2369,11 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             gateVerified: true,
             details: { fixture: "T2151", ffOnly: true },
           }),
-          recordLedgerCompletion: async () => ({ reviewRef: "reviews:R2151" }),
+          recordLedgerCompletion: async ({ task, completion, author, session }) =>
+            await recordProtectedImplementationCompletion(seededStore.store, task, completion, {
+              author,
+              ...(session === undefined ? {} : { session }),
+            }),
         });
         const panel = await implementationEvidence.prepareReviewPanel({
           taskRef: `tasks:${taskId}`,
@@ -2405,6 +2454,49 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             "--untracked-files=all",
           ]),
         ).toBe("");
+        const recorded = await implementationEvidence.recordCompletion({
+          taskRef: `tasks:${taskId}`,
+          expectedRepositoryHead: round2ResultCommit,
+          operationId: "t2151_completion_record_round2_v1",
+          author: "t2151-parent",
+        });
+        expect(recorded).toMatchObject({
+          status: "recorded",
+          completionRef: completion.completionRef,
+          taskRef: `tasks:${taskId}`,
+          resultCommit: round2ResultCommit,
+          repositoryHead: round2ResultCommit,
+        });
+        expect(seededStore.store.fetchItem(TASKS_LEDGER, taskId)).toMatchObject({
+          status: "done",
+          fields: { resultCommit: round2ResultCommit },
+        });
+        const releasedControl = await backend.transact(
+          { kind: "handle", handle: round2.handle },
+          (store) => {
+            const row = store.read(round2.handle);
+            if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
+              throw new Error("completed installed worker lost its queue evidence");
+            }
+            return row.implementationQueue;
+          },
+        );
+        expect(releasedControl).toMatchObject({
+          state: "released",
+          leaseGeneration: round2.retainedControl.leaseGeneration,
+          qualification: round2.retainedControl.qualification,
+          terminal: { reason: "gate-complete" },
+        });
+        expect(releasedControl).not.toHaveProperty("lease");
+        expect(
+          await implementationEvidence.recordCompletion({
+            taskRef: `tasks:${taskId}`,
+            expectedRepositoryHead: round2ResultCommit,
+            operationId: "t2151_completion_record_round2_v1",
+            author: "t2151-parent",
+          }),
+        ).toMatchObject({ status: "existing", completionRef: completion.completionRef });
+        expect(await gateRuns()).toBe(3);
         await backend.close();
         await seededStore.store.dispose();
       } finally {
