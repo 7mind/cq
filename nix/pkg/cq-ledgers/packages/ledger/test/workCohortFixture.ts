@@ -348,6 +348,7 @@ export function qualifiedQueue(input: {
     state: "qualified",
     partitionRevision: 1,
     leaseGeneration: 0,
+    qualificationDeadline: "2026-09-16T00:01:00.000Z",
     qualification: {
       kind: "cq-staged-completion-qualification",
       version: 1,
