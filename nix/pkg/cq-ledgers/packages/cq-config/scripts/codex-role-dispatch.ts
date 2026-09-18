@@ -6,6 +6,7 @@ import { createProcessWorksetEffectAdmissionProvider } from "@cq/process-control
 import {
   assertCodexBoundaryEffectTargetRef,
   assertCodexDispatchedRoleId,
+  CODEX_EXPECTED_RUN_ID_ENV,
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
@@ -27,7 +28,7 @@ const CODEX_EXECUTABLE_ENV = "CQ_CODEX_EXECUTABLE";
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (value === undefined || value.trim() === "") {
-    throw new Error(`codex-role-dispatch: ${name} must name the packaged Codex prompt root`);
+    throw new Error(`codex-role-dispatch: ${name} must be non-empty`);
   }
   return value;
 }
@@ -66,6 +67,9 @@ export async function main(): Promise<void> {
   const { effectTargetRef: untrustedEffectTargetRef, ...invocation } = wireInvocation;
   const effectTargetRef = assertCodexBoundaryEffectTargetRef(untrustedEffectTargetRef);
   const roleId = assertCodexDispatchedRoleId(invocation.roleId);
+  const expectedRunId =
+    roleId === "implement-worker" ? requiredEnvironment(CODEX_EXPECTED_RUN_ID_ENV) : undefined;
+  delete process.env[CODEX_EXPECTED_RUN_ID_ENV];
   const promptRoot = requiredEnvironment(PROMPT_ROOT_ENV);
   const roleInstructions = await readFile(
     path.join(promptRoot, "roles", `${roleId}.md`),
@@ -145,21 +149,13 @@ export async function main(): Promise<void> {
         "codex-role-dispatch: implement-worker requires a registered process observation",
       );
     }
-    if (execution.observation.outcome !== "completed") {
-      throw new Error("codex-role-dispatch: implement-worker process did not complete");
-    }
     await executeCodexImplementationCandidateQualifier({
       command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
       ledgerCwd: invocation.ledgerCwd,
       promptRoot,
-      handle,
-      roleId,
-      correlationId,
-      childThreadId: execution.observation.childThreadId,
-      outcome: execution.observation.outcome,
-      exitStatus: execution.observation.exitStatus,
+      execution,
+      expectedRunId: expectedRunId!,
       observedAt: new Date().toISOString(),
-      promptDigest: plan.effectivePreturn.rolePromptDigest,
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
     });
   }

@@ -197,6 +197,7 @@ throw new Error("unexpected cq invocation");
           CQ_CODEX_EXECUTABLE: codex,
           CQ_CODEX_LEDGER_COMMAND: cq,
           CQ_CODEX_ROLE_CORRELATION_ID: "installed-queued-correlation",
+          CQ_CODEX_ROLE_EXPECTED_RUN_ID: "installed-parent-run",
           CQ_T6519_INSTALLED_MARKERS: markers,
         },
         stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
@@ -213,8 +214,25 @@ throw new Error("unexpected cq invocation");
       const observations = readFileSync(markers, "utf8")
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line) as { readonly action: string });
-      expect(observations.filter(({ action }) => action === "qualify")).toHaveLength(1);
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              readonly action: string;
+              readonly request?: Readonly<Record<string, unknown>>;
+            },
+        );
+      const qualifications = observations.filter(({ action }) => action === "qualify");
+      expect(qualifications).toHaveLength(1);
+      expect(qualifications[0]?.request).toMatchObject({
+        correlationId: "installed-queued-correlation",
+        childThreadId: "installed-queued-thread",
+        expectedRunId: "installed-parent-run",
+        outcome: "completed",
+        exitStatus: 0,
+      });
+      expect(qualifications[0]?.request?.["childThreadId"]).not.toBe(
+        qualifications[0]?.request?.["expectedRunId"],
+      );
       expect(observations.filter(({ action }) => action === "coordinate")).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -224,7 +242,10 @@ throw new Error("unexpected cq invocation");
   test("candidate qualification replays one exact request after a lost acknowledgement [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-candidate-qualification-replay-"));
     const runner = join(root, "qualifier");
+    const codex = join(root, "codex-observation");
     const attempts = join(root, "attempts");
+    const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
+    if (initialized.exitCode !== 0) throw new Error("qualification replay git init failed");
     writeFileSync(
       runner,
       [
@@ -247,25 +268,110 @@ throw new Error("unexpected cq invocation");
       ].join("\n"),
     );
     chmodSync(runner, 0o755);
+    const stored = {
+      state: "gate-pending",
+      result: {
+        state: "gate-pending",
+        ...HANDLE,
+        submittedAt: "2026-09-16T12:00:00.000Z",
+        outputDigest: "a".repeat(64),
+      },
+    };
+    writeFileSync(
+      codex,
+      [
+        "#!/usr/bin/env bun",
+        "await Bun.stdin.text();",
+        `process.stdout.write(${JSON.stringify(
+          [
+            JSON.stringify({ type: "thread.started", thread_id: "generated-candidate-thread" }),
+            JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "mcp_tool_call",
+                server: "ledger",
+                tool: "store_result",
+                result: { content: [{ type: "text", text: JSON.stringify(stored) }] },
+              },
+            }),
+            JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: JSON.stringify(HANDLE) },
+            }),
+            JSON.stringify({ type: "turn.completed", usage: {} }),
+          ].join("\n"),
+        )});`,
+      ].join("\n"),
+    );
+    chmodSync(codex, 0o755);
     try {
+      const execution = await executeCodexRoleBoundary(
+        createCodexRoleBoundaryPlan({
+          roleId: "implement-worker",
+          roleInstructions: "candidate qualification replay",
+          handle: HANDLE,
+          inputCapability: INPUT_CAPABILITY,
+          resultCapability: RESULT_CAPABILITY,
+          gitChangeCapability: GIT_CHANGE_CAPABILITY,
+          parentGateCapability: PARENT_GATE_CAPABILITY,
+          cwd: root,
+          ledgerCwd: root,
+          model: "recording",
+          reasoningEffort: "medium",
+          sandboxMode: "danger-full-access",
+          timeoutMs: 5_000,
+          promptRoot: root,
+          ledgerCommand: runner,
+          codexExecutable: codex,
+        }),
+        "candidate-correlation",
+        undefined,
+        {
+          provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+          targetRef: "tasks:T6519",
+        },
+      );
       await executeCodexImplementationCandidateQualifier({
         command: runner,
         ledgerCwd: root,
         promptRoot: root,
-        handle: HANDLE,
-        roleId: "implement-worker",
-        correlationId: "candidate-correlation",
-        childThreadId: "candidate-thread",
-        outcome: "completed",
-        exitStatus: 0,
+        execution,
+        expectedRunId: "candidate-parent-run",
         observedAt: "2026-09-16T12:00:00.000Z",
-        promptDigest: "c".repeat(64),
         timeoutMs: 2_000,
       });
       expect(readFileSync(attempts, "utf8")).toBe("2");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("candidate qualification rejects a reconstructed process observation", async () => {
+    const fabricated = {
+      handle: HANDLE,
+      effectivePreturn: {
+        roleId: "implement-worker",
+        rolePromptDigest: "c".repeat(64),
+      },
+      observation: {
+        agentType: "implement-worker",
+        correlationId: "candidate-correlation",
+        childThreadId: "generated-candidate-thread",
+        outcome: "completed",
+        exitStatus: 0,
+      },
+    };
+    await expect(
+      executeCodexImplementationCandidateQualifier({
+        command: "must-not-launch",
+        ledgerCwd: "/projects/cq",
+        promptRoot: "/prompts",
+        execution: fabricated as never,
+        expectedRunId: "candidate-parent-run",
+        observedAt: "2026-09-16T12:00:00.000Z",
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toThrow("runner-owned registered process observation");
   });
 
   test("candidate coordinator uses the dedicated trusted local command after qualification [Behavioral-Active Blackbox Good-Communication]", async () => {

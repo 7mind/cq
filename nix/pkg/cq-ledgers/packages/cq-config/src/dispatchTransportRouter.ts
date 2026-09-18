@@ -43,6 +43,7 @@ import {
   CodexOperationalAbstentionError,
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
+  isRunnerOwnedCodexRoleBoundaryExecution,
   type CodexRoleBoundaryRequest,
   type CodexRoleSandboxMode,
 } from "./codexRoleBoundary.js";
@@ -337,6 +338,22 @@ export function createCodexProcessDispatchAdapter(
           targetRef: context.effectTargetRef,
         },
       );
+      if (!isRunnerOwnedCodexRoleBoundaryExecution(observed)) {
+        throw new CodexRoleBoundaryError(
+          "Codex process adapter lost its runner-owned process observation",
+        );
+      }
+      if (observed.observation.exitStatus !== 0) {
+        return {
+          outcome: "aborted",
+          reason: "native-failure",
+          details: {
+            source: "codex-role-boundary",
+            outcome: observed.observation.outcome,
+            exitStatus: observed.observation.exitStatus,
+          },
+        };
+      }
       const observedAt = binding.now();
       const decision = decideCodexCompletion({
         handle,

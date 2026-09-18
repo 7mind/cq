@@ -222,19 +222,16 @@ export interface CodexImplementationCandidateQualifierRequest {
   readonly command: string;
   readonly ledgerCwd: string;
   readonly promptRoot: string;
-  readonly handle: DispatchHandle;
-  readonly roleId: string;
-  readonly correlationId: string;
-  readonly childThreadId: string;
-  readonly outcome: "completed";
-  readonly exitStatus: number;
+  readonly execution: CodexRoleBoundaryExecutionResult;
+  readonly expectedRunId: string;
   readonly observedAt: string;
-  readonly promptDigest: string;
   readonly timeoutMs: number;
   readonly environment?: NodeJS.ProcessEnv;
 }
 
 const CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS = 2;
+
+class CodexImplementationCandidateTerminalError extends Error {}
 
 export interface CodexImplementationCandidateQualification {
   readonly state: "queued";
@@ -320,13 +317,24 @@ async function executeCodexImplementationCandidateQualifierAttempt(
     Object.keys(acknowledgement).sort().join(",") !==
       "attestationId,generation,outputDigest,partitionKey,qualificationDigest,state" ||
     acknowledgement["state"] !== "queued" ||
-    acknowledgement["attestationId"] !== input.handle.attestationId ||
-    acknowledgement["generation"] !== input.handle.generation ||
+    acknowledgement["attestationId"] !== input.execution.handle.attestationId ||
+    acknowledgement["generation"] !== input.execution.handle.generation ||
     typeof acknowledgement["partitionKey"] !== "string" ||
     acknowledgement["partitionKey"].trim() === "" ||
     typeof acknowledgement["outputDigest"] !== "string" ||
     typeof acknowledgement["qualificationDigest"] !== "string"
   ) {
+    const aborted = acknowledgement["result"] as Record<string, unknown> | undefined;
+    if (
+      acknowledgement["state"] === "aborted" &&
+      aborted?.["state"] === "aborted" &&
+      aborted["attestationId"] === input.execution.handle.attestationId &&
+      aborted["generation"] === input.execution.handle.generation
+    ) {
+      throw new CodexImplementationCandidateTerminalError(
+        `implementation candidate qualification terminalized the process observation as ${String(aborted["reason"])}`,
+      );
+    }
     throw new CodexRoleBoundaryError(
       "implementation candidate qualification emitted a foreign acknowledgement",
     );
@@ -338,15 +346,29 @@ async function executeCodexImplementationCandidateQualifierAttempt(
 export async function executeCodexImplementationCandidateQualifier(
   input: CodexImplementationCandidateQualifierRequest,
 ): Promise<CodexImplementationCandidateQualification> {
+  if (!isRunnerOwnedCodexRoleBoundaryExecution(input.execution)) {
+    throw new CodexRoleBoundaryError(
+      "implementation candidate qualification requires a runner-owned registered process observation",
+    );
+  }
+  if (
+    input.expectedRunId.trim() === "" ||
+    input.execution.observation.agentType !== input.execution.effectivePreturn.roleId
+  ) {
+    throw new CodexRoleBoundaryError(
+      "implementation candidate qualification run and role bindings are malformed",
+    );
+  }
   const request = Object.freeze({
-    ...input.handle,
-    roleId: input.roleId,
-    correlationId: input.correlationId,
-    childThreadId: input.childThreadId,
-    outcome: input.outcome,
-    exitStatus: input.exitStatus,
+    ...input.execution.handle,
+    roleId: input.execution.observation.agentType,
+    correlationId: input.execution.observation.correlationId,
+    childThreadId: input.execution.observation.childThreadId,
+    expectedRunId: input.expectedRunId,
+    outcome: input.execution.observation.outcome,
+    exitStatus: input.execution.observation.exitStatus,
     observedAt: input.observedAt,
-    promptDigest: input.promptDigest,
+    promptDigest: input.execution.effectivePreturn.rolePromptDigest,
   });
   const deadlineMs = Date.now() + input.timeoutMs;
   let firstFailure: unknown;
@@ -360,6 +382,7 @@ export async function executeCodexImplementationCandidateQualifier(
     try {
       return await executeCodexImplementationCandidateQualifierAttempt(input, request, remainingMs);
     } catch (error) {
+      if (error instanceof CodexImplementationCandidateTerminalError) throw error;
       if (attempt === 1) {
         firstFailure = error;
         continue;
@@ -681,6 +704,7 @@ const RUNNER_OWNED_NATIVE_EXECUTIONS = new WeakSet<object>();
 const RUNNER_OWNED_SANDBOX_CONTROLS = new WeakSet<object>();
 
 export const CODEX_PRETURN_OBSERVATION_PATH_ENV = "CQ_CODEX_PRETURN_OBSERVATION_PATH" as const;
+export const CODEX_EXPECTED_RUN_ID_ENV = "CQ_CODEX_ROLE_EXPECTED_RUN_ID" as const;
 
 const CODEX_BOUNDARY_EFFECT_TARGET_RE = /^(?:tasks:T|goals:G|defects:D|researches:RS)\d+$/u;
 
@@ -2056,6 +2080,7 @@ async function runInstalledRoleProcess(input: {
         ...process.env,
         ...input.environment,
         CQ_CODEX_ROLE_CORRELATION_ID: input.correlationId,
+        [CODEX_EXPECTED_RUN_ID_ENV]: input.request.expectedChild.runId,
         [CODEX_PRETURN_OBSERVATION_PATH_ENV]: observationPath,
       }),
       stdin: "pipe",

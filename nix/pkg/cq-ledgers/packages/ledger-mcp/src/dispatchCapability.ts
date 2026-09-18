@@ -159,6 +159,24 @@ async function readOnlyGitAllowEmpty(
   return stdout.trim();
 }
 
+async function readProtectedIntegrationHead(
+  repositoryRoot: string,
+  integrationRef: string,
+): Promise<string> {
+  if (!/^refs\/heads\/.+$/u.test(integrationRef)) {
+    throw new Error("implementation candidate integration ref is not a protected branch ref");
+  }
+  const head = await readOnlyGit(repositoryRoot, [
+    "rev-parse",
+    "--verify",
+    `${integrationRef}^{commit}`,
+  ]);
+  if (!FULL_GIT_SHA.test(head)) {
+    throw new Error("implementation candidate protected ref did not resolve to a commit");
+  }
+  return head;
+}
+
 function exactGoalRef(store: LedgerStore, taskId: string): string {
   const task = store.fetchItem(TASKS_LEDGER, taskId);
   const goalRefs = (Array.isArray(task.fields["ledgerRefs"])
@@ -178,14 +196,15 @@ function assertProcessQualificationObservation(input: QualifyImplementationCandi
     ["roleId", input.roleId],
     ["correlationId", input.correlationId],
     ["childThreadId", input.childThreadId],
+    ["expectedRunId", input.expectedRunId],
     ["promptDigest", input.promptDigest],
   ] as const) {
     if (typeof value !== "string" || value.trim() === "") {
       throw new Error(`implementation candidate ${field} must be non-empty`);
     }
   }
-  if (input.outcome !== "completed") {
-    throw new Error("only a completed Codex process observation can qualify a candidate");
+  if (input.outcome !== "completed" && input.outcome !== "transport-failed") {
+    throw new Error("implementation candidate outcome is not a Codex terminal observation");
   }
   if (!Number.isInteger(input.exitStatus)) {
     throw new Error("implementation candidate exitStatus must be an integer");
@@ -1139,8 +1158,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
       );
       if (
-        (await readOnlyGit(dispatchBinding.repositoryRoot, ["rev-parse", "HEAD"])) !==
-        input.ontoCommit
+        (await readProtectedIntegrationHead(
+          dispatchBinding.repositoryRoot,
+          input.control.partition.integrationRef,
+        )) !== input.ontoCommit
       ) {
         throw new Error("stale implementation candidate protected head moved before rebase");
       }
@@ -1277,8 +1298,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
             );
             if (
-              (await readOnlyGit(context.managed.repositoryRoot, ["rev-parse", "HEAD"])) !==
-              context.source.ontoCommit
+              (await readProtectedIntegrationHead(
+                context.managed.repositoryRoot,
+                context.control.partition.integrationRef,
+              )) !== context.source.ontoCommit
             ) {
               throw new Error("stale implementation candidate protected head moved before rebase");
             }
@@ -1408,11 +1431,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
   const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations = {
     reconcileRetiredSource: reconcileRetiredImplementationSource,
-    observeProtectedHead: async () => {
+    observeProtectedHead: async (control) => {
       if (options.repositoryRoot === undefined) {
         throw new Error("implementation candidate coordinator requires a local repository root");
       }
-      return await readOnlyGit(options.repositoryRoot, ["rev-parse", "HEAD"]);
+      return await readProtectedIntegrationHead(
+        options.repositoryRoot,
+        control.partition.integrationRef,
+      );
     },
     finalizeQualifiedFront: finalizeQualifiedImplementationFront,
     confirmAndFetchQualifiedFront: confirmAndFetchQualifiedImplementationFront,
@@ -2612,7 +2638,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (
         row.promptProvenance.roleId !== input.roleId ||
         row.promptProvenance.promptDigest !== input.promptDigest ||
-        row.expectedChild.childId !== expectedChildId
+        row.expectedChild.childId !== expectedChildId ||
+        row.expectedChild.runId !== input.expectedRunId
       ) {
         const aborted = await abortDispatchOn(
           options.backend,
@@ -2624,6 +2651,27 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             reason: "protocol-violation",
             details: {
               violation: "foreign-process-completion",
+              observationDigest: dispatchPayloadDigest(input as unknown as DispatchJSONValue),
+            },
+          },
+          { now },
+        );
+        rememberTerminal(aborted, aborted.abortedAt);
+        return Object.freeze({ state: "aborted" as const, result: aborted });
+      }
+      if (input.outcome !== "completed" || input.exitStatus !== 0) {
+        const aborted = await abortDispatchOn(
+          options.backend,
+          {
+            namespace,
+            actor: "trusted-extension",
+            attestationId: input.attestationId,
+            generation: input.generation,
+            reason: "native-failure",
+            details: {
+              violation: "unsuccessful-process-completion",
+              outcome: input.outcome,
+              exitStatus: input.exitStatus,
               observationDigest: dispatchPayloadDigest(input as unknown as DispatchJSONValue),
             },
           },

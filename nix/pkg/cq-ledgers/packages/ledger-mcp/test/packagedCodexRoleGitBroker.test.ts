@@ -68,10 +68,10 @@ function codexWorksetEffect(targetRef: string) {
   } as const;
 }
 
-function installedWorkerExpectedChild(correlationId: string, childThreadId: string) {
+function installedWorkerExpectedChild(correlationId: string, parentRunId: string) {
   return {
     childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}${correlationId}`,
-    runId: childThreadId,
+    runId: parentRunId,
   } as const;
 }
 
@@ -1245,7 +1245,7 @@ describe("packaged cq-codex-role Git broker", () => {
       const retryCorrelationId = "t2042-installed-worker-retry";
       const retryExpectedChild = installedWorkerExpectedChild(
         retryCorrelationId,
-        "t2042-packaged-broker",
+        "t2042-packaged-parent-run",
       );
       const retryPrepared = await capability.prepare({
         roleId: "implement-worker",
@@ -1853,7 +1853,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         const correlationId = `t2151-${input.label}`;
         const expectedChild = installedWorkerExpectedChild(
           correlationId,
-          "t2151-packaged-guarded",
+          `t2151-${input.label}-parent-run`,
         );
         const prepared = await capability.prepare({
           roleId: "implement-worker",

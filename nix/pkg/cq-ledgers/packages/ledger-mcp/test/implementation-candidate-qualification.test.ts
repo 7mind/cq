@@ -74,6 +74,118 @@ function finalizedTaskStore(): LedgerStore {
   } as unknown as LedgerStore;
 }
 
+async function stagedQualificationSubject(label: string) {
+  const repositoryRoot = mkdtempSync(join(tmpdir(), `cq-T6519-${label}-`));
+  roots.push(repositoryRoot);
+  git(repositoryRoot, "init", "-b", "main");
+  git(repositoryRoot, "config", "user.name", "CQ Test");
+  git(repositoryRoot, "config", "user.email", "cq@example.invalid");
+  writeFileSync(join(repositoryRoot, "candidate.ts"), "export const candidate = true;\n");
+  git(repositoryRoot, "add", "candidate.ts");
+  git(repositoryRoot, "commit", "-m", "candidate");
+  const resultCommit = git(repositoryRoot, "rev-parse", "HEAD");
+  const namespace: AttestationNamespace = {
+    backend: "xdg",
+    projectKey: `qualification-${label}`,
+  };
+  const clock = new FakeDispatchClock("2026-09-16T09:00:00.000Z");
+  const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+  const correlationId = `candidate-${label}-correlation`;
+  const expectedChild = {
+    childId: `implement-worker#${correlationId}`,
+    runId: `parent-${label}-run`,
+  };
+  const binding: DispatchGitEffectBinding = {
+    taskId: "T6519",
+    handleToken: `managed-handle-${label}`,
+    handleFingerprint: "3".repeat(64),
+    repositoryRoot,
+    repositoryId: "4".repeat(64),
+    commonDir: join(repositoryRoot, ".git"),
+    worktreePath: repositoryRoot,
+    branch: "implement/T6519",
+    ref: "refs/heads/implement/T6519",
+    baseCommit: resultCommit,
+  };
+  const prepared = await prepareDispatchOn(
+    backend,
+    {
+      namespace,
+      roleId: "implement-worker",
+      surface: "codex",
+      input: {
+        taskId: "T6519",
+        headline: "Queue native completion",
+        description: "Qualify one staged result.",
+        acceptance: "The exact process observation is durable.",
+        worktreePath: repositoryRoot,
+        branch: binding.branch,
+        baseCommit: resultCommit,
+        round: 0,
+        startingCommit: resultCommit,
+      },
+      idempotencyKey: `T6519-${label}-qualification`,
+      timeoutMs: 600_000,
+      registry: DISPATCH_OVERLAY_REGISTRY,
+      promptDigest: "5".repeat(64),
+      catalogHash: "6".repeat(64),
+      expectedChild,
+      gitEffectBinding: binding,
+    },
+    {
+      mode: "manager-bound",
+      now: clock.now,
+      randomBytes: sequentialDispatchRandomBytes(6519),
+      lineageFenceGuard: async () => null,
+      withLineageLock: async (operation) => await operation(),
+    },
+  );
+  if (!prepared.accepted) throw new Error(prepared.detail);
+  await fetchDispatchInputOn(
+    backend,
+    { ...prepared.prepared, namespace, inputCapability: prepared.prepared.inputCapability },
+    { now: clock.now },
+  );
+  const staged = await storeDispatchResultOn(
+    backend,
+    {
+      resultCapability: prepared.prepared.resultCapability,
+      output: {
+        taskId: "T6519",
+        status: "pass",
+        resultCommit,
+        branch: binding.branch,
+        actualWorktreePath: repositoryRoot,
+        filesTouched: ["candidate.ts"],
+        gitReceipts: [],
+        checkSummary: "focused check passed",
+        baseVerification: {
+          status: "verified",
+          relation: "equal",
+          baseCommit: resultCommit,
+          headCommit: resultCommit,
+        },
+        summary: "candidate staged",
+      },
+    },
+    { now: clock.now },
+  );
+  if (staged.state !== "gate-pending") throw new Error("candidate did not stage");
+  return {
+    backend,
+    capability: createDispatchCapability({
+      backend,
+      promptArtifactStore: {} as PromptArtifactStore,
+      ledgerStore: finalizedTaskStore(),
+      now: clock.now,
+    }),
+    clock,
+    correlationId,
+    expectedChild,
+    prepared: prepared.prepared,
+  };
+}
+
 describe("implementation candidate qualification [Behavioral-Active, Effectual-Group]", () => {
   test("installed-process observation durably qualifies staged bytes without claiming a gate", async () => {
     const repositoryRoot = mkdtempSync(join(tmpdir(), "cq-T6519-qualification-"));
@@ -180,6 +292,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       roleId: "implement-worker",
       correlationId,
       childThreadId: "child-thread-T6519",
+      expectedRunId: expectedChild.runId,
       outcome: "completed",
       exitStatus: 0,
       observedAt: clock.now(),
@@ -206,6 +319,48 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       },
     });
   });
+
+  for (const observation of [
+    {
+      label: "substituted registered run",
+      expectedRunId: "foreign-parent-run",
+      exitStatus: 0,
+      reason: "protocol-violation",
+    },
+    {
+      label: "completed nonzero exit",
+      expectedRunId: undefined,
+      exitStatus: 17,
+      reason: "native-failure",
+    },
+  ] as const) {
+    test(`${observation.label} terminalizes instead of qualifying`, async () => {
+      const subject = await stagedQualificationSubject(
+        observation.label.replaceAll(" ", "-"),
+      );
+      const outcome = await subject.capability.qualifyImplementationCandidate!({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: subject.correlationId,
+        childThreadId: `generated-${crypto.randomUUID()}`,
+        expectedRunId: observation.expectedRunId ?? subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: observation.exitStatus,
+        observedAt: subject.clock.now(),
+        promptDigest: "5".repeat(64),
+      });
+
+      expect(outcome).toMatchObject({
+        state: "aborted",
+        result: { reason: observation.reason },
+      });
+      expect(subject.backend.storedRows()[0]).toMatchObject({
+        state: "aborted",
+        abortReason: observation.reason,
+      });
+    });
+  }
 
   test("guarded-rebase qualification retains manager identity and queues the rebased execution base", async () => {
     const repositoryRoot = mkdtempSync(join(tmpdir(), "cq-T6519-rebased-qualification-"));
@@ -493,6 +648,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       roleId: "implement-worker",
       correlationId,
       childThreadId: "child-thread-T6519-rebased",
+      expectedRunId: expectedChild.runId,
       outcome: "completed",
       exitStatus: 0,
       observedAt: clock.now(),

@@ -121,6 +121,7 @@ process.exit(1);
         T2844_CODEX_CAPTURE: codexCapture,
         T2844_QUALIFIER_CAPTURE: qualifierCapture,
         CQ_CODEX_ROLE_CORRELATION_ID: "t2844-correlation",
+        CQ_CODEX_ROLE_EXPECTED_RUN_ID: "t2844-parent-run",
       };
 
       const missing = await invoke(request, environment);
@@ -170,6 +171,7 @@ process.exit(1);
         roleId: "implement-worker",
         correlationId: "t2844-correlation",
         childThreadId: "t2844",
+        expectedRunId: "t2844-parent-run",
         outcome: "completed",
         exitStatus: 0,
       });
@@ -178,6 +180,7 @@ process.exit(1);
         "childThreadId",
         "correlationId",
         "exitStatus",
+        "expectedRunId",
         "generation",
         "observedAt",
         "outcome",
@@ -186,6 +189,7 @@ process.exit(1);
       ]);
       expect(qualifier.request["observedAt"]).toEqual(expect.any(String));
       expect(qualifier.request["promptDigest"]).toMatch(/^[0-9a-f]{64}$/u);
+      expect(qualifier.environment).not.toHaveProperty("CQ_CODEX_ROLE_EXPECTED_RUN_ID");
       const qualifierTransport = JSON.stringify(qualifier);
       for (const forbidden of [
         "effectTargetRef",

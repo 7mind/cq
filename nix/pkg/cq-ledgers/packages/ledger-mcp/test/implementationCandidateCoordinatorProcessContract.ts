@@ -348,6 +348,7 @@ async function stageCandidate(input: {
     roleId: "implement-worker",
     correlationId: input.correlationId,
     childThreadId: `thread-${input.taskId}`,
+    expectedRunId: expectedChild.runId,
     outcome: "completed",
     exitStatus: 0,
     observedAt: "2026-09-16T12:00:01.000Z",
@@ -439,6 +440,9 @@ export async function runCoordinatorProcessContract(
     await git(repositoryRoot, ["add", "protected.txt"]);
     await git(repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
     const protectedHead = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    await git(repositoryRoot, ["checkout", "--detach", baseCommit]);
+    expect(await git(repositoryRoot, ["rev-parse", "refs/heads/main"])).toBe(protectedHead);
+    expect(await git(repositoryRoot, ["rev-parse", "HEAD"])).toBe(baseCommit);
 
     const hook = path.join(repositoryRoot, ".git", "hooks", "pre-rebase");
     await fs.writeFile(
@@ -486,7 +490,15 @@ export async function runCoordinatorProcessContract(
       workers.map((worker) => waitForFile(path.join(readyDir, worker.id), `worker ${worker.id}`)),
     );
     await fs.writeFile(startBarrier, "start\n", { flag: "wx" });
-    await waitForFile(rebaseMarker, "guarded rebase launch marker");
+    await Promise.race([
+      waitForFile(rebaseMarker, "guarded rebase launch marker"),
+      waitForFile(gateMarker, "unexpected pre-rebase gate marker").then(() => {
+        throw new Error("detached checkout HEAD was used instead of refs/heads/main");
+      }),
+      Promise.all(workers.map((worker) => worker.child.exited)).then(() => {
+        throw new Error("all coordinators exited before the protected-ref rebase launched");
+      }),
+    ]);
     await fs.writeFile(rebaseRelease, "release\n", { flag: "wx" });
     const outcomes = await Promise.all(workers.map(settleWorker));
     expect(outcomes).toHaveLength(3);

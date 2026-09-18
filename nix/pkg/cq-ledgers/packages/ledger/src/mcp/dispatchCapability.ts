@@ -92,7 +92,8 @@ export interface QualifyImplementationCandidateInput extends DispatchHandle {
   readonly roleId: string;
   readonly correlationId: string;
   readonly childThreadId: string;
-  readonly outcome: "completed";
+  readonly expectedRunId: string;
+  readonly outcome: "completed" | "transport-failed";
   readonly exitStatus: number;
   readonly observedAt: string;
   readonly promptDigest: string;

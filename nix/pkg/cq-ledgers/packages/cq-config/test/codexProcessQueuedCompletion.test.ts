@@ -200,6 +200,141 @@ describe("Codex process queued completion [Behavioral-Active, Blackbox-Group]", 
     expect(row.stagedCompletionQualification?.nativeCompletion).toEqual(nativeCompletion);
   });
 
+  test("real completed process with a nonzero exit terminalizes before qualification", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-library-nonzero-process-"));
+    const initialized = Bun.spawnSync([
+      process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+      "init",
+      "--quiet",
+      root,
+    ]);
+    if (initialized.exitCode !== 0) throw new Error("nonzero process fixture git init failed");
+    const executable = join(root, "codex-nonzero");
+    const roleInstructions = "T6519 reject a nonzero process completion";
+    const promptDigest = new Bun.CryptoHasher("sha256")
+      .update(roleInstructions)
+      .digest("hex");
+    const correlation = {
+      agentType: "implement-worker",
+      correlationId: "T6519LibraryNonzeroCorrelation012345",
+      threadId: "t6519-parent-nonzero-run",
+    } as const;
+    const processNamespace: AttestationNamespace = {
+      backend: "xdg",
+      projectKey: "queued-library-nonzero",
+    };
+    const processStore = new InMemoryAttestationStore(processNamespace);
+    const processClock = new FakeDispatchClock("2026-09-16T10:00:00.000Z");
+    const processDeps = { store: processStore, now: processClock.now };
+    const preparedOutcome = prepareDispatch(
+      {
+        namespace: processNamespace,
+        roleId: "implement-worker",
+        surface: "codex",
+        input: {
+          taskId: "T6519",
+          headline: "Reject a nonzero completion",
+          description: "A completed transport with a failed process is not runnable.",
+          acceptance: "The row terminalizes before qualification or gate admission.",
+          worktreePath: binding.worktreePath,
+          branch: binding.branch,
+          baseCommit,
+          round: 0,
+          startingCommit: baseCommit,
+        },
+        idempotencyKey: "T6519-library-process-nonzero",
+        timeoutMs: 600_000,
+        registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest,
+        catalogHash: "6".repeat(64),
+        expectedChild: codexExpectedChild(correlation),
+        gitEffectBinding: binding,
+      },
+      {
+        store: processStore,
+        now: processClock.now,
+        randomBytes: sequentialDispatchRandomBytes(6521),
+      },
+    );
+    if (!preparedOutcome.accepted) throw new Error(preparedOutcome.detail);
+    const prepared = preparedOutcome.prepared;
+    let stagedAcknowledgement: unknown;
+    writeFileSync(
+      executable,
+      `#!/usr/bin/env bun
+await Bun.stdin.text();
+const stored = ${JSON.stringify({ state: "gate-pending", result: { state: "gate-pending", attestationId: prepared.attestationId, generation: prepared.generation, submittedAt: processClock.now(), outputDigest: "a".repeat(64) } })};
+process.stdout.write([
+  JSON.stringify({ type: "thread.started", thread_id: "generated-library-nonzero-thread" }),
+  JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "ledger", tool: "store_result", result: { content: [{ type: "text", text: JSON.stringify(stored) }] } } }),
+  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(stored) } }),
+  JSON.stringify({ type: "turn.completed", usage: {} }),
+].join("\\n"), () => process.exit(17));
+`,
+    );
+    chmodSync(executable, 0o755);
+    try {
+      const registry = new DispatchTransportAdapterRegistry([
+        createCodexProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
+          (context) => {
+            context.child.materializeInput();
+            stagedAcknowledgement = context.child.storeResult(output);
+            return {
+              correlation,
+              now: processClock.now,
+              boundary: {
+                roleInstructions,
+                cwd: root,
+                ledgerCwd: root,
+                model: "gpt-5.6-sol",
+                reasoningEffort: "high",
+                sandboxMode: "danger-full-access",
+                promptRoot: root,
+                ledgerCommand: "cq-not-used-by-recording",
+                codexExecutable: executable,
+              },
+            };
+          },
+        ),
+      ]);
+      const result = await runPreparedDispatch(
+        {
+          namespace: processNamespace,
+          prepared,
+          activeHarness: "claude",
+          targetHarness: "codex",
+          forceShellout: false,
+          resolvedModel: {
+            harness: "codex",
+            model: "gpt-5.6-sol",
+            provider: null,
+            effort: "high",
+          },
+          qualifyStagedCompletion: async () => {
+            throw new Error("nonzero process completion must not qualify");
+          },
+        },
+        registry,
+        processDeps,
+      );
+
+      expect(stagedAcknowledgement).toMatchObject({ state: "gate-pending" });
+      expect(result).toMatchObject({
+        outcome: "aborted",
+        abort: { reason: "native-failure" },
+      });
+      const terminal = processStore.read(prepared) as AttestationEnvelope;
+      expect(terminal).toMatchObject({
+        state: "aborted",
+        abortReason: "native-failure",
+      });
+      expect(terminal.implementationQueue).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // specified: T6519 — the production adapter process returns before the later trusted gate.
   test(
     "real library adapter process returns queued, then a qualified lease gates, confirms, and fetches",

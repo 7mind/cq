@@ -456,7 +456,8 @@ interface ImplementationCandidateQualifyStdinRequest {
   readonly roleId: string;
   readonly correlationId: string;
   readonly childThreadId: string;
-  readonly outcome: "completed";
+  readonly expectedRunId: string;
+  readonly outcome: "completed" | "transport-failed";
   readonly exitStatus: number;
   readonly observedAt: string;
   readonly promptDigest: string;
@@ -514,6 +515,7 @@ export async function readImplementationCandidateQualifyRequest(
     "childThreadId",
     "correlationId",
     "exitStatus",
+    "expectedRunId",
     "generation",
     "observedAt",
     "outcome",
@@ -527,7 +529,8 @@ export async function readImplementationCandidateQualifyRequest(
     typeof request["roleId"] !== "string" ||
     typeof request["correlationId"] !== "string" ||
     typeof request["childThreadId"] !== "string" ||
-    request["outcome"] !== "completed" ||
+    typeof request["expectedRunId"] !== "string" ||
+    (request["outcome"] !== "completed" && request["outcome"] !== "transport-failed") ||
     !Number.isInteger(request["exitStatus"]) ||
     typeof request["observedAt"] !== "string" ||
     typeof request["promptDigest"] !== "string"
