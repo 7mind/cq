@@ -791,10 +791,11 @@ case " \$* " in
 const fs = require("node:fs");
 const request = JSON.parse(fs.readFileSync(0, "utf8"));
 const keys = Object.keys(request).sort().join(",");
-if (keys !== "attestationId,childThreadId,correlationId,exitStatus,generation,observedAt,outcome,promptDigest,roleId") process.exit(1);
+if (keys !== "attestationId,childThreadId,correlationId,exitStatus,expectedRunId,generation,observedAt,outcome,promptDigest,roleId") process.exit(1);
 if (request.attestationId !== "att_packaged_role_acknowledgement" || request.generation !== 7) process.exit(1);
 if (request.roleId !== "implement-worker" || request.correlationId !== "packaged-role-correlation") process.exit(1);
 if (request.childThreadId !== "packaged-role-thread" || request.outcome !== "completed" || request.exitStatus !== 0) process.exit(1);
+if (request.expectedRunId !== "packaged-role-parent-run" || request.expectedRunId === request.childThreadId) process.exit(1);
 if (typeof request.observedAt !== "string" || Number.isNaN(Date.parse(request.observedAt))) process.exit(1);
 if (typeof request.promptDigest !== "string" || !/^[0-9a-f]{64}$/.test(request.promptDigest)) process.exit(1);
 '
@@ -821,6 +822,7 @@ EOF
               CQ_CODEX_EXECUTABLE="$fakeCodex" \
               CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
               CQ_CODEX_ROLE_CORRELATION_ID="packaged-role-correlation" \
+              CQ_CODEX_ROLE_EXPECTED_RUN_ID="packaged-role-parent-run" \
               $out/bin/cq-codex-role > "$roleStdout"; then
               echo "cq-codex-role packaged acknowledgement check FAILED" >&2
               exit 1
@@ -846,6 +848,7 @@ EOF
                 CQ_CODEX_EXECUTABLE="$fakeCodex" \
                 CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
                 CQ_CODEX_ROLE_CORRELATION_ID="packaged-role-correlation" \
+                CQ_CODEX_ROLE_EXPECTED_RUN_ID="packaged-role-parent-run" \
                 ${pkgs.coreutils}/bin/timeout 10s \
                 ${pkgs.util-linux}/bin/script --quiet --return \
                   --command "$out/bin/cq-codex-role" \

@@ -169,6 +169,8 @@ function launchDispatch(
       CQ_PROMPT_ROOT: fixture.promptRoot,
       CQ_CODEX_EXECUTABLE: fixture.fakeCodex,
       CQ_CODEX_LEDGER_COMMAND: fixture.ledgerCommand,
+      CQ_CODEX_ROLE_CORRELATION_ID: "gate-lifecycle-correlation",
+      CQ_CODEX_ROLE_EXPECTED_RUN_ID: "gate-lifecycle-parent-run",
       CQ_TEST_CODEX_MODE: mode,
       CQ_TEST_CODEX_READY: fixture.codexReady,
       CQ_TEST_CODEX_GROUP: fixture.codexGroup,

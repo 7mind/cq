@@ -231,6 +231,8 @@ describe("T1628 Codex boundary diagnostics", () => {
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: fakeCodex,
           CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+          CQ_CODEX_ROLE_CORRELATION_ID: "boundary-diagnostic-correlation",
+          CQ_CODEX_ROLE_EXPECTED_RUN_ID: "boundary-diagnostic-parent-run",
         },
         stdin: "pipe",
         stdout: "pipe",
