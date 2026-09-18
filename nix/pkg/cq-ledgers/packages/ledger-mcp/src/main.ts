@@ -661,7 +661,7 @@ type ImplementationSuccessorLauncher = NonNullable<
 export function createImplementationSuccessorLauncher(
   profile: NonNullable<ImplementationCandidateCoordinateStdinRequest["successorLaunch"]>,
   promptRoot: string,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv,
 ): ImplementationSuccessorLauncher {
   return async ({ prepared, managed, expectedChild, timeoutMs }) => {
     if (
@@ -1584,9 +1584,10 @@ export async function main(argv: readonly string[]): Promise<void> {
     implementationCandidateCoordinateRequest?.successorLaunch === undefined ||
     resolvedPromptSurface === undefined
       ? undefined
-      : createImplementationSuccessorLauncher(
+        : createImplementationSuccessorLauncher(
           implementationCandidateCoordinateRequest.successorLaunch,
           resolvedPromptSurface.root,
+          process.env,
         );
   const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
     construction: http === null ? "stdio" : "http-single-project",
