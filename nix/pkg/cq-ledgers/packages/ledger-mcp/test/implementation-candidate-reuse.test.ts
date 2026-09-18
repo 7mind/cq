@@ -357,7 +357,12 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       });
       fixture.clock.advance(1);
       expect(await sweepAttestationsOn(backend, { now: fixture.clock.now })).toMatchObject({
-        envelopesCollapsed: [staged.prepared],
+        envelopesCollapsed: [
+          {
+            attestationId: staged.prepared.attestationId,
+            generation: staged.prepared.generation,
+          },
+        ],
         rowsRemaining: 1,
       });
       const [collapsed] = backend.storedRows();
@@ -375,7 +380,12 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       await backend.close();
       backend = new SqliteAttestationBackend({ namespace, dbPath });
       expect(await sweepAttestationsOn(backend, { now: fixture.clock.now })).toMatchObject({
-        tombstonesRemoved: [staged.prepared],
+        tombstonesRemoved: [
+          {
+            attestationId: staged.prepared.attestationId,
+            generation: staged.prepared.generation,
+          },
+        ],
         rowsRemaining: 0,
       });
     } finally {

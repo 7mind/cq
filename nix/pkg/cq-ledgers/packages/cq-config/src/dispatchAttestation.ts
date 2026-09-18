@@ -39,7 +39,8 @@
  * T720's ({@link DISPATCH_ATTESTATION_DEFERRED}).
  *
  * **Retention is bounded and lossy on purpose.** A terminal record keeps its
- * full envelope for {@link TERMINAL_ENVELOPE_RETENTION_MS} (24h). After that the
+ * full envelope for {@link TERMINAL_ENVELOPE_RETENTION_MS} (24h) after every
+ * attached implementation queue authority is terminal. After that the
  * envelope COLLAPSES to an {@link AttestationTombstone} that retains only the
  * namespace, the idempotency key, the payload/attestation/terminal digests and
  * the timestamps — never the output, the capability hash, the completion proof,
@@ -911,6 +912,11 @@ const TERMINAL_ENVELOPE_STATES = ["consumed", "aborted"] as const;
 export type AttestationTerminalKind = (typeof TERMINAL_ENVELOPE_STATES)[number];
 
 const TERMINAL_STATE_SET: ReadonlySet<string> = new Set(TERMINAL_ENVELOPE_STATES);
+const RETENTION_TERMINAL_QUEUE_STATES: ReadonlySet<string> = new Set([
+  "released",
+  "terminal",
+  "staged-rebase-retired",
+]);
 
 /** The native child identity a confirmation must match. */
 export interface NativeChildIdentity {
@@ -1209,7 +1215,7 @@ export interface AttestationEnvelope {
   readonly abortReason?: DispatchTerminalAbortReason;
   readonly abortDetails?: DispatchJSONValue;
   readonly abortDetailsDigest?: string;
-  /** When the record went terminal — the clock the 24h/30d windows run from. */
+  /** When the dispatch went terminal; queue-backed retention may start later. */
   readonly terminalAt?: string;
   /** Digest binding the terminal outcome; survives the envelope collapse. */
   readonly terminalDigest?: string;
@@ -2845,18 +2851,16 @@ function continuationClaimedBy(
 /**
  * The instant a row stops holding its idempotency key, or `undefined` while the
  * row is still LIVE (and therefore holds it indefinitely). A tombstone carries
- * the instant explicitly; a terminal envelope that no sweep has collapsed yet
- * derives the same instant from `terminalAt`, so the two agree and neither
- * depends on a sweep having run.
+ * the instant explicitly. A terminal envelope with no queue derives it from
+ * `terminalAt`; a queue-backed envelope starts at the queue's real release or
+ * terminal transition and remains live while that authority is runnable.
  */
 function idempotencyHorizonOf(row: AttestationRow): number | undefined {
   if (isAttestationTombstone(row)) {
     return attestationInstantMs(row.reuseAfter, "reuseAfter");
   }
-  if (row.terminalAt === undefined) {
-    return undefined;
-  }
-  return attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
+  const retentionStartMs = envelopeRetentionStartMs(row);
+  return retentionStartMs === undefined ? undefined : retentionStartMs + IDEMPOTENCY_HORIZON_MS;
 }
 
 /**
@@ -4466,16 +4470,19 @@ export function fetchDispatchResult(
     });
   }
   if (row.terminalAt !== undefined) {
-    const terminalMs = attestationInstantMs(row.terminalAt, "terminalAt");
-    if (atMs >= terminalMs + IDEMPOTENCY_HORIZON_MS) {
+    const retentionStartMs = envelopeRetentionStartMs(row);
+    if (retentionStartMs !== undefined && atMs >= retentionStartMs + IDEMPOTENCY_HORIZON_MS) {
       return Object.freeze({ state: "attestation-not-found" as const, ...resolved });
     }
-    if (atMs >= terminalMs + TERMINAL_ENVELOPE_RETENTION_MS) {
+    if (
+      retentionStartMs !== undefined &&
+      atMs >= retentionStartMs + TERMINAL_ENVELOPE_RETENTION_MS
+    ) {
       return Object.freeze({
         state: "terminal-envelope-expired" as const,
         ...resolved,
         terminalKind: row.state === "consumed" ? ("consumed" as const) : ("aborted" as const),
-        reuseAfter: isoAt(terminalMs + IDEMPOTENCY_HORIZON_MS),
+        reuseAfter: isoAt(retentionStartMs + IDEMPOTENCY_HORIZON_MS),
       });
     }
   }
@@ -4592,7 +4599,8 @@ function recoveryBindingOfRow(
         "dispatch recovery binding is attached to a nonterminal generation",
       );
     }
-    if (atMs >= attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS) {
+    const retentionStartMs = envelopeRetentionStartMs(row);
+    if (retentionStartMs !== undefined && atMs >= retentionStartMs + IDEMPOTENCY_HORIZON_MS) {
       if (expired === "omit") return undefined;
       throw new DispatchRecoveryError("expired", "dispatch recovery binding has expired");
     }
@@ -4778,7 +4786,8 @@ function continuationBindingOfRow(
         "dispatch continuation is attached to a nonterminal generation",
       );
     }
-    if (atMs >= attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS) {
+    const retentionStartMs = envelopeRetentionStartMs(row);
+    if (retentionStartMs !== undefined && atMs >= retentionStartMs + IDEMPOTENCY_HORIZON_MS) {
       if (expired === "omit") return undefined;
       throw new DispatchContinuationError("expired", "dispatch continuation has expired");
     }
@@ -4923,6 +4932,20 @@ export function resolveDispatchContinuation(
 // Sweep: the 24h envelope collapse and the 30d tombstone drop
 // ---------------------------------------------------------------------------
 
+function envelopeRetentionStartMs(row: AttestationEnvelope): number | undefined {
+  if (row.terminalAt === undefined) return undefined;
+  const queue = row.implementationQueue;
+  if (queue === undefined) return attestationInstantMs(row.terminalAt, "terminalAt");
+  if (!RETENTION_TERMINAL_QUEUE_STATES.has(queue.state)) return undefined;
+  if (queue.terminal === undefined) {
+    throw new AttestationContractError(
+      "implementationQueue.terminal",
+      `terminal queue state "${queue.state}" omitted its terminal provenance`,
+    );
+  }
+  return attestationInstantMs(queue.terminal.terminalAt, "implementationQueue.terminal.terminalAt");
+}
+
 /**
  * Collapse one terminal envelope to the minimal tombstone. Retains the
  * mandatory {@link TOMBSTONE_RETAINED_FIELDS} and an eligible recovery binding;
@@ -4936,7 +4959,13 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
   if (!TERMINAL_STATE_SET.has(row.state)) {
     throw new AttestationContractError("row.state", `"${row.state}" is not a terminal state`);
   }
-  const terminalMs = attestationInstantMs(row.terminalAt, "terminalAt");
+  const retentionStartMs = envelopeRetentionStartMs(row);
+  if (retentionStartMs === undefined) {
+    throw new AttestationContractError(
+      "implementationQueue.state",
+      "a terminal attestation cannot retain a runnable queue enrollment",
+    );
+  }
   return Object.freeze({
     kind: "tombstone" as const,
     namespace: row.namespace,
@@ -4948,7 +4977,7 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     terminalDigest: row.terminalDigest,
     createdAt: row.createdAt,
     terminalAt: row.terminalAt,
-    reuseAfter: isoAt(terminalMs + IDEMPOTENCY_HORIZON_MS),
+    reuseAfter: isoAt(retentionStartMs + IDEMPOTENCY_HORIZON_MS),
     ...(row.dispatchRecoveryBinding === undefined
       ? {}
       : { dispatchRecoveryBinding: row.dispatchRecoveryBinding }),
@@ -5023,13 +5052,16 @@ export function sweepAttestations(deps: DispatchServiceDeps): AttestationSweepRe
     if (row.terminalAt === undefined) {
       continue;
     }
-    const terminalMs = attestationInstantMs(row.terminalAt, "terminalAt");
-    if (atMs >= terminalMs + IDEMPOTENCY_HORIZON_MS) {
+    const retentionStartMs = envelopeRetentionStartMs(row);
+    if (retentionStartMs === undefined) {
+      continue;
+    }
+    if (atMs >= retentionStartMs + IDEMPOTENCY_HORIZON_MS) {
       deps.store.remove(handleOf(row));
       removed.push(handleOf(row));
       continue;
     }
-    if (atMs >= terminalMs + TERMINAL_ENVELOPE_RETENTION_MS) {
+    if (atMs >= retentionStartMs + TERMINAL_ENVELOPE_RETENTION_MS) {
       deps.store.replace(row, collapseAttestationEnvelope(row));
       collapsed.push(handleOf(row));
     }
