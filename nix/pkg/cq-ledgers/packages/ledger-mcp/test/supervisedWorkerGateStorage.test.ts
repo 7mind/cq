@@ -268,6 +268,9 @@ async function fixtureWithDispatchBase(
   now: () => string = () => "2026-08-12T20:00:00.000Z",
   wipFixture: WipFixtureMode = false,
   withLedgerStore = false,
+  implementationSuccessorLauncher?: (input: {
+    readonly prepared: Readonly<Record<string, unknown>>;
+  }) => Promise<void>,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -343,16 +346,20 @@ async function fixtureWithDispatchBase(
   const store = new InMemoryAttestationStore(namespace);
   const backend = new InMemoryAttestationBackend(store);
   const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
-  const capability = createDispatchCapability({
+  const capabilityOptions = {
     backend,
     promptArtifactStore: artifactStore(),
     ...(ledgerStore === undefined ? {} : { ledgerStore }),
+    ...(implementationSuccessorLauncher === undefined
+      ? {}
+      : { implementationSuccessorLauncher }),
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
     now,
     randomBytes: sequentialDispatchRandomBytes(sequence * 32),
-  });
+  };
+  const capability = createDispatchCapability(capabilityOptions);
   const expectedChild = {
     childId: `implement-worker#candidate-correlation-${sequence}`,
     runId: `run-${sequence}`,
@@ -879,7 +886,40 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
 
   test("production coordinator retires a stale front before one admitted guarded rebase and successor", async () => {
     const runner = new GateDummy();
-    const subject = await fixture(runner, true);
+    const launchMarker = path.join(
+      await fs.mkdtemp(path.join(tmpdir(), "t2081-successor-launch-")),
+      "launches.jsonl",
+    );
+    roots.push(path.dirname(launchMarker));
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      async ({ prepared }) => {
+        const child = Bun.spawn(
+          [
+            process.execPath,
+            "-e",
+            'import { appendFileSync } from "node:fs"; const input = JSON.parse(await Bun.stdin.text()); appendFileSync(process.env.CQ_T2081_SUCCESSOR_MARKER, JSON.stringify({ attestationId: input.attestationId, generation: input.generation }) + "\\n");',
+          ],
+          {
+            env: { ...process.env, CQ_T2081_SUCCESSOR_MARKER: launchMarker },
+            stdin: new Blob([JSON.stringify(prepared)]),
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        const [exitCode, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stderr).text(),
+        ]);
+        if (exitCode !== 0) {
+          throw new Error(`successor launch fixture exited ${String(exitCode)}: ${stderr}`);
+        }
+      },
+    );
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
       subject.capability.qualifyImplementationCandidate === undefined ||
@@ -925,6 +965,17 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       },
     });
     expect(runner.requests).toHaveLength(0);
+    const launches = (await fs.readFile(launchMarker, "utf8").catch(() => ""))
+      .trim()
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line) as { attestationId: string; generation: number });
+    expect(launches).toEqual([
+      {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation + 1,
+      },
+    ]);
     const [source, successor] = [...subject.store.rows()]
       .sort((left, right) => left.generation - right.generation);
     expect(source).toMatchObject({
