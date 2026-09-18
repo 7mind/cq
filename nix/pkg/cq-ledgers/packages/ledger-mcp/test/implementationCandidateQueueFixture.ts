@@ -33,6 +33,7 @@ export interface PrepareQueueCandidateOptions {
   readonly integrationRef: string;
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
+  readonly idempotencyKey?: string;
   readonly reprepareOf?: PreparedQueueCandidate;
 }
 
@@ -111,7 +112,7 @@ export class ImplementationCandidateQueueFixture {
         roleId: "implement-worker",
         surface: "codex",
         input,
-        idempotencyKey: `queue-${options.taskId}-${String(sequence)}`,
+        idempotencyKey: options.idempotencyKey ?? `queue-${options.taskId}-${String(sequence)}`,
         timeoutMs: 600_000,
         registry: DISPATCH_OVERLAY_REGISTRY,
         promptDigest: "a".repeat(64),
