@@ -31,7 +31,7 @@ describe("implementation candidate coordinator race [Behavioral-Active, Blackbox
       finalizeQualifiedFront: async () => {
         gateCalls += 1;
       },
-      confirmAndFetchQualifiedFront: async () => {},
+      confirmQualifiedFront: async () => {},
       retireStaleSource: async () => {
         throw new Error("race fixture must not retire");
       },

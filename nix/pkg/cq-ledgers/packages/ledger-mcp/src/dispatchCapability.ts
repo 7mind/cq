@@ -1028,7 +1028,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     );
   }
 
-  async function confirmAndFetchQualifiedImplementationFront(input: {
+  async function confirmQualifiedImplementationFront(input: {
     readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
     readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
     readonly nativeCompletion: Parameters<DispatchCapability["confirmCompletion"]>[0]["nativeCompletion"];
@@ -1076,19 +1076,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       throw new Error(`qualified implementation front confirmed as ${confirmation.state}`);
     }
     rememberTerminal(confirmation.result, confirmation.result.consumedAt);
-    const fetched = await fetchDispatchResultOn(
-      options.backend,
-      {
-        namespace,
-        actor: "trusted-parent",
-        attestationId: input.lease.attestationId,
-        generation: input.lease.generation,
-      },
-      { now },
-    );
-    if (fetched.state !== "consumed") {
-      throw new Error(`qualified implementation front fetched as ${fetched.state}`);
-    }
   }
 
   async function retireAndRebaseStaleImplementationFront(input: {
@@ -1442,7 +1429,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       );
     },
     finalizeQualifiedFront: finalizeQualifiedImplementationFront,
-    confirmAndFetchQualifiedFront: confirmAndFetchQualifiedImplementationFront,
+    confirmQualifiedFront: confirmQualifiedImplementationFront,
     retireStaleSource: retireAndRebaseStaleImplementationFront,
     rebaseRetiredSource: rebaseRetiredImplementationFront,
     prepareSuccessor: prepareStaleImplementationSuccessor,

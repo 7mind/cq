@@ -334,7 +334,7 @@ export interface ImplementationCandidateCoordinatorOperations {
     readonly lease: ImplementationQueueLeaseBinding;
     readonly control: ImplementationQueueControl;
   }): Promise<void>;
-  confirmAndFetchQualifiedFront(input: {
+  confirmQualifiedFront(input: {
     readonly lease: ImplementationQueueLeaseBinding;
     readonly control: ImplementationQueueControl;
     readonly nativeCompletion: NativeCompletionProof;
@@ -451,7 +451,7 @@ export class ImplementationCandidateCoordinator {
         throw new Error("leased implementation candidate lost its native completion proof");
       }
       await this.operations.finalizeQualifiedFront({ lease: acquired.lease, control });
-      await this.operations.confirmAndFetchQualifiedFront({
+      await this.operations.confirmQualifiedFront({
         lease: acquired.lease,
         control,
         nativeCompletion: control.qualification.nativeCompletion,

@@ -58,7 +58,7 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
     });
   });
 
-  test("unchanged qualified front gates, confirms, and fetches with its stored native proof", async () => {
+  test("unchanged qualified front gates and confirms with its stored native proof", async () => {
     const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
     const fixture = new ImplementationCandidateQueueFixture(backend);
     const staged = await fixture.stage({
@@ -79,8 +79,8 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
         events.push("gate");
         expect(lease.attemptId).toBe(control.attempt.attemptId);
       },
-      confirmAndFetchQualifiedFront: async ({ lease, control, nativeCompletion }) => {
-        events.push("confirm-fetch");
+      confirmQualifiedFront: async ({ lease, control, nativeCompletion }) => {
+        events.push("confirm");
         expect(nativeCompletion).toEqual(staged.qualification.nativeCompletion);
         await fixture.adapter.release({
           ...lease,
@@ -112,7 +112,7 @@ describe("implementation candidate scheduler [Behavioral-Active, Blackbox-Group]
         generation: staged.prepared.generation,
       },
     });
-    expect(events).toEqual(["gate", "confirm-fetch"]);
+    expect(events).toEqual(["gate", "confirm"]);
     expect(
       backend.storedRows().find(
         (row) =>

@@ -243,7 +243,7 @@ describe("implementation candidate head-of-line policy [Behavioral-Active, Black
           gateCount += 1;
           throw new Error("a leased partition must not run a second gate");
         },
-        confirmAndFetchQualifiedFront: async () => {
+        confirmQualifiedFront: async () => {
           throw new Error("a leased partition must not confirm another front");
         },
         retireStaleSource: async () => {

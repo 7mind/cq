@@ -185,7 +185,7 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
         finalizeQualifiedFront: async () => {
           laterGateCalls += 1;
         },
-        confirmAndFetchQualifiedFront: async () => undefined,
+        confirmQualifiedFront: async () => undefined,
       } as unknown as ImplementationCandidateCoordinatorOperations,
     );
     expect(
@@ -349,7 +349,7 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
       finalizeQualifiedFront: async () => {
         gateCalls += 1;
       },
-      confirmAndFetchQualifiedFront: async () => {
+      confirmQualifiedFront: async () => {
         throw new Error("stale source must not confirm");
       },
       retireStaleSource: async ({ control, ontoCommit }) => {
