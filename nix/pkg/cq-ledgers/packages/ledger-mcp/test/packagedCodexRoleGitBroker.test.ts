@@ -2302,61 +2302,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         ) {
           throw new Error("installed guarded-rebase fixture lacks candidate authority controls");
         }
-        const candidateRequest = {
-          workerDispatch: round2.handle,
-          taskRef: `tasks:${taskId}`,
-          resultCommit: round2ResultCommit,
-        } as const;
-        await expect(
-          capability.resolveImplementationCandidateAuthority(candidateRequest),
-        ).resolves.toMatchObject({
-          taskRef: `tasks:${taskId}`,
-          resultCommit: round2ResultCommit,
-        });
-        const canonicalCandidate = await backend.transact(
-          { kind: "handle", handle: round2.handle },
-          (store) => {
-            const row = store.read(round2.handle);
-            if (
-              row?.kind !== "envelope" ||
-              row.input === null ||
-              typeof row.input !== "object" ||
-              Array.isArray(row.input)
-            ) {
-              throw new Error("installed guarded-rebase candidate input is unavailable");
-            }
-            return { row, input: row.input };
-          },
-        );
-        try {
-          await backend.transact({ kind: "handle", handle: round2.handle }, (store) => {
-            const row = store.read(round2.handle);
-            if (row?.kind !== "envelope") {
-              throw new Error("installed guarded-rebase candidate row is unavailable");
-            }
-            store.replace(
-              row,
-              Object.freeze({
-                ...row,
-                input: Object.freeze({
-                  ...canonicalCandidate.input,
-                  description: "mismatched finalized task specification",
-                }),
-              }),
-            );
-          });
-          await expect(
-            capability.resolveImplementationCandidateAuthority(candidateRequest),
-          ).rejects.toThrow("implementation candidate task, goal, or finalized manifest changed");
-        } finally {
-          await backend.transact({ kind: "handle", handle: round2.handle }, (store) => {
-            const row = store.read(round2.handle);
-            if (row?.kind !== "envelope") {
-              throw new Error("installed guarded-rebase candidate row is unavailable");
-            }
-            store.replace(row, canonicalCandidate.row);
-          });
-        }
         const implementationEvidence = new ImplementationEvidenceService({
           store: implementationEvidenceStore,
           resolveReviewerRoster: () => [reviewerIdentity],

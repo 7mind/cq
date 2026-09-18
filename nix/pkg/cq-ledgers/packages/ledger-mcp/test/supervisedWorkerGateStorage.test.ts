@@ -1004,15 +1004,16 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         },
       });
 
+      const candidateRequest = {
+        workerDispatch: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        },
+        taskRef: "tasks:T2081",
+        resultCommit: subject.receipt.newHead,
+      } as const;
       await expect(
-        subject.capability.resolveImplementationCandidateAuthority({
-          workerDispatch: {
-            attestationId: subject.prepared.attestationId,
-            generation: subject.prepared.generation,
-          },
-          taskRef: "tasks:T2081",
-          resultCommit: subject.receipt.newHead,
-        }),
+        subject.capability.resolveImplementationCandidateAuthority(candidateRequest),
       ).resolves.toMatchObject({
         kind: "cq-implementation-candidate-authority",
         workerDispatch: {
@@ -1024,6 +1025,44 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         taskRef: "tasks:T2081",
         resultCommit: subject.receipt.newHead,
       });
+      const canonicalCandidate = await subject.backend.transact(
+        { kind: "handle", handle: subject.prepared },
+        (store) => {
+          const row = store.read(subject.prepared);
+          if (
+            row?.kind !== "envelope" ||
+            row.input === null ||
+            typeof row.input !== "object" ||
+            Array.isArray(row.input)
+          ) {
+            throw new Error("consumed candidate input is unavailable");
+          }
+          store.replace(
+            row,
+            Object.freeze({
+              ...row,
+              input: Object.freeze({
+                ...row.input,
+                description: "mismatched finalized task specification",
+              }),
+            }),
+          );
+          return row;
+        },
+      );
+      try {
+        await expect(
+          subject.capability.resolveImplementationCandidateAuthority(candidateRequest),
+        ).rejects.toThrow("implementation candidate task, goal, or finalized manifest changed");
+      } finally {
+        await subject.backend.transact({ kind: "handle", handle: subject.prepared }, (store) => {
+          const row = store.read(subject.prepared);
+          if (row?.kind !== "envelope") {
+            throw new Error("consumed candidate row is unavailable");
+          }
+          store.replace(row, canonicalCandidate);
+        });
+      }
     } finally {
       await subject.backend.close();
     }
