@@ -25,6 +25,7 @@ import {
   stageCohortCandidateAttemptV1,
   type CohortGitChangeReceiptV1,
   type CohortWholeDiffEntryV1,
+  type G213CandidateRepositoryV1,
   type G213QualifiedCandidateRowV1,
 } from "../src/workCohort.js";
 import { commit, observationFor, qualifiedQueue, receipt, sha256 } from "./workCohortFixture.js";
@@ -45,6 +46,8 @@ async function authenticatedCandidateRow(input: {
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
   readonly attempt?: string;
   readonly outputFilesTouched?: readonly string[];
+  readonly repository?: G213CandidateRepositoryV1;
+  readonly observeSourceRow?: (row: AttestationEnvelope) => void;
 }) {
   const gitEffectBinding = {
     taskId: input.dispatch.taskId,
@@ -89,13 +92,31 @@ async function authenticatedCandidateRow(input: {
         input.outputFilesTouched ?? input.repositoryDiff.map((entry) => entry.path),
     },
   } as unknown as AttestationEnvelope;
+  input.observeSourceRow?.(row);
   const authenticated = await resolveG213QualifiedCandidateRowV1({
     row,
-    repository: {
-      resolveWholeDiff: async () => input.repositoryDiff,
-    },
+    repository:
+      input.repository ??
+      ({
+        resolveWholeDiff: async () => input.repositoryDiff,
+      } satisfies G213CandidateRepositoryV1),
   });
-  return { queue, row: authenticated };
+  return { queue, row: authenticated, sourceRow: row };
+}
+
+function substitutePersistedCandidateResult(
+  row: AttestationEnvelope,
+  input: { readonly resultCommit: string; readonly resultTree: string },
+): void {
+  const mutable = row as unknown as {
+    implementationQueue: {
+      attempt: { resultCommit: string; resultTree: string };
+    };
+    output: { resultCommit: string };
+  };
+  mutable.implementationQueue.attempt.resultCommit = input.resultCommit;
+  mutable.implementationQueue.attempt.resultTree = input.resultTree;
+  mutable.output.resultCommit = input.resultCommit;
 }
 
 async function identityFixture() {
@@ -334,6 +355,109 @@ describe("cohort candidate identity", () => {
     expect(() =>
       stageCohortCandidateAttemptV1(fixture.pending, { row: callerAllocated }),
     ).toThrow("actual G213 row");
+  });
+
+  test("rejects spread and descriptor clones of an authenticated G213 row", async () => {
+    const fixture = await identityFixture();
+    const replacementResult = commit("replacement-result");
+    const replacementTree = commit("replacement-tree");
+    const replacementReceipts = [
+      receipt({
+        base: fixture.base,
+        result: replacementResult,
+        tree: replacementTree,
+        operation: "replacement",
+      }),
+    ];
+    const replacement = await authenticatedCandidateRow({
+      dispatch: fixture.dispatch,
+      result: replacementResult,
+      tree: replacementTree,
+      receipts: replacementReceipts,
+      repositoryDiff: [
+        { path: "src/result.ts", mode: "100644", blobDigest: sha256("replacement blob") },
+      ],
+      attempt: "attempt:replacement",
+    });
+    const spreadClone = {
+      ...fixture.row,
+      queue: replacement.row.queue,
+      repositoryDiff: replacement.row.repositoryDiff,
+    } as G213QualifiedCandidateRowV1;
+    const descriptorClone = Object.create(
+      Object.getPrototypeOf(fixture.row) as object,
+      Object.getOwnPropertyDescriptors(fixture.row),
+    ) as G213QualifiedCandidateRowV1;
+
+    expect(() =>
+      stageCohortCandidateAttemptV1(fixture.pending, { row: spreadClone }),
+    ).toThrow("actual G213 row");
+    expect(() =>
+      stageCohortCandidateAttemptV1(fixture.pending, { row: descriptorClone }),
+    ).toThrow("actual G213 row");
+  });
+
+  test("retains an immutable candidate snapshot without freezing the persisted row", async () => {
+    const fixture = await identityFixture();
+    const forgedResult = commit("post-authentication-result");
+    const forgedTree = commit("post-authentication-tree");
+
+    expect(Reflect.set(fixture.row.queue.attempt, "resultCommit", forgedResult)).toBe(false);
+    substitutePersistedCandidateResult(fixture.sourceRow, {
+      resultCommit: forgedResult,
+      resultTree: forgedTree,
+    });
+
+    const staged = stageCohortCandidateAttemptV1(fixture.pending, { row: fixture.row });
+    expect(staged.g213.resultCommit).toBe(fixture.result);
+    expect(staged.g213.resultTree).toBe(fixture.tree);
+    expect(
+      (fixture.sourceRow.implementationQueue?.attempt as { resultCommit: string }).resultCommit,
+    ).toBe(forgedResult);
+  });
+
+  test("snapshots the persisted candidate before asynchronous repository resolution", async () => {
+    const fixture = await identityFixture();
+    const repositoryDiff = fixture.row.repositoryDiff;
+    let observedSource: AttestationEnvelope | undefined;
+    let releaseRepository!: () => void;
+    let repositoryStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      repositoryStarted = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      releaseRepository = resolve;
+    });
+    const authentication = authenticatedCandidateRow({
+      dispatch: fixture.dispatch,
+      result: fixture.result,
+      tree: fixture.tree,
+      receipts: fixture.receipts,
+      repositoryDiff,
+      observeSourceRow: (row) => {
+        observedSource = row;
+      },
+      repository: {
+        resolveWholeDiff: async () => {
+          repositoryStarted();
+          await paused;
+          return repositoryDiff;
+        },
+      },
+    });
+    await started;
+    const forgedResult = commit("mid-resolution-result");
+    const forgedTree = commit("mid-resolution-tree");
+    substitutePersistedCandidateResult(observedSource!, {
+      resultCommit: forgedResult,
+      resultTree: forgedTree,
+    });
+    releaseRepository();
+
+    const authenticated = await authentication;
+    const staged = stageCohortCandidateAttemptV1(fixture.pending, { row: authenticated.row });
+    expect(staged.g213.resultCommit).toBe(fixture.result);
+    expect(staged.g213.resultTree).toBe(fixture.tree);
   });
 
   test("rejects an attestation substituted for the actual G213 row", async () => {
