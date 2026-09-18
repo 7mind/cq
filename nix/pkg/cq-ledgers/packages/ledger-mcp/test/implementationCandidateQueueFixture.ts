@@ -35,6 +35,14 @@ export interface PrepareQueueCandidateOptions {
   readonly finalizedManifestDigest: string;
   readonly idempotencyKey?: string;
   readonly reprepareOf?: PreparedQueueCandidate;
+  readonly withReceipt?: boolean;
+  readonly guardedRebase?: {
+    readonly guardedRebase: `cq-guarded-rebase:v1:${string}`;
+    readonly requestDigest: string;
+    readonly ontoCommit: string;
+    readonly rebasedStartCommit: string;
+    readonly resultTree: string;
+  };
 }
 
 interface PreparedOnly {
@@ -72,27 +80,42 @@ export class ImplementationCandidateQueueFixture {
   async prepareOnly(options: PrepareQueueCandidateOptions): Promise<PreparedOnly> {
     const sequence = this.sequence++;
     const prior = options.reprepareOf;
-    const baseCommit = prior?.binding.baseCommit ?? repeatedHex(sequence);
-    const resultCommit = repeatedHex(sequence + 1);
-    const resultTree = repeatedHex(sequence + 2);
+    const guarded = options.guardedRebase;
+    const baseCommit = guarded?.ontoCommit ?? prior?.binding.baseCommit ?? repeatedHex(sequence);
+    const resultCommit = guarded?.rebasedStartCommit ?? repeatedHex(sequence + 1);
+    const resultTree = guarded?.resultTree ?? repeatedHex(sequence + 2);
     const expectedChild = {
       childId: `queue-child-${String(sequence)}`,
       runId: `queue-run-${String(sequence)}`,
     };
     const binding: DispatchGitEffectBinding =
-      prior?.binding ??
-      {
-        taskId: options.taskId,
-        handleToken: `queue-worktree-${String(sequence)}`,
-        handleFingerprint: (sequence % 16).toString(16).repeat(64),
-        repositoryRoot: `/repo-${options.repositoryId.slice(0, 8)}`,
-        repositoryId: options.repositoryId,
-        commonDir: `/repo-${options.repositoryId.slice(0, 8)}/.git`,
-        worktreePath: `/repo-${options.repositoryId.slice(0, 8)}/.claude/worktrees/${options.taskId}-${String(sequence)}`,
-        branch: `implement/${options.taskId}`,
-        ref: `refs/heads/implement/${options.taskId}`,
-        baseCommit,
-      };
+      guarded !== undefined && prior !== undefined
+        ? {
+            ...prior.binding,
+            guardedRebaseBridge: {
+              guardedRebase: guarded.guardedRebase,
+              operationId: `queue-guarded-rebase-${String(sequence)}`,
+              requestDigest: guarded.requestDigest,
+              oldResultCommit: prior.candidate.resultCommit,
+              ontoCommit: guarded.ontoCommit,
+              rebasedStartCommit: guarded.rebasedStartCommit,
+              outcome: "clean",
+              exactTip: true,
+              finalizedAt: this.clock.peek(),
+            },
+          }
+        : (prior?.binding ?? {
+            taskId: options.taskId,
+            handleToken: `queue-worktree-${String(sequence)}`,
+            handleFingerprint: (sequence % 16).toString(16).repeat(64),
+            repositoryRoot: `/repo-${options.repositoryId.slice(0, 8)}`,
+            repositoryId: options.repositoryId,
+            commonDir: `/repo-${options.repositoryId.slice(0, 8)}/.git`,
+            worktreePath: `/repo-${options.repositoryId.slice(0, 8)}/.claude/worktrees/${options.taskId}-${String(sequence)}`,
+            branch: `implement/${options.taskId}`,
+            ref: `refs/heads/implement/${options.taskId}`,
+            baseCommit,
+          });
     const input: DispatchJSONValue = {
       taskId: options.taskId,
       headline: "Queue one implementation candidate",
@@ -102,7 +125,7 @@ export class ImplementationCandidateQueueFixture {
       branch: binding.branch,
       baseCommit,
       round: prior?.prepared.generation ?? 0,
-      startingCommit: prior?.candidate.resultCommit ?? baseCommit,
+      startingCommit: guarded?.rebasedStartCommit ?? prior?.candidate.resultCommit ?? baseCommit,
       ...(prior === undefined ? {} : { priorResultCommit: prior.candidate.resultCommit }),
     };
     const outcome = await prepareDispatchOn(
@@ -161,6 +184,27 @@ export class ImplementationCandidateQueueFixture {
 
   async stage(options: PrepareQueueCandidateOptions): Promise<PreparedQueueCandidate> {
     const prepared = await this.prepareOnly(options);
+    const guarded = prepared.binding.guardedRebaseBridge;
+    const gitReceipts: EnqueueImplementationCandidateRequest["gitReceipts"] =
+      options.withReceipt === true
+        ? [
+            {
+              kind: "cq-git-change-receipt",
+              version: 1,
+              attestationId: prepared.prepared.attestationId,
+              generation: prepared.prepared.generation,
+              taskId: prepared.binding.taskId,
+              operationId: `queue-fixture-change-${String(prepared.prepared.generation)}`,
+              requestDigest: "d".repeat(64),
+              oldHead: prepared.binding.baseCommit,
+              newHead: prepared.resultCommit,
+              tree: prepared.resultTree,
+              objectOids: [prepared.resultCommit, prepared.resultTree],
+              paths: ["candidate.ts"],
+              committedAt: this.clock.peek(),
+            },
+          ]
+        : [];
     const output: DispatchJSONValue = {
       taskId: prepared.binding.taskId,
       status: "pass",
@@ -168,12 +212,23 @@ export class ImplementationCandidateQueueFixture {
       branch: prepared.binding.branch,
       actualWorktreePath: prepared.binding.worktreePath,
       filesTouched: ["candidate.ts"],
-      gitReceipts: [],
+      gitReceipts: gitReceipts as unknown as DispatchJSONValue,
+      ...(guarded === undefined
+        ? {}
+        : {
+            gitLineage: {
+              kind: "guarded-rebase",
+              guardedRebase: guarded.guardedRebase,
+              ontoCommit: guarded.ontoCommit,
+              rebasedStartCommit: guarded.rebasedStartCommit,
+              exactTip: guarded.exactTip,
+            },
+          }),
       checkSummary: "targeted checks passed",
       baseVerification: {
         status: "verified",
         relation: "descendant",
-        baseCommit: prepared.binding.baseCommit,
+        baseCommit: guarded?.ontoCommit ?? prepared.binding.baseCommit,
         headCommit: prepared.resultCommit,
       },
       summary: "candidate staged",
@@ -184,6 +239,27 @@ export class ImplementationCandidateQueueFixture {
       { now: this.clock.now },
     );
     if (stored.state !== "gate-pending") throw new Error("expected gate-pending staging");
+    const stagedRebaseSource =
+      options.guardedRebase === undefined || options.reprepareOf === undefined
+        ? undefined
+        : await this.backend.transact(
+            { kind: "handle", handle: options.reprepareOf.prepared },
+            (store) => {
+              const row = store.read(options.reprepareOf!.prepared);
+              const source = row?.implementationQueue?.stagedRebaseSource;
+              if (source === undefined) {
+                throw new Error("guarded fixture source did not persist successor authority");
+              }
+              return {
+                sourceReference: source.sourceReference,
+                source: source.source,
+                leaseGeneration: source.leaseGeneration,
+                guardedRebase: source.guardedRebase,
+                ontoCommit: source.ontoCommit,
+                guardedRebaseJournalDigest: source.guardedRebaseJournalDigest,
+              };
+            },
+          );
     const candidate: Omit<EnqueueImplementationCandidateRequest, "namespace" | "actor"> = {
       attestationId: prepared.prepared.attestationId,
       generation: prepared.prepared.generation,
@@ -194,14 +270,15 @@ export class ImplementationCandidateQueueFixture {
         goalRef: prepared.goalRef,
         finalizedManifestDigest: prepared.finalizedManifestDigest,
       },
-      observedBaseCommit: prepared.binding.baseCommit,
+      observedBaseCommit: guarded?.ontoCommit ?? prepared.binding.baseCommit,
       resultCommit: prepared.resultCommit,
       resultTree: prepared.resultTree,
       gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
       packagedEnvironmentDigest: "c".repeat(64),
-      gitReceipts: [],
+      gitReceipts,
       gitEffectBinding: prepared.binding,
       stagedOutputDigest: stored.result.outputDigest,
+      ...(stagedRebaseSource === undefined ? {} : { stagedRebaseSource }),
     };
     return {
       prepared: prepared.prepared,

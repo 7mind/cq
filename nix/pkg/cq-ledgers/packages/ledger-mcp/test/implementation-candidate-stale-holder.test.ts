@@ -1,13 +1,98 @@
 import { describe, expect, test } from "bun:test";
 import {
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   claimQualifiedParentGateOn,
+  completeQualifiedParentGateOn,
+  confirmDispatchCompletionOn,
   enqueueImplementationCandidateOn,
+  type AttestationBackend,
+  type DispatchJSONValue,
+  type ImplementationQueueLeaseBinding,
 } from "@cq/config";
-import { ImplementationCandidateQueueFixture } from "./implementationCandidateQueueFixture.js";
+import {
+  ImplementationEvidenceService,
+  createInMemoryImplementationEvidenceStore,
+  type ImplementationCandidateAuthorityReceipt,
+  type ImplementationReviewerIdentity,
+} from "@cq/ledger";
+import {
+  ImplementationCandidateQueueFixture,
+  type PreparedQueueCandidate,
+} from "./implementationCandidateQueueFixture.js";
 
 const namespace = { backend: "xdg" as const, projectKey: "candidate-stale-holder" };
+
+async function completeCandidate(
+  backend: AttestationBackend,
+  fixture: ImplementationCandidateQueueFixture,
+  staged: PreparedQueueCandidate,
+  lease: ImplementationQueueLeaseBinding,
+  baseCommit: string,
+  startingCommit: string,
+): Promise<void> {
+  const claimed = await claimQualifiedParentGateOn(
+    backend,
+    { ...staged.prepared, queueLease: lease },
+    { now: fixture.clock.now },
+  );
+  if (claimed.state !== "gate-running") throw new Error("expected candidate gate claim");
+  await completeQualifiedParentGateOn(
+    backend,
+    {
+      ...staged.prepared,
+      queueLease: lease,
+      gateEpoch: claimed.gateEpoch,
+      output: {
+        ...(claimed.output as Readonly<Record<string, DispatchJSONValue>>),
+        supervisedGateEvidence: {
+          kind: "cq-supervised-gate-evidence",
+          version: 1,
+          attestationId: staged.prepared.attestationId,
+          generation: staged.prepared.generation,
+          roleId: "implement-worker",
+          roleVersion: staged.prepared.promptProvenance.version,
+          surface: "codex",
+          promptDigest: staged.prepared.promptProvenance.promptDigest,
+          catalogHash: staged.prepared.promptProvenance.catalogHash,
+          inputDigest: staged.prepared.promptProvenance.inputDigest,
+          taskId: staged.binding.taskId,
+          worktreePath: staged.binding.worktreePath,
+          branch: staged.binding.branch,
+          baseCommit,
+          startingCommit,
+          resultCommit: staged.candidate.resultCommit,
+          clean: true,
+          command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          gateExitCode: 0,
+          passCount: 1,
+          failCount: 0,
+          gateDurationMs: 1,
+          capturedAt: fixture.clock.now(),
+          filesTouchedDigest: "1".repeat(64),
+          gitReceiptsDigest: "2".repeat(64),
+          mutationTableDigest: "3".repeat(64),
+        },
+      },
+    },
+    { now: fixture.clock.now },
+  );
+  await confirmDispatchCompletionOn(
+    backend,
+    {
+      namespace,
+      ...staged.prepared,
+      nativeCompletion: staged.qualification.nativeCompletion,
+      expectedProvenance: staged.qualification.expectedProvenance,
+      continuationContext: {
+        liveTip: startingCommit,
+        gitReceipts: staged.candidate.gitReceipts,
+      },
+    },
+    { now: fixture.clock.now },
+  );
+}
 
 describe("implementation candidate stale-holder fencing [Behavioral-Active, Blackbox-Group]", () => {
   test("only the current resumed lease generation can attach gate evidence", async () => {
@@ -62,6 +147,306 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
         { now: fixture.clock.now },
       ),
     ).resolves.toMatchObject({ state: "gate-running" });
+  });
+
+  // regression: T6520 round 11 — same-enrollment resume coverage did not prove
+  // that a guarded-rebase successor becomes the sole review/completion authority.
+  test("after restart only the guarded-rebase successor acquires review and completion authority; its retired source and foreign task are rejected [Behavioral-Active Blackbox-Group]", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const common = {
+      taskId: "T6520",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+    } as const;
+    const source = await fixture.stage({ ...common, withReceipt: true });
+    const sourceQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: source.candidate,
+      ...source.qualification,
+    });
+    const sourceLease = await fixture.adapter.acquire({
+      partitionKey: sourceQualified.queue.partition.partitionKey,
+      holderId: "guarded-source-holder",
+    });
+    if (sourceLease.state !== "leased") throw new Error("expected guarded source lease");
+    await completeCandidate(
+      backend,
+      fixture,
+      source,
+      sourceLease.lease,
+      source.binding.baseCommit,
+      source.candidate.resultCommit,
+    );
+    backend.rehydrate();
+
+    const ontoCommit = "f".repeat(40);
+    const rebasedStartCommit = "d".repeat(40);
+    const successor = await fixture.stage({
+      ...common,
+      idempotencyKey: "guarded-successor-after-restart",
+      reprepareOf: source,
+      guardedRebase: {
+        guardedRebase: `cq-guarded-rebase:v1:${"c".repeat(64)}`,
+        requestDigest: "e".repeat(64),
+        ontoCommit,
+        rebasedStartCommit,
+        resultTree: "9".repeat(40),
+      },
+    });
+    const successorQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: successor.candidate,
+      ...successor.qualification,
+    });
+    const successorLease = await fixture.adapter.acquire({
+      partitionKey: successorQualified.queue.partition.partitionKey,
+      holderId: "guarded-successor-holder",
+    });
+    if (successorLease.state !== "leased") throw new Error("expected guarded successor lease");
+    backend.rehydrate();
+    await completeCandidate(
+      backend,
+      fixture,
+      successor,
+      successorLease.lease,
+      ontoCommit,
+      rebasedStartCommit,
+    );
+    backend.rehydrate();
+
+    const [sourceRow, successorRow] = [...backend.storedRows()].sort(
+      (left, right) => left.generation - right.generation,
+    );
+    expect(sourceRow).toMatchObject({
+      state: "consumed",
+      implementationQueue: {
+        state: "staged-rebase-retired",
+        stagedRebaseSource: {
+          successor: {
+            attestationId: successor.prepared.attestationId,
+            generation: successor.prepared.generation,
+          },
+        },
+      },
+    });
+    if (
+      sourceRow?.kind !== "envelope" ||
+      sourceRow.implementationQueue?.state !== "staged-rebase-retired"
+    ) {
+      throw new Error("guarded source did not retain its retirement boundary");
+    }
+    expect(sourceRow.implementationQueue.lease).toBeUndefined();
+    expect(successorRow).toMatchObject({
+      state: "consumed",
+      implementationQueue: {
+        state: "leased",
+        lease: {
+          holderId: successorLease.lease.holderId,
+          generation: successorLease.lease.leaseGeneration,
+        },
+      },
+    });
+    if (
+      successorRow?.kind !== "envelope" ||
+      successorRow.implementationQueue?.state !== "leased" ||
+      successorRow.implementationQueue.qualification === undefined
+    ) {
+      throw new Error("guarded successor authority did not survive restart");
+    }
+    const control = successorRow.implementationQueue;
+    const qualification = control.qualification;
+    if (qualification === undefined) {
+      throw new Error("guarded successor lost its qualification after restart");
+    }
+    const authority: ImplementationCandidateAuthorityReceipt = {
+      kind: "cq-implementation-candidate-authority",
+      version: 1,
+      workerDispatch: {
+        attestationId: successor.prepared.attestationId,
+        generation: successor.prepared.generation,
+      },
+      partitionKey: control.partition.partitionKey,
+      enrollmentId: control.enrollment.enrollmentId,
+      attemptId: control.attempt.attemptId,
+      leaseHolderId: successorLease.lease.holderId,
+      leaseGeneration: successorLease.lease.leaseGeneration,
+      qualificationDigest: qualification.qualificationDigest,
+      taskRef: "tasks:T6520",
+      taskDigest: "4".repeat(64),
+      goalRef: common.goalRef,
+      finalizedManifestDigest: common.finalizedManifestDigest,
+      integrationRef: common.integrationRef,
+      repositoryId: common.repositoryId,
+      worktreePath: successor.binding.worktreePath,
+      resultCommit: rebasedStartCommit,
+      resultTree: control.attempt.resultTree,
+      gateCommand: control.attempt.gateCommand,
+      packagedEnvironmentDigest: control.attempt.packagedEnvironmentDigest,
+      managedWorktreeBindingDigest: control.attempt.managedWorktreeBindingDigest,
+      gitReceiptLineageDigest: control.attempt.gitReceiptLineageDigest,
+      gateEvidenceDigest: "5".repeat(64),
+    };
+    const reviewer: ImplementationReviewerIdentity = {
+      alias: "native",
+      harness: "codex",
+      model: "frontier",
+      provider: null,
+      launch: "native",
+      adapterId: "codex:native",
+    };
+    const service = new ImplementationEvidenceService({
+      store: createInMemoryImplementationEvidenceStore(),
+      resolveReviewerRoster: () => [reviewer],
+      nativeFallback: reviewer,
+      now: fixture.clock.now,
+      prepareNativeReview: async ({ attemptRef }) => ({
+        attestationId: `att_${attemptRef.slice(-12)}`,
+        generation: 1,
+        responseStoreNow: "2099-01-01T00:00:00.000Z",
+        childCancelAt: "2099-01-01T00:01:00.000Z",
+        launchDeadline: "2098-12-31T23:59:00.000Z",
+        promptProvenance: {
+          roleId: "implement-reviewer",
+          version: 7,
+          surface: "codex",
+          promptDigest: "6".repeat(64),
+          catalogHash: "7".repeat(64),
+          inputDigest: "8".repeat(64),
+        },
+        inputCapability: { scope: "fetch-input", token: "input" },
+        resultCapability: { scope: "store-result", token: "result" },
+      }),
+      fetchNativeReview: async (dispatch) => ({
+        state: "consumed",
+        retainedAttestation: dispatch.attestationId,
+        output: {
+          taskId: "T6520",
+          verdict: "approve",
+          criticism: [],
+          questions: [],
+          defects: [],
+          rationale: "guarded successor is current",
+          gateReRan: true,
+          gateDurationMs: 1,
+          resultCommitVerified: true,
+          resultCommitEvidence: {
+            status: "verified",
+            resultCommit: rebasedStartCommit,
+            branchTip: rebasedStartCommit,
+          },
+          baseAncestry: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: ontoCommit,
+            resultCommit: rebasedStartCommit,
+            mergeBase: ontoCommit,
+          },
+        },
+      }),
+      executeExternalReview: async () => {
+        throw new Error("external review is not configured");
+      },
+      fetchWorker: async () => ({
+        state: "consumed",
+        input: { taskId: "T6520", baseCommit: ontoCommit },
+        output: {
+          taskId: "T6520",
+          status: "pass",
+          resultCommit: rebasedStartCommit,
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: ontoCommit,
+            headCommit: rebasedStartCommit,
+          },
+        },
+      }),
+      resolveCandidateAuthority: async (input) => {
+        if (
+          input.workerDispatch.attestationId !== successor.prepared.attestationId ||
+          input.workerDispatch.generation !== successor.prepared.generation ||
+          input.taskRef !== authority.taskRef ||
+          input.resultCommit !== authority.resultCommit
+        ) {
+          throw new Error("candidate is not the unique active guarded successor");
+        }
+        return authority;
+      },
+      releaseCandidateAuthority: async () => {},
+      readTaskAuthority: async () => ({
+        taskRef: "tasks:T6520",
+        ownerGoalRef: common.goalRef,
+        status: "wip",
+        finalizedManifest: "manifest-v1\n",
+      }),
+      repositoryHead: async () => ontoCommit,
+      verifyImplementation: async () => ({
+        baseCommit: ontoCommit,
+        startingCommit: rebasedStartCommit,
+        clean: true,
+        ancestryVerified: true,
+        receiptsVerified: true,
+        acceptanceVerified: true,
+        gateVerified: true,
+        details: { guardedSuccessor: true },
+      }),
+      recordLedgerCompletion: async () => ({ reviewRef: "reviews:R6520" }),
+    });
+    await expect(
+      service.prepareReviewPanel({
+        taskRef: "tasks:T6520",
+        resultCommit: source.candidate.resultCommit,
+        workerDispatch: {
+          attestationId: source.prepared.attestationId,
+          generation: source.prepared.generation,
+        },
+        operationId: "retired-source-review",
+        author: "parent",
+      }),
+    ).rejects.toThrow("unique active guarded successor");
+    await expect(
+      service.prepareReviewPanel({
+        taskRef: "tasks:T9999",
+        resultCommit: rebasedStartCommit,
+        workerDispatch: authority.workerDispatch,
+        operationId: "foreign-task-review",
+        author: "parent",
+      }),
+    ).rejects.toThrow("unique active guarded successor");
+
+    const panel = await service.prepareReviewPanel({
+      taskRef: authority.taskRef,
+      resultCommit: authority.resultCommit,
+      workerDispatch: authority.workerDispatch,
+      operationId: "guarded-successor-review",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "guarded-successor-attempt",
+      author: "parent",
+    });
+    await service.finalizeReviewAttempt({
+      attemptRef,
+      operationId: "guarded-successor-finalize",
+      author: "parent",
+    });
+    const completion = await service.prepareCompletion({
+      taskRef: authority.taskRef,
+      expectedRepositoryHead: ontoCommit,
+      resultCommit: authority.resultCommit,
+      workerDispatch: authority.workerDispatch,
+      reviewAttemptRefs: [attemptRef],
+      completion: "guarded successor reviewed",
+      logPaths: [],
+      mergeOperationId: "guarded-successor-merge",
+      operationId: "guarded-successor-completion",
+      author: "parent",
+    });
+    expect(completion).toMatchObject({ status: "prepared", resultCommit: rebasedStartCommit });
   });
 
   test("unqualified and staged-rebase-retired rows remain ineligible after durable replay", async () => {
