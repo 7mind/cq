@@ -785,10 +785,24 @@ EOF
 #!${pkgs.runtimeShell}
 set -eu
 case " \$* " in
-  *" --parent-gate-finalize "*)
+  *" --implementation-candidate-qualify "*)
     IFS= read -r request
-    test "\$request" = '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"parentGateCapability":{"scope":"parent-gate","token":"cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"}}'
-    printf '%s\n' '{"state":"result-stored","attestationId":"att_packaged_role_acknowledgement","generation":7,"storedAt":"2026-08-13T09:01:00.000Z","outputDigest":"digest-bound-output"}'
+    printf '%s\n' "\$request" | ${pkgs.nodejs_22}/bin/node -e '
+const fs = require("node:fs");
+const request = JSON.parse(fs.readFileSync(0, "utf8"));
+const keys = Object.keys(request).sort().join(",");
+if (keys !== "attestationId,childThreadId,correlationId,exitStatus,generation,observedAt,outcome,promptDigest,roleId") process.exit(1);
+if (request.attestationId !== "att_packaged_role_acknowledgement" || request.generation !== 7) process.exit(1);
+if (request.roleId !== "implement-worker" || request.correlationId !== "packaged-role-correlation") process.exit(1);
+if (request.childThreadId !== "packaged-role-thread" || request.outcome !== "completed" || request.exitStatus !== 0) process.exit(1);
+if (typeof request.observedAt !== "string" || Number.isNaN(Date.parse(request.observedAt))) process.exit(1);
+if (typeof request.promptDigest !== "string" || !/^[0-9a-f]{64}$/.test(request.promptDigest)) process.exit(1);
+'
+    printf '%s\n' '{"state":"queued","attestationId":"att_packaged_role_acknowledgement","generation":7,"partitionKey":"cq-implementation-queue:v1:packaged-role","outputDigest":"digest-bound-output","qualificationDigest":"qualification-bound-output"}'
+    ;;
+  *" --parent-gate-finalize "*|*" --implementation-candidate-coordinate "*)
+    echo "cq-codex-role invoked a gate path before returning the queued handle" >&2
+    exit 97
     ;;
   *) exec "$out/bin/cq" "\$@" ;;
 esac
@@ -806,6 +820,7 @@ EOF
               XDG_STATE_HOME="$TMPDIR/role-state" \
               CQ_CODEX_EXECUTABLE="$fakeCodex" \
               CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
+              CQ_CODEX_ROLE_CORRELATION_ID="packaged-role-correlation" \
               $out/bin/cq-codex-role > "$roleStdout"; then
               echo "cq-codex-role packaged acknowledgement check FAILED" >&2
               exit 1
@@ -830,6 +845,7 @@ EOF
               HOME=$TMPDIR \
                 CQ_CODEX_EXECUTABLE="$fakeCodex" \
                 CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
+                CQ_CODEX_ROLE_CORRELATION_ID="packaged-role-correlation" \
                 ${pkgs.coreutils}/bin/timeout 10s \
                 ${pkgs.util-linux}/bin/script --quiet --return \
                   --command "$out/bin/cq-codex-role" \
