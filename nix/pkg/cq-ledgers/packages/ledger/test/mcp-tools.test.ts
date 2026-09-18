@@ -1383,30 +1383,43 @@ describe("ledger MCP tools", () => {
     }
   });
 
-  it("create_item, workset get, and derive_predicates expose one rooted planning goal", async () => {
+  it("create_item, workset get, and derive_predicates retain a consumed rooted idea's goal", async () => {
     const store = await buildStore();
     try {
       const tools = createLedgerMcpTools(store);
       await createRoot(tools, { title: "MCP workset scenario" });
+      const idea = decode<{ item: { id: string } }>(
+        await callTool(tools, "create_item", {
+          ledger_id: "ideas",
+          status: "open",
+          fields: { title: "rooted idea" },
+        }),
+      );
+      await requireWorksetStore(store).setRoots([`ideas:${idea.item.id}`]);
       const goal = decode<{ item: { id: string } }>(
         await callTool(tools, "create_item", {
           ledger_id: "goals",
-          milestone_id: "M1",
           status: "clarifying",
-          fields: { title: "rooted goal", description: "plan through MCP" },
+          fields: { title: "rooted goal", description: "consume through MCP" },
+          owner_ref: `ideas:${idea.item.id}`,
+          creation_kind: "idea-to-goal",
         }),
       );
-      await requireWorksetStore(store).setRoots([`goals:${goal.item.id}`]);
 
       const workset = decode<{
         op: "get";
-        graph: { nodes: Array<{ ref: string }> };
+        graph: { roots: string[]; nodes: Array<{ ref: string }> };
       }>(await callTool(tools, "workset", { op: "get", projection: "id" }));
       const predicates = decode<DerivedPredicates>(
         await callTool(tools, "derive_predicates", {}),
       );
 
-      expect(workset.graph.nodes).toEqual([{ ref: `goals:${goal.item.id}` }]);
+      expect(store.fetchItem("ideas", idea.item.id).status).toBe("planned");
+      expect(workset.graph.roots).toEqual([`ideas:${idea.item.id}`]);
+      expect(workset.graph.nodes).toEqual([
+        { ref: `ideas:${idea.item.id}` },
+        { ref: `goals:${goal.item.id}` },
+      ]);
       expect(predicates.pPlan).toEqual({ value: true, items: [goal.item.id] });
     } finally {
       await store.dispose();
