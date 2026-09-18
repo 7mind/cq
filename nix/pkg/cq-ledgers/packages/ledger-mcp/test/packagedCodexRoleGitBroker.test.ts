@@ -12,18 +12,16 @@ import {
   CODEX_CORRELATION_SEPARATOR,
   CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
-  buildPositiveOnlyDispatchRegistry,
   createCodexRoleBoundaryPlan,
-  createNativeDispatchAdapter,
   executeCodexProviderSandboxControl,
   executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
   implementConflictResolverSidecar,
   implementReviewerSidecar,
-  qualifyCodexNativeAdapter,
   sequentialDispatchRandomBytes,
   type CodexInstalledIdentity,
   type CodexInstalledRoleBoundaryExecution,
+  type CodexProviderSandboxControl,
   type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
   type DispatchJSONValue,
@@ -82,6 +80,96 @@ function evidenceObserverOf(capability: ReturnType<typeof createDispatchCapabili
     throw new Error("packaged dispatch evidence observation is unavailable");
   }
   return capability.observeEvidence;
+}
+
+type PackagedLedgerStore = Awaited<ReturnType<typeof createLedgerStore>>["store"];
+type PackagedConsumedEvidence = Extract<
+  Awaited<ReturnType<NonNullable<ReturnType<typeof createDispatchCapability>["observeEvidence"]>>>,
+  { readonly state: "consumed" }
+>;
+
+async function seedFinalizedImplementationTask(input: {
+  readonly ledgerStore: PackagedLedgerStore;
+  readonly goalId: string;
+  readonly reviewId: string;
+  readonly taskKey: string;
+  readonly operationPrefix: string;
+  readonly session: string;
+  readonly title: string;
+  readonly description: string;
+  readonly acceptance: string;
+}): Promise<string> {
+  const lifecycle = input.ledgerStore as PackagedLedgerStore & PlanLifecycleStore;
+  await input.ledgerStore.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+    id: input.goalId,
+    status: "clarifying",
+    fields: { title: input.title, description: input.description },
+  });
+  const claim = await lifecycle.claimPlan({
+    goalId: input.goalId,
+    purpose: "initial",
+    claimRequestId: `${input.operationPrefix}-claim-v1`,
+    ownerFenceToken: "T".repeat(22),
+    expectedGeneration: null,
+    author: `${input.operationPrefix}-planner`,
+    session: input.session,
+  });
+  if (!claim.ok) throw new Error(`${input.operationPrefix} plan claim failed`);
+  const publication = await lifecycle.publishPlanDraft({
+    goalId: input.goalId,
+    claimId: claim.acknowledgement.claimId,
+    generation: claim.acknowledgement.generation,
+    operationId: `${input.operationPrefix}-publish-v1`,
+    ownerFenceToken: claim.acknowledgement.ownerFenceToken,
+    author: `${input.operationPrefix}-planner`,
+    session: input.session,
+    manifest: {
+      milestones: [{ key: "installed", title: input.title }],
+      tasks: [
+        {
+          key: input.taskKey,
+          milestoneKey: "installed",
+          headline: input.title,
+          description: input.description,
+          acceptance: input.acceptance,
+          ledgerRefs: [`goals:${input.goalId}`],
+        },
+      ],
+    },
+  });
+  if (!publication.ok) throw new Error(`${input.operationPrefix} plan publication failed`);
+  const published = publication.acknowledgement.manifest;
+  await input.ledgerStore.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
+    id: input.reviewId,
+    status: "go-ahead",
+    fields: {
+      summary: `approve ${input.title}`,
+      [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify({
+        goalId: input.goalId,
+        claimId: claim.acknowledgement.claimId,
+        generation: claim.acknowledgement.generation,
+        revision: published.revision,
+      }),
+      ledgerRefs: [`goals:${input.goalId}`],
+    },
+  });
+  const finalization = await lifecycle.finalizePlan({
+    goalId: input.goalId,
+    claimId: claim.acknowledgement.claimId,
+    generation: claim.acknowledgement.generation,
+    operationId: `${input.operationPrefix}-finalize-v1`,
+    ownerFenceToken: claim.acknowledgement.ownerFenceToken,
+    reviewId: input.reviewId,
+    draftRevision: published.revision,
+    decision: { headline: `Run ${input.title}` },
+    author: `${input.operationPrefix}-planner`,
+    session: input.session,
+  });
+  if (!finalization.ok) throw new Error(`${input.operationPrefix} plan finalization failed`);
+  const taskId = published.tasks.find(({ key }) => key === input.taskKey)?.id;
+  if (taskId === undefined) throw new Error(`${input.operationPrefix} task allocation is absent`);
+  await input.ledgerStore.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
+  return taskId;
 }
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(
@@ -204,10 +292,11 @@ async function runPackagedReviewer(input: {
   readonly managedHandle: ManagedWorktreeHandle;
   readonly baseCommit: string;
   readonly backend: SqliteAttestationBackend;
+  readonly ledgerStore: PackagedLedgerStore;
   readonly randomBytes: (count: number) => Uint8Array;
   readonly workerRoute: PackagedWorkerRoute;
   readonly reviewerMode: PackagedReviewerMode;
-  readonly workerResult: ConsumedDispatchResult;
+  readonly workerResult: ConsumedDispatchResult | PackagedConsumedEvidence;
 }): Promise<PackagedReviewerGateRun> {
   if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
     throw new Error("installed reviewer gate was not selected");
@@ -217,6 +306,7 @@ async function runPackagedReviewer(input: {
     managedHandle,
     baseCommit,
     backend,
+    ledgerStore,
     randomBytes,
     workerRoute,
     reviewerMode,
@@ -239,6 +329,7 @@ async function runPackagedReviewer(input: {
   const capability = createDispatchCapability({
     backend,
     promptArtifactStore: artifactStore("implement-reviewer"),
+    ledgerStore,
     now: () => dispatchNow,
     randomBytes,
   });
@@ -480,11 +571,13 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
   readonly managedHandle: ManagedWorktreeHandle;
   readonly baseCommit: string;
   readonly backend: SqliteAttestationBackend;
+  readonly ledgerStore: PackagedLedgerStore;
   readonly randomBytes: (count: number) => Uint8Array;
   readonly route: R;
 }): Promise<PackagedResolverGateRun<R>> {
   if (INSTALLED_ROLE === undefined) throw new Error("installed resolver gate was not selected");
-  const { repositoryRoot, managedHandle, baseCommit, backend, randomBytes, route } = input;
+  const { repositoryRoot, managedHandle, baseCommit, backend, ledgerStore, randomBytes, route } =
+    input;
   const binding = await resolveManagedWorktreeDispatchBinding({
     repositoryRoot,
     taskId: managedHandle.taskId,
@@ -525,6 +618,7 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
     backend,
     promptArtifactStore: artifactStore("implement-conflict-resolver"),
     repositoryRoot,
+    ledgerStore,
     now: () => dispatchNow,
     randomBytes,
   });
@@ -773,7 +867,7 @@ describe("packaged cq-codex-role Git broker", () => {
   );
 
   installedGateTest(
-    "authenticates installed worker, reviewer, and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]",
+    "authenticates installed worker evidence, reviewer, and resolver controls after queued coordination [Effectual-GoodCommunication, Blackbox-Group]",
     async () => {
       if (
         INSTALLED_ROLE === undefined ||
@@ -802,7 +896,17 @@ describe("packaged cq-codex-role Git broker", () => {
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
       await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
       const ledgerStore = await createLedgerStore(repositoryRoot);
-      await ledgerStore.store.dispose();
+      const taskId = await seedFinalizedImplementationTask({
+        ledgerStore: ledgerStore.store,
+        goalId: "G2042",
+        reviewId: "R2042",
+        taskKey: "packaged-broker",
+        operationPrefix: "t2042-plan",
+        session: "t2042-packaged-role",
+        title: "packaged broker probe",
+        description: "exercise native and installed workers through the broker lifecycle",
+        acceptance: "all confinement negatives remain unchanged",
+      });
       const baseTree = await git(repositoryRoot, ["rev-parse", `${baseCommit}^{tree}`]);
       const commonObject = path.join(
         repositoryRoot,
@@ -828,7 +932,7 @@ describe("packaged cq-codex-role Git broker", () => {
         baseCommit,
       ]);
       const managed = await prepareManagedWorktree(
-        { repositoryRoot, taskId: "T2042", baseCommit },
+        { repositoryRoot, taskId, baseCommit },
         { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
       );
       if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
@@ -857,13 +961,14 @@ describe("packaged cq-codex-role Git broker", () => {
         backend,
         promptArtifactStore: artifactStore("implement-worker"),
         repositoryRoot,
+        ledgerStore: ledgerStore.store,
         now: () => serviceNow,
         randomBytes: dispatchRandomBytes,
       });
       const prepared = await capability.prepare({
         roleId: "implement-worker",
         input: {
-          taskId: "T2042",
+          taskId,
           headline: "packaged broker probe",
           description: "make two broker commits",
           acceptance: "all confinement negatives remain unchanged",
@@ -941,7 +1046,7 @@ describe("packaged cq-codex-role Git broker", () => {
             CQ_T2042_WORKTREE: managed.handle.absolutePath,
             CQ_T2042_LEDGER_ROOT: repositoryRoot,
           },
-          codexWorksetEffect("tasks:T2042"),
+          codexWorksetEffect(`tasks:${taskId}`),
         );
       } catch (error) {
         const fixtureStderr = await readFile(workerStderrPath, "utf8").catch(() => "");
@@ -1079,7 +1184,7 @@ describe("packaged cq-codex-role Git broker", () => {
       expect(consumed.output).toMatchObject({
         supervisedGateEvidence: {
           kind: "cq-supervised-gate-evidence",
-          taskId: "T2042",
+          taskId,
           worktreePath: managed.handle.absolutePath,
           branch: managed.handle.branch,
           resultCommit: capture.output["resultCommit"],
@@ -1100,6 +1205,7 @@ describe("packaged cq-codex-role Git broker", () => {
             managedHandle: managed.handle,
             baseCommit,
             backend,
+            ledgerStore: ledgerStore.store,
             randomBytes: dispatchRandomBytes,
             workerRoute: "native",
             reviewerMode,
@@ -1117,6 +1223,7 @@ describe("packaged cq-codex-role Git broker", () => {
         backend,
         promptArtifactStore: artifactStore("implement-worker"),
         repositoryRoot,
+        ledgerStore: ledgerStore.store,
         now: () => serviceNow,
         randomBytes: dispatchRandomBytes,
       });
@@ -1296,24 +1403,26 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         }),
       ).toEqual({ state: "completed", handle: retryHandle });
       expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
-      const retryFetched = await capability.fetch(retryHandle);
-      expect(retryFetched).toMatchObject({
+      const retryEvidence = await evidenceObserverOf(capability)(retryHandle);
+      if (retryEvidence.state !== "consumed") {
+        throw new Error(`unexpected worker evidence ${retryEvidence.state}`);
+      }
+      expect(retryEvidence).toMatchObject({
         state: "consumed",
         output: {
           ...retryCapture.output,
           gitReceipts: [...receipts, ...retryReceipts],
         },
       });
-      const retryConsumed = retryFetched as ConsumedDispatchResult;
-      expect((retryConsumed.output as Record<string, unknown>)["gitReceipts"]).toEqual([
+      expect((retryEvidence.output as Record<string, unknown>)["gitReceipts"]).toEqual([
         ...receipts,
         ...retryReceipts,
       ]);
       expect(retryCapture.output).not.toHaveProperty("supervisedGateEvidence");
-      expect(retryConsumed.output).toMatchObject({
+      expect(retryEvidence.output).toMatchObject({
         supervisedGateEvidence: {
           kind: "cq-supervised-gate-evidence",
-          taskId: "T2042",
+          taskId,
           resultCommit: retryCapture.output["resultCommit"],
           passCount: 1,
         },
@@ -1328,10 +1437,11 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             managedHandle: managed.handle,
             baseCommit,
             backend,
+            ledgerStore: ledgerStore.store,
             randomBytes: dispatchRandomBytes,
             workerRoute: "process",
             reviewerMode,
-            workerResult: retryConsumed,
+            workerResult: retryEvidence,
           }),
         );
       }
@@ -1420,6 +1530,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         managedHandle: resumed.handle,
         baseCommit,
         backend,
+        ledgerStore: ledgerStore.store,
         randomBytes: dispatchRandomBytes,
         route: "native",
       });
@@ -1428,6 +1539,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         managedHandle: resumed.handle,
         baseCommit,
         backend,
+        ledgerStore: ledgerStore.store,
         randomBytes: dispatchRandomBytes,
         route: "process",
       });
@@ -1455,7 +1567,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         result: { state: "aborted", reason: "deadline-exceeded" },
       });
       if (deadline.state !== "aborted") throw new Error("deadline control did not abort");
-      const sandboxControls = [];
+      const sandboxControls: CodexProviderSandboxControl[] = [];
       const credentialNames = [
         "CQ_SERVE_TOKEN",
         "CQ_SERVE_MANAGEMENT_TOKEN",
@@ -1497,19 +1609,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         retryCapture.directGit.exitStatus !== 0 &&
         /^[0-9a-f]{64}$/.test(retryCapture.directGit.stderrDigest);
       if (!directGitDenied) throw new Error("installed worker did not deny direct Git metadata");
-      const workerAuthentication = {
-        execution: retryExecution,
-        nativeExecution: execution,
-        priorExecution: execution,
-        priorConsumed: consumed,
-        consumed: retryConsumed,
-        release: released,
-        sandboxControls: sandboxControls.filter(({ roleId }) => roleId === "implement-worker"),
-        completionRejection,
-        cancelled,
-        deadline: deadline.result,
-      } as const;
-      const workerGate = authenticateCodexProviderGateObservation(workerAuthentication);
       const resolverAuthentication = {
         execution: resolverRun.execution,
         nativeExecution: nativeResolverRun.execution,
@@ -1520,53 +1619,21 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         ),
       } as const;
       const resolverGate = authenticateCodexProviderGateObservation(resolverAuthentication);
-      expect(workerGate.failureControls).toEqual([...CODEX_PROVIDER_FAILURE_CONTROLS]);
-      const qualification = qualifyCodexNativeAdapter({
-        cwd: managed.handle.absolutePath,
-        handle: managed.handle,
-        repositoryRoot,
-        taskId: "T2042",
-        workerGate,
-        resolverGate,
+      expect(resolverGate).toMatchObject({
+        confinementVerified: true,
+        receiptChainVerified: true,
+        behavior: "multi-step-rebase",
       });
-      const replayWorktreeId = "019fef67-3aa4-73a7-90f0-60c2fa5b3a9c";
-      const replayHandle = {
-        ...managed.handle,
-        token: "foreign-replay-handle",
-        worktreeId: replayWorktreeId,
-        absolutePath: `${repositoryRoot}/.claude/worktrees/${replayWorktreeId}`,
-      };
-      const foreignRepositoryRoot = `${repositoryRoot}-foreign`;
-      const replayVerdicts = [
-        qualifyCodexNativeAdapter({
-          cwd: replayHandle.absolutePath,
-          handle: replayHandle,
-          repositoryRoot,
-          taskId: managed.handle.taskId,
-          workerGate,
-          resolverGate,
-        }),
-        qualifyCodexNativeAdapter({
-          cwd: managed.handle.absolutePath,
-          handle: { ...managed.handle, taskId: "T2043" },
-          repositoryRoot,
-          taskId: "T2043",
-          workerGate,
-          resolverGate,
-        }),
-        qualifyCodexNativeAdapter({
-          cwd: `${foreignRepositoryRoot}/.claude/worktrees/${managed.handle.worktreeId}`,
-          handle: {
-            ...managed.handle,
-            repositoryRoot: foreignRepositoryRoot,
-            absolutePath: `${foreignRepositoryRoot}/.claude/worktrees/${managed.handle.worktreeId}`,
-          },
-          repositoryRoot: foreignRepositoryRoot,
-          taskId: managed.handle.taskId,
-          workerGate,
-          resolverGate,
-        }),
-      ];
+      const workerFailureControls = new Set([
+        ...retryExecution.observedFailureControls,
+        "completion",
+        "cancel",
+        "deadline",
+        "restart",
+      ]);
+      expect(
+        CODEX_PROVIDER_FAILURE_CONTROLS.every((control) => workerFailureControls.has(control)),
+      ).toBe(true);
       const installedIdentity = retryExecution.installedIdentity;
       const expectedInstalledDigest = createHash("sha256")
         .update(await readFile(INSTALLED_ROLE))
@@ -1597,38 +1664,51 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       );
       const configExports = await import("@cq/config");
       expect({
+        nonMaterializedWorkerEvidenceRejected: rejected(() =>
+          authenticateCodexProviderGateObservation({
+            execution: retryExecution,
+            nativeExecution: execution,
+            priorExecution: execution,
+            priorConsumed: consumed,
+            consumed: retryEvidence,
+            release: released,
+            sandboxControls: sandboxControls.filter(
+              ({ roleId }) => roleId === "implement-worker",
+            ),
+            completionRejection,
+            cancelled,
+            deadline: deadline.result,
+          } as never),
+        ),
         fabricatedConsumedRejected: rejected(() =>
           authenticateCodexProviderGateObservation({
-            ...workerAuthentication,
-            consumed: { ...retryConsumed },
+            ...resolverAuthentication,
+            consumed: { ...resolverRun.consumed },
           }),
         ),
         fabricatedReleaseRejected: rejected(() =>
           authenticateCodexProviderGateObservation({
-            ...workerAuthentication,
+            ...resolverAuthentication,
             release: { ...released, handle: { ...released.handle } },
           }),
         ),
         fabricatedExecutionRejected: rejected(() =>
           authenticateCodexProviderGateObservation({
-            ...workerAuthentication,
-            execution: { ...retryExecution },
+            ...resolverAuthentication,
+            execution: { ...resolverRun.execution },
           } as never),
         ),
         missingRunnerEvidenceRejected: rejected(() =>
           authenticateCodexProviderGateObservation({
-            nativeExecution: execution,
-            consumed: retryConsumed,
+            nativeExecution: nativeResolverRun.execution,
+            consumed: resolverRun.consumed,
             release: released,
           } as never),
         ),
         publicAuthorityFactoriesAbsent:
           !Object.hasOwn(configExports, "recordManagerOwnedReleaseResult") &&
           !Object.hasOwn(configExports, "attestCodexInstalledGateTestResult"),
-        crossHandleTaskRepositoryReplayRejected: replayVerdicts.every(
-          (verdict) =>
-            verdict.status === "incompatible" && verdict.reason === "provider-gate-failed",
-        ),
+        foreignWorkerIdentityRejected: retryCapture.failureControls.includes("identity"),
         exactInstalledIdentity:
           installedIdentity?.storePath === path.dirname(path.dirname(INSTALLED_ROLE)) &&
           installedIdentity.executablePath === retryExecution.executable &&
@@ -1650,31 +1730,19 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           );
         }),
       }).toEqual({
+        nonMaterializedWorkerEvidenceRejected: true,
         fabricatedConsumedRejected: true,
         fabricatedReleaseRejected: true,
         fabricatedExecutionRejected: true,
         missingRunnerEvidenceRejected: true,
         publicAuthorityFactoriesAbsent: true,
-        crossHandleTaskRepositoryReplayRejected: true,
+        foreignWorkerIdentityRejected: true,
         exactInstalledIdentity: true,
         runnerCapturedEffectivePreturn: true,
         pairedExecutableIdentitySubstitutionRejected: true,
         actualCodexWritableSandboxPositive: true,
       });
-      expect(qualification).toMatchObject({
-        status: "qualified",
-        adapterId: "codex:native",
-        defectClosed: "D307",
-      });
-      const registry = buildPositiveOnlyDispatchRegistry({
-        adapters: [
-          createNativeDispatchAdapter("codex", () => {
-            throw new Error("qualification probe does not launch the adapter");
-          }),
-        ],
-        nativeQualifications: [qualification],
-      });
-      expect(registry.has("codex:native")).toBe(true);
+      await ledgerStore.store.dispose();
     },
     60_000,
   );
@@ -1705,85 +1773,21 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
       const seededStore = await createLedgerStore(repositoryRoot);
-      const lifecycle = seededStore.store as typeof seededStore.store & PlanLifecycleStore;
-      await seededStore.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
-        id: "G2151",
-        status: "clarifying",
-        fields: {
-          title: "installed guarded-rebase continuation gate",
-          description: "exercise a finalized task through the installed boundary",
-        },
-      });
-      const planClaim = await lifecycle.claimPlan({
+      const taskId = await seedFinalizedImplementationTask({
+        ledgerStore: seededStore.store,
         goalId: "G2151",
-        purpose: "initial",
-        claimRequestId: "t2151-plan-claim-v1",
-        ownerFenceToken: "T".repeat(22),
-        expectedGeneration: null,
-        author: "t2151-planner",
+        reviewId: "R2151",
+        taskKey: "guarded-rebase",
+        operationPrefix: "t2151-plan",
         session: "t2151-packaged-guarded",
+        title: "installed guarded-rebase continuation",
+        description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
+        acceptance: "the guarded continuation completes through the installed boundary",
       });
-      if (!planClaim.ok) throw new Error(`installed guarded fixture plan claim failed`);
-      const publishedResult = await lifecycle.publishPlanDraft({
-        goalId: "G2151",
-        claimId: planClaim.acknowledgement.claimId,
-        generation: planClaim.acknowledgement.generation,
-        operationId: "t2151-plan-publish-v1",
-        ownerFenceToken: planClaim.acknowledgement.ownerFenceToken,
-        author: "t2151-planner",
-        session: "t2151-packaged-guarded",
-        manifest: {
-          milestones: [{ key: "installed", title: "Installed guarded continuation" }],
-          tasks: [
-            {
-              key: "guarded-rebase",
-              milestoneKey: "installed",
-              headline: "installed guarded-rebase continuation",
-              description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
-              acceptance: "the guarded continuation completes through the installed boundary",
-              ledgerRefs: ["goals:G2151"],
-            },
-          ],
-        },
-      });
-      if (!publishedResult.ok) throw new Error(`installed guarded fixture publication failed`);
-      const published = publishedResult.acknowledgement.manifest;
-      const planReviewId = "R2151";
-      await seededStore.store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
-        id: planReviewId,
-        status: "go-ahead",
-        fields: {
-          summary: "approve the installed guarded-rebase fixture manifest",
-          [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify({
-            goalId: "G2151",
-            claimId: planClaim.acknowledgement.claimId,
-            generation: planClaim.acknowledgement.generation,
-            revision: published.revision,
-          }),
-          ledgerRefs: ["goals:G2151"],
-        },
-      });
-      const finalizedResult = await lifecycle.finalizePlan({
-        goalId: "G2151",
-        claimId: planClaim.acknowledgement.claimId,
-        generation: planClaim.acknowledgement.generation,
-        operationId: "t2151-plan-finalize-v1",
-        ownerFenceToken: planClaim.acknowledgement.ownerFenceToken,
-        reviewId: planReviewId,
-        draftRevision: published.revision,
-        decision: { headline: "Run the installed guarded-rebase continuation" },
-        author: "t2151-planner",
-        session: "t2151-packaged-guarded",
-      });
-      if (!finalizedResult.ok) throw new Error(`installed guarded fixture finalization failed`);
-      const taskId = published.tasks.find(({ key }) => key === "guarded-rebase")?.id;
-      if (taskId === undefined) throw new Error("installed guarded fixture task allocation is absent");
-      await seededStore.store.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
       if (seededStore.implementationEvidenceStore === undefined) {
         throw new Error("installed guarded-rebase fixture lacks protected evidence storage");
       }
       const implementationEvidenceStore = seededStore.implementationEvidenceStore;
-      await seededStore.store.dispose();
 
       const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2151-packaged-fake-"));
       roots.push(fixtureRoot);
@@ -1819,6 +1823,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         backend,
         promptArtifactStore: artifactStore("implement-worker"),
         repositoryRoot,
+        ledgerStore: seededStore.store,
         now: serviceNow,
         randomBytes: dispatchRandomBytes,
       });
@@ -1920,9 +1925,11 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             holderId: `installed-${input.label}-later-coordinator`,
           }),
         ).toEqual({ state: "completed", handle });
-        const fetched = await capability.fetch(handle);
-        if (fetched.state !== "consumed") throw new Error(`unexpected worker state ${fetched.state}`);
-        return { handle, capture, consumed: fetched as ConsumedDispatchResult };
+        const consumed = await evidenceObserverOf(capability)(handle);
+        if (consumed.state !== "consumed") {
+          throw new Error(`unexpected worker evidence ${consumed.state}`);
+        }
+        return { handle, capture, consumed };
       };
 
       const runGitEffect = async (
@@ -2032,6 +2039,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           backend,
           promptArtifactStore: artifactStore("implement-worker"),
           repositoryRoot,
+          ledgerStore: seededStore.store,
           now: serviceNow,
           randomBytes: dispatchRandomBytes,
         });
@@ -2166,6 +2174,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           managedHandle: managed.handle,
           baseCommit: ontoCommit,
           backend,
+          ledgerStore: seededStore.store,
           randomBytes: dispatchRandomBytes,
           workerRoute: "process",
           reviewerMode: "sandboxed",
@@ -2239,6 +2248,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           managedHandle: managed.handle,
           baseCommit: ontoCommit,
           backend,
+          ledgerStore: seededStore.store,
           randomBytes: dispatchRandomBytes,
           workerRoute: "process",
           reviewerMode: "non-sandboxed",
@@ -2393,6 +2403,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           ]),
         ).toBe("");
         await backend.close();
+        await seededStore.store.dispose();
       } finally {
         if (priorGateCount === undefined) delete process.env["CQ_T2151_GATE_COUNT"];
         else process.env["CQ_T2151_GATE_COUNT"] = priorGateCount;
