@@ -826,17 +826,13 @@ describe("staged-rebase source retirement", () => {
     }
 
     const correctionResult = "f".repeat(40);
+    // Regression: the public packaged runner sends this same-bridge correction
+    // as a bare reprepareOf request, without a private continuation claim.
     const correction = await prepare(backend, {
       input: input(ontoCommit, rebasedStartCommit, 2),
       idempotencyKey: "consumed-guarded-correction",
       reprepareOf: { attestationId: successor.attestationId, generation: successor.generation },
       gitEffectBinding: successorBinding,
-      continuationClaim: {
-        continuationReference:
-          consumedSuccessor.dispatchContinuationBinding.continuationReference,
-        actor: "trusted-parent",
-        liveTip: rebasedStartCommit,
-      },
     });
     const supersededSuccessor = backend
       .storedRows()

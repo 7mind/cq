@@ -557,6 +557,7 @@ async function completeGuardedContinuation(
   round: number,
   correction: {
     readonly content: string;
+    readonly previousContent: string;
     readonly baseReceipts: readonly GuardedRetryFixture["firstReceipt"][];
   },
 ): Promise<GuardedContinuationReceiptContext> {
@@ -596,8 +597,7 @@ async function completeGuardedContinuation(
     throw new Error("guarded-rebase continuation did not receive parent gate authority");
   }
   const parentGateCapability = prepared.prepared.parentGateCapability;
-  const expectedHead =
-    round === 1 ? context.rebasedStartCommit : correction.baseReceipts.at(-1)!.newHead;
+  const expectedHead = correction.baseReceipts.at(-1)?.newHead ?? context.rebasedStartCommit;
   const currentReceipt = await capability.gitCommit({
     ...prepared.handle,
     gitChangeCapability: prepared.prepared.gitChangeCapability,
@@ -608,7 +608,7 @@ async function completeGuardedContinuation(
       {
         kind: "modify",
         path: GUARDED_FIXTURE_PATH,
-        oldState: { mode: "100644", digest: sha256(round === 1 ? "first\n" : "continued\n") },
+        oldState: { mode: "100644", digest: sha256(correction.previousContent) },
         newState: { mode: "100644", digest: sha256(correction.content) },
       },
     ],
@@ -2432,6 +2432,7 @@ describe("dispatch-bound Git change capability", () => {
         1,
         {
           content: "continued\n",
+          previousContent: "first\n",
           baseReceipts: [],
         },
       );
@@ -2490,6 +2491,7 @@ describe("dispatch-bound Git change capability", () => {
         2,
         {
           content: "corrected\n",
+          previousContent: "continued\n",
           baseReceipts: first.receipts,
         },
       );
@@ -3543,6 +3545,49 @@ describe("dispatch-bound Git change capability", () => {
           rebasedStartCommit: d334ExactTipRebasedHead,
           exactTip: true,
         });
+
+        // Regression: the packaged runner prepares a correction with the
+        // public bare reprepareOf shape, not a private continuation claim.
+        const correction = await capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            d334ExactTip,
+            d334ExactTipOntoCommit,
+            d334ExactTipRebasedHead,
+            d334ExactTipRebasedHead,
+            2,
+          ),
+          idempotencyKey: "T2148-d334-exact-tip-round-2-correction",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d334-exact-tip-round-2",
+            runId: "d334-exact-tip-round-2",
+          },
+          reprepareOf: prepared.handle,
+        });
+        if (!correction.accepted) {
+          throw new Error(
+            `bare guarded correction rejected at ${correction.path}: ${correction.detail}`,
+          );
+        }
+        const completedCorrection = await completeGuardedContinuation(
+          d334ExactTip,
+          capability,
+          correction,
+          {
+            guardedRebase: d334ExactTipReference,
+            oldResultCommit: d334ExactTip.firstReceipt.newHead,
+            ontoCommit: d334ExactTipOntoCommit,
+            rebasedStartCommit: d334ExactTipRebasedHead,
+          },
+          2,
+          {
+            content: "corrected\n",
+            previousContent: "first\n",
+            baseReceipts: [],
+          },
+        );
+        expect(completedCorrection.receipts).toHaveLength(1);
       } finally {
         await closeGuardedRetryBackend(opened.backend);
       }
