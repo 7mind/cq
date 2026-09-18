@@ -204,6 +204,45 @@ describe("Agents tab (T279)", () => {
 
     expect(details!.open).toBe(true);
   });
+
+  it("renders synthetic prompt content only while its details element is open", async () => {
+    const originals = AGENT_ROLES.map((role) => role.promptTemplate);
+    const markers = AGENT_ROLES.map((role) => `synthetic-prompt-${role.id}`);
+    for (const [index, role] of AGENT_ROLES.entries()) {
+      role.promptTemplate = `# Synthetic prompt\n\n${markers[index]}\n\n${"content ".repeat(200)}`;
+    }
+
+    try {
+      await openAgentsTab();
+
+      for (const [index, role] of AGENT_ROLES.entries()) {
+        const details = testid(`help-agent-${role.id}-prompt`);
+        expect(details).not.toBeNull();
+        expect(details!.textContent).not.toContain(markers[index]!);
+      }
+
+      const firstDetails = testid(
+        `help-agent-${AGENT_ROLES[0]!.id}-prompt`,
+      ) as HTMLDetailsElement;
+      const firstSummary = firstDetails.querySelector("summary");
+      expect(firstSummary).not.toBeNull();
+      click(firstSummary);
+      await flush();
+
+      expect(firstDetails.textContent).toContain(markers[0]!);
+      for (const marker of markers.slice(1)) {
+        expect(container.textContent).not.toContain(marker);
+      }
+
+      click(firstSummary);
+      await flush();
+      expect(firstDetails.textContent).not.toContain(markers[0]!);
+    } finally {
+      for (const [index, role] of AGENT_ROLES.entries()) {
+        role.promptTemplate = originals[index]!;
+      }
+    }
+  });
 });
 
 /**
