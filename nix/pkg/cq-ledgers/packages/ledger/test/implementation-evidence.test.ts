@@ -981,13 +981,17 @@ describe("versioned protected implementation evidence [BG]", () => {
       });
       await f.service.markMergeStarted(completion.completionRef, BASE);
       let delayedSnapshots = 0;
+      const ordering: string[] = [];
       const delayedEvidence: ImplementationEvidenceStore = new Proxy(f.evidence, {
         get(target, property) {
           if (property === "snapshot") {
             return async () => {
               delayedSnapshots += 1;
+              ordering.push(`snapshot-${String(delayedSnapshots)}-start`);
               if (delayedSnapshots === 1) await Bun.sleep(120);
-              return await target.snapshot();
+              const snapshot = await target.snapshot();
+              ordering.push(`snapshot-${String(delayedSnapshots)}-end`);
+              return snapshot;
             };
           }
           const value: unknown = Reflect.get(target, property, target);
@@ -996,7 +1000,14 @@ describe("versioned protected implementation evidence [BG]", () => {
       });
       const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
       const provider = await implementationCompletionMergeAdmissionProviderFromStore({
-        provider: underlying,
+        provider: {
+          acquire: async (input) => {
+            ordering.push("admission-start");
+            const admission = await underlying.acquire(input);
+            ordering.push("admission-held");
+            return admission;
+          },
+        },
         store: delayedEvidence,
         binding: {
           kind: "merge",
@@ -1021,14 +1032,49 @@ describe("versioned protected implementation evidence [BG]", () => {
         cwd: root,
         env: process.env,
         stdio: "ignore" as const,
-        launchDeadlineMs: Date.now() + 50,
-        launchBootstrap: ignoredBootstrap,
+        launchDeadlineMs: Date.now() + 1_000,
+        launchBootstrap: (specification) => {
+          ordering.push("bootstrap-launched");
+          return ignoredBootstrap(specification);
+        },
       });
       await launched.exited;
 
       expect(await Bun.file(marker).text()).toBe("ran\n");
       expect(delayedSnapshots).toBe(2);
+      expect(ordering).toEqual([
+        "snapshot-1-start",
+        "snapshot-1-end",
+        "admission-start",
+        "admission-held",
+        "bootstrap-launched",
+        "snapshot-2-start",
+        "snapshot-2-end",
+      ]);
       expect(underlying.activeAdmissionCount()).toBe(0);
+
+      const expiredUnderlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+      const expiredBroker = new WorksetEffectBroker({ provider: expiredUnderlying });
+      let expiredBootstrapLaunches = 0;
+      await expect(
+        expiredBroker.launch({
+          kind: "merge",
+          targetRef: "tasks:T2345",
+          argv: [process.execPath, "-e", ""],
+          cwd: root,
+          env: process.env,
+          stdio: "ignore" as const,
+          launchDeadlineMs: Date.now() + 50,
+          beforeLaunch: () => new Promise<never>(() => {}),
+          launchBootstrap: (specification) => {
+            expiredBootstrapLaunches += 1;
+            return ignoredBootstrap(specification);
+          },
+        }),
+      ).rejects.toThrow("launch/admission deadline expired during pre-launch coordinate validation");
+      expect(expiredBootstrapLaunches).toBe(0);
+      expect(expiredUnderlying.events()).toEqual(["admission-acquired", "admission-abandoned"]);
+      expect(expiredUnderlying.activeAdmissionCount()).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
