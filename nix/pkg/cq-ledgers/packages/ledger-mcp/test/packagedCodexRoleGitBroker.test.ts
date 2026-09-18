@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   SqliteAttestationBackend,
   xdgAttestationDbPath,
+  CODEX_CORRELATION_SEPARATOR,
   CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
   buildPositiveOnlyDispatchRegistry,
@@ -66,6 +67,13 @@ function codexWorksetEffect(targetRef: string) {
   return {
     provider: worksetEffectAdmissionProviderFromStore(createInMemoryWorksetStore()),
     targetRef,
+  } as const;
+}
+
+function installedWorkerExpectedChild(correlationId: string, childThreadId: string) {
+  return {
+    childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}${correlationId}`,
+    runId: childThreadId,
   } as const;
 }
 
@@ -1127,10 +1135,11 @@ describe("packaged cq-codex-role Git broker", () => {
       expect(resumed.handle).toEqual(managed.handle);
       expect(resumed.evidence).toMatchObject({ mode: "resume", headCommit: firstResultCommit });
 
-      const retryExpectedChild = {
-        childId: "t2042-packaged-child-retry",
-        runId: "t2042-packaged-run-retry",
-      };
+      const retryCorrelationId = "t2042-installed-worker-retry";
+      const retryExpectedChild = installedWorkerExpectedChild(
+        retryCorrelationId,
+        "t2042-packaged-broker",
+      );
       const retryPrepared = await capability.prepare({
         roleId: "implement-worker",
         input: {
@@ -1214,7 +1223,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         managedHandle: resumed.handle,
         expectedChild: retryExpectedChild,
         expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
-        correlationId: "t2042-installed-worker-retry",
+        correlationId: retryCorrelationId,
         environment: {
           ...process.env,
           CQ_SERVE_TOKEN: "must-not-reach-installed-worker",
@@ -1829,10 +1838,11 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         readonly guardedRebase?: string;
         readonly guardedMode?: "exact-tip" | "correction";
       }) => {
-        const expectedChild = {
-          childId: `t2151-${input.label}-child`,
-          runId: `t2151-${input.label}-run`,
-        };
+        const correlationId = `t2151-${input.label}`;
+        const expectedChild = installedWorkerExpectedChild(
+          correlationId,
+          "t2151-packaged-guarded",
+        );
         const prepared = await capability.prepare({
           roleId: "implement-worker",
           input: JSON.parse(JSON.stringify(input.dispatchInput)),
@@ -1873,7 +1883,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           managedHandle: managed.handle,
           expectedChild,
           expectedPromptProvenance: prepared.prepared.promptProvenance,
-          correlationId: `t2151-${input.label}`,
+          correlationId,
           environment: {
             ...process.env,
             CQ_CODEX_EXECUTABLE: fakeCodex,
