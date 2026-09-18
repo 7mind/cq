@@ -447,6 +447,52 @@ function active(control: ImplementationQueueControl): boolean {
   return !["released", "terminal", "staged-rebase-retired"].includes(control.state);
 }
 
+function isConsumedGuardedContinuationAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+): boolean {
+  const bridge = successorBinding.guardedRebaseBridge;
+  const control = candidate.implementationQueue;
+  if (
+    bridge === undefined ||
+    control === undefined ||
+    candidate.attestationId !== successor.attestationId ||
+    candidate.generation >= successor.generation ||
+    (isAttestationTombstone(candidate) ? candidate.terminalKind : candidate.state) !== "consumed" ||
+    control.state !== "released" ||
+    control.terminal?.reason !== "gate-complete"
+  ) {
+    return false;
+  }
+  if (isAttestationTombstone(candidate)) {
+    const tombstoneControl = candidate.implementationQueue;
+    const retained = candidate.dispatchContinuationBinding;
+    return (
+      tombstoneControl?.qualificationDigest !== undefined &&
+      retained !== undefined &&
+      retained.gitEffectBinding.taskId === successorBinding.taskId &&
+      retained.gitEffectBinding.repositoryId === successorBinding.repositoryId &&
+      retained.gitEffectBinding.worktreePath === successorBinding.worktreePath &&
+      (retained.liveTip === bridge.oldResultCommit ||
+        (retained.gitEffectBinding.guardedRebaseBridge !== undefined &&
+          digest(retained.gitEffectBinding.guardedRebaseBridge) === digest(bridge)))
+    );
+  }
+  const liveControl = candidate.implementationQueue;
+  if (liveControl === undefined) return false;
+  const priorBinding = candidate.gitEffectBinding;
+  return (
+    liveControl.qualification !== undefined &&
+    liveControl.attempt.taskId === successorBinding.taskId &&
+    liveControl.attempt.repositoryId === successorBinding.repositoryId &&
+    liveControl.attempt.worktreePath === successorBinding.worktreePath &&
+    (liveControl.attempt.resultCommit === bridge.oldResultCommit ||
+      (priorBinding?.guardedRebaseBridge !== undefined &&
+        digest(priorBinding.guardedRebaseBridge) === digest(bridge)))
+  );
+}
+
 function runnable(control: ImplementationQueueControl): boolean {
   return active(control) && control.state !== "parked" && control.state !== "yielded";
 }
@@ -689,7 +735,8 @@ export function enqueueImplementationCandidate(
     (candidate) =>
       (candidate.attestationId !== row.attestationId ||
         candidate.generation !== row.generation) &&
-      candidate.implementationQueue!.state !== "staged-rebase-retired",
+      candidate.implementationQueue!.state !== "staged-rebase-retired" &&
+      !isConsumedGuardedContinuationAncestor(candidate, row, binding),
   );
   if (terminalPrior !== undefined) {
     throw new ImplementationQueueConflictError(

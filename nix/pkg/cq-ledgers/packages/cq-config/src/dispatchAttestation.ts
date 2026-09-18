@@ -2518,8 +2518,11 @@ function claimStagedRebaseSuccessor(
   if (previous === undefined) return;
   const queue = previous.implementationQueue;
   const source = previous.stagedRebaseSourceBinding ?? queue?.stagedRebaseSource;
+  const retainedContinuation = isAttestationTombstone(previous)
+    ? previous.dispatchContinuationBinding
+    : undefined;
   const priorManagerBinding = isAttestationTombstone(previous)
-    ? undefined
+    ? retainedContinuation?.gitEffectBinding
     : previous.gitEffectBinding;
   const managerBindingChanged =
     priorManagerBinding !== undefined &&
@@ -2537,13 +2540,23 @@ function claimStagedRebaseSuccessor(
         "baseCommit",
       ] as const).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
   if (source === undefined) {
+    const priorGuardedBridge = isAttestationTombstone(previous)
+      ? retainedContinuation?.gitEffectBinding.guardedRebaseBridge
+      : previous.gitEffectBinding?.guardedRebaseBridge;
+    const sameGuardedBridge =
+      bridge !== undefined &&
+      priorGuardedBridge !== undefined &&
+      dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue) ===
+        dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
     const completedQueueBindingMatches =
       bridge !== undefined &&
       gitEffectBinding !== undefined &&
       (isAttestationTombstone(previous)
-        ? previous.implementationQueue?.qualificationDigest !== undefined
+        ? previous.implementationQueue?.qualificationDigest !== undefined &&
+          (retainedContinuation?.liveTip === bridge.oldResultCommit || sameGuardedBridge)
         : previous.implementationQueue?.qualification !== undefined &&
-          previous.implementationQueue.attempt.resultCommit === bridge.oldResultCommit &&
+          (previous.implementationQueue.attempt.resultCommit === bridge.oldResultCommit ||
+            sameGuardedBridge) &&
           previous.implementationQueue.attempt.taskId === gitEffectBinding.taskId &&
           previous.implementationQueue.attempt.repositoryId === gitEffectBinding.repositoryId &&
           previous.implementationQueue.attempt.worktreePath === gitEffectBinding.worktreePath);

@@ -62,6 +62,10 @@ const authority = {
 const packagedEnvironmentDigest = "8".repeat(64);
 const guardedRebase = `cq-guarded-rebase:v1:${"9".repeat(64)}`;
 const guardedRebaseJournalDigest = "a".repeat(64);
+const randomBytesByBackend = new WeakMap<
+  InMemoryAttestationBackend,
+  ReturnType<typeof sequentialDispatchRandomBytes>
+>();
 
 function input(base: string, startingCommit: string, round: number): DispatchJSONValue {
   return {
@@ -111,6 +115,11 @@ async function prepare(
   backend: InMemoryAttestationBackend,
   overrides: Readonly<Record<string, unknown>> = {},
 ): Promise<DispatchPrepared> {
+  let randomBytes = randomBytesByBackend.get(backend);
+  if (randomBytes === undefined) {
+    randomBytes = sequentialDispatchRandomBytes(6518);
+    randomBytesByBackend.set(backend, randomBytes);
+  }
   const outcome = await prepareDispatchOn(
     backend,
     {
@@ -130,7 +139,7 @@ async function prepare(
     {
       mode: "manager-bound",
       now: clock.now,
-      randomBytes: sequentialDispatchRandomBytes(6518),
+      randomBytes,
       lineageFenceGuard: async () => null,
       withLineageLock: async (operation) => await operation(),
     },
@@ -528,6 +537,21 @@ describe("staged-rebase source retirement", () => {
       },
       { now: clock.now },
     );
+    const continuationReceipt = {
+      kind: "cq-git-change-receipt" as const,
+      version: 1 as const,
+      attestationId: prepared.attestationId,
+      generation: prepared.generation,
+      taskId: binding.taskId,
+      operationId: "consumed-ordinary-result",
+      requestDigest: "0".repeat(64),
+      oldHead: baseCommit,
+      newHead: resultCommit,
+      tree: resultTree,
+      objectOids: [resultCommit],
+      paths: ["file.txt"],
+      committedAt: clock.peek(),
+    };
     await confirmDispatchCompletionOn(
       backend,
       {
@@ -537,8 +561,8 @@ describe("staged-rebase source retirement", () => {
         nativeCompletion: completion(),
         expectedProvenance: provenanceBindingOf(prepared),
         continuationContext: {
-          liveTip: baseCommit,
-          gitReceipts: [],
+          liveTip: resultCommit,
+          gitReceipts: [continuationReceipt],
         },
       },
       { now: clock.now },
@@ -553,6 +577,22 @@ describe("staged-rebase source retirement", () => {
         terminal: { reason: "gate-complete" },
       },
     });
+    clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+    await sweepAttestationsOn(backend, { now: clock.now });
+    backend.rehydrate();
+    expect(backend.storedRows()).toContainEqual(
+      expect.objectContaining({
+        kind: "tombstone",
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        terminalKind: "consumed",
+        implementationQueue: expect.objectContaining({
+          state: "released",
+          terminal: expect.objectContaining({ reason: "gate-complete" }),
+          qualificationDigest: expect.any(String),
+        }),
+      }),
+    );
 
     const rebasedStartCommit = "d".repeat(40);
     const successorBridge = {
@@ -624,20 +664,145 @@ describe("staged-rebase source retirement", () => {
       ontoCommit,
     );
     expect(successorQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
+    const successorQualification = await qualifyDispatchStagedCompletionOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+        partitionKey: successorQueue.partition.partitionKey,
+        enrollmentId: successorQueue.enrollment.enrollmentId,
+        attemptId: successorQueue.attempt.attemptId,
+        stagedOutputDigest: successorStored.result.outputDigest,
+        expectedChild: child,
+        expectedProvenance: provenanceBindingOf(successor),
+        nativeCompletion: completion(),
+      },
+      { now: clock.now },
+    );
+    expect(successorQualification).toMatchObject({ state: "qualified", replayed: false });
+    const successorLease = await acquireImplementationCandidateOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        partitionKey: successorQueue.partition.partitionKey,
+        holderId: "parent-gate-guarded-successor",
+      },
+      { now: clock.now },
+    );
+    if (successorLease.state !== "leased") throw new Error("expected guarded successor lease");
+    if (successor.parentGateCapability === undefined) {
+      throw new Error("guarded successor omitted its parent gate capability");
+    }
+    const successorGate = await claimParentGateOn(
+      backend,
+      {
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+        parentGateCapability: successor.parentGateCapability,
+        queueLease: successorLease.lease,
+      },
+      { now: clock.now },
+    );
+    if (successorGate.state !== "gate-running") {
+      throw new Error("expected guarded successor parent gate");
+    }
+    await completeParentGateOn(
+      backend,
+      {
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+        parentGateCapability: successor.parentGateCapability,
+        queueLease: successorLease.lease,
+        gateEpoch: successorGate.gateEpoch,
+        output: {
+          ...stagedOutput(rebasedStartCommit),
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            version: 1,
+            attestationId: successor.attestationId,
+            generation: successor.generation,
+            roleId: "implement-worker",
+            roleVersion: successor.promptProvenance.version,
+            surface: "codex",
+            promptDigest: successor.promptProvenance.promptDigest,
+            catalogHash: successor.promptProvenance.catalogHash,
+            inputDigest: successor.promptProvenance.inputDigest,
+            taskId: binding.taskId,
+            worktreePath: binding.worktreePath,
+            branch: binding.branch,
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            resultCommit: rebasedStartCommit,
+            clean: true,
+            command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 1,
+            capturedAt: clock.now(),
+            filesTouchedDigest: "d".repeat(64),
+            gitReceiptsDigest: "e".repeat(64),
+            mutationTableDigest: "f".repeat(64),
+          },
+        },
+      },
+      { now: clock.now },
+    );
+    await confirmDispatchCompletionOn(
+      backend,
+      {
+        namespace,
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+        nativeCompletion: completion(),
+        expectedProvenance: provenanceBindingOf(successor),
+        continuationContext: { liveTip: rebasedStartCommit, gitReceipts: [] },
+      },
+      { now: clock.now },
+    );
+
+    const correctionResult = "f".repeat(40);
+    const correction = await prepare(backend, {
+      input: input(ontoCommit, rebasedStartCommit, 2),
+      idempotencyKey: "consumed-guarded-correction",
+      reprepareOf: { attestationId: successor.attestationId, generation: successor.generation },
+      gitEffectBinding: successorBinding,
+    });
+    const correctionStored = await storeDispatchResultOn(
+      backend,
+      { resultCapability: correction.resultCapability, output: stagedOutput(correctionResult) },
+      { now: clock.now },
+    );
+    if (correctionStored.state !== "gate-pending") {
+      throw new Error("expected guarded correction staging");
+    }
+    const correctionQueue = await enqueue(
+      backend,
+      correction,
+      correctionStored.result,
+      successorBinding,
+      correctionResult,
+      "0".repeat(40),
+      ontoCommit,
+    );
+    expect(correctionQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
     expect(
       await qualifyDispatchStagedCompletionOn(
         backend,
         {
           namespace,
           actor: "trusted-parent",
-          attestationId: successor.attestationId,
-          generation: successor.generation,
-          partitionKey: successorQueue.partition.partitionKey,
-          enrollmentId: successorQueue.enrollment.enrollmentId,
-          attemptId: successorQueue.attempt.attemptId,
-          stagedOutputDigest: successorStored.result.outputDigest,
+          attestationId: correction.attestationId,
+          generation: correction.generation,
+          partitionKey: correctionQueue.partition.partitionKey,
+          enrollmentId: correctionQueue.enrollment.enrollmentId,
+          attemptId: correctionQueue.attempt.attemptId,
+          stagedOutputDigest: correctionStored.result.outputDigest,
           expectedChild: child,
-          expectedProvenance: provenanceBindingOf(successor),
+          expectedProvenance: provenanceBindingOf(correction),
           nativeCompletion: completion(),
         },
         { now: clock.now },
