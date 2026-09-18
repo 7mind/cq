@@ -893,6 +893,87 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toHaveLength(1);
   });
 
+  // regression: T6519 round 30 — composed coverage had displaced these boundary controls.
+  test("successor launcher keeps private authorities off argv and rejects a foreign returned handle [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const subject = await fixture();
+    const managed = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (
+      managed === null ||
+      subject.prepared.parentGateCapability === undefined ||
+      subject.prepared.gitChangeCapability === undefined
+    ) {
+      throw new Error("successor launcher fixture lacks exact worker authority");
+    }
+    const controlRoot = await fs.mkdtemp(path.join(tmpdir(), "t2081-successor-controls-"));
+    roots.push(controlRoot);
+    const marker = path.join(controlRoot, "argv.json");
+    const roleScript = path.join(controlRoot, "controlled-successor.ts");
+    await fs.writeFile(
+      roleScript,
+      `import { writeFile } from "node:fs/promises";
+const invocation = JSON.parse(await Bun.stdin.text());
+await writeFile(process.env["CQ_T2081_SUCCESSOR_ARGV_MARKER"], JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({
+  attestationId: invocation.handle.attestationId,
+  generation: invocation.handle.generation + (process.env["CQ_T2081_RETURN_FOREIGN"] === "1" ? 1 : 0),
+}));
+`,
+    );
+    const inheritedPath = process.env["PATH"];
+    if (inheritedPath === undefined || inheritedPath.trim() === "") {
+      throw new Error("test PATH is unavailable");
+    }
+    const profile = {
+      roleCommand: process.execPath,
+      roleScript,
+      ledgerCommand: "/controlled/cq",
+      codexExecutable: "/controlled/codex",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write" as const,
+    };
+    const launchInput = {
+      prepared: subject.prepared,
+      managed,
+      expectedChild: subject.expectedChild,
+      timeoutMs: 600_000,
+    };
+    const launcher = createImplementationSuccessorLauncher(profile, controlRoot, {
+      PATH: inheritedPath,
+      CQ_T2081_SUCCESSOR_ARGV_MARKER: marker,
+    });
+
+    await launcher(launchInput);
+
+    const argv = JSON.parse(await fs.readFile(marker, "utf8")) as readonly string[];
+    expect(argv).toEqual([]);
+    const renderedArgv = argv.join("\n");
+    for (const capability of [
+      subject.prepared.inputCapability,
+      subject.prepared.resultCapability,
+      subject.prepared.parentGateCapability,
+      subject.prepared.gitChangeCapability,
+    ]) {
+      expect(renderedArgv).not.toContain(capability.token);
+    }
+    const foreignLauncher = createImplementationSuccessorLauncher(profile, controlRoot, {
+      PATH: inheritedPath,
+      CQ_T2081_SUCCESSOR_ARGV_MARKER: marker,
+      CQ_T2081_RETURN_FOREIGN: "1",
+    });
+    await expect(foreignLauncher(launchInput)).rejects.toThrow(
+      "implementation successor boundary returned a foreign handle",
+    );
+  });
+
   // regression: T6519 round 29 — the stale-front owner must finish its real successor boundary.
   test("production coordinator retires a stale front and the installed successor boundary completes it [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const scenarioStartedAt = Date.now();
@@ -1259,7 +1340,11 @@ throw new Error("unexpected controlled cq invocation");
           holderId: "restarted-production-stale-coordinator",
         }),
       ),
-    ).toEqual(outcome);
+    ).toEqual({
+      state: "empty",
+      partitionKey: qualified.partitionKey,
+      partitionRevision: 9,
+    });
     const launches = (await fs.readFile(launchMarker, "utf8").catch(() => ""))
       .trim()
       .split("\n")
