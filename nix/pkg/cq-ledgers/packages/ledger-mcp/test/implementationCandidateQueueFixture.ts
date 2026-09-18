@@ -139,8 +139,16 @@ export class ImplementationCandidateQueueFixture {
       startingCommit: guarded?.rebasedStartCommit ?? prior?.candidate.resultCommit ?? baseCommit,
       ...(prior === undefined ? {} : { priorResultCommit: prior.candidate.resultCommit }),
     };
+    const priorState =
+      prior === undefined
+        ? undefined
+        : await this.backend.transact({ kind: "handle", handle: prior.prepared }, (store) => {
+            const row = store.read(prior.prepared);
+            if (row === undefined) throw new Error("queue fixture prior dispatch disappeared");
+            return row.state;
+          });
     const continuation =
-      prior === undefined || guarded !== undefined
+      prior === undefined || guarded !== undefined || priorState !== "consumed"
         ? undefined
         : await discoverDispatchContinuationOn(
             this.backend,
