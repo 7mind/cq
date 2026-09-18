@@ -392,7 +392,8 @@ throw new Error("unexpected cq invocation");
       runner,
       [
         "#!/bin/sh",
-        `cat >${JSON.stringify(request)}`,
+        "body=$(cat)",
+        `printf '%s' "$body" >${JSON.stringify(request)}`,
         `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
         "attempt=$((attempt + 1))",
         `printf %s "$attempt" >${JSON.stringify(attempts)}`,
@@ -413,8 +414,32 @@ throw new Error("unexpected cq invocation");
         parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
+        successorLaunch: {
+          roleCommand: "/nix/store/bun/bin/bun",
+          roleScript: "/nix/store/cq/codex-role-dispatch.ts",
+          ledgerCommand: "/nix/store/cq/bin/cq",
+          codexExecutable: "/nix/store/codex/bin/codex",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+          sandboxMode: "workspace-write",
+        },
       });
       expect(outcome).toEqual({ state: "completed" });
+      const capturedRequest = JSON.parse(readFileSync(request, "utf8")) as unknown;
+      expect(capturedRequest).toEqual({
+        ...HANDLE,
+        holderId: "installed-codex:partition",
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+        successorLaunch: {
+          roleCommand: "/nix/store/bun/bin/bun",
+          roleScript: "/nix/store/cq/codex-role-dispatch.ts",
+          ledgerCommand: "/nix/store/cq/bin/cq",
+          codexExecutable: "/nix/store/codex/bin/codex",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+          sandboxMode: "workspace-write",
+        },
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

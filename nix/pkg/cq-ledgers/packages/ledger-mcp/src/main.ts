@@ -82,7 +82,12 @@ import {
   type PlanClaimAuthorityMinter,
   createNodeCryptoPlanClaimAuthorityMinter,
 } from "@cq/ledger";
-import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
+import {
+  CODEX_ROLE_SANDBOX_MODES,
+  loadConfig,
+  resolveRemoteLedgerTokenFromProcess,
+  type CodexRoleSandboxMode,
+} from "@cq/config";
 import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
 import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
@@ -119,7 +124,11 @@ export type {
   AttachProjectAdminMcpHttpOptions,
   ProjectAdminReconcileKind,
 } from "./projectAdminMcp.js";
-import { createSingleProjectDispatchRuntime, type DispatchRuntime } from "./dispatchCapability.js";
+import {
+  createSingleProjectDispatchRuntime,
+  type DispatchRuntime,
+  type SingleProjectDispatchRuntimeOptions,
+} from "./dispatchCapability.js";
 export {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
@@ -545,6 +554,15 @@ interface ImplementationCandidateCoordinateStdinRequest {
   readonly generation: number;
   readonly holderId: string;
   readonly parentGateCapability: { readonly scope: "parent-gate"; readonly token: string };
+  readonly successorLaunch?: {
+    readonly roleCommand: string;
+    readonly roleScript: string;
+    readonly ledgerCommand: string;
+    readonly codexExecutable: string;
+    readonly model: string;
+    readonly reasoningEffort: string;
+    readonly sandboxMode: CodexRoleSandboxMode;
+  };
 }
 
 export async function readImplementationCandidateCoordinateRequest(
@@ -597,9 +615,12 @@ export async function readImplementationCandidateCoordinateRequest(
   const parentGateCapability = request["parentGateCapability"] as
     | Record<string, unknown>
     | undefined;
+  const successorLaunch = request["successorLaunch"] as Record<string, unknown> | undefined;
+  const requestFields = Object.keys(request).sort().join(",");
+  const baseFields = "attestationId,generation,holderId,parentGateCapability";
+  const launchFields = `${baseFields},successorLaunch`;
   if (
-    Object.keys(request).sort().join(",") !==
-      "attestationId,generation,holderId,parentGateCapability" ||
+    (requestFields !== baseFields && requestFields !== launchFields) ||
     typeof request["attestationId"] !== "string" ||
     !Number.isInteger(request["generation"]) ||
     typeof request["holderId"] !== "string" ||
@@ -607,11 +628,118 @@ export async function readImplementationCandidateCoordinateRequest(
     parentGateCapability === undefined ||
     Object.keys(parentGateCapability).sort().join(",") !== "scope,token" ||
     parentGateCapability["scope"] !== "parent-gate" ||
-    typeof parentGateCapability["token"] !== "string"
+    typeof parentGateCapability["token"] !== "string" ||
+    (successorLaunch !== undefined &&
+      (Object.keys(successorLaunch).sort().join(",") !==
+        "codexExecutable,ledgerCommand,model,reasoningEffort,roleCommand,roleScript,sandboxMode" ||
+        typeof successorLaunch["roleCommand"] !== "string" ||
+        successorLaunch["roleCommand"].trim() === "" ||
+        typeof successorLaunch["roleScript"] !== "string" ||
+        successorLaunch["roleScript"].trim() === "" ||
+        typeof successorLaunch["ledgerCommand"] !== "string" ||
+        successorLaunch["ledgerCommand"].trim() === "" ||
+        typeof successorLaunch["codexExecutable"] !== "string" ||
+        successorLaunch["codexExecutable"].trim() === "" ||
+        typeof successorLaunch["model"] !== "string" ||
+        successorLaunch["model"].trim() === "" ||
+        typeof successorLaunch["reasoningEffort"] !== "string" ||
+        successorLaunch["reasoningEffort"].trim() === "" ||
+        typeof successorLaunch["sandboxMode"] !== "string" ||
+        !(CODEX_ROLE_SANDBOX_MODES as readonly string[]).includes(
+          successorLaunch["sandboxMode"],
+        )))
   ) {
     throw new Error("ledger-mcp: malformed implementation coordinator request");
   }
   return request as unknown as ImplementationCandidateCoordinateStdinRequest;
+}
+
+type ImplementationSuccessorLauncher = NonNullable<
+  SingleProjectDispatchRuntimeOptions["implementationSuccessorLauncher"]
+>;
+
+export function createImplementationSuccessorLauncher(
+  profile: NonNullable<ImplementationCandidateCoordinateStdinRequest["successorLaunch"]>,
+  promptRoot: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): ImplementationSuccessorLauncher {
+  return async ({ prepared, managed, expectedChild, timeoutMs }) => {
+    if (
+      prepared.promptProvenance.roleId !== "implement-worker" ||
+      prepared.promptProvenance.surface !== "codex" ||
+      prepared.parentGateCapability === undefined ||
+      prepared.gitChangeCapability === undefined ||
+      prepared.gitConflictCapability !== undefined
+    ) {
+      throw new Error("implementation successor launch requires exact Codex worker authority");
+    }
+    const childPrefix = "implement-worker#";
+    if (!expectedChild.childId.startsWith(childPrefix)) {
+      throw new Error("implementation successor launch expected child is malformed");
+    }
+    const correlationId = expectedChild.childId.slice(childPrefix.length);
+    if (correlationId.trim() === "" || expectedChild.runId.trim() === "") {
+      throw new Error("implementation successor launch run identity is malformed");
+    }
+    const invocation = {
+      roleId: "implement-worker",
+      handle: {
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+      },
+      inputCapability: prepared.inputCapability,
+      resultCapability: prepared.resultCapability,
+      parentGateCapability: prepared.parentGateCapability,
+      gitChangeCapability: prepared.gitChangeCapability,
+      effectTargetRef: `tasks:${managed.taskId}`,
+      cwd: managed.worktreePath,
+      ledgerCwd: managed.repositoryRoot,
+      model: profile.model,
+      reasoningEffort: profile.reasoningEffort,
+      sandboxMode: profile.sandboxMode,
+      timeoutMs,
+    };
+    const child = Bun.spawn([profile.roleCommand, profile.roleScript], {
+      cwd: managed.worktreePath,
+      env: {
+        ...environment,
+        CQ_PROMPT_ROOT: promptRoot,
+        CQ_CODEX_LEDGER_COMMAND: profile.ledgerCommand,
+        CQ_CODEX_EXECUTABLE: profile.codexExecutable,
+        CQ_CODEX_ROLE_CORRELATION_ID: correlationId,
+        CQ_CODEX_ROLE_EXPECTED_RUN_ID: expectedChild.runId,
+      },
+      stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitStatus, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    if (exitStatus !== 0) {
+      throw new Error(
+        `implementation successor boundary exited ${String(exitStatus)}: ${stderr.trim()}`,
+      );
+    }
+    let returned: unknown;
+    try {
+      returned = JSON.parse(stdout.trim()) as unknown;
+    } catch {
+      throw new Error("implementation successor boundary emitted non-JSON stdout");
+    }
+    if (
+      returned === null ||
+      typeof returned !== "object" ||
+      Array.isArray(returned) ||
+      Object.keys(returned).sort().join(",") !== "attestationId,generation" ||
+      (returned as Record<string, unknown>)["attestationId"] !== prepared.attestationId ||
+      (returned as Record<string, unknown>)["generation"] !== prepared.generation
+    ) {
+      throw new Error("implementation successor boundary returned a foreign handle");
+    }
+  };
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -1449,6 +1577,17 @@ export async function main(argv: readonly string[]): Promise<void> {
   // Reject unsupported local configuration before opening persistent state.
   const resolved = await createEmbeddedStore(cwd);
   const store = resolved.store;
+  const implementationCandidateCoordinateRequest = implementationCandidateCoordinate
+    ? await readImplementationCandidateCoordinateRequest(process.stdin)
+    : undefined;
+  const implementationSuccessorLauncher =
+    implementationCandidateCoordinateRequest?.successorLaunch === undefined ||
+    resolvedPromptSurface === undefined
+      ? undefined
+      : createImplementationSuccessorLauncher(
+          implementationCandidateCoordinateRequest.successorLaunch,
+          resolvedPromptSurface.root,
+        );
   const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
     construction: http === null ? "stdio" : "http-single-project",
     resolved,
@@ -1456,6 +1595,9 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? {}
       : { promptArtifactStore: resolvedPromptSurface.store }),
     environment: process.env,
+    ...(implementationSuccessorLauncher === undefined
+      ? {}
+      : { implementationSuccessorLauncher }),
   });
   const dispatchCapability =
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
@@ -1495,7 +1637,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         );
       }
       const outcome = await dispatchCapability.coordinateImplementationCandidate(
-        await readImplementationCandidateCoordinateRequest(process.stdin),
+        implementationCandidateCoordinateRequest!,
       );
       process.stdout.write(`${JSON.stringify(outcome)}\n`);
     } finally {

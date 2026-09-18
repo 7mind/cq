@@ -51,6 +51,7 @@ import {
   type DispatchNarrativeSource,
   type DispatchJSONValue,
   type DispatchPrepareAccepted,
+  type DispatchPrepared,
   type DispatchPreLaunchRejection,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
@@ -267,6 +268,13 @@ export interface DispatchCapabilityOptions {
   /** Test seam for an unexpected bridge-materialization failure; production uses the ledger implementation. */
   readonly materializeGuardedRebaseBridge?: typeof materializeGuardedRebaseBridge;
   readonly implementationEvidenceStore?: ImplementationEvidenceStore;
+  /** Trusted local owner for the exact guarded-rebase successor prepared by this runtime. */
+  readonly implementationSuccessorLauncher?: (input: {
+    readonly prepared: DispatchPrepared;
+    readonly managed: ManagedWorktreeDispatchBinding;
+    readonly expectedChild: { readonly childId: string; readonly runId: string };
+    readonly timeoutMs: number;
+  }) => Promise<void>;
 }
 
 function brokerResultEvidence(
@@ -1359,6 +1367,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     });
     if (!prepared.accepted) {
       throw new Error(`stale implementation candidate successor was refused: ${prepared.detail}`);
+    }
+    if (options.implementationSuccessorLauncher !== undefined) {
+      await options.implementationSuccessorLauncher({
+        prepared: prepared.prepared,
+        managed: context.managed,
+        expectedChild: context.sourceRow.expectedChild,
+        timeoutMs,
+      });
     }
     return Object.freeze({ ...prepared.handle });
   }
@@ -3249,6 +3265,7 @@ function available(
   repositoryRoot?: string,
   ledgerStore?: LedgerStore,
   implementationEvidenceStore?: ImplementationEvidenceStore,
+  implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"],
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -3259,6 +3276,9 @@ function available(
       ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
       ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
+      ...(implementationSuccessorLauncher === undefined
+        ? {}
+        : { implementationSuccessorLauncher }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -3269,6 +3289,7 @@ export interface SingleProjectDispatchRuntimeOptions {
   readonly resolved: ResolvedLedgerStore;
   readonly promptArtifactStore?: PromptArtifactStore;
   readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"];
 }
 
 /**
@@ -3319,6 +3340,7 @@ export async function createSingleProjectDispatchRuntime(
     options.resolved.configRoot,
     options.resolved.store,
     options.resolved.implementationEvidenceStore,
+    options.implementationSuccessorLauncher,
   );
 }
 

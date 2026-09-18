@@ -42,6 +42,7 @@ import {
   type LedgerStore,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
+import { createImplementationSuccessorLauncher } from "../src/main.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const exec = promisify(execFile);
@@ -268,9 +269,9 @@ async function fixtureWithDispatchBase(
   now: () => string = () => "2026-08-12T20:00:00.000Z",
   wipFixture: WipFixtureMode = false,
   withLedgerStore = false,
-  implementationSuccessorLauncher?: (input: {
-    readonly prepared: Readonly<Record<string, unknown>>;
-  }) => Promise<void>,
+  implementationSuccessorLauncher?: NonNullable<
+    Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
+  >,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -890,35 +891,41 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       await fs.mkdtemp(path.join(tmpdir(), "t2081-successor-launch-")),
       "launches.jsonl",
     );
-    roots.push(path.dirname(launchMarker));
+    const launchRoot = path.dirname(launchMarker);
+    const roleScript = path.join(launchRoot, "successor-role.ts");
+    roots.push(launchRoot);
+    await fs.writeFile(
+      roleScript,
+      `import { appendFileSync } from "node:fs";
+const input = JSON.parse(await Bun.stdin.text());
+appendFileSync(process.env.CQ_T2081_SUCCESSOR_MARKER, JSON.stringify({
+  attestationId: input.handle.attestationId,
+  generation: input.handle.generation,
+  argv: process.argv.slice(2),
+}) + "\\n");
+process.stdout.write(JSON.stringify(input.handle));
+`,
+    );
+    const implementationSuccessorLauncher = createImplementationSuccessorLauncher(
+      {
+        roleCommand: process.execPath,
+        roleScript,
+        ledgerCommand: "/trusted/cq",
+        codexExecutable: "/trusted/codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+      },
+      launchRoot,
+      { ...process.env, CQ_T2081_SUCCESSOR_MARKER: launchMarker },
+    );
     const subject = await fixtureWithDispatchBase(
       runner,
       "managed",
       () => "2026-08-12T20:00:00.000Z",
       false,
       true,
-      async ({ prepared }) => {
-        const child = Bun.spawn(
-          [
-            process.execPath,
-            "-e",
-            'import { appendFileSync } from "node:fs"; const input = JSON.parse(await Bun.stdin.text()); appendFileSync(process.env.CQ_T2081_SUCCESSOR_MARKER, JSON.stringify({ attestationId: input.attestationId, generation: input.generation }) + "\\n");',
-          ],
-          {
-            env: { ...process.env, CQ_T2081_SUCCESSOR_MARKER: launchMarker },
-            stdin: new Blob([JSON.stringify(prepared)]),
-            stdout: "pipe",
-            stderr: "pipe",
-          },
-        );
-        const [exitCode, stderr] = await Promise.all([
-          child.exited,
-          new Response(child.stderr).text(),
-        ]);
-        if (exitCode !== 0) {
-          throw new Error(`successor launch fixture exited ${String(exitCode)}: ${stderr}`);
-        }
-      },
+      implementationSuccessorLauncher,
     );
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
@@ -965,15 +972,43 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       },
     });
     expect(runner.requests).toHaveLength(0);
+    const restarted = createDispatchCapability({
+      backend: subject.backend,
+      promptArtifactStore: artifactStore(),
+      ledgerStore: subject.ledgerStore,
+      repositoryRoot: subject.repositoryRoot,
+      worktreeStateDir: subject.stateDir,
+      supervisedWorkerGateRunner: runner,
+      implementationSuccessorLauncher,
+      now: () => "2026-08-12T20:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(sequence * 48),
+    });
+    if (restarted.coordinateImplementationCandidate === undefined) {
+      throw new Error("restarted implementation coordinator is unavailable");
+    }
+    expect(
+      await restarted.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "restarted-production-stale-coordinator",
+      }),
+    ).toEqual(outcome);
     const launches = (await fs.readFile(launchMarker, "utf8").catch(() => ""))
       .trim()
       .split("\n")
       .filter((line) => line !== "")
-      .map((line) => JSON.parse(line) as { attestationId: string; generation: number });
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            attestationId: string;
+            generation: number;
+            argv: readonly string[];
+          },
+      );
     expect(launches).toEqual([
       {
         attestationId: subject.prepared.attestationId,
         generation: subject.prepared.generation + 1,
+        argv: [],
       },
     ]);
     const [source, successor] = [...subject.store.rows()]

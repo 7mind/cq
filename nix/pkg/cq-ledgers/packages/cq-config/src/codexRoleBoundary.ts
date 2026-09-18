@@ -251,6 +251,15 @@ export interface CodexImplementationCandidateCoordinatorRequest {
   readonly holderId: string;
   readonly timeoutMs: number;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly successorLaunch?: {
+    readonly roleCommand: string;
+    readonly roleScript: string;
+    readonly ledgerCommand: string;
+    readonly codexExecutable: string;
+    readonly model: string;
+    readonly reasoningEffort: string;
+    readonly sandboxMode: CodexRoleSandboxMode;
+  };
 }
 
 export type CodexImplementationCandidateCoordination =
@@ -403,6 +412,14 @@ export async function executeCodexImplementationCandidateQualifier(
 async function executeCodexImplementationCandidateCoordinatorAttempt(
   input: CodexImplementationCandidateCoordinatorRequest,
 ): Promise<CodexImplementationCandidateCoordination> {
+  const request = {
+    ...input.handle,
+    holderId: input.holderId,
+    parentGateCapability: input.parentGateCapability,
+    ...(input.successorLaunch === undefined
+      ? {}
+      : { successorLaunch: input.successorLaunch }),
+  };
   const child = Bun.spawn(
     [
       input.command,
@@ -418,19 +435,11 @@ async function executeCodexImplementationCandidateCoordinatorAttempt(
     {
       cwd: input.ledgerCwd,
       env: withoutWorksetCredentials({ ...process.env, ...input.environment }),
-      stdin: "pipe",
+      stdin: new Blob([`${JSON.stringify(request)}\n`]),
       stdout: "pipe",
       stderr: "pipe",
     },
   );
-  child.stdin.write(
-    `${JSON.stringify({
-      ...input.handle,
-      holderId: input.holderId,
-      parentGateCapability: input.parentGateCapability,
-    })}\n`,
-  );
-  child.stdin.end();
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;

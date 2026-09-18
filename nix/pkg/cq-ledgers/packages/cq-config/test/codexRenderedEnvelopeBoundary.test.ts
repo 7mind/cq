@@ -224,6 +224,15 @@ process.exit(1);
         ...HANDLE,
         holderId: "att_t2844_boundary:1:installed-parent",
         parentGateCapability: PARENT_GATE_CAPABILITY,
+        successorLaunch: {
+          roleCommand: process.execPath,
+          roleScript: DISPATCH_SCRIPT,
+          ledgerCommand: cq,
+          codexExecutable: codex,
+          model: "boundary-control",
+          reasoningEffort: "low",
+          sandboxMode: "danger-full-access",
+        },
       });
       for (const forbidden of [
         "effectTargetRef",

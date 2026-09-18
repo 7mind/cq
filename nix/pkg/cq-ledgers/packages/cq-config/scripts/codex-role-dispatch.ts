@@ -159,6 +159,10 @@ export async function main(): Promise<void> {
       observedAt: new Date().toISOString(),
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
     });
+    const roleScript = process.argv[1];
+    if (roleScript === undefined || roleScript.trim() === "") {
+      throw new Error("codex-role-dispatch: current role script path is unavailable");
+    }
     process.stdout.write(`${JSON.stringify(handle)}\n`);
     await executeCodexImplementationCandidateCoordinator({
       command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
@@ -168,6 +172,15 @@ export async function main(): Promise<void> {
       parentGateCapability: invocation.parentGateCapability,
       holderId: `${handle.attestationId}:${String(handle.generation)}:installed-parent`,
       timeoutMs: plan.effectivePreturn.parentGateWindowMs,
+      successorLaunch: {
+        roleCommand: process.execPath,
+        roleScript,
+        ledgerCommand: boundaryRequest.ledgerCommand,
+        codexExecutable: boundaryRequest.codexExecutable,
+        model: boundaryRequest.model,
+        reasoningEffort: boundaryRequest.reasoningEffort,
+        sandboxMode: plan.sandboxMode,
+      },
     });
     return;
   }
