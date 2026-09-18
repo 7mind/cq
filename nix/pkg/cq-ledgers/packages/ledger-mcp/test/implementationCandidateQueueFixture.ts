@@ -114,7 +114,8 @@ export class ImplementationCandidateQueueFixture {
               finalizedAt: this.clock.peek(),
             },
           }
-        : (prior?.binding ?? options.gitEffectBinding ?? {
+        : (prior?.binding ??
+          options.gitEffectBinding ?? {
             taskId: options.taskId,
             handleToken: `queue-worktree-${String(sequence)}`,
             handleFingerprint: (sequence % 16).toString(16).repeat(64),

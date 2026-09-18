@@ -6,11 +6,48 @@
     "scriptDagSha256": "e61ab397845e24c5c11b6c8d3add2173fd955847d071c8c0713652b02ea12d48"
   },
   "opaqueEdges": [
-    { "kind": "path", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts", "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts", "sha256": "adbc86bd3abaff0cfda02dc49551efd9b98f04015458ccccd93ed12fe285e4fe", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts", "sha256": "db5dad0f9a74b53c7c6bfc212113f7c4f4fb2e9b6047cbe42005b33cbbb148fc", "targets": [] },
-    { "kind": "spawn", "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts", "sha256": "a7ad4b983f2e53402a5d16a11cc06bbf01b30a0fe36acc994ce02e9082ef27a7", "targets": [] },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-stale-holder.test.ts",
+      "sha256": "5730e4893d6d083d6702d10598efdc5dfcaa5dd87825b9a5956cf1c47fa03e85",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-stale-holder.test.ts",
+      "sha256": "5730e4893d6d083d6702d10598efdc5dfcaa5dd87825b9a5956cf1c47fa03e85",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts",
+      "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/managedDispatchRecovery.test.ts",
+      "sha256": "8e5b373eadb828dec449d9137594c775c28c792697265e56155eb9c9ef6c3ed1",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
+      "sha256": "adbc86bd3abaff0cfda02dc49551efd9b98f04015458ccccd93ed12fe285e4fe",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
+      "sha256": "db5dad0f9a74b53c7c6bfc212113f7c4f4fb2e9b6047cbe42005b33cbbb148fc",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-candidate-qualification.test.ts",
+      "sha256": "a7ad4b983f2e53402a5d16a11cc06bbf01b30a0fe36acc994ce02e9082ef27a7",
+      "targets": []
+    },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredGate.ts",
@@ -39,19 +76,25 @@
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredCommand.ts",
       "sha256": "c82302fb5d1b78e5a88a4a5da31e4942f1c52710ff7241f2cdbb0223e690db37",
-      "targets": ["nix/pkg/cq-ledgers/packages/ledger/bench/checkPostgresLifecycleBounds.ts"]
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger/bench/checkPostgresLifecycleBounds.ts"
+      ]
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/sqliteLifecycleBoundsProcesses.ts",
       "sha256": "d3d32e63b2b95d770e183e25d5d213d10ff88471f32d7ee1ad5ffb1c73031bf1",
-      "targets": ["nix/pkg/cq-ledgers/packages/ledger/bench/sqliteLifecycleBoundsPeer.ts"]
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger/bench/sqliteLifecycleBoundsPeer.ts"
+      ]
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/direct-owned-lifecycle-sqlite.test.ts",
       "sha256": "563e6c922a808e9282d34c3bfab880ad457d82b5784a66f6ef3d4dec2248a809",
-      "targets": ["nix/pkg/cq-ledgers/packages/ledger/test/directOwnedLifecyclePeer.ts"]
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger/test/directOwnedLifecyclePeer.ts"
+      ]
     },
     {
       "kind": "path",
@@ -153,7 +196,9 @@
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
       "sha256": "db590ae4ee38e757de8a5fa4808ac3db4012a0fcad020c2427477153b58680c7",
-      "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"]
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"
+      ]
     },
     {
       "kind": "dynamic",
@@ -1816,13 +1861,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
-      "sha256": "823afe8b9ba3be95f4773b228d091072083a14b0dea2330f8b7177bd7553eebc",
+      "sha256": "8f1b9d5baec36315e3a436996049e69435d3cb9ccb15ac326ec083c1bf148c1f",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/implementation-evidence.test.ts",
-      "sha256": "823afe8b9ba3be95f4773b228d091072083a14b0dea2330f8b7177bd7553eebc",
+      "sha256": "8f1b9d5baec36315e3a436996049e69435d3cb9ccb15ac326ec083c1bf148c1f",
       "targets": []
     },
     {

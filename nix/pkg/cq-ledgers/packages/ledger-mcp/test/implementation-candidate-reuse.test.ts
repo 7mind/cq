@@ -518,9 +518,8 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
     expect(releaseEffects).toEqual(["protected-completion-release"]);
     expect(gateCounts).toEqual([1, 1, 1, 1, 1, 1, 1]);
     expect(gateCounts.at(-1)! - gateCounts[0]!).toBe(0);
-    const released = await backend.transact(
-      { kind: "handle", handle: staged.prepared },
-      (store) => store.read(staged.prepared),
+    const released = await backend.transact({ kind: "handle", handle: staged.prepared }, (store) =>
+      store.read(staged.prepared),
     );
     expect(released?.implementationQueue?.state).toBe("released");
   });
@@ -560,7 +559,8 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       } as const;
       const candidates = new Map<number, Awaited<ReturnType<typeof fixture.stage>>>();
       let gateRuns = 0;
-      const gatedHandles: Array<{ readonly attestationId: string; readonly generation: number }> = [];
+      const gatedHandles: Array<{ readonly attestationId: string; readonly generation: number }> =
+        [];
       const coordinator = new ImplementationCandidateCoordinator(fixture.adapter, {
         observeProtectedHead: async (control) => control.attempt.observedBaseCommit,
         finalizeQualifiedFront: async ({ lease, control }) => {

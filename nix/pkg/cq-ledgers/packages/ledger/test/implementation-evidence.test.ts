@@ -1005,7 +1005,9 @@ describe("versioned protected implementation evidence [BG]", () => {
             return ignoredBootstrap(specification);
           },
         }),
-      ).rejects.toThrow("launch/admission deadline expired during pre-launch coordinate validation");
+      ).rejects.toThrow(
+        "launch/admission deadline expired during pre-launch coordinate validation",
+      );
       expect(expiredBootstrapLaunches).toBe(0);
       expect(expiredUnderlying.events()).toEqual(["admission-acquired", "admission-abandoned"]);
       expect(expiredUnderlying.activeAdmissionCount()).toBe(0);
