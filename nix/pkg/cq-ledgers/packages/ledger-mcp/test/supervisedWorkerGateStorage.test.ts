@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   CODEX_STAGED_TIMING_BASIS,
@@ -46,6 +47,9 @@ import { createImplementationSuccessorLauncher } from "../src/main.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const exec = promisify(execFile);
+const CODEX_ROLE_DISPATCH_SCRIPT = fileURLToPath(
+  new URL("../../cq-config/scripts/codex-role-dispatch.ts", import.meta.url),
+);
 const roots: string[] = [];
 let sequence = 0;
 
@@ -71,14 +75,17 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function artifactStore(): PromptArtifactStore {
+function artifactStore(
+  promptDigest = "a".repeat(64),
+  roleBytes = new Uint8Array([1]),
+): PromptArtifactStore {
   const metadata = {
     roleId: "implement-worker",
     roleKind: "dispatched-subagent" as const,
     artifactPath: "roles/implement-worker.md",
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: "codex" as const,
-    promptDigest: "a".repeat(64),
+    promptDigest,
     schemaVersion: 8,
   };
   return {
@@ -88,7 +95,7 @@ function artifactStore(): PromptArtifactStore {
       promptSurface: "codex",
       catalogHash: "b".repeat(64),
     }),
-    readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
+    readRole: () => ({ metadata, bytes: roleBytes }),
   };
 }
 
@@ -272,6 +279,7 @@ async function fixtureWithDispatchBase(
   implementationSuccessorLauncher?: NonNullable<
     Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
   >,
+  promptArtifactStore: PromptArtifactStore = artifactStore(),
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -349,7 +357,7 @@ async function fixtureWithDispatchBase(
   const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
   const capabilityOptions = {
     backend,
-    promptArtifactStore: artifactStore(),
+    promptArtifactStore,
     ...(ledgerStore === undefined ? {} : { ledgerStore }),
     ...(implementationSuccessorLauncher === undefined
       ? {}
@@ -885,61 +893,298 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toHaveLength(1);
   });
 
-  test("production coordinator retires a stale front before one admitted guarded rebase and successor", async () => {
-    const runner = new GateDummy();
+  // regression: T6519 round 29 — the stale-front owner must finish its real successor boundary.
+  test("production coordinator retires a stale front and the installed successor boundary completes it [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const scenarioStartedAt = Date.now();
+    const observedNow = () => new Date(scenarioStartedAt).toISOString();
+    const runner = new GateDummy({
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 123,
+      capturedAt: new Date(scenarioStartedAt + 1_000).toISOString(),
+      outputTail: "17 pass\nRan 17 tests across 4 files.",
+    });
     const launchMarker = path.join(
-      await fs.mkdtemp(path.join(tmpdir(), "t2081-successor-launch-")),
+      await fs.mkdtemp(path.join(tmpdir(), "t2081-successor-owner-")),
       "launches.jsonl",
     );
     const launchRoot = path.dirname(launchMarker);
-    const roleScript = path.join(launchRoot, "successor-role.ts");
+    const phaseMarker = path.join(launchRoot, "phases.jsonl");
+    const bridgeRoot = path.join(launchRoot, "bridge");
+    const promptRoot = path.join(launchRoot, "prompts");
+    const codexExecutable = path.join(launchRoot, "controlled-codex");
+    const ledgerCommand = path.join(launchRoot, "controlled-cq");
+    const roleInstructions = "Complete the exact guarded successor through the public protocol.\n";
+    const roleBytes = new TextEncoder().encode(roleInstructions);
+    const promptArtifactStore = artifactStore(sha256(roleInstructions), roleBytes);
     roots.push(launchRoot);
+    await fs.mkdir(bridgeRoot);
+    await fs.mkdir(path.join(promptRoot, "roles"), { recursive: true });
+    await fs.writeFile(path.join(promptRoot, "roles", "implement-worker.md"), roleInstructions);
     await fs.writeFile(
-      roleScript,
-      `import { appendFileSync } from "node:fs";
-const input = JSON.parse(await Bun.stdin.text());
-appendFileSync(process.env.CQ_T2081_SUCCESSOR_MARKER, JSON.stringify({
-  attestationId: input.handle.attestationId,
-  generation: input.handle.generation,
-  argv: process.argv.slice(2),
-}) + "\\n");
-process.stdout.write(JSON.stringify(input.handle));
+      codexExecutable,
+      `#!/usr/bin/env bun
+import { randomUUID } from "node:crypto";
+import { appendFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import * as path from "node:path";
+const bridgeRoot = process.env["CQ_T2081_BRIDGE_ROOT"];
+const launchMarker = process.env["CQ_T2081_SUCCESSOR_MARKER"];
+const phaseMarker = process.env["CQ_T2081_PHASE_MARKER"];
+if (bridgeRoot === undefined || launchMarker === undefined || phaseMarker === undefined) throw new Error("controlled Codex environment is incomplete");
+async function bridge(operation, request) {
+  const id = randomUUID();
+  const requestPath = path.join(bridgeRoot, id + ".request.json");
+  const temporaryPath = requestPath + ".tmp";
+  const responsePath = path.join(bridgeRoot, id + ".response.json");
+  await writeFile(temporaryPath, JSON.stringify({ id, operation, request }));
+  await rename(temporaryPath, requestPath);
+  for (;;) {
+    try {
+      const response = JSON.parse(await readFile(responsePath, "utf8"));
+      await unlink(responsePath);
+      if (response.ok !== true) throw new Error(response.error);
+      return response.value;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await Bun.sleep(5);
+  }
+}
+const launch = JSON.parse(await Bun.stdin.text());
+const handle = { attestationId: launch.attestationId, generation: launch.generation };
+await appendFile(launchMarker, JSON.stringify(handle) + "\\n");
+await appendFile(phaseMarker, JSON.stringify({ phase: "codex", ...handle }) + "\\n");
+const materialized = await bridge("fetch", {
+  ...handle,
+  inputCapability: launch.inputCapability,
+});
+const input = materialized.input;
+const lineage = input.guardedRebaseLineage;
+if (lineage === undefined || lineage.exactTip !== true) throw new Error("controlled Codex requires an exact-tip guarded successor");
+const gitExecutable = process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git";
+const changed = Bun.spawnSync(
+  [gitExecutable, "diff", "--name-only", "--no-renames", "-z", input.baseCommit, input.startingCommit, "--"],
+  { cwd: input.worktreePath, stdout: "pipe", stderr: "pipe" },
+);
+if (changed.exitCode !== 0) throw new Error(changed.stderr.toString());
+const output = {
+  taskId: input.taskId,
+  status: "pass",
+  resultCommit: input.startingCommit,
+  branch: input.branch,
+  actualWorktreePath: input.worktreePath,
+  filesTouched: changed.stdout.toString().split("\\0").filter(Boolean).sort(),
+  gitReceipts: [],
+  gitLineage: {
+    kind: "guarded-rebase",
+    guardedRebase: lineage.guardedRebase,
+    ontoCommit: lineage.ontoCommit,
+    rebasedStartCommit: lineage.rebasedStartCommit,
+    exactTip: lineage.exactTip,
+  },
+  checkSummary: "controlled installed successor check passed",
+  baseVerification: {
+    status: "verified",
+    relation: input.baseCommit === input.startingCommit ? "equal" : "descendant",
+    baseCommit: input.baseCommit,
+    headCommit: input.startingCommit,
+  },
+  summary: "exact guarded successor completed through the installed boundary",
+};
+const stored = await bridge("store", { resultCapability: launch.resultCapability, output });
+if (stored.state !== "gate-pending") throw new Error("controlled Codex result did not stage");
+process.stdout.write([
+  JSON.stringify({ type: "thread.started", thread_id: "t2081-successor-thread-" + String(handle.generation) }),
+  JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "ledger", tool: "store_result", result: { content: [{ type: "text", text: JSON.stringify(stored) }] } } }),
+  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(handle) } }),
+  JSON.stringify({ type: "turn.completed", usage: {} }),
+].join("\\n"));
 `,
     );
+    await fs.chmod(codexExecutable, 0o700);
+    await fs.writeFile(
+      ledgerCommand,
+      `#!/usr/bin/env bun
+import { randomUUID } from "node:crypto";
+import { appendFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import * as path from "node:path";
+import { createInterface } from "node:readline";
+const bridgeRoot = process.env["CQ_T2081_BRIDGE_ROOT"];
+const phaseMarker = process.env["CQ_T2081_PHASE_MARKER"];
+if (bridgeRoot === undefined || phaseMarker === undefined) throw new Error("controlled cq environment is incomplete");
+if (process.argv.includes("__workset-effect-provider")) {
+  await appendFile(phaseMarker, JSON.stringify({ phase: "provider-start" }) + "\\n");
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of lines) {
+    const request = JSON.parse(line);
+    await appendFile(phaseMarker, JSON.stringify({ phase: "provider-" + request.op }) + "\\n");
+    process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
+    if (request.op === "release" || request.op === "abandon") break;
+  }
+  process.exit(0);
+}
+async function bridge(operation, request) {
+  const id = randomUUID();
+  const requestPath = path.join(bridgeRoot, id + ".request.json");
+  const temporaryPath = requestPath + ".tmp";
+  const responsePath = path.join(bridgeRoot, id + ".response.json");
+  await writeFile(temporaryPath, JSON.stringify({ id, operation, request }));
+  await rename(temporaryPath, requestPath);
+  for (;;) {
+    try {
+      const response = JSON.parse(await readFile(responsePath, "utf8"));
+      await unlink(responsePath);
+      if (response.ok !== true) throw new Error(response.error);
+      return response.value;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await Bun.sleep(5);
+  }
+}
+const request = JSON.parse(await Bun.stdin.text());
+if (process.argv.includes("--implementation-candidate-qualify")) {
+  await appendFile(phaseMarker, JSON.stringify({ phase: "qualify" }) + "\\n");
+  process.stdout.write(JSON.stringify(await bridge("qualify", request)));
+  process.exit(0);
+}
+if (process.argv.includes("--implementation-candidate-coordinate")) {
+  await appendFile(phaseMarker, JSON.stringify({ phase: "coordinate" }) + "\\n");
+  process.stdout.write(JSON.stringify(await bridge("coordinate", request)));
+  process.exit(0);
+}
+throw new Error("unexpected controlled cq invocation");
+`,
+    );
+    await fs.chmod(ledgerCommand, 0o700);
+    const inheritedPath = process.env["PATH"];
+    if (inheritedPath === undefined || inheritedPath.trim() === "") {
+      throw new Error("test PATH is unavailable");
+    }
+    const launcherEnvironment = {
+      PATH: inheritedPath,
+      CQ_T2081_BRIDGE_ROOT: bridgeRoot,
+      CQ_T2081_SUCCESSOR_MARKER: launchMarker,
+      CQ_T2081_PHASE_MARKER: phaseMarker,
+      XDG_STATE_HOME: path.join(launchRoot, "xdg-state"),
+      XDG_CONFIG_HOME: path.join(launchRoot, "xdg-config"),
+      ...(process.env["CQ_TEST_GIT_EXECUTABLE"] === undefined
+        ? {}
+        : { CQ_TEST_GIT_EXECUTABLE: process.env["CQ_TEST_GIT_EXECUTABLE"] }),
+    };
     const implementationSuccessorLauncher = createImplementationSuccessorLauncher(
       {
         roleCommand: process.execPath,
-        roleScript,
-        ledgerCommand: "/trusted/cq",
-        codexExecutable: "/trusted/codex",
+        roleScript: CODEX_ROLE_DISPATCH_SCRIPT,
+        ledgerCommand,
+        codexExecutable,
         model: "gpt-5.6-sol",
         reasoningEffort: "high",
         sandboxMode: "workspace-write",
       },
-      launchRoot,
-      { ...process.env, CQ_T2081_SUCCESSOR_MARKER: launchMarker },
+      promptRoot,
+      launcherEnvironment,
     );
-    let successorLaunchInput:
-      | Parameters<
-          NonNullable<
-            Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
-          >
-        >[0]
-      | undefined;
     const recordedSuccessorLauncher: NonNullable<
       Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
     > = async (input) => {
-      successorLaunchInput = input;
       await implementationSuccessorLauncher(input);
     };
     const subject = await fixtureWithDispatchBase(
       runner,
       "managed",
-      () => "2026-08-12T20:00:00.000Z",
+      observedNow,
       false,
       true,
       recordedSuccessorLauncher,
+      promptArtifactStore,
     );
+    type BridgeRequest = {
+      readonly id: string;
+      readonly operation: "fetch" | "store" | "qualify" | "coordinate";
+      readonly request: Readonly<Record<string, unknown>>;
+    };
+    const processedRequests = new Set<string>();
+    const runWithBridge = async <T>(operation: Promise<T>): Promise<T> => {
+      let settled = false;
+      void operation.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      const pending = new Set<Promise<void>>();
+      while (!settled || pending.size > 0) {
+        const entries = await fs.readdir(bridgeRoot);
+        for (const entry of entries.filter((name) => name.endsWith(".request.json"))) {
+          const requestPath = path.join(bridgeRoot, entry);
+          if (processedRequests.has(requestPath)) continue;
+          processedRequests.add(requestPath);
+          const task = (async () => {
+            const message = JSON.parse(await fs.readFile(requestPath, "utf8")) as BridgeRequest;
+            let value: unknown;
+            try {
+              switch (message.operation) {
+                case "fetch":
+                  value = await subject.capability.fetchInput(
+                    message.request as unknown as Parameters<
+                      typeof subject.capability.fetchInput
+                    >[0],
+                  );
+                  break;
+                case "store":
+                  value = await subject.capability.storeResult(
+                    message.request as unknown as Parameters<
+                      typeof subject.capability.storeResult
+                    >[0],
+                  );
+                  break;
+                case "qualify":
+                  value = await subject.capability.qualifyImplementationCandidate!(
+                    message.request as unknown as Parameters<
+                      NonNullable<typeof subject.capability.qualifyImplementationCandidate>
+                    >[0],
+                  );
+                  break;
+                case "coordinate":
+                  value = await subject.capability.coordinateImplementationCandidate!(
+                    message.request as unknown as Parameters<
+                      NonNullable<typeof subject.capability.coordinateImplementationCandidate>
+                    >[0],
+                  );
+                  break;
+              }
+              const temporaryResponse = path.join(bridgeRoot, `${message.id}.response.json.tmp`);
+              await fs.writeFile(temporaryResponse, JSON.stringify({ ok: true, value }));
+              await fs.rename(
+                temporaryResponse,
+                path.join(bridgeRoot, `${message.id}.response.json`),
+              );
+            } catch (error) {
+              const temporaryResponse = path.join(bridgeRoot, `${message.id}.response.json.tmp`);
+              await fs.writeFile(
+                temporaryResponse,
+                JSON.stringify({
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              );
+              await fs.rename(
+                temporaryResponse,
+                path.join(bridgeRoot, `${message.id}.response.json`),
+              );
+            }
+          })();
+          pending.add(task);
+          void task.finally(() => pending.delete(task));
+        }
+        if (!settled || pending.size > 0) await Bun.sleep(5);
+      }
+      return await operation;
+    };
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
       subject.capability.qualifyImplementationCandidate === undefined ||
@@ -957,21 +1202,26 @@ process.stdout.write(JSON.stringify(input.handle));
       expectedRunId: subject.expectedChild.runId,
       outcome: "completed",
       exitStatus: 0,
-      observedAt: "2026-08-12T20:00:02.000Z",
+      observedAt: observedNow(),
       promptDigest: subject.prepared.promptProvenance.promptDigest,
     });
     if (qualified.state !== "queued") throw new Error("candidate did not qualify");
-    await fs.writeFile(path.join(subject.repositoryRoot, "advance.txt"), "advance protected head\n");
+    await fs.writeFile(
+      path.join(subject.repositoryRoot, "advance.txt"),
+      "advance protected head\n",
+    );
     await git(subject.repositoryRoot, ["add", "advance.txt"]);
     await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
     await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
     await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
     const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
 
-    const outcome = await subject.capability.coordinateImplementationCandidate({
-      partitionKey: qualified.partitionKey,
-      holderId: "production-stale-coordinator",
-    });
+    const outcome = await runWithBridge(
+      subject.capability.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "production-stale-coordinator",
+      }),
+    );
 
     expect(outcome).toEqual({
       state: "successor-queued",
@@ -984,29 +1234,31 @@ process.stdout.write(JSON.stringify(input.handle));
         generation: subject.prepared.generation + 1,
       },
     });
-    expect(runner.requests).toHaveLength(0);
+    expect(runner.requests).toHaveLength(1);
     if (subject.ledgerStore === undefined) {
       throw new Error("stale successor restart requires the task ledger");
     }
     const restarted = createDispatchCapability({
       backend: subject.backend,
-      promptArtifactStore: artifactStore(),
+      promptArtifactStore,
       ledgerStore: subject.ledgerStore,
       repositoryRoot: subject.repositoryRoot,
       worktreeStateDir: subject.stateDir,
       supervisedWorkerGateRunner: runner,
       implementationSuccessorLauncher: recordedSuccessorLauncher,
-      now: () => "2026-08-12T20:00:00.000Z",
+      now: observedNow,
       randomBytes: sequentialDispatchRandomBytes(sequence * 48),
     });
     if (restarted.coordinateImplementationCandidate === undefined) {
       throw new Error("restarted implementation coordinator is unavailable");
     }
     expect(
-      await restarted.coordinateImplementationCandidate({
-        partitionKey: qualified.partitionKey,
-        holderId: "restarted-production-stale-coordinator",
-      }),
+      await runWithBridge(
+        restarted.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: "restarted-production-stale-coordinator",
+        }),
+      ),
     ).toEqual(outcome);
     const launches = (await fs.readFile(launchMarker, "utf8").catch(() => ""))
       .trim()
@@ -1017,46 +1269,17 @@ process.stdout.write(JSON.stringify(input.handle));
           JSON.parse(line) as {
             attestationId: string;
             generation: number;
-            argv: readonly string[];
           },
       );
     expect(launches).toEqual([
       {
         attestationId: subject.prepared.attestationId,
         generation: subject.prepared.generation + 1,
-        argv: [],
       },
     ]);
-    if (successorLaunchInput === undefined) {
-      throw new Error("successor launcher did not receive the prepared private envelope");
-    }
-    const foreignRoleScript = path.join(launchRoot, "foreign-successor-role.ts");
-    await fs.writeFile(
-      foreignRoleScript,
-      `const input = JSON.parse(await Bun.stdin.text());
-process.stdout.write(JSON.stringify({
-  attestationId: input.handle.attestationId,
-  generation: input.handle.generation + 1,
-}));
-`,
+    const [source, successor] = [...subject.store.rows()].sort(
+      (left, right) => left.generation - right.generation,
     );
-    const foreignLauncher = createImplementationSuccessorLauncher(
-      {
-        roleCommand: process.execPath,
-        roleScript: foreignRoleScript,
-        ledgerCommand: "/trusted/cq",
-        codexExecutable: "/trusted/codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "high",
-        sandboxMode: "workspace-write",
-      },
-      launchRoot,
-    );
-    await expect(foreignLauncher(successorLaunchInput)).rejects.toThrow(
-      "implementation successor boundary returned a foreign handle",
-    );
-    const [source, successor] = [...subject.store.rows()]
-      .sort((left, right) => left.generation - right.generation);
     expect(source).toMatchObject({
       state: "aborted",
       abortReason: "staged-rebase",
@@ -1065,6 +1288,15 @@ process.stdout.write(JSON.stringify({
     expect(successor).toMatchObject({
       state: "consumed",
       generation: subject.prepared.generation + 1,
+      implementationQueue: { state: "released" },
+      stagedCompletionQualification: {
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-extension",
+          childId: subject.expectedChild.childId,
+          runId: subject.expectedChild.runId,
+        },
+      },
       input: {
         baseCommit: protectedHead,
         priorResultCommit: subject.receipt.newHead,
@@ -1075,7 +1307,33 @@ process.stdout.write(JSON.stringify({
         },
       },
     });
+    expect(successor).not.toHaveProperty("outputMaterializedAt");
     expect(runner.requests).toHaveLength(1);
+    const successorHandle = {
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation + 1,
+    };
+    const successorResultCommit = await git(subject.managed.handle.absolutePath, [
+      "rev-parse",
+      "HEAD",
+    ]);
+    expect(await subject.capability.fetch(successorHandle)).toMatchObject({
+      state: "consumed",
+      output: {
+        status: "pass",
+        resultCommit: successorResultCommit,
+      },
+    });
+    expect(await subject.capability.fetch(successorHandle)).toMatchObject({
+      state: "output-already-materialized",
+    });
+    expect(await subject.capability.fetch(subject.prepared)).toMatchObject({
+      state: "aborted",
+      reason: "staged-rebase",
+    });
+    expect(
+      subject.store.rows().filter((row) => row.generation === subject.prepared.generation + 1),
+    ).toHaveLength(1);
     expect(
       await git(subject.managed.handle.absolutePath, [
         "merge-base",
@@ -1084,7 +1342,7 @@ process.stdout.write(JSON.stringify({
         "HEAD",
       ]),
     ).toBe("");
-  });
+  }, 30_000);
 
   test("a fresh production coordinator replays one persisted conflict without gating or relaunching it", async () => {
     const runner = new GateDummy();

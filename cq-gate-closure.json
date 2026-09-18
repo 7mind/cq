@@ -592,7 +592,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "797bf53632263e008ac277bf83e049fe12413207abd0beb1d8e5ed645011fbb9",
+      "sha256": "32d63eeefc2d29259dc729ecf91d83d46494a97362b384a0d0ebc598eaceaffe",
       "targets": []
     },
     {
