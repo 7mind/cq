@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import type { AttestationEnvelope, ImplementationQueueControl } from "@cq/config";
+import type { AttestationEnvelope, AttestationStore, ImplementationQueueControl } from "@cq/config";
 import ts from "typescript";
 
 import {
@@ -2521,11 +2521,24 @@ export class GitG213CandidateRepositoryV1 implements G213CandidateRepositoryV1 {
 
 async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   readonly row: AttestationEnvelope;
+  readonly requestedHandle: {
+    readonly attestationId: string;
+    readonly generation: number;
+  };
   readonly repository: G213CandidateRepositoryV1;
 }): Promise<G213QualifiedCandidateRowV1> {
   const row = immutableSnapshot(input.row);
   const queue = row.implementationQueue;
   const binding = row.gitEffectBinding;
+  if (
+    row.attestationId !== input.requestedHandle.attestationId ||
+    row.generation !== input.requestedHandle.generation
+  ) {
+    throw new Error("trusted attestation store returned a different G213 handle");
+  }
+  if (row.state !== "gate-pending") {
+    throw new Error("trusted attestation store returned a stale G213 candidate");
+  }
   if (
     row.kind !== "envelope" ||
     row.promptProvenance.roleId !== "implement-worker" ||
@@ -2541,14 +2554,21 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   }
   const rowInput = row.input as Readonly<Record<string, unknown>>;
   const startingCommit = rowInput["startingCommit"];
-  if (typeof startingCommit !== "string") {
-    throw new Error("actual G213 row lacks its prepared starting commit");
+  const baseCommit = rowInput["baseCommit"];
+  if (typeof startingCommit !== "string" || typeof baseCommit !== "string") {
+    throw new Error("actual G213 row lacks its prepared commit bindings");
   }
   assertCommit(startingCommit, "actual G213 row starting commit");
+  assertCommit(baseCommit, "actual G213 row base commit");
   if (
     queue.attempt.managedWorktreeBindingDigest !== digest(binding) ||
     queue.attempt.taskId !== binding.taskId ||
     queue.attempt.repositoryId !== binding.repositoryId ||
+    queue.attempt.worktreePath !== binding.worktreePath ||
+    queue.attempt.observedBaseCommit !== baseCommit ||
+    row.stagedCompletionQualification?.qualificationDigest !==
+      queue.qualification.qualificationDigest ||
+    row.gateSubmittedOutputDigest !== queue.qualification.outputDigest ||
     queue.qualification.expectedChild.childId !== row.expectedChild.childId ||
     queue.qualification.expectedChild.runId !== row.expectedChild.runId ||
     queue.qualification.expectedProvenance.roleId !== row.promptProvenance.roleId ||
@@ -2564,6 +2584,7 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   const output = row.output as Readonly<Record<string, unknown>>;
   if (
     output["taskId"] !== binding.taskId ||
+    output["branch"] !== binding.branch ||
     output["resultCommit"] !== queue.attempt.resultCommit ||
     digest(output["gitReceipts"] ?? []) !== queue.attempt.gitReceiptLineageDigest
   ) {
@@ -2600,12 +2621,40 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
 /** Own the non-copyable identity of rows authenticated from persisted G213 state. */
 export class G213CandidateAuthenticatorV1 {
   readonly #authenticatedRows = new WeakSet<G213QualifiedCandidateRowV1>();
+  readonly #store: Pick<AttestationStore, "namespace" | "read">;
+  readonly #repository: G213CandidateRepositoryV1;
+
+  constructor(input: {
+    readonly store: Pick<AttestationStore, "namespace" | "read">;
+    readonly repository: G213CandidateRepositoryV1;
+  }) {
+    this.#store = input.store;
+    this.#repository = input.repository;
+  }
 
   async resolve(input: {
-    readonly row: AttestationEnvelope;
-    readonly repository: G213CandidateRepositoryV1;
+    readonly attestationId: string;
+    readonly generation: number;
   }): Promise<G213QualifiedCandidateRowV1> {
-    const row = await resolveG213QualifiedCandidateRowSnapshotV1(input);
+    assertNonEmpty(input.attestationId, "G213 attestation id");
+    if (!Number.isInteger(input.generation) || input.generation < 1) {
+      throw new Error("G213 generation must be a positive integer");
+    }
+    const persisted = this.#store.read(input);
+    if (persisted === undefined) {
+      throw new Error("trusted attestation store has no matching G213 candidate");
+    }
+    if (persisted.kind !== "envelope") {
+      throw new Error("trusted attestation store returned a stale G213 candidate");
+    }
+    if (canonical(persisted.namespace) !== canonical(this.#store.namespace)) {
+      throw new Error("trusted attestation store returned another namespace");
+    }
+    const row = await resolveG213QualifiedCandidateRowSnapshotV1({
+      row: persisted,
+      requestedHandle: input,
+      repository: this.#repository,
+    });
     this.#authenticatedRows.add(row);
     return row;
   }

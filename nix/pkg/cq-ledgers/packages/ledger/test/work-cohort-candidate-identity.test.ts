@@ -6,7 +6,13 @@ import { promisify } from "node:util";
 
 import { describe, expect, test } from "bun:test";
 
-import type { AttestationEnvelope } from "@cq/config";
+import {
+  InMemoryAttestationStore,
+  type AttestationEnvelope,
+  type AttestationNamespace,
+  type AttestationRow,
+  type AttestationStore,
+} from "@cq/config";
 
 import {
   CohortCandidateSealConflictError,
@@ -31,7 +37,42 @@ import { commit, observationFor, qualifiedQueue, receipt, sha256 } from "./workC
 
 const execFileAsync = promisify(execFile);
 
-async function authenticatedCandidateRow(input: {
+const candidateNamespace: AttestationNamespace = Object.freeze({
+  backend: "xdg",
+  projectKey: "cohort-candidate-test",
+});
+
+type CandidateAttestationStore = Pick<AttestationStore, "namespace" | "read">;
+
+class ManualCandidateAttestationStore implements CandidateAttestationStore {
+  readonly namespace = candidateNamespace;
+  readonly #rows = new Map<string, AttestationRow>();
+
+  constructor(rows: readonly AttestationRow[]) {
+    for (const row of rows) {
+      this.#rows.set(`${row.attestationId}#${String(row.generation)}`, row);
+    }
+  }
+
+  read(handle: { readonly attestationId: string; readonly generation: number }) {
+    return this.#rows.get(`${handle.attestationId}#${String(handle.generation)}`);
+  }
+}
+
+const candidateStoreCases = [
+  {
+    name: "reference attestation adapter",
+    create: (rows: readonly AttestationRow[]): CandidateAttestationStore =>
+      InMemoryAttestationStore.rehydrate(candidateNamespace, rows),
+  },
+  {
+    name: "manual attestation dummy",
+    create: (rows: readonly AttestationRow[]): CandidateAttestationStore =>
+      new ManualCandidateAttestationStore(rows),
+  },
+] as const;
+
+interface CandidateEnvelopeInput {
   readonly dispatch: {
     readonly attestationId: string;
     readonly generation: number;
@@ -45,9 +86,9 @@ async function authenticatedCandidateRow(input: {
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
   readonly attempt?: string;
   readonly outputFilesTouched?: readonly string[];
-  readonly repository?: G213CandidateRepositoryV1;
-  readonly observeSourceRow?: (row: AttestationEnvelope) => void;
-}) {
+}
+
+function candidateEnvelope(input: CandidateEnvelopeInput) {
   const gitEffectBinding = {
     taskId: input.dispatch.taskId,
     handleToken: "worktree-token",
@@ -71,8 +112,10 @@ async function authenticatedCandidateRow(input: {
   });
   const row = {
     kind: "envelope",
+    namespace: candidateNamespace,
     attestationId: input.dispatch.attestationId,
     generation: input.dispatch.generation,
+    state: "gate-pending",
     promptProvenance: {
       roleId: "implement-worker",
       version: 10,
@@ -80,28 +123,69 @@ async function authenticatedCandidateRow(input: {
       inputDigest: sha256("input"),
     },
     expectedChild: { childId: "child", runId: "run" },
-    input: { startingCommit: input.dispatch.startingCommit },
+    input: {
+      baseCommit: input.dispatch.startingCommit,
+      startingCommit: input.dispatch.startingCommit,
+    },
+    gateSubmittedOutputDigest: queue.qualification?.outputDigest,
     gitEffectBinding,
     implementationQueue: queue,
+    stagedCompletionQualification: queue.qualification,
     output: {
       taskId: input.dispatch.taskId,
+      branch: input.dispatch.branch,
       resultCommit: input.result,
       gitReceipts: input.receipts,
       filesTouched:
         input.outputFilesTouched ?? input.repositoryDiff.map((entry) => entry.path),
     },
   } as unknown as AttestationEnvelope;
-  input.observeSourceRow?.(row);
-  const authenticator = new G213CandidateAuthenticatorV1();
-  const authenticated = await authenticator.resolve({
-    row,
+  return { queue, row };
+}
+
+async function authenticatedCandidateRow(input: {
+  readonly dispatch: {
+    readonly attestationId: string;
+    readonly generation: number;
+    readonly taskId: string;
+    readonly branch: string;
+    readonly startingCommit: string;
+  };
+  readonly result: string;
+  readonly tree: string;
+  readonly receipts: readonly CohortGitChangeReceiptV1[];
+  readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
+  readonly attempt?: string;
+  readonly outputFilesTouched?: readonly string[];
+  readonly repository?: G213CandidateRepositoryV1;
+  readonly storeFactory?: (row: AttestationEnvelope) => CandidateAttestationStore;
+  readonly observeSourceRow?: (row: AttestationEnvelope) => void;
+}) {
+  const candidate = candidateEnvelope({
+    dispatch: input.dispatch,
+    result: input.result,
+    tree: input.tree,
+    receipts: input.receipts,
+    repositoryDiff: input.repositoryDiff,
+    ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
+    ...(input.outputFilesTouched === undefined
+      ? {}
+      : { outputFilesTouched: input.outputFilesTouched }),
+  });
+  input.observeSourceRow?.(candidate.row);
+  const store =
+    input.storeFactory?.(candidate.row) ?? candidateStoreCases[0].create([candidate.row]);
+  const authenticator = new G213CandidateAuthenticatorV1({
+    store,
     repository:
       input.repository ??
-      ({
-        resolveWholeDiff: async () => input.repositoryDiff,
-      } satisfies G213CandidateRepositoryV1),
+      ({ resolveWholeDiff: async () => input.repositoryDiff } satisfies G213CandidateRepositoryV1),
   });
-  return { authenticator, queue, row: authenticated, sourceRow: row };
+  const authenticated = await authenticator.resolve({
+    attestationId: input.dispatch.attestationId,
+    generation: input.dispatch.generation,
+  });
+  return { authenticator, queue: candidate.queue, row: authenticated, sourceRow: candidate.row };
 }
 
 function substitutePersistedCandidateResult(
@@ -172,6 +256,109 @@ async function identityFixture() {
 }
 
 describe("cohort candidate identity", () => {
+  for (const storeCase of candidateStoreCases) {
+    test(`resolves only a live qualified row through the ${storeCase.name}`, async () => {
+      const fixture = await identityFixture();
+      const repository = {
+        resolveWholeDiff: async () => fixture.row.repositoryDiff,
+      } satisfies G213CandidateRepositoryV1;
+      const authenticator = new G213CandidateAuthenticatorV1({
+        store: storeCase.create([fixture.sourceRow]),
+        repository,
+      });
+      const resolved = await authenticator.resolve({
+        attestationId: fixture.dispatch.attestationId,
+        generation: fixture.dispatch.generation,
+      });
+      const staged = authenticator.stage(fixture.pending, { row: resolved });
+      expect(staged.g213.attemptId).toBe(fixture.queue.attempt.attemptId);
+
+      await expect(
+        authenticator.resolve({ attestationId: "att-unknown", generation: 1 }),
+      ).rejects.toThrow("trusted attestation store");
+      await expect(
+        authenticator.resolve({
+          attestationId: fixture.dispatch.attestationId,
+          generation: fixture.dispatch.generation + 1,
+        }),
+      ).rejects.toThrow("trusted attestation store");
+
+      const stale = { ...fixture.sourceRow, state: "consumed" } as AttestationEnvelope;
+      const staleAuthenticator = new G213CandidateAuthenticatorV1({
+        store: storeCase.create([stale]),
+        repository,
+      });
+      await expect(
+        staleAuthenticator.resolve({
+          attestationId: fixture.dispatch.attestationId,
+          generation: fixture.dispatch.generation,
+        }),
+      ).rejects.toThrow("stale G213 candidate");
+
+      const unqualified = {
+        ...fixture.sourceRow,
+        implementationQueue: {
+          ...fixture.sourceRow.implementationQueue!,
+          state: "enqueued",
+          qualification: undefined,
+        },
+      } as unknown as AttestationEnvelope;
+      const unqualifiedAuthenticator = new G213CandidateAuthenticatorV1({
+        store: storeCase.create([unqualified]),
+        repository,
+      });
+      await expect(
+        unqualifiedAuthenticator.resolve({
+          attestationId: fixture.dispatch.attestationId,
+          generation: fixture.dispatch.generation,
+        }),
+      ).rejects.toThrow("qualified managed implement-worker");
+
+      const foreignBinding = {
+        ...fixture.sourceRow,
+        gitEffectBinding: {
+          ...fixture.sourceRow.gitEffectBinding!,
+          repositoryId: "repository:foreign",
+        },
+      } as AttestationEnvelope;
+      const foreignBindingAuthenticator = new G213CandidateAuthenticatorV1({
+        store: storeCase.create([foreignBinding]),
+        repository,
+      });
+      await expect(
+        foreignBindingAuthenticator.resolve({
+          attestationId: fixture.dispatch.attestationId,
+          generation: fixture.dispatch.generation,
+        }),
+      ).rejects.toThrow("identity or qualification is inconsistent");
+    });
+  }
+
+  test("rejects a trusted-store lookup that substitutes another handle", async () => {
+    const fixture = await identityFixture();
+    const foreign = candidateEnvelope({
+      dispatch: { ...fixture.dispatch, attestationId: "att-foreign", generation: 2 },
+      result: fixture.result,
+      tree: fixture.tree,
+      receipts: fixture.receipts,
+      repositoryDiff: fixture.row.repositoryDiff,
+    });
+    const authenticator = new G213CandidateAuthenticatorV1({
+      store: {
+        namespace: candidateNamespace,
+        read: () => foreign.row,
+      },
+      repository: { resolveWholeDiff: async () => fixture.row.repositoryDiff },
+    });
+
+    await expect(
+      authenticator.resolve({
+        attestationId: fixture.dispatch.attestationId,
+        generation: fixture.dispatch.generation,
+      }),
+    ).rejects.toThrow("different G213 handle");
+  });
+
   test("seals one G213 attempt atomically without advancing definition generation", async () => {
     const fixture = await identityFixture();
     const store = new InMemoryCohortCandidateSealStoreV1();
@@ -371,7 +558,7 @@ describe("cohort candidate identity", () => {
         operation: "caller-resolved",
       }),
     ];
-    const fabricated = await authenticatedCandidateRow({
+    const fabricated = candidateEnvelope({
       dispatch: fixture.dispatch,
       result: forgedResult,
       tree: forgedTree,
@@ -381,10 +568,20 @@ describe("cohort candidate identity", () => {
       ],
       attempt: "attempt:caller-resolved",
     });
+    const resolved = await fixture.authenticator.resolve({
+      attestationId: fixture.dispatch.attestationId,
+      generation: fixture.dispatch.generation,
+      row: fabricated.row,
+      repository: {
+        resolveWholeDiff: async () => fabricated.row.output,
+      },
+    } as unknown as { readonly attestationId: string; readonly generation: number });
+    const staged = fixture.authenticator.stage(fixture.pending, { row: resolved });
 
-    expect(() =>
-      fabricated.authenticator.stage(fixture.pending, { row: fabricated.row }),
-    ).toThrow("trusted attestation store");
+    expect(staged.g213.resultCommit).toBe(fixture.result);
+    expect(staged.g213.resultTree).toBe(fixture.tree);
+    expect(staged.g213.attemptId).toBe(fixture.queue.attempt.attemptId);
+    expect(staged.g213.resultCommit).not.toBe(forgedResult);
   });
 
   test("rejects spread and descriptor clones of an authenticated G213 row", async () => {
