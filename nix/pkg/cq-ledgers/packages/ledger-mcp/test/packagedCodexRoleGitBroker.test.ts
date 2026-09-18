@@ -35,9 +35,10 @@ import {
   ImplementationEvidenceService,
   MILESTONES_AMBIENT_ID,
   observeManagedRebaseConflict,
-  PLAN_FINALIZED_MANIFEST_FIELD,
+  PLAN_REVIEW_DRAFT_FIELD,
   prepareManagedWorktree,
   releaseManagedWorktree,
+  REVIEWS_LEDGER,
   resolveManagedWorktreeDispatchBinding,
   resolveSingleProjectAttestationNamespace,
   worksetEffectAdmissionProviderFromStore,
@@ -46,6 +47,7 @@ import {
   type DispatchBoundGitAuthorization,
   type ImplementationReviewerIdentity,
   type ManagedWorktreeHandle,
+  type PlanLifecycleStore,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -1674,7 +1676,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
         throw new Error("installed guarded-rebase gate was not selected");
       }
-      const taskId = "T2151";
       const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2151-packaged-guarded-"));
       roots.push(repositoryRoot);
       await git(repositoryRoot, ["init", "-q", "-b", "main"]);
@@ -1695,34 +1696,79 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
       const seededStore = await createLedgerStore(repositoryRoot);
-      const seededMilestone = await seededStore.store.createMilestone({
-        title: "installed guarded-rebase continuation gate",
-      });
-      await seededStore.store.createItem(TASKS_LEDGER, seededMilestone.id, {
-        id: taskId,
-        status: "planned",
-        fields: {
-          headline: "installed guarded-rebase continuation",
-          description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
-          acceptance: "the guarded continuation completes through the installed boundary",
-          ledgerRefs: ["goals:G2151"],
-          worksetOwnerRef: "goals:G2151",
-          worksetOwnerEdgeKind: "active-current-draft",
-        },
-      });
+      const lifecycle = seededStore.store as typeof seededStore.store & PlanLifecycleStore;
       await seededStore.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
         id: "G2151",
-        status: "planning",
+        status: "clarifying",
         fields: {
           title: "installed guarded-rebase continuation gate",
           description: "exercise a finalized task through the installed boundary",
-          [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify({
-            revision: 1,
-            milestones: [{ key: "installed", id: seededMilestone.id }],
-            tasks: [{ key: "guarded-rebase", id: taskId }],
-          }),
         },
       });
+      const planClaim = await lifecycle.claimPlan({
+        goalId: "G2151",
+        purpose: "initial",
+        claimRequestId: "t2151-plan-claim-v1",
+        ownerFenceToken: "T".repeat(22),
+        expectedGeneration: null,
+        author: "t2151-planner",
+        session: "t2151-packaged-guarded",
+      });
+      if (!planClaim.ok) throw new Error(`installed guarded fixture plan claim failed`);
+      const publishedResult = await lifecycle.publishPlanDraft({
+        goalId: "G2151",
+        claimId: planClaim.acknowledgement.claimId,
+        generation: planClaim.acknowledgement.generation,
+        operationId: "t2151-plan-publish-v1",
+        ownerFenceToken: planClaim.acknowledgement.ownerFenceToken,
+        author: "t2151-planner",
+        session: "t2151-packaged-guarded",
+        manifest: {
+          milestones: [{ key: "installed", title: "Installed guarded continuation" }],
+          tasks: [
+            {
+              key: "guarded-rebase",
+              milestoneKey: "installed",
+              headline: "installed guarded-rebase continuation",
+              description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
+              acceptance: "the guarded continuation completes through the installed boundary",
+              ledgerRefs: ["goals:G2151"],
+            },
+          ],
+        },
+      });
+      if (!publishedResult.ok) throw new Error(`installed guarded fixture publication failed`);
+      const published = publishedResult.acknowledgement.manifest;
+      const planReviewId = "R2151";
+      await seededStore.store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: planReviewId,
+        status: "go-ahead",
+        fields: {
+          summary: "approve the installed guarded-rebase fixture manifest",
+          [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify({
+            goalId: "G2151",
+            claimId: planClaim.acknowledgement.claimId,
+            generation: planClaim.acknowledgement.generation,
+            revision: published.revision,
+          }),
+          ledgerRefs: ["goals:G2151"],
+        },
+      });
+      const finalizedResult = await lifecycle.finalizePlan({
+        goalId: "G2151",
+        claimId: planClaim.acknowledgement.claimId,
+        generation: planClaim.acknowledgement.generation,
+        operationId: "t2151-plan-finalize-v1",
+        ownerFenceToken: planClaim.acknowledgement.ownerFenceToken,
+        reviewId: planReviewId,
+        draftRevision: published.revision,
+        decision: { headline: "Run the installed guarded-rebase continuation" },
+        author: "t2151-planner",
+        session: "t2151-packaged-guarded",
+      });
+      if (!finalizedResult.ok) throw new Error(`installed guarded fixture finalization failed`);
+      const taskId = published.tasks.find(({ key }) => key === "guarded-rebase")?.id;
+      if (taskId === undefined) throw new Error("installed guarded fixture task allocation is absent");
       await seededStore.store.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
       if (seededStore.implementationEvidenceStore === undefined) {
         throw new Error("installed guarded-rebase fixture lacks protected evidence storage");

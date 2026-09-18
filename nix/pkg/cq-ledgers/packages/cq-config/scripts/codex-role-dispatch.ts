@@ -125,6 +125,17 @@ export async function main(): Promise<void> {
       ? await executeCodexRoleBoundary(plan, worksetEffect)
       : await executeCodexRoleBoundary(plan, correlationId, undefined, worksetEffect);
   const handle = "observation" in execution ? execution.handle : execution;
+  if (observationPath !== undefined && "observation" in execution) {
+    await appendFile(
+      observationPath,
+      `${JSON.stringify({
+        kind: "cq-codex-effective-outcome",
+        version: 1,
+        handle: execution.handle,
+        observedFailureControls: execution.observedFailureControls,
+      })}\n`,
+    );
+  }
   if (roleId === "implement-worker") {
     if (invocation.parentGateCapability === undefined) {
       throw new Error("codex-role-dispatch: implement-worker requires parent gate authority");
@@ -151,17 +162,6 @@ export async function main(): Promise<void> {
       promptDigest: plan.effectivePreturn.rolePromptDigest,
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
     });
-  }
-  if (observationPath !== undefined && "observation" in execution) {
-    await appendFile(
-      observationPath,
-      `${JSON.stringify({
-        kind: "cq-codex-effective-outcome",
-        version: 1,
-        handle: execution.handle,
-        observedFailureControls: execution.observedFailureControls,
-      })}\n`,
-    );
   }
   process.stdout.write(`${JSON.stringify(handle)}\n`);
 }
