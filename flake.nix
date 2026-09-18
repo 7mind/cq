@@ -801,8 +801,21 @@ if (typeof request.promptDigest !== "string" || !/^[0-9a-f]{64}$/.test(request.p
 '
     printf '%s\n' '{"state":"queued","attestationId":"att_packaged_role_acknowledgement","generation":7,"partitionKey":"cq-implementation-queue:v1:packaged-role","outputDigest":"digest-bound-output","qualificationDigest":"qualification-bound-output"}'
     ;;
-  *" --parent-gate-finalize "*|*" --implementation-candidate-coordinate "*)
-    echo "cq-codex-role invoked a gate path before returning the queued handle" >&2
+  *" --implementation-candidate-coordinate "*)
+    IFS= read -r request
+    printf '%s\n' "\$request" | ${pkgs.nodejs_22}/bin/node -e '
+const fs = require("node:fs");
+const request = JSON.parse(fs.readFileSync(0, "utf8"));
+const keys = Object.keys(request).sort().join(",");
+if (keys !== "attestationId,generation,holderId,parentGateCapability") process.exit(1);
+if (request.attestationId !== "att_packaged_role_acknowledgement" || request.generation !== 7) process.exit(1);
+if (request.parentGateCapability?.scope !== "parent-gate" || request.parentGateCapability.token !== "cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG") process.exit(1);
+if (typeof request.holderId !== "string" || !request.holderId.includes(request.attestationId)) process.exit(1);
+'
+    printf '%s\n' '{"state":"empty","partitionKey":"cq-implementation-queue:v1:packaged-role","partitionRevision":1}'
+    ;;
+  *" --parent-gate-finalize "*)
+    echo "cq-codex-role invoked the legacy direct gate path" >&2
     exit 97
     ;;
   *) exec "$out/bin/cq" "\$@" ;;

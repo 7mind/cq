@@ -306,6 +306,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       outputDigest: staged.state === "gate-pending" ? staged.result.outputDigest : "",
       qualificationDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
     });
+    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
     const row = backend.storedRows()[0];
     expect(row).toMatchObject({
       state: "gate-pending",
@@ -332,6 +333,43 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
         promptDigest: "5".repeat(64),
       }),
     ).rejects.toThrow("altered staged-completion proof");
+    const parentGateCapability = prepared.prepared.parentGateCapability;
+    if (parentGateCapability === undefined) throw new Error("worker gate authority missing");
+    await expect(
+      capability.coordinateImplementationCandidate!({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        holderId: "installed-parent-invalid-authority",
+        parentGateCapability: {
+          ...parentGateCapability,
+          token: `${parentGateCapability.token.slice(0, -1)}x`,
+        },
+      }),
+    ).rejects.toThrow("parent authority is invalid");
+    const queueAdapter = new ImplementationCandidateQueueAdapter({
+      backend,
+      actor: "trusted-extension",
+      now: clock.now,
+    });
+    const acquired = await queueAdapter.acquire({
+      partitionKey: qualified.partitionKey,
+      holderId: "installed-parent-yield-control",
+    });
+    if (acquired.state !== "leased") throw new Error("qualified row did not lease");
+    const leasedControl = await queueAdapter.inspectLease(acquired.lease);
+    await queueAdapter.applyHeadOfLineDisposition({
+      disposition: "yield",
+      lease: acquired.lease,
+      expectedPartitionRevision: leasedControl.partitionRevision,
+    });
+    await expect(
+      capability.coordinateImplementationCandidate!({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        holderId: "installed-parent-valid-authority",
+        parentGateCapability,
+      }),
+    ).resolves.toMatchObject({ state: "empty" });
   });
 
   for (const observation of [

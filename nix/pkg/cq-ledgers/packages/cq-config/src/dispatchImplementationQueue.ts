@@ -1048,15 +1048,6 @@ export function qualifyDispatchStagedCompletion(
   assertTrustedActor(request.actor);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
-  if (
-    request.completionObservationDigest !== undefined &&
-    !SHA256.test(request.completionObservationDigest)
-  ) {
-    throw new AttestationContractError(
-      "completionObservationDigest",
-      "expected a SHA-256 digest",
-    );
-  }
   const qualificationPayload = {
     partitionKey: request.partitionKey,
     enrollmentId: request.enrollmentId,

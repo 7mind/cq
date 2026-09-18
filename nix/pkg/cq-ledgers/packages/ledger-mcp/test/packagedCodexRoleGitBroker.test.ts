@@ -1375,7 +1375,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       expect((await readFile(qualificationAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(
         2,
       );
-      expect(await Bun.file(gateCountPath).exists()).toBe(false);
+      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
       expect(retryReceipts).toHaveLength(2);
       expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
       expect(retryReceipts[1]?.["newHead"]).toBe(retryCapture.output["resultCommit"]);
@@ -1385,31 +1385,18 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         firstResultCommit,
         String(retryCapture.output["resultCommit"]),
       ]);
-      const queuedControl = await backend.transact({ kind: "handle", handle: retryHandle }, (store) => {
+      const releasedControl = await backend.transact({ kind: "handle", handle: retryHandle }, (store) => {
         const row = store.read(retryHandle);
         if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
           throw new Error("installed worker did not durably qualify its staged result");
         }
         return row.implementationQueue;
       });
-      expect(queuedControl).toMatchObject({ state: "qualified", leaseGeneration: 0 });
-      if (capability.coordinateImplementationCandidate === undefined) {
-        throw new Error("installed worker coordinator is unavailable");
-      }
-      const priorGateCount = process.env["CQ_T2042_GATE_COUNT"];
-      process.env["CQ_T2042_GATE_COUNT"] = gateCountPath;
-      try {
-        expect(
-          await capability.coordinateImplementationCandidate({
-            partitionKey: queuedControl.partition.partitionKey,
-            holderId: "installed-process-later-coordinator",
-          }),
-        ).toEqual({ state: "completed", handle: retryHandle });
-      } finally {
-        if (priorGateCount === undefined) delete process.env["CQ_T2042_GATE_COUNT"];
-        else process.env["CQ_T2042_GATE_COUNT"] = priorGateCount;
-      }
-      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
+      expect(releasedControl).toMatchObject({
+        state: "released",
+        leaseGeneration: 1,
+        terminal: { reason: "gate-complete" },
+      });
       const retryEvidence = await evidenceObserverOf(capability)(retryHandle);
       if (retryEvidence.state !== "consumed") {
         throw new Error(`unexpected worker evidence ${retryEvidence.state}`);
@@ -1915,23 +1902,18 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
           output: Record<string, unknown>;
         };
-        const queuedControl = await backend.transact({ kind: "handle", handle }, (store) => {
+        const releasedControl = await backend.transact({ kind: "handle", handle }, (store) => {
           const row = store.read(handle);
           if (row?.kind !== "envelope" || row.implementationQueue === undefined) {
             throw new Error("installed worker did not durably qualify its staged result");
           }
           return row.implementationQueue;
         });
-        expect(queuedControl).toMatchObject({ state: "qualified", leaseGeneration: 0 });
-        if (capability.coordinateImplementationCandidate === undefined) {
-          throw new Error("installed worker coordinator is unavailable");
-        }
-        expect(
-          await capability.coordinateImplementationCandidate({
-            partitionKey: queuedControl.partition.partitionKey,
-            holderId: `installed-${input.label}-later-coordinator`,
-          }),
-        ).toEqual({ state: "completed", handle });
+        expect(releasedControl).toMatchObject({
+          state: "released",
+          leaseGeneration: 1,
+          terminal: { reason: "gate-complete" },
+        });
         const consumed = await evidenceObserverOf(capability)(handle);
         if (consumed.state !== "consumed") {
           throw new Error(`unexpected worker evidence ${consumed.state}`);
