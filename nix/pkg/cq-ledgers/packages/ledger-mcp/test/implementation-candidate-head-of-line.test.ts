@@ -310,6 +310,9 @@ describe("implementation candidate head-of-line policy [Behavioral-Active, Black
         lease: independentLease.lease,
         expectedPartitionRevision: independentLease.partitionRevision,
       });
+      if (!("partition" in independentDeferred)) {
+        throw new Error(`expected independent ${expectedState} control`);
+      }
       await fixture.adapter.applyHeadOfLineDisposition({
         disposition: "resume",
         lease: independentLease.lease,
