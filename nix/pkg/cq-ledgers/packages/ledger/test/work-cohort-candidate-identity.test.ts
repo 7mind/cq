@@ -282,6 +282,12 @@ describe("cohort candidate identity", () => {
           generation: fixture.dispatch.generation + 1,
         }),
       ).rejects.toThrow("trusted attestation store");
+      await expect(
+        authenticator.resolve({ attestationId: "", generation: fixture.dispatch.generation }),
+      ).rejects.toThrow("attestation id");
+      await expect(
+        authenticator.resolve({ attestationId: fixture.dispatch.attestationId, generation: 0 }),
+      ).rejects.toThrow("positive integer");
 
       const stale = { ...fixture.sourceRow, state: "consumed" } as AttestationEnvelope;
       const staleAuthenticator = new G213CandidateAuthenticatorV1({
@@ -331,6 +337,81 @@ describe("cohort candidate identity", () => {
           generation: fixture.dispatch.generation,
         }),
       ).rejects.toThrow("identity or qualification is inconsistent");
+
+      const invalidIdentityRows = [
+        {
+          row: {
+            ...fixture.sourceRow,
+            input: { startingCommit: fixture.dispatch.startingCommit },
+          } as unknown as AttestationEnvelope,
+          error: "prepared commit bindings",
+        },
+        {
+          row: {
+            ...fixture.sourceRow,
+            implementationQueue: {
+              ...fixture.sourceRow.implementationQueue!,
+              attempt: {
+                ...fixture.sourceRow.implementationQueue!.attempt,
+                worktreePath: "/repo/.claude/worktrees/substituted",
+              },
+            },
+          } as AttestationEnvelope,
+          error: "identity or qualification is inconsistent",
+        },
+        {
+          row: {
+            ...fixture.sourceRow,
+            implementationQueue: {
+              ...fixture.sourceRow.implementationQueue!,
+              attempt: {
+                ...fixture.sourceRow.implementationQueue!.attempt,
+                observedBaseCommit: commit("substituted-observed-base"),
+              },
+            },
+          } as AttestationEnvelope,
+          error: "identity or qualification is inconsistent",
+        },
+        {
+          row: {
+            ...fixture.sourceRow,
+            stagedCompletionQualification: {
+              ...fixture.sourceRow.stagedCompletionQualification!,
+              qualificationDigest: sha256("substituted qualification"),
+            },
+          } as AttestationEnvelope,
+          error: "identity or qualification is inconsistent",
+        },
+        {
+          row: {
+            ...fixture.sourceRow,
+            gateSubmittedOutputDigest: sha256("substituted output"),
+          } as AttestationEnvelope,
+          error: "identity or qualification is inconsistent",
+        },
+        {
+          row: {
+            ...fixture.sourceRow,
+            output: {
+              ...(fixture.sourceRow.output as Readonly<Record<string, unknown>>),
+              branch: "implement/substituted",
+            },
+          } as unknown as AttestationEnvelope,
+          error: "staged output differs from its queue attempt",
+        },
+      ];
+      for (const invalid of invalidIdentityRows) {
+        const invalidAuthenticator = new G213CandidateAuthenticatorV1({
+          store: storeCase.create([invalid.row]),
+          repository,
+        });
+        await expect(
+          invalidAuthenticator.resolve({
+            attestationId: fixture.dispatch.attestationId,
+            generation: fixture.dispatch.generation,
+          }),
+        ).rejects.toThrow(invalid.error);
+      }
     });
   }
 
@@ -357,6 +438,23 @@ describe("cohort candidate identity", () => {
         generation: fixture.dispatch.generation,
       }),
     ).rejects.toThrow("different G213 handle");
+
+    const foreignNamespaceAuthenticator = new G213CandidateAuthenticatorV1({
+      store: {
+        namespace: candidateNamespace,
+        read: () => ({
+          ...fixture.sourceRow,
+          namespace: { ...candidateNamespace, projectKey: "foreign" },
+        }),
+      },
+      repository: { resolveWholeDiff: async () => fixture.row.repositoryDiff },
+    });
+    await expect(
+      foreignNamespaceAuthenticator.resolve({
+        attestationId: fixture.dispatch.attestationId,
+        generation: fixture.dispatch.generation,
+      }),
+    ).rejects.toThrow("another namespace");
   });
 
   test("seals one G213 attempt atomically without advancing definition generation", async () => {
