@@ -2537,6 +2537,16 @@ function claimStagedRebaseSuccessor(
         "baseCommit",
       ] as const).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
   if (source === undefined) {
+    const completedQueueBindingMatches =
+      bridge !== undefined &&
+      gitEffectBinding !== undefined &&
+      (isAttestationTombstone(previous)
+        ? previous.implementationQueue?.qualificationDigest !== undefined
+        : previous.implementationQueue?.qualification !== undefined &&
+          previous.implementationQueue.attempt.resultCommit === bridge.oldResultCommit &&
+          previous.implementationQueue.attempt.taskId === gitEffectBinding.taskId &&
+          previous.implementationQueue.attempt.repositoryId === gitEffectBinding.repositoryId &&
+          previous.implementationQueue.attempt.worktreePath === gitEffectBinding.worktreePath);
     const consumedOrdinaryQueue =
       bridge !== undefined &&
       gitEffectBinding !== undefined &&
@@ -2545,13 +2555,7 @@ function claimStagedRebaseSuccessor(
       queue.state === "released" &&
       queue.terminal?.reason === "gate-complete" &&
       !managerBindingChanged &&
-      (isAttestationTombstone(previous)
-        ? queue.qualificationDigest !== undefined
-        : queue.qualification !== undefined &&
-          queue.attempt.resultCommit === bridge.oldResultCommit &&
-          queue.attempt.taskId === gitEffectBinding.taskId &&
-          queue.attempt.repositoryId === gitEffectBinding.repositoryId &&
-          queue.attempt.worktreePath === gitEffectBinding.worktreePath);
+      completedQueueBindingMatches;
     if (consumedOrdinaryQueue) return;
     if (bridge !== undefined && queue !== undefined) {
       throw new AttestationBindingError(

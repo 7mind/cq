@@ -77,7 +77,7 @@ function input(base: string, startingCommit: string, round: number): DispatchJSO
   };
 }
 
-function stagedOutput(commit: string): DispatchJSONValue {
+function stagedOutput(commit: string): Readonly<Record<string, DispatchJSONValue>> {
   return {
     taskId: "T6518",
     status: "pass",
