@@ -521,12 +521,14 @@ function isConsumedOrdinaryContinuationAncestor(
     return false;
   }
   if (isAttestationTombstone(candidate)) {
-    return control.qualificationDigest !== undefined;
+    return candidate.implementationQueue?.qualificationDigest !== undefined;
   }
+  const liveControl = candidate.implementationQueue;
+  if (liveControl === undefined) return false;
   return (
-    control.qualification !== undefined &&
-    retained.liveTip === control.attempt.resultCommit &&
-    digest(retained.gitReceipts) === control.attempt.gitReceiptLineageDigest
+    liveControl.qualification !== undefined &&
+    retained.liveTip === liveControl.attempt.resultCommit &&
+    digest(retained.gitReceipts) === liveControl.attempt.gitReceiptLineageDigest
   );
 }
 

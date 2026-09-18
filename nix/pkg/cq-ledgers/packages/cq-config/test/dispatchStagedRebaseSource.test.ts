@@ -25,7 +25,6 @@ import {
   sweepAttestationsOn,
   terminalizeImplementationCandidateOn,
   type AttestationNamespace,
-  type DispatchGitChangeReceipt,
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
@@ -67,6 +66,7 @@ const randomBytesByBackend = new WeakMap<
   InMemoryAttestationBackend,
   ReturnType<typeof sequentialDispatchRandomBytes>
 >();
+type GitReceipts = EnqueueImplementationCandidateRequest["gitReceipts"];
 
 function input(base: string, startingCommit: string, round: number): DispatchJSONValue {
   return {
@@ -84,7 +84,7 @@ function input(base: string, startingCommit: string, round: number): DispatchJSO
 
 function stagedOutput(
   commit: string,
-  gitReceipts: readonly DispatchGitChangeReceipt[] = [],
+  gitReceipts: GitReceipts = [],
 ): Readonly<Record<string, DispatchJSONValue>> {
   return {
     taskId: "T6518",
@@ -93,7 +93,7 @@ function stagedOutput(
     branch: binding.branch,
     actualWorktreePath: binding.worktreePath,
     filesTouched: ["packages/cq-config/src/dispatchImplementationQueue.ts"],
-    gitReceipts,
+    gitReceipts: gitReceipts as unknown as DispatchJSONValue,
     checkSummary: "focused checks passed",
     baseVerification: {
       status: "verified",
@@ -171,7 +171,7 @@ async function enqueue(
   tree: string,
   observedBaseCommit: string,
   source?: EnqueueImplementationCandidateRequest["stagedRebaseSource"],
-  gitReceipts: readonly DispatchGitChangeReceipt[] = [],
+  gitReceipts: GitReceipts = [],
 ): Promise<ImplementationQueueControl> {
   return await enqueueImplementationCandidateOn(
     backend,
@@ -203,11 +203,11 @@ async function qualifiedAndLeased(withReceipt = false): Promise<{
   readonly pending: GatePendingResultView;
   readonly queue: ImplementationQueueControl;
   readonly retirement: RetireDispatchStagedRebaseSourceRequest;
-  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly gitReceipts: GitReceipts;
 }> {
   const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
   const prepared = await prepare(backend);
-  const gitReceipts: readonly DispatchGitChangeReceipt[] = withReceipt
+  const gitReceipts: GitReceipts = withReceipt
     ? [
         {
           kind: "cq-git-change-receipt",

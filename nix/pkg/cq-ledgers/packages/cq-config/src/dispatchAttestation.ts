@@ -2636,7 +2636,10 @@ function claimStagedRebaseSuccessor(
     const retainedQueue = queue!;
     const supersededAt = deps.now();
     const detailsDigest = dispatchPayloadDigest({
-      successor,
+      successor: {
+        attestationId: successor.attestationId,
+        generation: successor.generation,
+      },
       continuationReference: request.continuationClaim.continuationReference,
     });
     const { lease: _supersededLease, ...terminalQueueBase } = retainedQueue;
