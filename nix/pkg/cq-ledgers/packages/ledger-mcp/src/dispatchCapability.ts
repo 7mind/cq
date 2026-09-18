@@ -10,6 +10,7 @@ import {
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  implementWorkerSupervisedGateEvidenceSchema,
   IDEMPOTENCY_HORIZON_MS,
   AttestationKeyReuseError,
   AttestationBackendUnsupportedError,
@@ -45,6 +46,7 @@ import {
   resolveDispatchRecoveryOn,
   resolveDispatchContinuationOn,
   storeDispatchResultOn,
+  validateAgainstSchema,
   validateDispatchInput,
   type AttestationBackend,
   type AttestationEnvelope,
@@ -102,6 +104,7 @@ import {
   type GitConflictContinuationResultEvidence,
   type LedgerStore,
   type ImplementationEvidenceStore,
+  type ImplementationCandidateAuthorityReceipt,
   type LedgerServerConstruction,
   type ManagedWorktreeDispatchBinding,
   type ResolvedLedgerStore,
@@ -113,6 +116,7 @@ import {
   assertManagedRecoveryTipEligible,
   captureCurrentDispatchRecoverySealUnderLock,
   currentRecoveryTaskEvidence,
+  currentRecoveryTaskSpecificationDigest,
 } from "./dispatchRecoverySeal.js";
 import {
   ImplementationCandidateCoordinator,
@@ -123,6 +127,14 @@ import {
 
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
+
+function dispatchObject(
+  value: DispatchJSONValue | undefined,
+): value is Readonly<Record<string, DispatchJSONValue>> {
+  return (
+    value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value)
+  );
+}
 
 async function readOnlyGit(repositoryRoot: string, args: readonly string[]): Promise<string> {
   const child = Bun.spawn(["git", "-C", repositoryRoot, ...args], {
@@ -181,9 +193,8 @@ async function readProtectedIntegrationHead(
 
 function exactGoalRef(store: LedgerStore, taskId: string): string {
   const task = store.fetchItem(TASKS_LEDGER, taskId);
-  const goalRefs = (Array.isArray(task.fields["ledgerRefs"])
-    ? task.fields["ledgerRefs"]
-    : []
+  const goalRefs = (
+    Array.isArray(task.fields["ledgerRefs"]) ? task.fields["ledgerRefs"] : []
   ).filter(
     (entry): entry is string => typeof entry === "string" && /^goals:[A-Za-z0-9._-]+$/u.test(entry),
   );
@@ -551,9 +562,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           startingCommitInput: startingCommit,
           priorResultCommitInput:
             (record["priorResultCommit"] as string | null | undefined) ?? null,
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
         });
         outcomes.push({ kind: "materialized", source: { handle, priorBinding }, bridge });
       } catch (error) {
@@ -681,11 +690,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         current: binding,
         baseCommitInput: baseCommit,
         startingCommitInput: startingCommit,
-        priorResultCommitInput:
-          (record["priorResultCommit"] as string | null | undefined) ?? null,
-        ...(options.worktreeStateDir === undefined
-          ? {}
-          : { stateDir: options.worktreeStateDir }),
+        priorResultCommitInput: (record["priorResultCommit"] as string | null | undefined) ?? null,
+        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
       });
       return true;
     } catch {
@@ -707,9 +713,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       input.guardedRebase === undefined &&
       input.recovery === undefined;
     const guardedRebase =
-      noOtherAuthority &&
-      input.continuation === undefined &&
-      input.guardedRebase !== undefined;
+      noOtherAuthority && input.continuation === undefined && input.guardedRebase !== undefined;
     return continuation || guardedRebase;
   }
 
@@ -1039,7 +1043,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   async function confirmQualifiedImplementationFront(input: {
     readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
     readonly control: Awaited<ReturnType<ImplementationCandidateQueueAdapter["inspectLease"]>>;
-    readonly nativeCompletion: Parameters<DispatchCapability["confirmCompletion"]>[0]["nativeCompletion"];
+    readonly nativeCompletion: Parameters<
+      DispatchCapability["confirmCompletion"]
+    >[0]["nativeCompletion"];
   }): Promise<void> {
     if (input.control.qualification === undefined) {
       throw new Error("qualified implementation front lost its completion qualification");
@@ -1433,27 +1439,234 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     return Object.freeze({ state: "successor-queued" as const, successor });
   }
 
-  const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations = {
-    reconcileRetiredSource: reconcileRetiredImplementationSource,
-    observeProtectedHead: async (control) => {
-      if (options.repositoryRoot === undefined) {
-        throw new Error("implementation candidate coordinator requires a local repository root");
-      }
-      return await readProtectedIntegrationHead(
-        options.repositoryRoot,
-        control.partition.integrationRef,
-      );
-    },
-    finalizeQualifiedFront: finalizeQualifiedImplementationFront,
-    confirmQualifiedFront: confirmQualifiedImplementationFront,
-    retireStaleSource: retireAndRebaseStaleImplementationFront,
-    rebaseRetiredSource: rebaseRetiredImplementationFront,
-    prepareSuccessor: prepareStaleImplementationSuccessor,
-  };
+  const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations =
+    {
+      reconcileRetiredSource: reconcileRetiredImplementationSource,
+      observeProtectedHead: async (control) => {
+        if (options.repositoryRoot === undefined) {
+          throw new Error("implementation candidate coordinator requires a local repository root");
+        }
+        return await readProtectedIntegrationHead(
+          options.repositoryRoot,
+          control.partition.integrationRef,
+        );
+      },
+      finalizeQualifiedFront: finalizeQualifiedImplementationFront,
+      confirmQualifiedFront: confirmQualifiedImplementationFront,
+      retireStaleSource: retireAndRebaseStaleImplementationFront,
+      rebaseRetiredSource: rebaseRetiredImplementationFront,
+      prepareSuccessor: prepareStaleImplementationSuccessor,
+    };
   const implementationCandidateCoordinator = new ImplementationCandidateCoordinator(
     implementationCandidateQueue,
     implementationCandidateCoordinatorOperations,
   );
+
+  async function resolveImplementationCandidateAuthority(input: {
+    readonly workerDispatch: { readonly attestationId: string; readonly generation: number };
+    readonly taskRef: string;
+    readonly resultCommit: string;
+  }): Promise<ImplementationCandidateAuthorityReceipt> {
+    if (options.repositoryRoot === undefined || options.ledgerStore === undefined) {
+      throw new Error("implementation candidate authority requires a repository and task ledger");
+    }
+    const taskId = input.taskRef.startsWith("tasks:") ? input.taskRef.slice("tasks:".length) : "";
+    if (!/^T[0-9]+$/u.test(taskId) || !FULL_GIT_SHA.test(input.resultCommit)) {
+      throw new Error("implementation candidate authority target is malformed");
+    }
+    const resolved = await options.backend.transact(
+      { kind: "handle", handle: input.workerDispatch },
+      (store) => {
+        const row = store.read(input.workerDispatch);
+        if (row === undefined || isAttestationTombstone(row)) {
+          throw new Error("implementation candidate authority requires a live durable dispatch");
+        }
+        const control = row.implementationQueue;
+        const output = row.output;
+        const gate = dispatchObject(output) ? output["supervisedGateEvidence"] : undefined;
+        if (
+          row.state !== "consumed" ||
+          control === undefined ||
+          control.state !== "leased" ||
+          control.qualification === undefined ||
+          control.lease === undefined ||
+          !dispatchObject(output) ||
+          output["status"] !== "pass" ||
+          output["taskId"] !== taskId ||
+          output["resultCommit"] !== input.resultCommit ||
+          !dispatchObject(gate) ||
+          !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+          gate["taskId"] !== taskId ||
+          gate["resultCommit"] !== input.resultCommit ||
+          gate["worktreePath"] !== control.attempt.worktreePath ||
+          gate["command"] !== control.attempt.gateCommand ||
+          control.attempt.resultCommit !== input.resultCommit ||
+          control.attempt.taskId !== taskId ||
+          control.enrollment.taskId !== taskId
+        ) {
+          throw new Error("implementation candidate lacks an exact consumed green-gate identity");
+        }
+        const activeEnrollmentRows = store.rows().filter((candidate) => {
+          if (isAttestationTombstone(candidate)) return false;
+          const queue = candidate.implementationQueue;
+          return (
+            queue !== undefined &&
+            queue.enrollment.enrollmentId === control.enrollment.enrollmentId &&
+            !["released", "terminal", "staged-rebase-retired"].includes(queue.state)
+          );
+        });
+        const liveLeaseRows = store.rows().filter((candidate) => {
+          if (isAttestationTombstone(candidate)) return false;
+          const queue = candidate.implementationQueue;
+          return (
+            queue?.partition.partitionKey === control.partition.partitionKey &&
+            queue.state === "leased"
+          );
+        });
+        if (
+          activeEnrollmentRows.length !== 1 ||
+          activeEnrollmentRows[0]?.attestationId !== row.attestationId ||
+          activeEnrollmentRows[0]?.generation !== row.generation ||
+          liveLeaseRows.length !== 1 ||
+          liveLeaseRows[0]?.attestationId !== row.attestationId ||
+          liveLeaseRows[0]?.generation !== row.generation
+        ) {
+          throw new Error("implementation candidate is not the unique active leased successor");
+        }
+        if (row.gitEffectBinding === undefined) {
+          throw new Error("implementation candidate lost its managed worktree binding");
+        }
+        return {
+          row,
+          control,
+          gate: gate as DispatchJSONValue,
+          binding: row.gitEffectBinding,
+        };
+      },
+    );
+    const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, taskId);
+    if (
+      currentRecoveryTaskSpecificationDigest(resolved.row.input) !==
+        taskEvidence.taskSpecificationDigest ||
+      resolved.control.enrollment.goalRef !== exactGoalRef(options.ledgerStore, taskId) ||
+      resolved.control.enrollment.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest
+    ) {
+      throw new Error("implementation candidate task, goal, or finalized manifest changed");
+    }
+    await assertManagedWorktreeDispatchBindingLive(
+      resolved.binding,
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+    );
+    if (
+      dispatchPayloadDigest(resolved.binding as unknown as DispatchJSONValue) !==
+        resolved.control.attempt.managedWorktreeBindingDigest ||
+      resolved.binding.taskId !== taskId ||
+      resolved.binding.repositoryId !== resolved.control.attempt.repositoryId ||
+      resolved.binding.worktreePath !== resolved.control.attempt.worktreePath
+    ) {
+      throw new Error("implementation candidate managed worktree authority changed");
+    }
+    const [liveTip, worktreeStatus, protectedHead] = await Promise.all([
+      readOnlyGit(resolved.binding.worktreePath, ["rev-parse", "HEAD"]),
+      readOnlyGitAllowEmpty(resolved.binding.worktreePath, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+      ]),
+      readProtectedIntegrationHead(
+        resolved.binding.repositoryRoot,
+        resolved.control.partition.integrationRef,
+      ),
+    ]);
+    if (
+      liveTip !== input.resultCommit ||
+      worktreeStatus !== "" ||
+      protectedHead !== resolved.control.attempt.observedBaseCommit
+    ) {
+      throw new Error("implementation candidate code, tree, or integration base changed");
+    }
+    return Object.freeze({
+      kind: "cq-implementation-candidate-authority" as const,
+      version: 1 as const,
+      workerDispatch: Object.freeze({ ...input.workerDispatch }),
+      partitionKey: resolved.control.partition.partitionKey,
+      enrollmentId: resolved.control.enrollment.enrollmentId,
+      attemptId: resolved.control.attempt.attemptId,
+      leaseHolderId: resolved.control.lease!.holderId,
+      leaseGeneration: resolved.control.lease!.generation,
+      qualificationDigest: resolved.control.qualification!.qualificationDigest,
+      taskRef: input.taskRef,
+      taskDigest: taskEvidence.taskDigest,
+      goalRef: resolved.control.enrollment.goalRef,
+      finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
+      integrationRef: resolved.control.partition.integrationRef,
+      repositoryId: resolved.control.attempt.repositoryId,
+      worktreePath: resolved.control.attempt.worktreePath,
+      resultCommit: resolved.control.attempt.resultCommit,
+      resultTree: resolved.control.attempt.resultTree,
+      gateCommand: resolved.control.attempt.gateCommand,
+      packagedEnvironmentDigest: resolved.control.attempt.packagedEnvironmentDigest,
+      managedWorktreeBindingDigest: resolved.control.attempt.managedWorktreeBindingDigest,
+      gitReceiptLineageDigest: resolved.control.attempt.gitReceiptLineageDigest,
+      gateEvidenceDigest: dispatchPayloadDigest(resolved.gate),
+    });
+  }
+
+  async function releaseImplementationCandidateAuthority(
+    receipt: ImplementationCandidateAuthorityReceipt,
+  ): Promise<void> {
+    const release = await options.backend.transact(
+      { kind: "handle", handle: receipt.workerDispatch },
+      (store) => {
+        const row = store.read(receipt.workerDispatch);
+        if (row === undefined) throw new Error("implementation candidate release row is missing");
+        if (row.implementationQueue === undefined) {
+          throw new Error("implementation candidate release row has no queue authority");
+        }
+        if (isAttestationTombstone(row)) {
+          const control = row.implementationQueue;
+          if (
+            control.state === "released" &&
+            control.partitionKey === receipt.partitionKey &&
+            control.enrollmentId === receipt.enrollmentId &&
+            control.attemptId === receipt.attemptId &&
+            control.leaseGeneration === receipt.leaseGeneration
+          )
+            return null;
+          throw new Error("implementation candidate release tombstone does not match the receipt");
+        }
+        const control = row.implementationQueue;
+        if (
+          control.partition.partitionKey !== receipt.partitionKey ||
+          control.enrollment.enrollmentId !== receipt.enrollmentId ||
+          control.attempt.attemptId !== receipt.attemptId ||
+          control.leaseGeneration !== receipt.leaseGeneration
+        ) {
+          throw new Error("implementation candidate release coordinates changed");
+        }
+        if (control.state === "released") return null;
+        if (
+          control.state !== "leased" ||
+          control.lease?.holderId !== receipt.leaseHolderId ||
+          control.lease.generation !== receipt.leaseGeneration
+        ) {
+          throw new Error("implementation candidate release requires the exact live lease");
+        }
+        return {
+          attestationId: row.attestationId,
+          generation: row.generation,
+          partitionKey: receipt.partitionKey,
+          enrollmentId: receipt.enrollmentId,
+          attemptId: receipt.attemptId,
+          holderId: receipt.leaseHolderId,
+          leaseGeneration: receipt.leaseGeneration,
+          expectedPartitionRevision: control.partitionRevision,
+          detail: { operation: "protected-implementation-completion", taskRef: receipt.taskRef },
+        };
+      },
+    );
+    if (release !== null) await implementationCandidateQueue.release(release);
+  }
 
   const capability: DispatchCapability = {
     prepare: async (input) => {
@@ -2696,7 +2909,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         !FULL_GIT_SHA.test(resultCommit) ||
         !Array.isArray(gitReceipts)
       ) {
-        throw new Error("only a passing broker-verified worker result can enter the runnable queue");
+        throw new Error(
+          "only a passing broker-verified worker result can enter the runnable queue",
+        );
       }
       const [resultTree, integrationRef] = await Promise.all([
         readOnlyGit(binding.repositoryRoot, ["rev-parse", "--verify", `${resultCommit}^{tree}`]),
@@ -2707,33 +2922,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
       const goalRef = exactGoalRef(options.ledgerStore, binding.taskId);
-      const stagedRebaseSource = await options.backend.transact(
-        { kind: "namespace" },
-        (store) => {
-          const matches = store
-            .rows()
-            .map((candidate) => candidate.stagedRebaseSourceBinding)
-            .filter(
-              (source) =>
-                source?.successor?.attestationId === input.attestationId &&
-                source.successor.generation === input.generation,
-            );
-          if (matches.length > 1) {
-            throw new Error("implementation successor is claimed by multiple retired sources");
-          }
-          const source = matches[0];
-          return source === undefined
-            ? undefined
-            : Object.freeze({
-                sourceReference: source.sourceReference,
-                source: Object.freeze({ ...source.source }),
-                leaseGeneration: source.leaseGeneration,
-                guardedRebase: source.guardedRebase,
-                ontoCommit: source.ontoCommit,
-                guardedRebaseJournalDigest: source.guardedRebaseJournalDigest,
-              });
-        },
-      );
+      const stagedRebaseSource = await options.backend.transact({ kind: "namespace" }, (store) => {
+        const matches = store
+          .rows()
+          .map((candidate) => candidate.stagedRebaseSourceBinding)
+          .filter(
+            (source) =>
+              source?.successor?.attestationId === input.attestationId &&
+              source.successor.generation === input.generation,
+          );
+        if (matches.length > 1) {
+          throw new Error("implementation successor is claimed by multiple retired sources");
+        }
+        const source = matches[0];
+        return source === undefined
+          ? undefined
+          : Object.freeze({
+              sourceReference: source.sourceReference,
+              source: Object.freeze({ ...source.source }),
+              leaseGeneration: source.leaseGeneration,
+              guardedRebase: source.guardedRebase,
+              ontoCommit: source.ontoCommit,
+              guardedRebaseJournalDigest: source.guardedRebaseJournalDigest,
+            });
+      });
       const queue = await enqueueImplementationCandidateOn(
         options.backend,
         {
@@ -2786,9 +2998,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             inputDigest: row.promptProvenance.inputDigest,
           },
           nativeCompletion,
-          completionObservationDigest: dispatchPayloadDigest(
-            input as unknown as DispatchJSONValue,
-          ),
+          completionObservationDigest: dispatchPayloadDigest(input as unknown as DispatchJSONValue),
         },
         { now },
       );
@@ -3001,6 +3211,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (row.state === "aborted") return { state: "aborted" as const, ...base };
         return { state: "nonterminal" as const, ...base };
       }),
+    ...(options.repositoryRoot === undefined || options.ledgerStore === undefined
+      ? {}
+      : {
+          resolveImplementationCandidateAuthority,
+          releaseImplementationCandidateAuthority,
+        }),
     gitCommit: async (input) => {
       if (options.repositoryRoot === undefined) {
         throw new Error("git_commit is unavailable without a local repository root");
@@ -3203,7 +3419,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const recovery = await options.backend.transact({ kind: "namespace" }, (store) => {
           assertManagedRecoveryTipEligible(store.rows(), gitEffectBinding, liveTip);
           return discoverDispatchRecovery(
-            { namespace, actor: "trusted-parent", gitEffectBinding, liveTip }, { store, now },
+            { namespace, actor: "trusted-parent", gitEffectBinding, liveTip },
+            { store, now },
           );
         });
         return Object.freeze({
@@ -3276,9 +3493,7 @@ function available(
       ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
       ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
-      ...(implementationSuccessorLauncher === undefined
-        ? {}
-        : { implementationSuccessorLauncher }),
+      ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -3290,6 +3505,64 @@ export interface SingleProjectDispatchRuntimeOptions {
   readonly promptArtifactStore?: PromptArtifactStore;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"];
+}
+
+export interface SingleProjectImplementationCandidateAuthority {
+  resolve(input: {
+    readonly workerDispatch: { readonly attestationId: string; readonly generation: number };
+    readonly taskRef: string;
+    readonly resultCommit: string;
+  }): Promise<ImplementationCandidateAuthorityReceipt>;
+  close(): Promise<void>;
+}
+
+/** Open only the durable candidate/lease authority needed by the direct merge gate. */
+export async function createSingleProjectImplementationCandidateAuthority(input: {
+  readonly resolved: ResolvedLedgerStore;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+}): Promise<SingleProjectImplementationCandidateAuthority> {
+  const backend = assertAttestationConstructionSupported("direct", input.resolved.backend);
+  if (backend !== "xdg") {
+    throw new Error(`unsupported direct candidate authority backend: ${backend}`);
+  }
+  const projectId = loadConfig(input.resolved.configRoot)?.ledger?.projectId ?? null;
+  const namespace = await resolveSingleProjectAttestationNamespace({
+    construction: "direct",
+    backend,
+    repoRoot: input.resolved.configRoot,
+    projectId,
+  });
+  const attestationBackend = await createAttestationStoreForConstruction({
+    backend: "xdg",
+    namespace,
+    ...(input.environment === undefined ? {} : { env: input.environment }),
+  });
+  const promptArtifactStore: PromptArtifactStore = {
+    readManifest: () => {
+      throw new Error("candidate authority cannot read prompt artifacts");
+    },
+    readRole: () => {
+      throw new Error("candidate authority cannot read prompt artifacts");
+    },
+  };
+  const capability = createDispatchCapability({
+    backend: attestationBackend,
+    promptArtifactStore,
+    repositoryRoot: input.resolved.configRoot,
+    ledgerStore: input.resolved.store,
+  });
+  if (capability.resolveImplementationCandidateAuthority === undefined) {
+    await attestationBackend.close();
+    throw new Error("direct implementation candidate authority is unavailable");
+  }
+  return Object.freeze({
+    resolve: async (request: {
+      readonly workerDispatch: { readonly attestationId: string; readonly generation: number };
+      readonly taskRef: string;
+      readonly resultCommit: string;
+    }) => await capability.resolveImplementationCandidateAuthority!(request),
+    close: async () => await attestationBackend.close(),
+  });
 }
 
 /**

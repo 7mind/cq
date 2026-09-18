@@ -99,12 +99,39 @@ export interface ImplementationReviewerIdentity {
   readonly adapterId: string;
 }
 
+export interface ImplementationCandidateAuthorityReceipt {
+  readonly kind: "cq-implementation-candidate-authority";
+  readonly version: 1;
+  readonly workerDispatch: DispatchHandle;
+  readonly partitionKey: string;
+  readonly enrollmentId: string;
+  readonly attemptId: string;
+  readonly leaseHolderId: string;
+  readonly leaseGeneration: number;
+  readonly qualificationDigest: string;
+  readonly taskRef: string;
+  readonly taskDigest: string;
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly integrationRef: string;
+  readonly repositoryId: string;
+  readonly worktreePath: string;
+  readonly resultCommit: string;
+  readonly resultTree: string;
+  readonly gateCommand: string;
+  readonly packagedEnvironmentDigest: string;
+  readonly managedWorktreeBindingDigest: string;
+  readonly gitReceiptLineageDigest: string;
+  readonly gateEvidenceDigest: string;
+}
+
 export interface ImplementationReviewPanelRecord {
   readonly version: 1;
   readonly panelRef: string;
   readonly taskRef: string;
   readonly resultCommit: string;
   readonly workerDispatch: DispatchHandle;
+  readonly candidateAuthority?: ImplementationCandidateAuthorityReceipt;
   readonly rosterDigest: string;
   readonly roster: readonly ImplementationReviewerIdentity[];
   readonly attemptRefs: readonly string[];
@@ -177,6 +204,7 @@ export interface ImplementationCompletionRecord {
   readonly baseCommit: string;
   readonly startingCommit: string;
   readonly workerDispatch: DispatchHandle;
+  readonly candidateAuthority?: ImplementationCandidateAuthorityReceipt;
   readonly workerResult: DispatchJSONValue;
   readonly reviewAttemptRefs: readonly string[];
   readonly completion: string;
@@ -1558,6 +1586,14 @@ export interface ImplementationEvidenceServiceDependencies {
   /** A persisted reservation must settle after the same timeout as its shellout. */
   readonly executionReservationTimeoutMs?: number;
   readonly fetchWorker: (dispatch: DispatchHandle) => Promise<ImplementationWorkerObservation>;
+  readonly resolveCandidateAuthority?: (input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly taskRef: string;
+    readonly resultCommit: string;
+  }) => Promise<ImplementationCandidateAuthorityReceipt>;
+  readonly releaseCandidateAuthority?: (
+    receipt: ImplementationCandidateAuthorityReceipt,
+  ) => Promise<void>;
   readonly readTaskAuthority: (taskRef: string) => Promise<ImplementationTaskAuthority>;
   readonly repositoryHead: () => Promise<string>;
   /** Production Git proof used when replacing a stale prepared journal. */
@@ -2119,6 +2155,47 @@ export class ImplementationEvidenceService {
     const roster = structuredClone(this.deps.resolveReviewerRoster());
     if (roster.length === 0) throw new Error("implementation reviewer roster must not be empty");
     return roster;
+  }
+
+  private async resolveCandidateAuthority(input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly taskRef: string;
+    readonly resultCommit: string;
+  }): Promise<ImplementationCandidateAuthorityReceipt | undefined> {
+    if (this.deps.resolveCandidateAuthority === undefined) return undefined;
+    const receipt = structuredClone(await this.deps.resolveCandidateAuthority(input));
+    if (
+      receipt.kind !== "cq-implementation-candidate-authority" ||
+      receipt.version !== 1 ||
+      receipt.taskRef !== input.taskRef ||
+      receipt.resultCommit !== input.resultCommit ||
+      !sameHandle(receipt.workerDispatch, input.workerDispatch) ||
+      !Number.isSafeInteger(receipt.leaseGeneration) ||
+      receipt.leaseGeneration < 1
+    ) {
+      throw new Error("implementation candidate authority receipt does not match the review target");
+    }
+    return receipt;
+  }
+
+  private async assertPanelAuthorityCurrent(
+    panel: ImplementationReviewPanelRecord,
+  ): Promise<void> {
+    if (digest(this.reviewerRoster()) !== panel.rosterDigest) {
+      throw new Error("implementation reviewer roster changed after panel preparation");
+    }
+    if (this.deps.resolveCandidateAuthority === undefined) return;
+    if (panel.candidateAuthority === undefined) {
+      throw new Error("implementation review panel lacks candidate-layer authority");
+    }
+    const current = await this.resolveCandidateAuthority({
+      workerDispatch: panel.workerDispatch,
+      taskRef: panel.taskRef,
+      resultCommit: panel.resultCommit,
+    });
+    if (canonical(current) !== canonical(panel.candidateAuthority)) {
+      throw new Error("implementation candidate authority changed after panel preparation");
+    }
   }
 
   private auditRoster(): readonly ImplementationReviewerIdentity[] {
@@ -4157,9 +4234,10 @@ export class ImplementationEvidenceService {
     assertOperationId(input.operationId);
     taskIdFromRef(input.taskRef);
     assertFullSha(input.resultCommit, "result_commit");
+    const candidateAuthority = await this.resolveCandidateAuthority(input);
     const roster = this.reviewerRoster();
     const rosterDigest = digest(roster);
-    const request = { ...input, roster };
+    const request = { ...input, roster, candidateAuthority: candidateAuthority ?? null };
     const requestDigest = digest(request);
     const panelRef = opaqueRef("cq-implementation-review-panel", request);
     const attemptRefs = roster.map((identity, position) =>
@@ -4188,6 +4266,7 @@ export class ImplementationEvidenceService {
         taskRef: input.taskRef,
         resultCommit: input.resultCommit,
         workerDispatch: structuredClone(input.workerDispatch),
+        ...(candidateAuthority === undefined ? {} : { candidateAuthority }),
         rosterDigest,
         roster,
         attemptRefs,
@@ -4302,37 +4381,6 @@ export class ImplementationEvidenceService {
     return !Number.isFinite(expiresAt) || !Number.isFinite(now) || now >= expiresAt;
   }
 
-  private async recoverExpiredExternalReviewExecution(attemptRef: string): Promise<string | null> {
-    return await this.deps.store[mutateEvidence](async (state) => {
-      const current = state.attempts[attemptRef];
-      if (
-        current === undefined ||
-        current.execution !== null ||
-        current.executionReservation === null ||
-        current.executionReservation === undefined ||
-        !this.reservationExpired(current.executionReservation)
-      ) {
-        return null;
-      }
-      const execution: ExternalImplementationReviewExecution = {
-        executionRef: current.executionReservation.executionRef,
-        adapterIdentity: current.identity.adapterId,
-        stdout: "",
-        stderr: "",
-        exitCode: null,
-        parseResult: {
-          kind: "operational-abstention",
-          reason: "unavailable",
-          detail:
-            "external review execution reservation expired before an execution receipt was recorded",
-        },
-        executedAt: this.now(),
-      };
-      state.attempts[attemptRef] = { ...current, execution };
-      return execution.executionRef;
-    });
-  }
-
   async executeExternalReviewAttempt(input: ExecuteExternalImplementationReviewAttemptInput) {
     assertOperationId(input.operationId);
     const snapshot = await this.deps.store.snapshot();
@@ -4344,20 +4392,12 @@ export class ImplementationEvidenceService {
     const panel = snapshot.panels[attempt.panelRef];
     if (panel === undefined) throw new Error("review panel is missing");
     const requestDigest = digest(input);
-    const expiredExecutionRef = await this.recoverExpiredExternalReviewExecution(input.attemptRef);
-    if (expiredExecutionRef !== null) {
-      return {
-        status: "existing" as const,
-        attemptRef: attempt.attemptRef,
-        executionRef: expiredExecutionRef,
-      };
-    }
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
       if (attempt.execution === null) {
         if (attempt.executionReservation === null || attempt.executionReservation === undefined)
           throw new Error("external review replay has no durable execution reservation");
         return {
-          status: "existing" as const,
+          status: "pending" as const,
           attemptRef: attempt.attemptRef,
           executionRef: attempt.executionReservation.executionRef,
         };
@@ -4382,6 +4422,7 @@ export class ImplementationEvidenceService {
         if (current.executionReservation !== null && current.executionReservation !== undefined) {
           return {
             existing: true as const,
+            pending: true as const,
             executionRef: current.executionReservation.executionRef,
           };
         }
@@ -4420,7 +4461,9 @@ export class ImplementationEvidenceService {
     });
     if (reservation.existing) {
       return {
-        status: "existing" as const,
+        status: ("pending" in reservation && reservation.pending ? "pending" : "existing") as
+          | "pending"
+          | "existing",
         attemptRef: attempt.attemptRef,
         executionRef: reservation.executionRef,
       };
@@ -4506,6 +4549,9 @@ export class ImplementationEvidenceService {
     const snapshot = await this.deps.store.snapshot();
     const attempt = snapshot.attempts[input.attemptRef];
     if (attempt === undefined) throw new Error("implementation review attempt is missing");
+    const panel = snapshot.panels[attempt.panelRef];
+    if (panel === undefined) throw new Error("review panel is missing");
+    await this.assertPanelAuthorityCurrent(panel);
     const requestDigest = digest(input);
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
       if (attempt.terminalState === null)
@@ -4519,8 +4565,19 @@ export class ImplementationEvidenceService {
     }
     let verdict: DispatchJSONValue | null = null;
     let retainedAttestation: string | null = null;
-    const panel = snapshot.panels[attempt.panelRef];
-    if (panel === undefined) throw new Error("review panel is missing");
+    if (
+      attempt.identity.launch === "adapter" &&
+      attempt.execution === null &&
+      attempt.executionReservation !== null &&
+      attempt.executionReservation !== undefined
+    ) {
+      return {
+        status: "pending" as const,
+        attemptRef: attempt.attemptRef,
+        executionRef: attempt.executionReservation.executionRef,
+        reservationExpired: this.reservationExpired(attempt.executionReservation),
+      };
+    }
     const worker = await this.deps.fetchWorker(panel.workerDispatch);
     if (attempt.identity.launch === "native") {
       if (attempt.preparedDispatch === null)
@@ -4708,6 +4765,7 @@ export class ImplementationEvidenceService {
       !sameHandle(panel.workerDispatch, input.workerDispatch)
     )
       throw new Error("review panel does not match task, result, and worker dispatch");
+    await this.assertPanelAuthorityCurrent(panel);
     const expectedAttempts = [
       ...panel.attemptRefs,
       ...(panel.fallbackAttemptRef === null ? [] : [panel.fallbackAttemptRef]),
@@ -4748,6 +4806,7 @@ export class ImplementationEvidenceService {
       baseCommit: verification.baseCommit,
       startingCommit: verification.startingCommit,
       workerDispatch: input.workerDispatch,
+      candidateAuthority: panel.candidateAuthority ?? null,
       workerResult,
       reviewAttemptRefs: input.reviewAttemptRefs,
       attempts: boundAttempts.map((attempt) => ({
@@ -4820,6 +4879,9 @@ export class ImplementationEvidenceService {
         baseCommit: verification.baseCommit,
         startingCommit: verification.startingCommit,
         workerDispatch: structuredClone(input.workerDispatch),
+        ...(panel.candidateAuthority === undefined
+          ? {}
+          : { candidateAuthority: structuredClone(panel.candidateAuthority) }),
         workerResult,
         reviewAttemptRefs: [...input.reviewAttemptRefs],
         completion: input.completion,
@@ -4864,11 +4926,26 @@ export class ImplementationEvidenceService {
     binding: MergeEffectBinding,
     observedHead: string,
   ): Promise<ImplementationCompletionRecord> {
-    return await assertImplementationCompletionMergeAdmission(
+    const completion = await assertImplementationCompletionMergeAdmission(
       this.deps.store,
       binding,
       observedHead,
     );
+    if (observedHead === completion.repositoryHead && this.deps.resolveCandidateAuthority !== undefined) {
+      if (completion.candidateAuthority === undefined) {
+        throw new Error("completion lacks candidate-layer authority");
+      }
+      const snapshot = await this.deps.store.snapshot();
+      const firstAttempt = snapshot.attempts[completion.reviewAttemptRefs[0]!];
+      if (firstAttempt === undefined) throw new Error("completion review attempt is missing");
+      const panel = snapshot.panels[firstAttempt.panelRef];
+      if (panel === undefined) throw new Error("completion review panel is missing");
+      await this.assertPanelAuthorityCurrent(panel);
+      if (canonical(panel.candidateAuthority) !== canonical(completion.candidateAuthority)) {
+        throw new Error("completion candidate authority differs from its review panel");
+      }
+    }
+    return completion;
   }
 
   async markMergeStarted(completionRef: string, observedHead: string): Promise<void> {
@@ -5034,6 +5111,7 @@ export class ImplementationEvidenceService {
       baseCommit: verification.baseCommit,
       startingCommit: verification.startingCommit,
       workerDispatch: completion.workerDispatch,
+      candidateAuthority: completion.candidateAuthority ?? null,
       workerResult: worker.output,
       reviewAttemptRefs: completion.reviewAttemptRefs,
       attempts: boundAttempts.map((attempt) => ({
@@ -5164,6 +5242,12 @@ export class ImplementationEvidenceService {
     const recorded = taskCompletions.filter((entry) => entry.state === "recorded");
     if (active.length === 0 && recorded.length === 1) {
       const completion = recorded[0]!;
+      if (
+        completion.candidateAuthority !== undefined &&
+        this.deps.releaseCandidateAuthority !== undefined
+      ) {
+        await this.deps.releaseCandidateAuthority(completion.candidateAuthority);
+      }
       return {
         status: "existing" as const,
         completionRef: completion.completionRef,
@@ -5286,6 +5370,14 @@ export class ImplementationEvidenceService {
         repositoryHead: recorded.resultCommit,
         evidenceFingerprint: recorded.evidenceFingerprint,
       };
+    }).then(async (result) => {
+      if (
+        completion.candidateAuthority !== undefined &&
+        this.deps.releaseCandidateAuthority !== undefined
+      ) {
+        await this.deps.releaseCandidateAuthority(completion.candidateAuthority);
+      }
+      return result;
     });
   }
 }
@@ -5632,6 +5724,9 @@ export interface ImplementationCompletionMergeAdmissionProviderOptions {
   readonly store: ImplementationEvidenceStore;
   readonly binding: MergeEffectBinding;
   readonly repositoryHead: () => Promise<string>;
+  readonly authorizeCandidate?: (
+    receipt: ImplementationCandidateAuthorityReceipt,
+  ) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -5650,6 +5745,18 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
     options.binding,
     validatedHead,
   );
+  const authorizeCandidate = async (): Promise<void> => {
+    if (validatedHead !== validatedCompletion.repositoryHead) return;
+    if (options.authorizeCandidate === undefined) {
+      if (validatedCompletion.candidateAuthority !== undefined) {
+        throw new Error("candidate-layer merge authorization is unavailable");
+      }
+      return;
+    }
+    if (validatedCompletion.candidateAuthority === undefined) return;
+    await options.authorizeCandidate(validatedCompletion.candidateAuthority);
+  };
+  await authorizeCandidate();
   const preparationAlreadyDurable =
     (validatedCompletion.state === "merge-started" &&
       validatedHead === validatedCompletion.repositoryHead) ||
@@ -5685,6 +5792,7 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
         );
         if (observedHead !== validatedHead)
           throw new Error("repository HEAD changed after durable merge-started preparation");
+        await awaitBeforeLaunchDeadline(authorizeCandidate(), deadline, "candidate merge authorization");
         await Promise.resolve(underlying.prepareGuardianShare?.(guardian, deadline));
         mergePrepared = true;
       };

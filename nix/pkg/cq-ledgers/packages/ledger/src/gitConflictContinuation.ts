@@ -188,6 +188,8 @@ function trustedGitEnvironment(): NodeJS.ProcessEnv {
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_COMMITTER_NAME: "cq conflict continuation",
+    GIT_COMMITTER_EMAIL: "cq-conflict-continuation@example.invalid",
     GIT_EDITOR: "true",
     GIT_SEQUENCE_EDITOR: "true",
     GIT_MERGE_AUTOEDIT: "no",

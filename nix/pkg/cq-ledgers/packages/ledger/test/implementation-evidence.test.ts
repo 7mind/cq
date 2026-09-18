@@ -25,6 +25,7 @@ import {
   recordProtectedImplementationCompletion,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationEvidenceStore,
+  type ImplementationCandidateAuthorityReceipt,
   type ImplementationReviewerIdentity,
 } from "../src/index.js";
 
@@ -39,6 +40,37 @@ const reviewer: ImplementationReviewerIdentity = {
   launch: "native",
   adapterId: "codex:native",
 };
+
+function candidateAuthority(
+  overrides: Partial<ImplementationCandidateAuthorityReceipt> = {},
+): ImplementationCandidateAuthorityReceipt {
+  return {
+    kind: "cq-implementation-candidate-authority",
+    version: 1,
+    workerDispatch: WORKER,
+    partitionKey: "cq-implementation-partition:v1:" + "1".repeat(64),
+    enrollmentId: "cq-implementation-enrollment:v1:" + "2".repeat(64),
+    attemptId: "cq-implementation-attempt:v1:" + "3".repeat(64),
+    leaseHolderId: "protected-completion",
+    leaseGeneration: 1,
+    qualificationDigest: "4".repeat(64),
+    taskRef: "tasks:T2345",
+    taskDigest: "5".repeat(64),
+    goalRef: "goals:G1",
+    finalizedManifestDigest: "6".repeat(64),
+    integrationRef: "refs/heads/main",
+    repositoryId: "7".repeat(64),
+    worktreePath: "/repo/.claude/worktrees/T2345",
+    resultCommit: RESULT,
+    resultTree: "8".repeat(40),
+    gateCommand: "bun run check",
+    packagedEnvironmentDigest: "9".repeat(64),
+    managedWorktreeBindingDigest: "a".repeat(64),
+    gitReceiptLineageDigest: "b".repeat(64),
+    gateEvidenceDigest: "c".repeat(64),
+    ...overrides,
+  };
+}
 
 function prepared(attemptRef: string): DispatchPrepared {
   return {
@@ -84,13 +116,18 @@ function approvedVerdict() {
 
 async function fixture(
   evidence: ImplementationEvidenceStore = createInMemoryImplementationEvidenceStore(),
+  options: {
+    readonly reviewerRoster?: () => readonly ImplementationReviewerIdentity[];
+    readonly resolveCandidateAuthority?: () => ImplementationCandidateAuthorityReceipt;
+  } = {},
 ) {
   let head = BASE;
   let ledgerWrites = 0;
   let verificationClean = true;
+  let candidateReleaseCount = 0;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: evidence,
-    resolveReviewerRoster: () => [reviewer],
+    resolveReviewerRoster: options.reviewerRoster ?? (() => [reviewer]),
     nativeFallback: reviewer,
     now: () => "2026-08-24T00:00:00.000Z",
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),
@@ -121,6 +158,14 @@ async function fixture(
         supervisedGateEvidence: { gateExitCode: 0, passCount: 1, failCount: 0 },
       },
     }),
+    ...(options.resolveCandidateAuthority === undefined
+      ? {}
+      : {
+          resolveCandidateAuthority: async () => options.resolveCandidateAuthority!(),
+          releaseCandidateAuthority: async () => {
+            candidateReleaseCount += 1;
+          },
+        }),
     readTaskAuthority: async () => ({
       taskRef: "tasks:T2345",
       ownerGoalRef: "goals:G1",
@@ -171,6 +216,7 @@ async function fixture(
       verificationClean = value;
     },
     getLedgerWrites: () => ledgerWrites,
+    getCandidateReleaseCount: () => candidateReleaseCount,
   };
 }
 
@@ -211,6 +257,98 @@ function ignoredBootstrap(specification: RegisteredLaunchBootstrapSpecification<
 }
 
 describe("versioned protected implementation evidence [BG]", () => {
+  test("fences review and merge with the current candidate receipt, then recovers post-merge completion", async () => {
+    let roster: readonly ImplementationReviewerIdentity[] = [reviewer];
+    let authority = candidateAuthority();
+    const f = await fixture(createInMemoryImplementationEvidenceStore(), {
+      reviewerRoster: () => roster,
+      resolveCandidateAuthority: () => authority,
+    });
+    const completionInput = {
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [] as string[],
+      mergeOperationId: "merge-candidate-fence",
+      operationId: "completion-candidate-fence",
+      author: "parent",
+    } as const;
+
+    roster = [{ ...reviewer, model: "changed-reviewer" }];
+    await expect(f.service.prepareCompletion(completionInput)).rejects.toThrow(
+      "reviewer roster changed",
+    );
+    roster = [reviewer];
+    authority = candidateAuthority({ leaseGeneration: 2 });
+    await expect(f.service.prepareCompletion(completionInput)).rejects.toThrow(
+      "candidate authority changed",
+    );
+    authority = candidateAuthority();
+    const completion = await f.service.prepareCompletion(completionInput);
+    const binding = {
+      kind: "merge" as const,
+      targetRef: "tasks:T2345",
+      repositoryRoot: "/repo",
+      commit: RESULT,
+      completionRef: completion.completionRef,
+      mergeOperationId: completionInput.mergeOperationId,
+    };
+    authority = candidateAuthority({ managedWorktreeBindingDigest: "d".repeat(64) });
+    await expect(f.service.assertMergeAdmission(binding, BASE)).rejects.toThrow(
+      "candidate authority changed",
+    );
+    authority = candidateAuthority();
+    await expect(f.service.assertMergeAdmission(binding, BASE)).resolves.toMatchObject({
+      completionRef: completion.completionRef,
+      state: "prepared",
+    });
+
+    const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const provider = await implementationCompletionMergeAdmissionProviderFromStore({
+      provider: underlying,
+      store: f.evidence,
+      binding,
+      repositoryHead: async () => f.getHead(),
+      authorizeCandidate: async (receipt) => {
+        if (JSON.stringify(receipt) !== JSON.stringify(authority)) {
+          throw new Error("candidate authority changed at merge authorization");
+        }
+      },
+    });
+    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+    await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
+    authority = candidateAuthority({ leaseGeneration: 3 });
+    await expect(
+      admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 }),
+    ).rejects.toThrow("candidate authority changed at merge authorization");
+    authority = candidateAuthority();
+    await admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });
+    f.setHead(RESULT);
+    await admission.markSettled();
+    await admission.releaseAfterSettlement();
+    authority = candidateAuthority({ leaseGeneration: 3 });
+    await expect(
+      f.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-candidate-fence",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "recorded" });
+    await expect(
+      f.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-candidate-fence-replay",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "existing" });
+    expect(f.getCandidateReleaseCount()).toBe(2);
+  });
+
   test("binds complete ordered review evidence before merge and records after durable merge", async () => {
     const f = await fixture();
     const completion = await f.service.prepareCompletion({
@@ -616,9 +754,7 @@ describe("versioned protected implementation evidence [BG]", () => {
           return reads === 2 ? "c".repeat(40) : BASE;
         },
       }),
-    ).rejects.toThrow(
-      "repository HEAD changed during durable merge-started preparation",
-    );
+    ).rejects.toThrow("repository HEAD changed during durable merge-started preparation");
     expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
       "merge-started",
     );

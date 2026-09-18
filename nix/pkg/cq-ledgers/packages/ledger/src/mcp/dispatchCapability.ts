@@ -26,6 +26,7 @@ import type {
   GitConflictResolution,
   GitRebaseConflictState,
 } from "../gitConflictContinuation.js";
+import type { ImplementationCandidateAuthorityReceipt } from "../implementationEvidence.js";
 
 export interface PrepareDispatchToolInput {
   readonly roleId?: string;
@@ -110,8 +111,7 @@ export interface CoordinateImplementationCandidateHandleInput extends DispatchHa
 }
 
 export type CoordinateImplementationCandidateInput =
-  | CoordinateImplementationCandidatePartitionInput
-  | CoordinateImplementationCandidateHandleInput;
+  CoordinateImplementationCandidatePartitionInput | CoordinateImplementationCandidateHandleInput;
 
 export type CoordinateImplementationCandidateOutcome =
   | AcquireImplementationCandidateOutcome
@@ -209,6 +209,14 @@ export interface DispatchCapability {
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
   /** Trusted non-materializing observation used only by protected completion evidence. */
   observeEvidence?(input: DispatchHandle): Promise<DispatchEvidenceObservation>;
+  resolveImplementationCandidateAuthority?(input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly taskRef: string;
+    readonly resultCommit: string;
+  }): Promise<ImplementationCandidateAuthorityReceipt>;
+  releaseImplementationCandidateAuthority?(
+    receipt: ImplementationCandidateAuthorityReceipt,
+  ): Promise<void>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
   gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;
   observeWorktreeActivity?(worktreePath: string): Promise<DispatchWorktreeActivityObservation>;

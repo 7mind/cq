@@ -132,6 +132,7 @@ import {
 export {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
+  createSingleProjectImplementationCandidateAuthority,
   createPostgresHubDispatchRuntime,
   createSingleProjectDispatchRuntime,
   refuseDispatchRuntime,
@@ -139,6 +140,7 @@ export {
 export type {
   DispatchRuntime,
   PostgresHubDispatchRuntimeOptions,
+  SingleProjectImplementationCandidateAuthority,
   SingleProjectDispatchRuntimeOptions,
 } from "./dispatchCapability.js";
 export {

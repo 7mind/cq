@@ -2358,7 +2358,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           terminalState: "approved",
           outcome: { kind: "verdict" },
         });
-        if (finalizedReview.outcome.kind !== "verdict")
+        if (finalizedReview.status !== "recorded" || finalizedReview.outcome?.kind !== "verdict")
           throw new Error("approved review omitted its validated verdict outcome");
         expect(JSON.stringify(finalizedReview.outcome.verdict)).toBe(
           JSON.stringify(round2Review.consumed.output),

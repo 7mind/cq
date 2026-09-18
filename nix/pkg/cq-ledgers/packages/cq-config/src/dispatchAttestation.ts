@@ -4065,21 +4065,23 @@ export function confirmDispatchCompletion(
     terminalDigest,
     ...(row.implementationQueue === undefined
       ? {}
-      : {
-          implementationQueue: Object.freeze({
-            ...queueControlWithoutLease(row.implementationQueue),
-            state: "released" as const,
-            partitionRevision: nextImplementationQueuePartitionRevision(
-              deps.store,
-              row.implementationQueue.partition.partitionKey,
-            ),
-            terminal: Object.freeze({
-              reason: "gate-complete" as const,
-              terminalAt: at,
-              detailsDigest: dispatchPayloadDigest({ outputDigest: row.outputDigest }),
+      : row.implementationQueue.state === "leased" && row.implementationQueue.lease !== undefined
+        ? {
+            implementationQueue: Object.freeze({
+              ...row.implementationQueue,
+              partitionRevision: nextImplementationQueuePartitionRevision(
+                deps.store,
+                row.implementationQueue.partition.partitionKey,
+              ),
             }),
-          }),
-        }),
+          }
+        : (() => {
+            throw new DispatchStateConflictError(
+              CONFIRM,
+              row.state,
+              "queued completion requires its exact live implementation queue lease",
+            );
+          })()),
     ...(continuationBinding === undefined
       ? {}
       : { dispatchContinuationBinding: continuationBinding }),

@@ -18,6 +18,10 @@ import {
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
 import { runWorksetGitEffectGate, type WorksetGitEffectBinding } from "@cq/process-control";
+import {
+  createSingleProjectImplementationCandidateAuthority,
+  type SingleProjectImplementationCandidateAuthority,
+} from "@cq/ledger-mcp";
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const TASK_ID = /^T[0-9]+$/u;
@@ -204,6 +208,7 @@ export async function runGateGitEffect(
     }
   }
   const resolved = await createManagementLedgerStore(request.cwd);
+  let candidateAuthority: SingleProjectImplementationCandidateAuthority | undefined;
   try {
     const repository = await repositoryRoot(request.cwd);
     if (request.operation === "rebase" && request.operationId !== undefined) {
@@ -250,13 +255,29 @@ export async function runGateGitEffect(
     }
     const provider =
       request.operation === "merge"
-        ? await implementationCompletionMergeAdmissionProviderFromStore({
-            provider: ordinaryProvider,
-            store: resolved.implementationEvidenceStore!,
-            binding: expected as Extract<WorksetGitEffectBinding, { readonly kind: "merge" }>,
-            repositoryHead: async () =>
-              await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD"),
-          })
+        ? await (async () => {
+            candidateAuthority = await createSingleProjectImplementationCandidateAuthority({
+              resolved,
+              environment: process.env,
+            });
+            return await implementationCompletionMergeAdmissionProviderFromStore({
+              provider: ordinaryProvider,
+              store: resolved.implementationEvidenceStore!,
+              binding: expected as Extract<WorksetGitEffectBinding, { readonly kind: "merge" }>,
+              repositoryHead: async () =>
+                await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD"),
+              authorizeCandidate: async (receipt) => {
+                const current = await candidateAuthority!.resolve({
+                  workerDispatch: receipt.workerDispatch,
+                  taskRef: receipt.taskRef,
+                  resultCommit: receipt.resultCommit,
+                });
+                if (JSON.stringify(current) !== JSON.stringify(receipt)) {
+                  throw new Error("cq gate git-effect: implementation candidate authority changed");
+                }
+              },
+            });
+          })()
         : ordinaryProvider;
     const result = await runWorksetGitEffectGate({
       expected,
@@ -276,6 +297,10 @@ export async function runGateGitEffect(
     }
     return { exitCode: result.code };
   } finally {
-    await resolved.store.dispose();
+    try {
+      await candidateAuthority?.close();
+    } finally {
+      await resolved.store.dispose();
+    }
   }
 }

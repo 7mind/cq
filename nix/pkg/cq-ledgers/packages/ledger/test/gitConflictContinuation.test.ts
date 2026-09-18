@@ -160,6 +160,60 @@ afterAll(async () => {
 });
 
 describe("continueManagedWorktreeRebase", () => {
+  test("preserves authorship and supplies a trusted committer without repository-local identity", async () => {
+    const fixture = await seed();
+    await git(fixture.worktreePath, ["config", "--unset", "user.name"]);
+    await git(fixture.worktreePath, ["config", "--unset", "user.email"]);
+    const firstState = await observeManagedRebaseConflict(fixture.authorization, {
+      stateDir: fixture.stateDir,
+    });
+    const authorization = {
+      ...fixture.authorization,
+      conflictStateDigest: gitRebaseConflictStateDigest(firstState),
+    };
+    await fs.writeFile(path.join(fixture.worktreePath, "a.txt"), "base changed a + task a\n");
+    const first = await continueManagedWorktreeRebase(
+      {
+        authorization,
+        operationId: "T2043-global-only-identity-1",
+        expectedState: firstState,
+        resolutions: [
+          {
+            kind: "regular",
+            path: "a.txt",
+            newState: { mode: "100644", digest: digest("base changed a + task a\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: async () => {} },
+    );
+    if (first.outcome.kind !== "conflict") throw new Error("expected second conflict");
+    await fs.writeFile(path.join(fixture.worktreePath, "b.txt"), "base changed b + task b\n");
+    const second = await continueManagedWorktreeRebase(
+      {
+        authorization,
+        operationId: "T2043-global-only-identity-2",
+        expectedState: first.outcome.state,
+        resolutions: [
+          {
+            kind: "regular",
+            path: "b.txt",
+            newState: { mode: "100644", digest: digest("base changed b + task b\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: async () => {} },
+    );
+
+    expect(second.outcome).toEqual({ kind: "terminal", tip: second.newHead });
+    expect(await git(fixture.worktreePath, ["show", "-s", "--format=%an <%ae>", "HEAD"])).toBe(
+      "T2043 <t2043@example.invalid>",
+    );
+    expect(await git(fixture.worktreePath, ["show", "-s", "--format=%cn <%ce>", "HEAD"])).toBe(
+      "cq conflict continuation <cq-conflict-continuation@example.invalid>",
+    );
+  });
+
   test("continues one marker-free resolution at a time and durably replays each receipt", async () => {
     const fixture = await seed();
     const authorize = async () => {};

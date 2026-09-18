@@ -375,7 +375,7 @@ function receiptClosuresEqual(
   );
 }
 
-function taskSpecificationDigest(input: unknown): string {
+export function currentRecoveryTaskSpecificationDigest(input: unknown): string {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new CurrentRecoverySealError("journal-conflict", "recovery task specification is absent");
   }
@@ -578,7 +578,7 @@ async function assertLegacyCommittedMigration(
     selectedRow,
     coordinates.binding,
   );
-  if (taskSpecificationDigest(identityInput) !== expectedTaskSpecificationDigest) {
+  if (currentRecoveryTaskSpecificationDigest(identityInput) !== expectedTaskSpecificationDigest) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
       "pre-scheme recovery task specification differs from the current finalized task",
@@ -734,7 +734,7 @@ async function journalSuccessorSource(
     }
     if (
       coordinates.taskSpecificationDigest === undefined ||
-      taskSpecificationDigest(input) !== coordinates.taskSpecificationDigest
+      currentRecoveryTaskSpecificationDigest(input) !== coordinates.taskSpecificationDigest
     ) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
@@ -1206,7 +1206,7 @@ export function currentRecoveryTaskEvidence(
   return {
     taskIdentityScheme: CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
     taskDigest: dispatchPayloadDigest(taskIdentity as unknown as DispatchJSONValue),
-    taskSpecificationDigest: taskSpecificationDigest(taskSpecification),
+    taskSpecificationDigest: currentRecoveryTaskSpecificationDigest(taskSpecification),
     finalizedManifestDigest: dispatchPayloadDigest(decodedManifest),
   };
 }

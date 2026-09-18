@@ -831,6 +831,18 @@ export function createProductionImplementationEvidenceService(
       }
       return { state: observation.state === "aborted" ? "aborted" : "missing" };
     },
+    ...(options.dispatchCapability.resolveImplementationCandidateAuthority === undefined
+      ? {}
+      : {
+          resolveCandidateAuthority: async (input) =>
+            await options.dispatchCapability.resolveImplementationCandidateAuthority!(input),
+        }),
+    ...(options.dispatchCapability.releaseImplementationCandidateAuthority === undefined
+      ? {}
+      : {
+          releaseCandidateAuthority: async (receipt) =>
+            await options.dispatchCapability.releaseImplementationCandidateAuthority!(receipt),
+        }),
     readTaskAuthority: async (taskRef) => {
       const taskId = taskRef.slice("tasks:".length);
       const task = await resolveUniqueTaskState(store, taskId);
