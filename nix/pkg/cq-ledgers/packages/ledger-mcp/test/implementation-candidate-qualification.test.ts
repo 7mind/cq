@@ -324,13 +324,22 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
     {
       label: "substituted registered run",
       expectedRunId: "foreign-parent-run",
+      outcome: "completed",
       exitStatus: 0,
       reason: "protocol-violation",
     },
     {
       label: "completed nonzero exit",
       expectedRunId: undefined,
+      outcome: "completed",
       exitStatus: 17,
+      reason: "native-failure",
+    },
+    {
+      label: "transport-failed terminal observation",
+      expectedRunId: undefined,
+      outcome: "transport-failed",
+      exitStatus: 0,
       reason: "native-failure",
     },
   ] as const) {
@@ -345,7 +354,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
         correlationId: subject.correlationId,
         childThreadId: `generated-${crypto.randomUUID()}`,
         expectedRunId: observation.expectedRunId ?? subject.expectedChild.runId,
-        outcome: "completed",
+        outcome: observation.outcome,
         exitStatus: observation.exitStatus,
         observedAt: subject.clock.now(),
         promptDigest: "5".repeat(64),
