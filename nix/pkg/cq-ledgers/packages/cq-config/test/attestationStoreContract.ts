@@ -77,15 +77,19 @@ import {
   invalidOutputDetailsOf,
   isAttestationTombstone,
   prepareDispatchOn,
+  parkImplementationCandidateOn,
   provenanceBindingOf,
   qualifyDispatchStagedCompletionOn,
   recoverImplementationCandidateOn,
+  releaseImplementationCandidateOn,
   resultCapabilityHash,
   resolveDispatchRecoveryOn,
+  resumeImplementationCandidateOn,
   retireDispatchStagedRebaseSourceOn,
   storeDispatchResultOn,
   sweepAttestationsOn,
   terminalizeImplementationCandidateOn,
+  yieldImplementationCandidateOn,
   type AbortDispatchRequest,
   type AttestationBackend,
   type AttestationNamespace,
@@ -866,6 +870,257 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           },
         });
       }));
+
+    // regression: T6519 round 21 — a current partition revision previously let
+    // an older parked/yielded enrollment resume across a later live lease.
+    for (const disposition of ["park", "yield"] as const) {
+      test(`${disposition} resume preserves the partition's single live lease across peers and restart`, () =>
+        withCase(async ({ fixture, driver, clock }) => {
+          const stage = async (
+            idempotencyKey: string,
+            goalRef: string,
+            finalizedManifestDigest: string,
+          ) => {
+            const prepared = await driver.prepare({
+              surface: "codex",
+              gitEffectBinding: PARENT_GATE_BINDING,
+              idempotencyKey,
+            });
+            await driver.fetchInput(prepared);
+            const staged = await driver.store(
+              prepared.resultCapability,
+              PARENT_GATE_STAGED_OUTPUT,
+            );
+            if (staged.state !== "gate-pending") throw new Error("expected gate-pending staging");
+            const queued = await enqueueImplementationCandidateOn(
+              driver.backend,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                ...handleOf(prepared),
+                repositoryId: PARENT_GATE_BINDING.repositoryId,
+                integrationRef: "refs/heads/main",
+                authority: {
+                  taskId: "T720",
+                  goalRef,
+                  finalizedManifestDigest,
+                },
+                observedBaseCommit: PARENT_GATE_BINDING.baseCommit,
+                resultCommit: "b".repeat(40),
+                resultTree: "8".repeat(40),
+                gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+                packagedEnvironmentDigest: "9".repeat(64),
+                gitReceipts: [],
+                gitEffectBinding: PARENT_GATE_BINDING,
+                stagedOutputDigest: staged.result.outputDigest,
+              },
+              { now: clock.now },
+            );
+            const qualified = await qualifyDispatchStagedCompletionOn(
+              driver.backend,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                ...handleOf(prepared),
+                partitionKey: queued.partition.partitionKey,
+                enrollmentId: queued.enrollment.enrollmentId,
+                attemptId: queued.attempt.attemptId,
+                stagedOutputDigest: staged.result.outputDigest,
+                expectedChild: CHILD,
+                expectedProvenance: provenanceBindingOf(prepared),
+                nativeCompletion: completion(),
+              },
+              { now: clock.now },
+            );
+            if (qualified.state !== "qualified") throw new Error("expected qualification");
+            return { prepared, queued, qualification: qualified.qualification };
+          };
+
+          const first = await stage(
+            `lease-invariant-${disposition}-first`,
+            "goals:G94",
+            "7".repeat(64),
+          );
+          const second = await stage(
+            `lease-invariant-${disposition}-second`,
+            "goals:G95",
+            "6".repeat(64),
+          );
+          const firstLease = await acquireImplementationCandidateOn(
+            driver.backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              partitionKey: first.queued.partition.partitionKey,
+              holderId: `${disposition}-first-holder`,
+            },
+            { now: clock.now },
+          );
+          if (firstLease.state !== "leased") throw new Error("expected first lease");
+          const defer =
+            disposition === "park"
+              ? parkImplementationCandidateOn
+              : yieldImplementationCandidateOn;
+          const deferred = await defer(
+            driver.backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...firstLease.lease,
+              expectedPartitionRevision: firstLease.partitionRevision,
+              detail: { disposition },
+            },
+            { now: clock.now },
+          );
+          const peer = await fixture.peer();
+          const secondLease = await acquireImplementationCandidateOn(
+            peer,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              partitionKey: first.queued.partition.partitionKey,
+              holderId: `${disposition}-second-holder`,
+            },
+            { now: clock.now },
+          );
+          if (secondLease.state !== "leased") throw new Error("expected second lease");
+          const restarted = await fixture.restart();
+
+          await expect(
+            resumeImplementationCandidateOn(
+              restarted,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                ...firstLease.lease,
+                expectedPartitionRevision: deferred.partitionRevision,
+                detail: { authority: "stale-revision" },
+              },
+              { now: clock.now },
+            ),
+          ).rejects.toMatchObject({ reason: "partition-revision" });
+          await expect(
+            resumeImplementationCandidateOn(
+              restarted,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                ...firstLease.lease,
+                leaseGeneration: firstLease.lease.leaseGeneration + 1,
+                expectedPartitionRevision: secondLease.partitionRevision,
+                detail: { authority: "stale-generation" },
+              },
+              { now: clock.now },
+            ),
+          ).rejects.toMatchObject({ reason: "stale-lease" });
+          await expect(
+            resumeImplementationCandidateOn(
+              restarted,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                ...firstLease.lease,
+                expectedPartitionRevision: secondLease.partitionRevision,
+                detail: { authority: "current" },
+              },
+              { now: clock.now },
+            ),
+          ).rejects.toMatchObject({ reason: "not-front" });
+
+          expect(
+            await acquireImplementationCandidateOn(
+              restarted,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                partitionKey: first.queued.partition.partitionKey,
+                holderId: `${disposition}-would-be-second-holder`,
+              },
+              { now: clock.now },
+            ),
+          ).toMatchObject({
+            state: "blocked",
+            front: handleOf(second.prepared),
+            frontState: "leased",
+          });
+          const whileLeased = await restarted.transact({ kind: "namespace" }, (store) =>
+            store
+              .rows()
+              .filter(
+                (row) =>
+                  row.implementationQueue !== undefined &&
+                  "partition" in row.implementationQueue &&
+                  row.implementationQueue.partition.partitionKey ===
+                    first.queued.partition.partitionKey,
+              ),
+          );
+          expect(
+            whileLeased.filter((row) => row.implementationQueue?.state === "leased"),
+          ).toHaveLength(1);
+          expect(
+            whileLeased.find((row) => row.attestationId === first.prepared.attestationId)
+              ?.implementationQueue,
+          ).toMatchObject({ state: `${disposition}ed` });
+          expect(
+            whileLeased.find((row) => row.attestationId === second.prepared.attestationId)
+              ?.implementationQueue,
+          ).toMatchObject({
+            state: "leased",
+            lease: {
+              holderId: secondLease.lease.holderId,
+              generation: secondLease.lease.leaseGeneration,
+            },
+          });
+
+          const released = await releaseImplementationCandidateOn(
+            restarted,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...secondLease.lease,
+              expectedPartitionRevision: secondLease.partitionRevision,
+              detail: { disposition: "gate-complete" },
+            },
+            { now: clock.now },
+          );
+          const afterRelease = await fixture.restart();
+          const resumed = await resumeImplementationCandidateOn(
+            afterRelease,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              ...firstLease.lease,
+              expectedPartitionRevision: released.partitionRevision,
+              detail: { authority: "after-release" },
+            },
+            { now: clock.now },
+          );
+          expect(resumed).toMatchObject({
+            state: "qualified",
+            enrollment: first.queued.enrollment,
+            qualification: first.qualification,
+          });
+          expect(
+            await acquireImplementationCandidateOn(
+              afterRelease,
+              {
+                namespace: driver.namespace,
+                actor: "trusted-parent",
+                partitionKey: first.queued.partition.partitionKey,
+                holderId: `${disposition}-resumed-holder`,
+              },
+              { now: clock.now },
+            ),
+          ).toMatchObject({
+            state: "leased",
+            lease: {
+              enrollmentId: firstLease.lease.enrollmentId,
+              attemptId: firstLease.lease.attemptId,
+              leaseGeneration: firstLease.lease.leaseGeneration + 1,
+            },
+          });
+        }));
+    }
 
     for (const abortCase of [
       {

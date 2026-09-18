@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryAttestationBackend, InMemoryAttestationStore } from "@cq/config";
 import {
+  ImplementationCandidateCoordinator,
   IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES,
   type ImplementationCandidateHeadOfLineDisposition,
 } from "../src/implementationCandidateQueue.js";
@@ -166,4 +167,193 @@ describe("implementation candidate head-of-line policy [Behavioral-Active, Black
       },
     });
   });
+
+  // regression: T6519 round 21 — resuming an older parked/yielded enrollment
+  // while a later enrollment held the partition lease created two live leases.
+  test.each([
+    ["park", "parked"],
+    ["yield", "yielded"],
+  ] as const)(
+    "%s cannot resume across a later live lease and resumes after its release",
+    async (disposition, expectedState) => {
+      const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+      const fixture = new ImplementationCandidateQueueFixture(backend);
+      const first = await fixture.stage(candidate("T6719"));
+      const firstQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: first.candidate,
+        ...first.qualification,
+      });
+      const second = await fixture.stage(candidate("T6720"));
+      await fixture.adapter.qualifyNativeCompletion({
+        candidate: second.candidate,
+        ...second.qualification,
+      });
+      const firstLease = await fixture.adapter.acquire({
+        partitionKey: firstQualified.queue.partition.partitionKey,
+        holderId: `coordinator-${disposition}-first`,
+      });
+      if (firstLease.state !== "leased") throw new Error("expected first lease");
+      const deferred = await fixture.adapter.applyHeadOfLineDisposition({
+        disposition,
+        lease: firstLease.lease,
+        expectedPartitionRevision: firstLease.partitionRevision,
+        detail: { disposition },
+      });
+      if (!("partition" in deferred)) throw new Error(`expected ${expectedState} control`);
+      const secondLease = await fixture.adapter.acquire({
+        partitionKey: firstQualified.queue.partition.partitionKey,
+        holderId: `coordinator-${disposition}-second`,
+      });
+      if (secondLease.state !== "leased") throw new Error("expected second lease");
+
+      await expect(
+        fixture.adapter.applyHeadOfLineDisposition({
+          disposition: "resume",
+          lease: firstLease.lease,
+          expectedPartitionRevision: deferred.partitionRevision,
+          detail: { disposition: "resume", authority: "stale-revision" },
+        }),
+      ).rejects.toMatchObject({ reason: "partition-revision" });
+      await expect(
+        fixture.adapter.applyHeadOfLineDisposition({
+          disposition: "resume",
+          lease: {
+            ...firstLease.lease,
+            leaseGeneration: firstLease.lease.leaseGeneration + 1,
+          },
+          expectedPartitionRevision: secondLease.partitionRevision,
+          detail: { disposition: "resume", authority: "stale-generation" },
+        }),
+      ).rejects.toMatchObject({ reason: "stale-lease" });
+      await expect(
+        fixture.adapter.applyHeadOfLineDisposition({
+          disposition: "resume",
+          lease: firstLease.lease,
+          expectedPartitionRevision: secondLease.partitionRevision,
+          detail: { disposition: "resume", authority: "current" },
+        }),
+      ).rejects.toMatchObject({ reason: "not-front" });
+
+      let gateCount = 0;
+      const coordinator = new ImplementationCandidateCoordinator(fixture.adapter, {
+        observeProtectedHead: async () => {
+          throw new Error("a leased partition must not observe another front");
+        },
+        finalizeQualifiedFront: async () => {
+          gateCount += 1;
+          throw new Error("a leased partition must not run a second gate");
+        },
+        confirmAndFetchQualifiedFront: async () => {
+          throw new Error("a leased partition must not confirm another front");
+        },
+        retireStaleSource: async () => {
+          throw new Error("a leased partition must not retire another front");
+        },
+        rebaseRetiredSource: async () => {
+          throw new Error("a leased partition must not rebase another front");
+        },
+        prepareSuccessor: async () => {
+          throw new Error("a leased partition must not prepare another front");
+        },
+      });
+      const blocked = await coordinator.run({
+        partitionKey: firstQualified.queue.partition.partitionKey,
+        holderId: `coordinator-${disposition}-would-be-second`,
+      });
+      expect(blocked).toMatchObject({
+        state: "blocked",
+        front: {
+          attestationId: second.prepared.attestationId,
+          generation: second.prepared.generation,
+        },
+        frontState: "leased",
+      });
+      expect(gateCount).toBe(0);
+
+      const rowsWhileLeased = backend.storedRows();
+      const firstWhileLeased = rowsWhileLeased.find(
+        (row) => row.attestationId === first.prepared.attestationId,
+      );
+      const secondWhileLeased = rowsWhileLeased.find(
+        (row) => row.attestationId === second.prepared.attestationId,
+      );
+      expect(firstWhileLeased?.implementationQueue).toMatchObject({
+        state: expectedState,
+        leaseGeneration: firstLease.lease.leaseGeneration,
+      });
+      expect(secondWhileLeased?.implementationQueue).toMatchObject({
+        state: "leased",
+        lease: {
+          holderId: secondLease.lease.holderId,
+          generation: secondLease.lease.leaseGeneration,
+        },
+      });
+      expect(
+        rowsWhileLeased.filter((row) => row.implementationQueue?.state === "leased"),
+      ).toHaveLength(1);
+
+      const independent = await fixture.stage({
+        ...candidate("T6730"),
+        repositoryId: "d".repeat(64),
+      });
+      const independentQualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: independent.candidate,
+        ...independent.qualification,
+      });
+      const independentLease = await fixture.adapter.acquire({
+        partitionKey: independentQualified.queue.partition.partitionKey,
+        holderId: `coordinator-${disposition}-independent`,
+      });
+      if (independentLease.state !== "leased") throw new Error("expected independent lease");
+      const independentDeferred = await fixture.adapter.applyHeadOfLineDisposition({
+        disposition,
+        lease: independentLease.lease,
+        expectedPartitionRevision: independentLease.partitionRevision,
+      });
+      await fixture.adapter.applyHeadOfLineDisposition({
+        disposition: "resume",
+        lease: independentLease.lease,
+        expectedPartitionRevision: independentDeferred.partitionRevision,
+      });
+      expect(
+        await fixture.adapter.acquire({
+          partitionKey: independentQualified.queue.partition.partitionKey,
+          holderId: `coordinator-${disposition}-independent-resumed`,
+        }),
+      ).toMatchObject({
+        state: "leased",
+        lease: { leaseGeneration: independentLease.lease.leaseGeneration + 1 },
+      });
+
+      const released = await fixture.adapter.release({
+        ...secondLease.lease,
+        expectedPartitionRevision: secondLease.partitionRevision,
+        detail: { disposition: "gate-complete" },
+      });
+      const resumed = await fixture.adapter.applyHeadOfLineDisposition({
+        disposition: "resume",
+        lease: firstLease.lease,
+        expectedPartitionRevision: released.partitionRevision,
+        detail: { disposition: "resume", authority: "after-release" },
+      });
+      expect(resumed).toMatchObject({
+        state: "qualified",
+        enrollment: firstQualified.queue.enrollment,
+        qualification: firstQualified.queue.qualification,
+      });
+      expect(
+        await fixture.adapter.acquire({
+          partitionKey: firstQualified.queue.partition.partitionKey,
+          holderId: `coordinator-${disposition}-resumed`,
+        }),
+      ).toMatchObject({
+        state: "leased",
+        lease: {
+          enrollmentId: firstLease.lease.enrollmentId,
+          attemptId: firstLease.lease.attemptId,
+          leaseGeneration: firstLease.lease.leaseGeneration + 1,
+        },
+      });
+    },
+  );
 });
