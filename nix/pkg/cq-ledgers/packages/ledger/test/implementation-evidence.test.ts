@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DispatchHandle, DispatchPrepared } from "@cq/config";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +41,23 @@ const reviewer: ImplementationReviewerIdentity = {
   launch: "native",
   adapterId: "codex:native",
 };
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function evidenceDigest(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
 
 function candidateAuthority(
   overrides: Partial<ImplementationCandidateAuthorityReceipt> = {},
@@ -257,6 +275,134 @@ function ignoredBootstrap(specification: RegisteredLaunchBootstrapSpecification<
 }
 
 describe("versioned protected implementation evidence [BG]", () => {
+  // Regression origin: T6520 round 3 — candidate receipts extended the
+  // fingerprint after old merged journals had already been authenticated.
+  test("records and replays an exact old-format merged completion without weakening its fences [Behavioral-Active Blackbox-Group]", async () => {
+    const original = await fixture();
+    const completionInput = {
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [original.attemptRef],
+      completion: "implemented",
+      logPaths: [] as string[],
+      mergeOperationId: "merge-old-format",
+      operationId: "completion-old-format",
+      author: "parent",
+    } as const;
+    const preparedCompletion = await original.service.prepareCompletion(completionInput);
+    await original.service.markMergeStarted(preparedCompletion.completionRef, BASE);
+    original.setHead(RESULT);
+    await original.service.markMerged(preparedCompletion.completionRef, RESULT);
+    const snapshot = await original.evidence.snapshot();
+    const current = snapshot.completions[preparedCompletion.completionRef]!;
+    const attempts = current.reviewAttemptRefs.map((ref) => snapshot.attempts[ref]!);
+    const verification = {
+      baseCommit: BASE,
+      startingCommit: BASE,
+      clean: true,
+      ancestryVerified: true,
+      receiptsVerified: true,
+      acceptanceVerified: true,
+      gateVerified: true,
+      details: current.verification,
+    };
+    const legacyFingerprint = evidenceDigest({
+      version: 1,
+      taskRef: current.taskRef,
+      ownerGoalRef: current.ownerGoalRef,
+      finalizedManifest: current.finalizedManifest,
+      repositoryHead: current.repositoryHead,
+      resultCommit: current.resultCommit,
+      baseCommit: current.baseCommit,
+      startingCommit: current.startingCommit,
+      workerDispatch: current.workerDispatch,
+      workerResult: current.workerResult,
+      reviewAttemptRefs: current.reviewAttemptRefs,
+      attempts: attempts.map((attempt) => ({
+        attemptRef: attempt.attemptRef,
+        position: attempt.position,
+        identity: attempt.identity,
+        terminalState: attempt.terminalState,
+        verdictDigest: attempt.verdictDigest,
+        fallback: attempt.fallback,
+        fallbackTrigger: attempt.fallbackTrigger,
+        fallbackExclusions: attempt.fallbackExclusions,
+        retainedAttestation: attempt.retainedAttestation ?? null,
+      })),
+      verification,
+      completion: current.completion,
+      logPaths: current.logPaths,
+      mergeOperationId: current.mergeOperationId,
+    });
+    const legacyCompletionRef = `cq-implementation-completion:v1:${evidenceDigest({
+      taskRef: current.taskRef,
+      operationId: current.operationId,
+      evidenceFingerprint: legacyFingerprint,
+    })}`;
+    const legacyRecord = {
+      ...current,
+      completionRef: legacyCompletionRef,
+      evidenceFingerprint: legacyFingerprint,
+      requestDigest: evidenceDigest({ ...completionInput, evidenceFingerprint: legacyFingerprint }),
+      state: "merged" as const,
+      mergeStartedAt: current.mergeStartedAt ?? "2026-08-24T00:00:00.000Z",
+      mergedAt: current.mergedAt ?? "2026-08-24T00:00:00.000Z",
+    };
+    const legacySnapshot = {
+      ...snapshot,
+      completions: { [legacyCompletionRef]: legacyRecord },
+    };
+
+    const unrelated = await fixture(createInMemoryImplementationEvidenceStore(legacySnapshot));
+    await expect(
+      unrelated.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: BASE,
+        operationId: "record-old-format-unrelated",
+        author: "parent",
+      }),
+    ).rejects.toThrow("unrelated integration ref");
+
+    const tamperedSnapshot = {
+      ...legacySnapshot,
+      completions: {
+        [legacyCompletionRef]: { ...legacyRecord, evidenceFingerprint: "0".repeat(64) },
+      },
+    };
+    const tampered = await fixture(createInMemoryImplementationEvidenceStore(tamperedSnapshot));
+    tampered.setHead(RESULT);
+    await expect(
+      tampered.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-old-format-tampered",
+        author: "parent",
+      }),
+    ).rejects.toThrow("evidence fingerprint changed before recording");
+
+    const reopened = await fixture(createInMemoryImplementationEvidenceStore(legacySnapshot));
+    reopened.setHead(RESULT);
+    await expect(
+      reopened.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-old-format",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "recorded", completionRef: legacyCompletionRef });
+    await expect(
+      reopened.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-old-format-replay",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "existing", completionRef: legacyCompletionRef });
+    expect(reopened.getLedgerWrites()).toBe(1);
+  });
+
   test("fences review and merge with the current candidate receipt, then recovers post-merge completion", async () => {
     let roster: readonly ImplementationReviewerIdentity[] = [reviewer];
     let authority = candidateAuthority();

@@ -13,6 +13,69 @@ import { ImplementationCandidateQueueFixture } from "./implementationCandidateQu
 const namespace = { backend: "xdg" as const, projectKey: "candidate-reuse" };
 
 describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group]", () => {
+  test("an exact installed handoff never leases a different queued candidate", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const common = {
+      repositoryId: "d".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "e".repeat(64),
+    };
+    const first = await fixture.stage({ ...common, taskId: "T6520" });
+    const second = await fixture.stage({ ...common, taskId: "T6521" });
+    const firstQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    await fixture.adapter.qualifyNativeCompletion({
+      candidate: second.candidate,
+      ...second.qualification,
+    });
+
+    expect(
+      await fixture.adapter.acquire({
+        partitionKey: firstQualified.queue.partition.partitionKey,
+        holderId: "installed-second-candidate",
+        expectedCandidate: {
+          attestationId: second.prepared.attestationId,
+          generation: second.prepared.generation,
+        },
+      }),
+    ).toMatchObject({
+      state: "blocked",
+      front: {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+      },
+      frontState: "qualified",
+    });
+    const rowsAfterBlockedHandoff = await backend.transact({ kind: "namespace" }, (store) =>
+      store.rows(),
+    );
+    expect(rowsAfterBlockedHandoff).toHaveLength(2);
+    expect(
+      rowsAfterBlockedHandoff.map((row) => row.implementationQueue?.state),
+    ).toEqual(["qualified", "qualified"]);
+
+    expect(
+      await fixture.adapter.acquire({
+        partitionKey: firstQualified.queue.partition.partitionKey,
+        holderId: "installed-first-candidate",
+        expectedCandidate: {
+          attestationId: first.prepared.attestationId,
+          generation: first.prepared.generation,
+        },
+      }),
+    ).toMatchObject({
+      state: "leased",
+      lease: {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+      },
+    });
+  });
+
   test("one unchanged qualified candidate retains one green gate across review handoff", async () => {
     const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
     const fixture = new ImplementationCandidateQueueFixture(backend);

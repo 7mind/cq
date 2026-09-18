@@ -322,6 +322,10 @@ export class ImplementationCandidateQueueAdapter {
 }
 
 export interface ImplementationCandidateCoordinatorOperations {
+  isQualifiedFrontSettled?(input: {
+    readonly lease: ImplementationQueueLeaseBinding;
+    readonly control: ImplementationQueueControl;
+  }): Promise<boolean>;
   reconcileRetiredSource?(input: PendingStagedRebaseCheckpoint): Promise<
     | { readonly state: "conflict-pending" }
     | {
@@ -445,6 +449,16 @@ export class ImplementationCandidateCoordinator {
     }
     if (acquired.state !== "leased") return acquired;
     const control = await this.queue.inspectLease(acquired.lease);
+    if (
+      this.operations.isQualifiedFrontSettled !== undefined &&
+      (await this.operations.isQualifiedFrontSettled({ lease: acquired.lease, control }))
+    ) {
+      return Object.freeze({
+        state: "empty" as const,
+        partitionKey: acquired.lease.partitionKey,
+        partitionRevision: acquired.partitionRevision,
+      });
+    }
     const protectedHead = await this.operations.observeProtectedHead(control);
     if (protectedHead === control.attempt.observedBaseCommit) {
       if (control.qualification === undefined) {

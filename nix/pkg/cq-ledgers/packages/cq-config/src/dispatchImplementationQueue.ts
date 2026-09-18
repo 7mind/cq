@@ -320,6 +320,7 @@ export interface AcquireImplementationCandidateRequest {
   readonly actor: "trusted-parent" | "trusted-extension";
   readonly partitionKey: string;
   readonly holderId: string;
+  readonly expectedCandidate?: DispatchHandle;
   readonly expectedPartitionRevision?: number;
 }
 
@@ -1201,6 +1202,22 @@ export function acquireImplementationCandidate(
       state: "empty" as const,
       partitionKey: request.partitionKey,
       partitionRevision: revision,
+    });
+  }
+  if (
+    request.expectedCandidate !== undefined &&
+    (front.attestationId !== request.expectedCandidate.attestationId ||
+      front.generation !== request.expectedCandidate.generation)
+  ) {
+    return Object.freeze({
+      state: "blocked" as const,
+      partitionKey: request.partitionKey,
+      partitionRevision: revision,
+      front: Object.freeze({
+        attestationId: front.attestationId,
+        generation: front.generation,
+      }),
+      frontState: front.implementationQueue!.state,
     });
   }
   const leased = livePartitionLease(deps.store, request.partitionKey);

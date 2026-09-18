@@ -975,6 +975,49 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     now,
   });
 
+  async function isQualifiedImplementationFrontSettled(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+  }): Promise<boolean> {
+    return await options.backend.transact(
+      { kind: "handle", handle: input.lease },
+      (store): boolean => {
+        const row = store.read(input.lease);
+        if (row === undefined || isAttestationTombstone(row)) {
+          throw new Error("qualified implementation front disappeared before settlement replay");
+        }
+        if (row.state !== "consumed") return false;
+        const control = row.implementationQueue;
+        const output = dispatchObject(row.output) ? row.output : undefined;
+        const gate = output === undefined ? undefined : output["supervisedGateEvidence"];
+        if (
+          control === undefined ||
+          control.state !== "leased" ||
+          control.qualification === undefined ||
+          control.lease === undefined ||
+          row.stagedCompletionQualification?.qualificationDigest !==
+            control.qualification.qualificationDigest ||
+          input.lease.partitionKey !== control.partition.partitionKey ||
+          input.lease.enrollmentId !== control.enrollment.enrollmentId ||
+          input.lease.attemptId !== control.attempt.attemptId ||
+          input.lease.holderId !== control.lease.holderId ||
+          input.lease.leaseGeneration !== control.lease.generation ||
+          output?.["status"] !== "pass" ||
+          output["taskId"] !== control.attempt.taskId ||
+          output["resultCommit"] !== control.attempt.resultCommit ||
+          !dispatchObject(gate) ||
+          !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+          gate["taskId"] !== control.attempt.taskId ||
+          gate["resultCommit"] !== control.attempt.resultCommit ||
+          gate["worktreePath"] !== control.attempt.worktreePath ||
+          gate["command"] !== control.attempt.gateCommand
+        ) {
+          throw new Error("consumed implementation front lost its exact gate and lease authority");
+        }
+        return true;
+      },
+    );
+  }
+
   async function finalizeQualifiedImplementationFront(input: {
     readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
   }): Promise<void> {
@@ -1441,6 +1484,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
   const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations =
     {
+      isQualifiedFrontSettled: isQualifiedImplementationFrontSettled,
       reconcileRetiredSource: reconcileRetiredImplementationSource,
       observeProtectedHead: async (control) => {
         if (options.repositoryRoot === undefined) {
@@ -1475,7 +1519,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       throw new Error("implementation candidate authority target is malformed");
     }
     const resolved = await options.backend.transact(
-      { kind: "handle", handle: input.workerDispatch },
+      { kind: "namespace" },
       (store) => {
         const row = store.read(input.workerDispatch);
         if (row === undefined || isAttestationTombstone(row)) {
@@ -3046,6 +3090,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return await implementationCandidateCoordinator.run({
         partitionKey,
         holderId: input.holderId,
+        expectedCandidate: {
+          attestationId: input.attestationId,
+          generation: input.generation,
+        },
       });
     },
     finalizeParentGate: async (input) => {

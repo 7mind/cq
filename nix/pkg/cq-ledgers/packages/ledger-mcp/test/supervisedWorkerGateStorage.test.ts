@@ -11,6 +11,7 @@ import {
   CODEX_STAGED_TIMING_BASIS,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  SqliteAttestationBackend,
   isAttestationTombstone,
   serializeWipArtifact,
   sequentialDispatchRandomBytes,
@@ -280,6 +281,7 @@ async function fixtureWithDispatchBase(
     Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]
   >,
   promptArtifactStore: PromptArtifactStore = artifactStore(),
+  attestationBackend: "memory" | "sqlite" = "memory",
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -353,7 +355,13 @@ async function fixtureWithDispatchBase(
     projectKey: `t2081-${sequence}`,
   };
   const store = new InMemoryAttestationStore(namespace);
-  const backend = new InMemoryAttestationBackend(store);
+  const backend =
+    attestationBackend === "sqlite"
+      ? new SqliteAttestationBackend({
+          namespace,
+          dbPath: path.join(repositoryRoot, "attestations.sqlite"),
+        })
+      : new InMemoryAttestationBackend(store);
   const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
   const capabilityOptions = {
     backend,
@@ -828,13 +836,14 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(CODEX_STAGED_TIMING_BASIS.parentGateWindowMs).toBe(9_611_000);
   });
 
-  test("production coordinator gates, confirms, and releases one qualified managed front for public fetch", async () => {
+  test("production coordinator gates, confirms, and retains one qualified managed front for review", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner, true);
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
       subject.capability.qualifyImplementationCandidate === undefined ||
-      subject.capability.coordinateImplementationCandidate === undefined
+      subject.capability.coordinateImplementationCandidate === undefined ||
+      subject.prepared.parentGateCapability === undefined
     ) {
       throw new Error("implementation candidate runtime is unavailable");
     }
@@ -869,9 +878,23 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const confirmed = subject.store.rows()[0];
     expect(confirmed).toMatchObject({
       state: "consumed",
-      implementationQueue: { state: "released", leaseGeneration: 1 },
+      implementationQueue: {
+        state: "leased",
+        leaseGeneration: 1,
+        lease: { holderId: "production-coordinator", generation: 1 },
+      },
     });
     expect(confirmed).not.toHaveProperty("outputMaterializedAt");
+
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        holderId: "production-coordinator",
+        parentGateCapability: subject.prepared.parentGateCapability,
+      }),
+    ).toMatchObject({ state: "empty", partitionKey: qualified.partitionKey });
+    expect(runner.requests).toHaveLength(1);
 
     const fetched = await subject.capability.fetch({
       attestationId: subject.prepared.attestationId,
@@ -891,6 +914,81 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       }),
     ).resolves.toMatchObject({ state: "output-already-materialized" });
     expect(runner.requests).toHaveLength(1);
+  });
+
+  // regression: T6520 round 3 — uniqueness is namespace-wide and a
+  // handle-scoped SQLite transaction must not enumerate sibling rows.
+  test("real SQLite resolves the exact consumed leased candidate through public authority [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const observedNow = () => "2026-08-12T20:00:00.000Z";
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      observedNow,
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      "sqlite",
+    );
+    try {
+      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+      if (
+        subject.capability.qualifyImplementationCandidate === undefined ||
+        subject.capability.resolveImplementationCandidateAuthority === undefined ||
+        subject.capability.coordinateImplementationCandidate === undefined
+      ) {
+        throw new Error("implementation candidate authority is unavailable");
+      }
+      const qualified = await subject.capability.qualifyImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+        childThreadId: "sqlite-authority-child-thread",
+        expectedRunId: subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: observedNow(),
+        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      });
+      if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+      expect(
+        await subject.capability.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: "sqlite-protected-handoff",
+        }),
+      ).toMatchObject({
+        state: "completed",
+        handle: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        },
+      });
+
+      await expect(
+        subject.capability.resolveImplementationCandidateAuthority({
+          workerDispatch: {
+            attestationId: subject.prepared.attestationId,
+            generation: subject.prepared.generation,
+          },
+          taskRef: "tasks:T2081",
+          resultCommit: subject.receipt.newHead,
+        }),
+      ).resolves.toMatchObject({
+        kind: "cq-implementation-candidate-authority",
+        workerDispatch: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        },
+        leaseHolderId: "sqlite-protected-handoff",
+        leaseGeneration: 1,
+        taskRef: "tasks:T2081",
+        resultCommit: subject.receipt.newHead,
+      });
+    } finally {
+      await subject.backend.close();
+    }
   });
 
   // regression: T6519 round 30 — composed coverage had displaced these boundary controls.
@@ -1340,10 +1438,14 @@ throw new Error("unexpected controlled cq invocation");
           holderId: "restarted-production-stale-coordinator",
         }),
       ),
-    ).toEqual({
-      state: "empty",
+    ).toMatchObject({
+      state: "blocked",
       partitionKey: qualified.partitionKey,
-      partitionRevision: 9,
+      front: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation + 1,
+      },
+      frontState: "leased",
     });
     const launches = (await fs.readFile(launchMarker, "utf8").catch(() => ""))
       .trim()
@@ -1373,7 +1475,7 @@ throw new Error("unexpected controlled cq invocation");
     expect(successor).toMatchObject({
       state: "consumed",
       generation: subject.prepared.generation + 1,
-      implementationQueue: { state: "released" },
+      implementationQueue: { state: "leased" },
       stagedCompletionQualification: {
         nativeCompletion: {
           kind: "native-completion",

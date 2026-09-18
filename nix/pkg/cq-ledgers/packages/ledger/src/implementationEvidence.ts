@@ -5101,7 +5101,7 @@ export class ImplementationEvidenceService {
     ) {
       throw new Error("implementation verification changed after completion preparation");
     }
-    const evidenceFingerprint = digest({
+    const evidence = {
       version: 1,
       taskRef: completion.taskRef,
       ownerGoalRef: task.ownerGoalRef,
@@ -5111,7 +5111,6 @@ export class ImplementationEvidenceService {
       baseCommit: verification.baseCommit,
       startingCommit: verification.startingCommit,
       workerDispatch: completion.workerDispatch,
-      candidateAuthority: completion.candidateAuthority ?? null,
       workerResult: worker.output,
       reviewAttemptRefs: completion.reviewAttemptRefs,
       attempts: boundAttempts.map((attempt) => ({
@@ -5129,8 +5128,17 @@ export class ImplementationEvidenceService {
       completion: completion.completion,
       logPaths: completion.logPaths,
       mergeOperationId: completion.mergeOperationId,
+    };
+    const evidenceFingerprint = digest({
+      ...evidence,
+      candidateAuthority: completion.candidateAuthority ?? null,
     });
-    if (evidenceFingerprint !== completion.evidenceFingerprint) {
+    const legacyEvidenceFingerprint =
+      completion.candidateAuthority === undefined ? digest(evidence) : null;
+    if (
+      evidenceFingerprint !== completion.evidenceFingerprint &&
+      legacyEvidenceFingerprint !== completion.evidenceFingerprint
+    ) {
       throw new Error("implementation evidence fingerprint changed before recording");
     }
     return task;
