@@ -599,6 +599,50 @@ describe("staged-rebase source retirement", () => {
       },
     });
     expect(successor.generation).toBe(prepared.generation + 1);
+    const successorBinding: DispatchGitEffectBinding = {
+      ...binding,
+      guardedRebaseBridge: successorBridge,
+    };
+    const successorStored = await storeDispatchResultOn(
+      backend,
+      {
+        resultCapability: successor.resultCapability,
+        output: stagedOutput(rebasedStartCommit),
+      },
+      { now: clock.now },
+    );
+    if (successorStored.state !== "gate-pending") {
+      throw new Error("expected consumed ordinary successor staging");
+    }
+    const successorQueue = await enqueue(
+      backend,
+      successor,
+      successorStored.result,
+      successorBinding,
+      rebasedStartCommit,
+      "e".repeat(40),
+      ontoCommit,
+    );
+    expect(successorQueue.enrollment.enrollmentId).toBe(retirement.enrollmentId);
+    expect(
+      await qualifyDispatchStagedCompletionOn(
+        backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          attestationId: successor.attestationId,
+          generation: successor.generation,
+          partitionKey: successorQueue.partition.partitionKey,
+          enrollmentId: successorQueue.enrollment.enrollmentId,
+          attemptId: successorQueue.attempt.attemptId,
+          stagedOutputDigest: successorStored.result.outputDigest,
+          expectedChild: child,
+          expectedProvenance: provenanceBindingOf(successor),
+          nativeCompletion: completion(),
+        },
+        { now: clock.now },
+      ),
+    ).toMatchObject({ state: "qualified", replayed: false });
   });
 
   // regression: T6518 review round 3 — enqueue claimed the source after prepare and store_result.
