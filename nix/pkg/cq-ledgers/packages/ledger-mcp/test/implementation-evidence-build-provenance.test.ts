@@ -241,5 +241,6 @@ test("the cq derivation requires clean self.rev and runs the installed provenanc
   expect(flake).toContain("!(self ? dirtyRev)");
   expect(flake).toContain('export const PACKAGED_BUILD_COMMIT = "${sourceRevision}" as const;');
   expect(flake).toContain("probeImplementationEvidenceBuildProvenance.ts");
+  expect(flake).toContain("nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper pkgs.git ];");
   expect(flake).toContain("doInstallCheck = true;");
 });
