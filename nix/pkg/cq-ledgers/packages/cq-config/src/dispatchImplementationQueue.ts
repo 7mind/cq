@@ -511,6 +511,30 @@ function frontRow(store: AttestationStore, partitionKey: string): AttestationEnv
     )[0];
 }
 
+function livePartitionLease(
+  store: AttestationStore,
+  partitionKey: string,
+): AttestationEnvelope | undefined {
+  const leased = queueRows(store, partitionKey).filter(
+    (row): row is AttestationEnvelope =>
+      !isAttestationTombstone(row) && row.implementationQueue?.state === "leased",
+  );
+  if (leased.length > 1) {
+    throw new AttestationContractError(
+      "queue.lease",
+      `implementation queue partition "${partitionKey}" has multiple live leases`,
+    );
+  }
+  const row = leased[0];
+  if (row !== undefined && row.implementationQueue?.lease === undefined) {
+    throw new AttestationContractError(
+      "queue.lease",
+      "leased implementation candidate is missing its live lease authority",
+    );
+  }
+  return row;
+}
+
 function assertQueueIdentity(
   row: AttestationEnvelope,
   request: Pick<ImplementationQueueLeaseBinding, "partitionKey" | "enrollmentId" | "attemptId">,
@@ -1170,15 +1194,29 @@ export function acquireImplementationCandidate(
       partitionRevision: revision,
     });
   }
-  const control = front.implementationQueue!;
-  if (control.state === "leased" && control.lease?.holderId === request.holderId) {
+  const leased = livePartitionLease(deps.store, request.partitionKey);
+  if (leased !== undefined) {
+    const leasedControl = leased.implementationQueue!;
+    if (leasedControl.lease?.holderId === request.holderId) {
+      return Object.freeze({
+        state: "leased" as const,
+        lease: leaseBinding(leased, leasedControl),
+        partitionRevision: revision,
+        replayed: true,
+      });
+    }
     return Object.freeze({
-      state: "leased" as const,
-      lease: leaseBinding(front, control),
-      partitionRevision: control.partitionRevision,
-      replayed: true,
+      state: "blocked" as const,
+      partitionKey: request.partitionKey,
+      partitionRevision: revision,
+      front: Object.freeze({
+        attestationId: leased.attestationId,
+        generation: leased.generation,
+      }),
+      frontState: "leased" as const,
     });
   }
+  const control = front.implementationQueue!;
   if (
     control.state !== "qualified" ||
     control.qualification === undefined ||
@@ -1319,6 +1357,12 @@ export function resumeImplementationCandidate(
     throw new ImplementationQueueConflictError(
       "stale-lease",
       "resume requires the latest parked or yielded lease generation",
+    );
+  }
+  if (livePartitionLease(deps.store, request.partitionKey) !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "not-front",
+      "resume cannot preempt another enrollment's live partition lease",
     );
   }
   const next: ImplementationQueueControl = Object.freeze({
