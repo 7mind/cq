@@ -362,7 +362,7 @@ describe("protected implementation review attempts [BG]", () => {
     expect(executions).toBe(1);
   });
 
-  test("records an expired adapter reservation as an abstention without relaunching", async () => {
+  test("keeps an expired live adapter reservation pending and retains its eventual verdict", async () => {
     let executions = 0;
     let release!: () => void;
     let markStarted!: () => void;
@@ -416,7 +416,14 @@ describe("protected implementation review attempts [BG]", () => {
         operationId: "execute-expired-reservation",
         author: "parent",
       }),
-    ).resolves.toMatchObject({ status: "existing", attemptRef });
+    ).resolves.toMatchObject({ status: "pending", attemptRef });
+    await expect(
+      service.finalizeReviewAttempt({
+        attemptRef,
+        operationId: "finalize-expired-reservation",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "pending", attemptRef });
     release();
     await first;
     await expect(
@@ -425,7 +432,7 @@ describe("protected implementation review attempts [BG]", () => {
         operationId: "finalize-expired-reservation",
         author: "parent",
       }),
-    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
+    ).resolves.toMatchObject({ terminalState: "approved" });
     expect(executions).toBe(1);
   });
 
