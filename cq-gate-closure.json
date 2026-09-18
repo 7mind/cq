@@ -482,7 +482,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/implementationEvidenceRuntime.ts",
-      "sha256": "d8e46f22313a50f7b76b8324602e058dd8ae2e991d7cc3ac149075e50a921671",
+      "sha256": "855f52d763fe059803a42f169aabffe87db1cdbacb085035ca7874367d414fba",
       "targets": []
     },
     {
