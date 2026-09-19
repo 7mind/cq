@@ -83,6 +83,31 @@ export interface DispatchContinuationResolution {
   readonly terminalAt: string;
 }
 
+interface DispatchStagedRebaseResolutionBase {
+  readonly taskId: string;
+  readonly liveTip: string;
+  readonly source: DispatchHandle;
+  readonly sourceReference: string;
+  readonly guardedRebase: string;
+}
+
+export type DispatchStagedRebaseResolution = DispatchStagedRebaseResolutionBase &
+  (
+    | { readonly status: "staged-rebase-conflict-pending" }
+    | {
+        readonly status: "staged-rebase-preparation-ready";
+        readonly preparation: {
+          readonly kind: "guarded-rebase";
+          readonly reprepareOf: DispatchHandle;
+          readonly guardedRebase: string;
+        };
+      }
+    | {
+        readonly status: "staged-rebase-successor-bound";
+        readonly successor: DispatchHandle;
+      }
+  );
+
 export interface StoreResultToolInput {
   readonly resultCapability: ResultCapability;
   readonly output: DispatchJSONValue;
@@ -237,6 +262,12 @@ export interface DispatchCapability {
     gitEffectBinding: DispatchGitEffectBinding,
     liveTip: string,
   ): Promise<DispatchContinuationResolution>;
+  resolveStagedRebase?(
+    gitEffectBinding: DispatchGitEffectBinding,
+    liveTip: string,
+    source: DispatchHandle,
+    sourceReference: string,
+  ): Promise<DispatchStagedRebaseResolution>;
 }
 
 export class DispatchNotImplementedError extends Error {

@@ -317,7 +317,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
       "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
   ),
   worktree_manage: purposeBuiltSmall(
-    "`prepared|resume-required|refused`, `conflict-observed`, or " +
+    "`prepared|resume-required|refused`, `conflict-observed`, staged-rebase recovery, or " +
       "`released|refused`; typed acknowledgements only.",
   ),
   git_commit: purposeBuiltSmall(
@@ -380,9 +380,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   record_implementation_completion: purposeBuiltSmall(
     "Completion acknowledgement: merge-required, reprepare-required, recorded, or existing.",
   ),
-  record_implementation_adoption: purposeBuiltSmall(
-    "Operator-adoption acknowledgement.",
-  ),
+  record_implementation_adoption: purposeBuiltSmall("Operator-adoption acknowledgement."),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

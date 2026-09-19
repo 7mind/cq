@@ -540,6 +540,38 @@ describe("worktree_manage schema", () => {
     ).toThrow(/must not accompany/);
   });
 
+  it("accepts only the exact manager/source staged-rebase recovery binding", () => {
+    const handle = wireHandle(2);
+    const sourceDispatch = { attestationId: "att_t6573_source", generation: 5 };
+    const sourceReference = `cq-staged-rebase-source:v1:${"c".repeat(64)}`;
+    expect(
+      parseWorktreeManageInput({
+        operation: "resolve-staged-rebase",
+        handle,
+        sourceDispatch,
+        sourceReference,
+      }),
+    ).toEqual({
+      operation: "resolve-staged-rebase",
+      stagedRebaseHandle: handle,
+      stagedRebaseSource: sourceDispatch,
+      stagedRebaseSourceReference: sourceReference,
+    });
+    for (const input of [
+      { operation: "resolve-staged-rebase", handle, sourceReference },
+      { operation: "resolve-staged-rebase", handle, sourceDispatch },
+      {
+        operation: "resolve-staged-rebase",
+        handle,
+        sourceDispatch,
+        sourceReference,
+        taskId: "T1207",
+      },
+    ]) {
+      expect(() => parseWorktreeManageInput(input)).toThrow();
+    }
+  });
+
   it("accepts only a complete prepare-only legacy adoption target", () => {
     const expectedHead = "b".repeat(40);
     const adoptWorktreePath = "/tmp/project/.claude/worktrees/implement-T1207";

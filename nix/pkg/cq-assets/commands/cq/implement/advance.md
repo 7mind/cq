@@ -84,6 +84,25 @@ the effect boundaries required by the shared contract.
   recovery association from registry files, and never substitute raw
   attestation, repository, worktree, branch, base, tip, terminal, or receipt
   coordinates for the opaque reference.
+- **Retired staged-rebase handoff.** A coordinator result with
+  `state: "blocked"` and `frontState: "staged-rebase-retired"` is terminal for
+  that coordinator invocation. Retain its exact `front` dispatch handle and
+  `sourceReference`; never poll it again with the now-revoked parent-gate
+  capability. With the task's retained manager handle, call only
+  `worktree_manage({ operation: "resolve-staged-rebase", handle, sourceDispatch: front, sourceReference })`.
+  Accept `staged-rebase-conflict-pending` as the exact conflict handoff and use
+  `observe-conflict` plus the ordinary conflict-resolver path. After its
+  continuation receipts are terminal, replay the identical manager operation.
+  Accept `staged-rebase-preparation-ready` only when its task, live tip, source,
+  source reference, guarded-rebase reference, and nested `preparation.reprepareOf`
+  all equal the retained identities; then pass only
+  `preparation.reprepareOf` and `preparation.guardedRebase` to the ordinary
+  `prepare_dispatch` successor path. `staged-rebase-successor-bound` is an
+  idempotent acknowledgement of the exact already-allocated successor, not
+  authority to allocate another. Never restore the retired parent capability,
+  use parent-lost recovery, read the private journal, reconstruct either opaque
+  reference, create a replacement rebase, or infer lineage from equivalent
+  patches.
 - **Deterministic gate failure.** `gate-rejected` is a completed deterministic gate
   failure, not lost transport or parent interruption. Reconcile a lost store/finalize
   acknowledgement against the durable terminal result and retain its bounded
@@ -121,7 +140,7 @@ the effect boundaries required by the shared contract.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
   capabilities or secrets. Before piping a transcript, require `test -s
-  <transcript>` so empty or whitespace-only captures are skipped rather than
+<transcript>` so empty or whitespace-only captures are skipped rather than
   written.
 - The surface-specific fragment defines dispatch input delivery and result
   materialization. Retain the parent-prepared handle. Interpret a native
@@ -352,7 +371,7 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    `illness-detected` rather than inventing acceptance.
 2. Call
    `ledger::materialize_operator_action({ task_id, expected_output_identity,
-   expected_evidence, author, session })` before any ordinary readiness action.
+expected_evidence, author, session })` before any ordinary readiness action.
    Accept only `created` or exact `existing`. This deterministically creates or
    restart-reuses one pending revision-1 action and one `user-action-required`
    handoff; conflicting identity/evidence fails closed.
@@ -366,7 +385,7 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    evidence exists, or a pending action's current acknowledgement epoch ended
    in recorded failure, this parent may call
    `ledger::revise_operator_action({ action_id, expected_revision,
-   expected_output_identity, expected_evidence, revised_at, author, session })`
+expected_output_identity, expected_evidence, revised_at, author, session })`
    with the exact current revision and complete replacement contract. For the
    evidence-bearing exception, require the terminal evidence entry and
    `lastFailure` to identify the same failed probe in the current revision and
@@ -388,7 +407,7 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    acknowledgement/failure epoch do not count toward verification.
 5. Only a `verified` action authorizes
    `ledger::complete_operator_action({ action_id, expected_revision, completion,
-   author, session })`. Re-read the action and pass its current revision before
+author, session })`. Re-read the action and pass its current revision before
    every acknowledgement, evidence, revision, or completion call. This typed
    transition marks the linked task `done`. Re-derive predicates; never use
    generic `update_item` or another resurrection operation to bypass verification.
@@ -717,7 +736,8 @@ back to raw Git, broadening the worker sandbox, or accepting caller-minted
 lineage or gate evidence. Only after the fresh gate and reviews pass does the
 existing ff-only guarded merge below run.
 
-On conflict, call `worktree_manage` with `operation: "observe-conflict"` and the
+On an ordinary parent-initiated guarded-rebase conflict, call `worktree_manage`
+with `operation: "observe-conflict"` and the
 manager handle. Supply its exact `conflictState` (original tip, onto, dispatch
 base, current HEAD and ancestry, sequencer identity/todo/current command, and
 every unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only
@@ -731,7 +751,9 @@ branch, absolute
 worktree path, and the complete durable receipt chain; after any continuation
 its last receipt must end at the exact live nonterminal conflict state. Then
 create a linked question, set the task `blocked`, keep the worktree/handle, and
-skip its dependants.
+skip its dependants. A coordinator-retired staged-rebase conflict instead uses
+only the manager-bound `resolve-staged-rebase` handoff above; do not replay the
+retired coordinator or its revoked authority through this ordinary arm.
 
 After the final checks and fresh approved panel, call
 `prepare_implementation_completion({ task_ref, expected_repository_head,

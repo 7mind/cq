@@ -432,6 +432,7 @@ export {
   validateManagedWorktreeInstallPlan,
   assertManagedWorktreeDispatchBindingLive,
   observeManagedWorktreeLiveTip,
+  observeManagedWorktreeRebaseTip,
   assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
@@ -574,6 +575,7 @@ export {
   materializeGuardedRebaseBridge,
   reverifyGuardedRebaseBridge,
   runGuardedRebase,
+  runGuardedRebaseUnderManagedLock,
 } from "./guardedRebaseContinuation.js";
 export type {
   GuardedRebaseEffectResult,
@@ -922,6 +924,7 @@ export type {
   DispatchWorktreeActivityObservation,
   DispatchRecoveryResolution,
   DispatchContinuationResolution,
+  DispatchStagedRebaseResolution,
   FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
   QualifyImplementationCandidateInput,

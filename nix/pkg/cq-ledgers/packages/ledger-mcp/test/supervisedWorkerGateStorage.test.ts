@@ -23,6 +23,7 @@ import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   InMemoryCurrentRecoverySealJournalStore,
+  WORKTREE_MANAGE_TOOL_SPEC,
   PLAN_FINALIZED_MANIFEST_FIELD,
   assertManagedWorktreeWipClosure,
   continueManagedWorktreeRebase,
@@ -48,6 +49,7 @@ import {
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
   type LedgerStore,
+  type DispatchStagedRebaseResolution,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import { createImplementationSuccessorLauncher } from "../src/main.js";
@@ -1626,8 +1628,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       ...finalPrepared.handle,
       inputCapability: finalPrepared.prepared.inputCapability,
     });
-    const { focusedChecks: _focusedChecks, ...finalOutput } = subject.output as
-      typeof subject.output & { readonly focusedChecks: DispatchJSONValue };
+    const { focusedChecks: _focusedChecks, ...finalOutput } =
+      subject.output as typeof subject.output & { readonly focusedChecks: DispatchJSONValue };
     expect(
       await subject.capability.storeResult({
         resultCapability: finalPrepared.prepared.resultCapability,
@@ -1682,8 +1684,10 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       {
         intent: "focused-only" as const,
         output: (subject: GateFixture) => {
-          const { focusedChecks: _focusedChecks, ...withoutFocusedChecks } = subject.output as
-            typeof subject.output & { readonly focusedChecks?: DispatchJSONValue };
+          const { focusedChecks: _focusedChecks, ...withoutFocusedChecks } =
+            subject.output as typeof subject.output & {
+              readonly focusedChecks?: DispatchJSONValue;
+            };
           return withoutFocusedChecks;
         },
         expected: "focused-only validation requires",
@@ -2423,6 +2427,7 @@ throw new Error("unexpected controlled cq invocation");
     await git(subject.repositoryRoot, ["commit", "-q", "-m", "conflict protected head"]);
     await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
     await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
+    const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
 
     const first = await subject.capability.coordinateImplementationCandidate({
       partitionKey: qualified.partitionKey,
@@ -2437,6 +2442,10 @@ throw new Error("unexpected controlled cq invocation");
       },
       frontState: "staged-rebase-retired",
     });
+    if (first.state !== "blocked" || !("sourceReference" in first)) {
+      throw new Error("conflicted retirement did not return its staged-source handoff");
+    }
+    const sourceReference = first.sourceReference;
     expect(runner.requests).toHaveLength(0);
     const retired = subject.store
       .rows()
@@ -2465,6 +2474,32 @@ throw new Error("unexpected controlled cq invocation");
     if (restarted.coordinateImplementationCandidate === undefined) {
       throw new Error("restarted implementation coordinator is unavailable");
     }
+
+    if (restarted.resolveStagedRebase === undefined) {
+      throw new Error("public staged-rebase recovery is unavailable");
+    }
+    const pendingRecovery = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+      subject.ledgerStore,
+      {
+        repositoryRoot: subject.repositoryRoot,
+        deps: { stateDir: subject.stateDir },
+        resolveStagedRebase: restarted.resolveStagedRebase,
+      },
+      {
+        operation: "resolve-staged-rebase",
+        handle: subject.managed.handle,
+        sourceDispatch: first.front,
+        sourceReference,
+      },
+    )) as unknown as DispatchStagedRebaseResolution;
+    expect(pendingRecovery).toEqual({
+      status: "staged-rebase-conflict-pending",
+      taskId: subject.managed.handle.taskId,
+      liveTip: expect.any(String),
+      source: first.front,
+      sourceReference,
+      guardedRebase: expect.stringMatching(/^cq-guarded-rebase:v1:/u),
+    });
 
     const replay = await restarted.coordinateImplementationCandidate({
       partitionKey: qualified.partitionKey,
@@ -2537,6 +2572,81 @@ throw new Error("unexpected controlled cq invocation");
       throw new Error("finalized-journal coordinator is unavailable");
     }
 
+    if (finalizedRestart.resolveStagedRebase === undefined) {
+      throw new Error("finalized staged-rebase recovery is unavailable");
+    }
+    const recovered = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+      subject.ledgerStore,
+      {
+        repositoryRoot: subject.repositoryRoot,
+        deps: { stateDir: subject.stateDir },
+        resolveStagedRebase: finalizedRestart.resolveStagedRebase,
+      },
+      {
+        operation: "resolve-staged-rebase",
+        handle: subject.managed.handle,
+        sourceDispatch: first.front,
+        sourceReference,
+      },
+    )) as unknown as DispatchStagedRebaseResolution;
+    if (recovered.status !== "staged-rebase-preparation-ready") {
+      throw new Error("terminal staged-rebase recovery did not return preparation authority");
+    }
+    const recoveredGuardedRebase = recovered.guardedRebase;
+    expect(recovered).toMatchObject({
+      status: "staged-rebase-preparation-ready",
+      taskId: subject.managed.handle.taskId,
+      source: first.front,
+      sourceReference,
+      guardedRebase: recoveredGuardedRebase,
+      preparation: {
+        kind: "guarded-rebase",
+        reprepareOf: first.front,
+        guardedRebase: recoveredGuardedRebase,
+      },
+    });
+    expect(recovered.preparation.guardedRebase).toMatch(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u);
+    if (
+      retired === undefined ||
+      isAttestationTombstone(retired) ||
+      retired.input === null ||
+      typeof retired.input !== "object" ||
+      Array.isArray(retired.input)
+    ) {
+      throw new Error("retired source input is unavailable");
+    }
+    const successor = await finalizedRestart.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...retired.input,
+        baseCommit: protectedHead,
+        startingCommit: recovered.liveTip,
+        priorResultCommit: subject.receipt.newHead,
+        round: 1,
+      },
+      idempotencyKey: "t6573-public-staged-rebase-successor",
+      timeoutMs: 600_000,
+      expectedChild: subject.expectedChild,
+      reprepareOf: recovered.preparation.reprepareOf,
+      guardedRebase: recovered.preparation.guardedRebase,
+    });
+    if (!successor.accepted) throw new Error(successor.detail);
+    const successorInput = await finalizedRestart.fetchInput({
+      ...successor.handle,
+      inputCapability: successor.prepared.inputCapability,
+    });
+    expect(successorInput.input).toMatchObject({
+      baseCommit: protectedHead,
+      startingCommit: recovered.liveTip,
+      priorResultCommit: subject.receipt.newHead,
+      round: 1,
+      guardedRebaseLineage: {
+        guardedRebase: recovered.guardedRebase,
+        ontoCommit: protectedHead,
+        rebasedStartCommit: recovered.liveTip,
+      },
+    });
+
     expect(
       await finalizedRestart.coordinateImplementationCandidate({
         partitionKey: qualified.partitionKey,
@@ -2549,8 +2659,8 @@ throw new Error("unexpected controlled cq invocation");
         generation: subject.prepared.generation,
       },
       successor: {
-        attestationId: subject.prepared.attestationId,
-        generation: subject.prepared.generation + 1,
+        attestationId: successor.handle.attestationId,
+        generation: successor.handle.generation,
       },
     });
     expect(runner.requests).toHaveLength(0);
@@ -2781,10 +2891,7 @@ throw new Error("unexpected controlled cq invocation");
         generation: unchanged.prepared.generation,
       },
     });
-    if (
-      !corrected.accepted ||
-      corrected.prepared.gitChangeCapability === undefined
-    ) {
+    if (!corrected.accepted || corrected.prepared.gitChangeCapability === undefined) {
       throw new Error("changed correction did not receive Git authority");
     }
     await subject.capability.fetchInput({
@@ -2897,7 +3004,8 @@ throw new Error("unexpected controlled cq invocation");
       correctedChild,
       "2026-08-12T20:00:05.000Z",
     );
-    if (correctionQualified.state !== "queued") throw new Error("changed correction did not qualify");
+    if (correctionQualified.state !== "queued")
+      throw new Error("changed correction did not qualify");
     expect(
       await subject.capability.coordinateImplementationCandidate({
         partitionKey: correctionQualified.partitionKey,
@@ -4295,10 +4403,7 @@ throw new Error("unexpected controlled cq invocation");
             identity: "first [REDACTED:api-key]",
             assertion: "expected [REDACTED:api-key] to be absent",
           },
-          failureIndex: [
-            { identity: "first [REDACTED:api-key]" },
-            { identity: "second failure" },
-          ],
+          failureIndex: [{ identity: "first [REDACTED:api-key]" }, { identity: "second failure" }],
         },
       },
     });

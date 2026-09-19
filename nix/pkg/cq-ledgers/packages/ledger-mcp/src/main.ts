@@ -576,7 +576,9 @@ export async function readImplementationCandidateCoordinateRequest(
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (buffered.length + bytes.length > PARENT_GATE_REQUEST_MAX_BYTES) {
         cleanup();
-        rejectInput(new Error("ledger-mcp: implementation coordinator request exceeds 16384 bytes"));
+        rejectInput(
+          new Error("ledger-mcp: implementation coordinator request exceeds 16384 bytes"),
+        );
         return;
       }
       buffered = Buffer.concat([buffered, bytes]);
@@ -615,8 +617,7 @@ export async function readImplementationCandidateCoordinateRequest(
   }
   const request = parsed as Record<string, unknown>;
   const parentGateCapability = request["parentGateCapability"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const successorLaunch = request["successorLaunch"] as Record<string, unknown> | undefined;
   const requestFields = Object.keys(request).sort().join(",");
   const baseFields = "attestationId,generation,holderId,parentGateCapability";
@@ -647,9 +648,7 @@ export async function readImplementationCandidateCoordinateRequest(
         typeof successorLaunch["reasoningEffort"] !== "string" ||
         successorLaunch["reasoningEffort"].trim() === "" ||
         typeof successorLaunch["sandboxMode"] !== "string" ||
-        !(CODEX_ROLE_SANDBOX_MODES as readonly string[]).includes(
-          successorLaunch["sandboxMode"],
-        )))
+        !(CODEX_ROLE_SANDBOX_MODES as readonly string[]).includes(successorLaunch["sandboxMode"])))
   ) {
     throw new Error("ledger-mcp: malformed implementation coordinator request");
   }
@@ -1107,6 +1106,9 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
           ...(opts.dispatchCapability?.resolveContinuation === undefined
             ? {}
             : { resolveDispatchContinuation: opts.dispatchCapability.resolveContinuation }),
+          ...(opts.dispatchCapability?.resolveStagedRebase === undefined
+            ? {}
+            : { resolveStagedRebase: opts.dispatchCapability.resolveStagedRebase }),
           deps: {
             adoptionActivityFence: createGitLegacyWorktreeActivityFence(
               opts.dispatchCapability?.observeWorktreeActivity,
@@ -1586,7 +1588,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     implementationCandidateCoordinateRequest?.successorLaunch === undefined ||
     resolvedPromptSurface === undefined
       ? undefined
-        : createImplementationSuccessorLauncher(
+      : createImplementationSuccessorLauncher(
           implementationCandidateCoordinateRequest.successorLaunch,
           resolvedPromptSurface.root,
           process.env,
@@ -1598,9 +1600,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? {}
       : { promptArtifactStore: resolvedPromptSurface.store }),
     environment: process.env,
-    ...(implementationSuccessorLauncher === undefined
-      ? {}
-      : { implementationSuccessorLauncher }),
+    ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
   });
   const dispatchCapability =
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;

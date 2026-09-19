@@ -383,6 +383,8 @@ export type AcquireImplementationCandidateOutcome =
       readonly partitionRevision: number;
       readonly front: DispatchHandle;
       readonly frontState: ImplementationCandidateQueueState;
+      /** Present only for a staged-rebase-retired coordinator handoff. */
+      readonly sourceReference?: string;
     }
   | {
       readonly state: "leased";
@@ -398,8 +400,7 @@ export interface ImplementationQueueLeaseTransitionRequest extends Implementatio
   readonly detail?: DispatchJSONValue;
 }
 
-export interface ReserveImplementationCompletionLeaseRequest
-  extends ImplementationQueueLeaseTransitionRequest {
+export interface ReserveImplementationCompletionLeaseRequest extends ImplementationQueueLeaseTransitionRequest {
   readonly operationId: string;
   readonly taskRef: string;
   readonly completionRef: string;
@@ -408,8 +409,7 @@ export interface ReserveImplementationCompletionLeaseRequest
   readonly qualificationDigest: string;
 }
 
-export interface ReleaseImplementationCompletionLeaseRequest
-  extends ImplementationQueueLeaseTransitionRequest {
+export interface ReleaseImplementationCompletionLeaseRequest extends ImplementationQueueLeaseTransitionRequest {
   readonly operationId: string;
   readonly taskRef: string;
   readonly completionRef: string;
@@ -470,7 +470,8 @@ const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
 
 function assertCompletionLeaseCoordinates(
-  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+  request:
+    ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
 ): void {
   if (
     !IMPLEMENTATION_OPERATION_ID.test(request.operationId) ||
@@ -487,7 +488,8 @@ function assertCompletionLeaseCoordinates(
 }
 
 function completionLeaseRequestDigest(
-  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+  request:
+    ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
 ): string {
   return digest({
     attestationId: request.attestationId,
@@ -625,18 +627,20 @@ function isConsumedOrdinaryContinuationAncestor(
   const retainedBinding = retained?.gitEffectBinding;
   const sameManagerBinding =
     retainedBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => retainedBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => retainedBinding[field] === successorBinding[field]);
   const sameLineageBridge =
     retainedBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
@@ -697,24 +701,25 @@ function isGateRejectedCorrectionAncestor(
       : undefined;
   const sameManagerBinding =
     sourceBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => sourceBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => sourceBinding[field] === successorBinding[field]);
   const sameLineageBridge =
     sourceBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
       : successorBinding.guardedRebaseBridge !== undefined &&
-        digest(sourceBinding.guardedRebaseBridge) ===
-          digest(successorBinding.guardedRebaseBridge);
+        digest(sourceBinding.guardedRebaseBridge) === digest(successorBinding.guardedRebaseBridge);
   if (
     control === undefined ||
     sourceBinding === undefined ||
@@ -755,8 +760,7 @@ function isGateRejectedCorrectionAncestor(
     sourceInherited.length > sourceClosure.length ||
     digest(sourceInherited) !== digest(sourceClosure.slice(0, sourceInherited.length)) ||
     successorInherited.length > successorClosure.length ||
-    digest(successorInherited) !==
-      digest(successorClosure.slice(0, successorInherited.length)) ||
+    digest(successorInherited) !== digest(successorClosure.slice(0, successorInherited.length)) ||
     sourceClosure.length >= successorClosure.length ||
     digest(sourceClosure) !== digest(successorClosure.slice(0, sourceClosure.length)) ||
     (sourceClosure.length > 0 &&
@@ -767,9 +771,7 @@ function isGateRejectedCorrectionAncestor(
   const changedSuffix = successorClosure.slice(sourceClosure.length);
   return changedSuffix.every((receipt, index) => {
     const previousHead =
-      index === 0
-        ? control.attempt.resultCommit
-        : changedSuffix[index - 1]?.newHead;
+      index === 0 ? control.attempt.resultCommit : changedSuffix[index - 1]?.newHead;
     return (
       receipt.attestationId === successor.attestationId &&
       receipt.taskId === successorBinding.taskId &&
@@ -1359,8 +1361,7 @@ export function enqueueImplementationCandidate(
   }
   const terminalPrior = priorEnrollment.find(
     (candidate) =>
-      (candidate.attestationId !== row.attestationId ||
-        candidate.generation !== row.generation) &&
+      (candidate.attestationId !== row.attestationId || candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired" &&
       !isComposedTerminalAncestor(
         candidate,
@@ -1379,18 +1380,16 @@ export function enqueueImplementationCandidate(
       `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected`,
     );
   }
-  const retiredSourceRows = priorEnrollment.filter(
-    (candidate) => {
-      const control = candidate.implementationQueue!;
-      const claimed = control.stagedRebaseSource?.successor;
-      return (
-        control.state === "staged-rebase-retired" &&
-        control.stagedRebaseSource !== undefined &&
-        (claimed === undefined ||
-          (claimed.attestationId === row.attestationId && claimed.generation === row.generation))
-      );
-    },
-  );
+  const retiredSourceRows = priorEnrollment.filter((candidate) => {
+    const control = candidate.implementationQueue!;
+    const claimed = control.stagedRebaseSource?.successor;
+    return (
+      control.state === "staged-rebase-retired" &&
+      control.stagedRebaseSource !== undefined &&
+      (claimed === undefined ||
+        (claimed.attestationId === row.attestationId && claimed.generation === row.generation))
+    );
+  });
   const successorSource = request.stagedRebaseSource;
   if (retiredSourceRows.length > 0 && successorSource === undefined) {
     throw new DispatchStagedRebaseSourceError(
@@ -2200,15 +2199,7 @@ export function terminalizeImplementationCandidate(
     );
   }
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
-  return queuedAbort(
-    row,
-    control,
-    deps.now(),
-    reason,
-    terminalReason,
-    details,
-    deps,
-  );
+  return queuedAbort(row, control, deps.now(), reason, terminalReason, details, deps);
 }
 
 export function retireDispatchStagedRebaseSource(

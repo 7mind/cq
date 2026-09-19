@@ -3559,6 +3559,23 @@ export async function observeManagedWorktreeLiveTip(
   return tip;
 }
 
+/** Resolve HEAD while permitting the exact manager-bound detached rebase state. */
+export async function observeManagedWorktreeRebaseTip(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir">,
+): Promise<string> {
+  await assertManagedWorktreeConflictDispatchBindingLive(binding, deps);
+  const tip = await revParse(
+    deps.git ?? nodeManagedWorktreeGitRunner,
+    binding.worktreePath,
+    "HEAD",
+  );
+  if (tip === null || !FULL_COMMIT_SHA.test(tip)) {
+    throw new Error("managed rebase worktree HEAD is not a full commit SHA");
+  }
+  return tip;
+}
+
 /** Recheck a manager binding while Git has detached HEAD for its active rebase. */
 export async function assertManagedWorktreeConflictDispatchBindingLive(
   binding: ManagedWorktreeDispatchBinding,

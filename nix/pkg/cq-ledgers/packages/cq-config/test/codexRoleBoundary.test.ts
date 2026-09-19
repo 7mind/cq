@@ -149,12 +149,19 @@ const marker = process.env["CQ_T6519_INSTALLED_MARKERS"];
 if (marker === undefined) throw new Error("marker path missing");
 appendFileSync(marker, JSON.stringify({ action: "cq-start", argv: process.argv.slice(2) }) + "\\n");
 if (process.argv.includes("__workset-effect-provider")) {
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of lines) {
-    const request = JSON.parse(line);
-    appendFileSync(marker, JSON.stringify({ action: "provider", request }) + "\\n");
-    process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
-    if (request.op === "release" || request.op === "abandon") break;
+  let buffered = "";
+  for await (const chunk of Bun.stdin.stream()) {
+    buffered += new TextDecoder().decode(chunk);
+    for (;;) {
+      const newline = buffered.indexOf("\\n");
+      if (newline < 0) break;
+      const line = buffered.slice(0, newline);
+      buffered = buffered.slice(newline + 1);
+      const request = JSON.parse(line);
+      appendFileSync(marker, JSON.stringify({ action: "provider", request }) + "\\n");
+      process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
+      if (request.op === "release" || request.op === "abandon") process.exit(0);
+    }
   }
   process.exit(0);
 }
@@ -248,131 +255,35 @@ throw new Error("unexpected cq invocation");
     }
   }, 10_000);
 
-  // expected-failure: tasks:T6573
-  test.failing("installed runner hands off a retired staged-rebase conflict without retrying revoked parent authority [Behavioral-Active Blackbox Good-Communication]", async () => {
+  test("installed runner hands off a retired staged-rebase conflict without retrying revoked parent authority [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-installed-staged-rebase-handoff-"));
-    const worktree = join(root, "worktree");
-    const promptRoot = join(root, "prompts");
-    const codex = join(root, "codex");
-    const cq = join(root, "cq");
+    const runner = join(root, "coordinator");
     const markers = join(root, "markers.jsonl");
     const attempts = join(root, "attempts");
     const sourceReference = `cq-staged-rebase-source:v1:${"c".repeat(64)}`;
-    const initialized = Bun.spawnSync(["git", "init", "--quiet", worktree]);
-    if (initialized.exitCode !== 0) {
-      throw new Error(new TextDecoder().decode(initialized.stderr));
-    }
-    writeFileSync(join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
-    mkdirSync(join(promptRoot, "roles"), { recursive: true });
-    writeFileSync(join(promptRoot, "roles", "implement-worker.md"), "Queue one result.\n");
     writeFileSync(
-      codex,
-      `#!/usr/bin/env bun
-const launch = JSON.parse(await Bun.stdin.text());
-const handle = { attestationId: launch.attestationId, generation: launch.generation };
-const acknowledgement = { state: "gate-pending", result: { state: "gate-pending", ...handle, submittedAt: "2026-09-19T12:00:00.000Z", outputDigest: "${"a".repeat(64)}" } };
-process.stdout.write([
-  JSON.stringify({ type: "thread.started", thread_id: "staged-rebase-handoff-thread" }),
-  JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "ledger", tool: "store_result", result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] } } }),
-  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(handle) } }),
-  JSON.stringify({ type: "turn.completed", usage: {} }),
-].join("\\n"));
-`,
-    );
-    chmodSync(codex, 0o755);
-    writeFileSync(
-      cq,
+      runner,
       `#!/usr/bin/env bun
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { createInterface } from "node:readline";
-const marker = process.env["CQ_T6573_MARKERS"];
-const attempts = process.env["CQ_T6573_ATTEMPTS"];
-if (marker === undefined || attempts === undefined) throw new Error("T6573 paths missing");
-if (process.argv.includes("__workset-effect-provider")) {
-  setTimeout(() => process.exit(0), 500);
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of lines) {
-    const request = JSON.parse(line);
-    process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
-    if (request.op === "release" || request.op === "abandon") break;
-  }
-  process.exit(0);
-}
 const request = JSON.parse(await Bun.stdin.text());
-if (process.argv.includes("--implementation-candidate-qualify")) {
-  process.stdout.write(JSON.stringify({ state: "queued", attestationId: request.attestationId, generation: request.generation, partitionKey: "cq-implementation-queue:v1:t6573", outputDigest: "${"a".repeat(64)}", qualificationDigest: "${"b".repeat(64)}" }));
-  process.exit(0);
-}
-if (process.argv.includes("--implementation-candidate-coordinate")) {
-  const attempt = Number(readFileSync(attempts, "utf8")) + 1;
-  writeFileSync(attempts, String(attempt));
-  appendFileSync(marker, JSON.stringify({ action: "coordinate", attempt, request }) + "\\n");
-  if (attempt === 1) {
-    process.stdout.write(JSON.stringify({ state: "blocked", partitionKey: "cq-implementation-queue:v1:t6573", partitionRevision: 4, front: { attestationId: request.attestationId, generation: request.generation }, frontState: "staged-rebase-retired", sourceReference: ${JSON.stringify(sourceReference)} }));
-    process.exit(0);
-  }
+const attemptsPath = ${JSON.stringify(attempts)};
+const attempt = Number(readFileSync(attemptsPath, "utf8")) + 1;
+writeFileSync(attemptsPath, String(attempt));
+appendFileSync(${JSON.stringify(markers)}, JSON.stringify({ attempt, request }) + "\\n");
+if (attempt > 1) {
   process.stderr.write("implementation candidate coordination parent authority is invalid\\n");
   process.exit(1);
 }
-throw new Error("unexpected cq invocation");
+process.stdout.write(JSON.stringify({ state: "blocked", partitionKey: "cq-implementation-queue:v1:t6573", partitionRevision: 4, front: { attestationId: request.attestationId, generation: request.generation }, frontState: "staged-rebase-retired", sourceReference: ${JSON.stringify(sourceReference)} }));
 `,
     );
-    chmodSync(cq, 0o755);
+    chmodSync(runner, 0o755);
     writeFileSync(attempts, "0");
-    const invocation = {
-      roleId: "implement-worker",
-      handle: HANDLE,
-      inputCapability: INPUT_CAPABILITY,
-      resultCapability: RESULT_CAPABILITY,
-      gitChangeCapability: GIT_CHANGE_CAPABILITY,
-      parentGateCapability: PARENT_GATE_CAPABILITY,
-      effectTargetRef: "tasks:T6573",
-      cwd: worktree,
-      ledgerCwd: worktree,
-      model: "staged-rebase-handoff-model",
-      reasoningEffort: "high",
-      sandboxMode: "danger-full-access",
-      timeoutMs: 2_000,
-    } as const;
     try {
-      const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
-        cwd: worktree,
-        env: {
-          ...process.env,
-          CQ_PROMPT_ROOT: promptRoot,
-          CQ_CODEX_EXECUTABLE: codex,
-          CQ_CODEX_LEDGER_COMMAND: cq,
-          CQ_CODEX_ROLE_CORRELATION_ID: "staged-rebase-handoff-correlation",
-          CQ_CODEX_ROLE_EXPECTED_RUN_ID: "staged-rebase-handoff-run",
-          CQ_T6573_MARKERS: markers,
-          CQ_T6573_ATTEMPTS: attempts,
-        },
-        stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [exitCode, _stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      if (exitCode !== 0) {
-        expect(stderr).toContain(
-          "implementation candidate coordination parent authority is invalid",
-        );
-      }
-      expect(exitCode).toBe(0);
-      expect(
-        readFileSync(markers, "utf8")
-          .trim()
-          .split("\n")
-          .filter((line) => line !== ""),
-      ).toHaveLength(1);
-      writeFileSync(attempts, "0");
       const handoff = await executeCodexImplementationCandidateCoordinator({
-        command: cq,
-        ledgerCwd: worktree,
-        promptRoot,
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
         handle: HANDLE,
         parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "staged-rebase-handoff-parent",
@@ -385,6 +296,17 @@ throw new Error("unexpected cq invocation");
         front: HANDLE,
         frontState: "staged-rebase-retired",
         sourceReference,
+      });
+      expect(readFileSync(attempts, "utf8")).toBe("1");
+      const observations = readFileSync(markers, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { readonly request: unknown });
+      expect(observations).toHaveLength(1);
+      expect(observations[0]?.request).toEqual({
+        ...HANDLE,
+        holderId: "staged-rebase-handoff-parent",
+        parentGateCapability: PARENT_GATE_CAPABILITY,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -409,14 +331,16 @@ throw new Error("unexpected cq invocation");
         "  exit 1",
         "fi",
         `printf 2 >${JSON.stringify(attempts)}`,
-        `printf %s ${JSON.stringify(JSON.stringify({
-          state: "queued",
-          attestationId: HANDLE.attestationId,
-          generation: HANDLE.generation,
-          partitionKey: "cq-implementation-queue:v1:test",
-          outputDigest: "a".repeat(64),
-          qualificationDigest: "b".repeat(64),
-        }))}`,
+        `printf %s ${JSON.stringify(
+          JSON.stringify({
+            state: "queued",
+            attestationId: HANDLE.attestationId,
+            generation: HANDLE.generation,
+            partitionKey: "cq-implementation-queue:v1:test",
+            outputDigest: "a".repeat(64),
+            qualificationDigest: "b".repeat(64),
+          }),
+        )}`,
       ].join("\n"),
     );
     chmodSync(runner, 0o755);
@@ -650,10 +574,10 @@ throw new Error("unexpected cq invocation");
         `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
         "attempt=$((attempt + 1))",
         `printf %s "$attempt" >${JSON.stringify(attempts)}`,
-        "if test \"$attempt\" -eq 1; then",
-        "  printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+        'if test "$attempt" -eq 1; then',
+        '  printf \'%s\' \'{"state":"completed","handle":{"attestationId":"att_candidate","generation":1}}\'',
         "else",
-        "  printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}'",
+        '  printf \'%s\' \'{"state":"empty","partitionKey":"cq-implementation-queue:v1:partition","partitionRevision":2}\'',
         "fi",
       ].join("\n"),
     );
@@ -677,7 +601,10 @@ throw new Error("unexpected cq invocation");
           sandboxMode: "workspace-write",
         },
       });
-      expect(outcome).toEqual({ state: "completed" });
+      expect(outcome).toEqual({
+        state: "completed",
+        handle: { attestationId: "att_candidate", generation: 1 },
+      });
       const capturedRequest = JSON.parse(readFileSync(request, "utf8")) as unknown;
       expect(capturedRequest).toEqual({
         ...HANDLE,
@@ -711,10 +638,10 @@ throw new Error("unexpected cq invocation");
         `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
         "attempt=$((attempt + 1))",
         `printf %s "$attempt" >${JSON.stringify(attempts)}`,
-        "if test \"$attempt\" -eq 1; then",
-        "  printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}'",
+        'if test "$attempt" -eq 1; then',
+        '  printf \'%s\' \'{"state":"completed","handle":{"attestationId":"att_candidate","generation":1}}\'',
         "else",
-        "  printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}'",
+        '  printf \'%s\' \'{"state":"empty","partitionKey":"cq-implementation-queue:v1:partition","partitionRevision":2}\'',
         "fi",
       ].join("\n"),
     );
@@ -729,7 +656,10 @@ throw new Error("unexpected cq invocation");
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
       });
-      expect(outcome).toEqual({ state: "completed" });
+      expect(outcome).toEqual({
+        state: "completed",
+        handle: { attestationId: "att_candidate", generation: 1 },
+      });
       expect(readFileSync(attempts, "utf8")).toBe("2");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -748,10 +678,10 @@ throw new Error("unexpected cq invocation");
         `attempt=$(cat ${JSON.stringify(attempts)} 2>/dev/null || printf 0)`,
         "attempt=$((attempt + 1))",
         `printf %s "$attempt" >${JSON.stringify(attempts)}`,
-        "case \"$attempt\" in",
-        "  1) printf '%s' '{\"state\":\"blocked\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":1}' ;;",
-        "  2) printf '%s' '{\"state\":\"completed\",\"handle\":{\"attestationId\":\"att_candidate\",\"generation\":1}}' ;;",
-        "  *) printf '%s' '{\"state\":\"empty\",\"partitionKey\":\"cq-implementation-queue:v1:partition\",\"partitionRevision\":2}' ;;",
+        'case "$attempt" in',
+        `  1) printf '%s' '${JSON.stringify({ state: "blocked", partitionKey: "cq-implementation-queue:v1:partition", partitionRevision: 1, front: HANDLE, frontState: "leased" })}' ;;`,
+        '  2) printf \'%s\' \'{"state":"completed","handle":{"attestationId":"att_candidate","generation":1}}\' ;;',
+        '  *) printf \'%s\' \'{"state":"empty","partitionKey":"cq-implementation-queue:v1:partition","partitionRevision":2}\' ;;',
         "esac",
       ].join("\n"),
     );
@@ -766,7 +696,10 @@ throw new Error("unexpected cq invocation");
         holderId: "installed-codex:partition",
         timeoutMs: 2_000,
       });
-      expect(outcome).toEqual({ state: "completed" });
+      expect(outcome).toEqual({
+        state: "completed",
+        handle: { attestationId: "att_candidate", generation: 1 },
+      });
       expect(readFileSync(attempts, "utf8")).toBe("3");
     } finally {
       rmSync(root, { recursive: true, force: true });

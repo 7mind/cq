@@ -89,8 +89,10 @@ import {
   resolveManagedWorktreeDispatchBinding,
   resolveManagedWorktreeLineageBinding,
   observeManagedWorktreeLiveTip,
+  observeManagedWorktreeRebaseTip,
   resolveInheritedGitChangeReceipts,
   runGuardedRebase,
+  runGuardedRebaseUnderManagedLock,
   runLedgerWorksetGitEffect,
   SupervisedWorkerGateRejectedError,
   withManagedWorktreeEffectLock,
@@ -1573,7 +1575,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     return Object.freeze({ ...checkpoint, managed });
   }
 
-  async function reconcileRetiredStagedRebase(context: RetiredStagedRebaseContext) {
+  async function reconcileRetiredStagedRebase(
+    context: RetiredStagedRebaseContext,
+    runner: typeof runGuardedRebase,
+  ) {
     if (options.ledgerStore === undefined) {
       throw new Error("staged-rebase recovery requires the task ledger");
     }
@@ -1588,7 +1593,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       worktreePath: context.managed.worktreePath,
       ontoCommit: context.source.ontoCommit,
     });
-    return await runGuardedRebase({
+    return await runner({
       binding: context.managed,
       operationId,
       ontoCommit: context.source.ontoCommit,
@@ -1628,7 +1633,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     ) {
       throw new Error("stale implementation candidate rebase checkpoint changed");
     }
-    const rebase = await reconcileRetiredStagedRebase(context);
+    const rebase = await reconcileRetiredStagedRebase(context, runGuardedRebase);
     if (rebase.kind !== "finalized") {
       throw new Error("stale implementation candidate rebase remains conflict-pending");
     }
@@ -1703,7 +1708,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     ) {
       throw new Error("stale implementation candidate successor checkpoint changed");
     }
-    const rebase = await reconcileRetiredStagedRebase(context);
+    const rebase = await reconcileRetiredStagedRebase(context, runGuardedRebase);
     if (rebase.kind !== "finalized" || rebase.reference !== input.rebase.guardedRebase) {
       throw new Error("stale implementation candidate successor rebase is not finalized");
     }
@@ -1730,7 +1735,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         successor: Object.freeze({ ...context.source.successor }),
       });
     }
-    const rebase = await reconcileRetiredStagedRebase(context);
+    const rebase = await reconcileRetiredStagedRebase(context, runGuardedRebase);
     if (rebase.kind !== "finalized") {
       return Object.freeze({ state: "conflict-pending" as const });
     }
@@ -1740,6 +1745,94 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       rebase.bridge.rebasedStartCommit,
     );
     return Object.freeze({ state: "successor-queued" as const, successor });
+  }
+
+  async function resolveManagerBoundStagedRebase(
+    gitEffectBinding: ManagedWorktreeDispatchBinding,
+    liveTip: string,
+    source: { readonly attestationId: string; readonly generation: number },
+    sourceReference: string,
+  ) {
+    const context = await loadRetiredStagedRebaseContext(sourceReference);
+    if (
+      context.source.source.attestationId !== source.attestationId ||
+      context.source.source.generation !== source.generation ||
+      context.source.sourceReference !== sourceReference
+    ) {
+      throw new Error("staged-rebase recovery source handle or reference changed");
+    }
+    for (const field of [
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const) {
+      if (context.managed[field] !== gitEffectBinding[field]) {
+        throw new Error(`staged-rebase recovery managed binding changed at ${field}`);
+      }
+    }
+    if (
+      !dispatchObject(context.sourceRow.input) ||
+      context.sourceRow.input["taskId"] !== gitEffectBinding.taskId ||
+      context.control.attempt.taskId !== gitEffectBinding.taskId ||
+      context.control.attempt.repositoryId !== gitEffectBinding.repositoryId ||
+      context.control.attempt.worktreePath !== gitEffectBinding.worktreePath ||
+      context.control.attempt.resultCommit !== context.source.sourceResultCommit ||
+      context.source.repositoryId !== gitEffectBinding.repositoryId ||
+      context.source.worktreePath !== gitEffectBinding.worktreePath
+    ) {
+      throw new Error("staged-rebase recovery task, repository, or attempt binding changed");
+    }
+    const deps =
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir };
+    if ((await observeManagedWorktreeRebaseTip(gitEffectBinding, deps)) !== liveTip) {
+      throw new Error("staged-rebase recovery live tip changed under the manager effect lock");
+    }
+    const rebase = await reconcileRetiredStagedRebase(context, runGuardedRebaseUnderManagedLock);
+    const base = Object.freeze({
+      taskId: gitEffectBinding.taskId,
+      liveTip,
+      source: Object.freeze({ ...context.source.source }),
+      sourceReference: context.source.sourceReference,
+      guardedRebase: context.source.guardedRebase,
+    });
+    if (rebase.kind !== "finalized") {
+      return Object.freeze({
+        status: "staged-rebase-conflict-pending" as const,
+        ...base,
+      });
+    }
+    if (
+      rebase.reference !== context.source.guardedRebase ||
+      rebase.bridge.requestDigest !== context.source.guardedRebaseJournalDigest ||
+      rebase.bridge.oldResultCommit !== context.source.sourceResultCommit ||
+      rebase.bridge.ontoCommit !== context.source.ontoCommit ||
+      rebase.bridge.rebasedStartCommit !== liveTip
+    ) {
+      throw new Error("staged-rebase recovery terminal journal does not match the retired source");
+    }
+    if (context.source.successor !== undefined) {
+      return Object.freeze({
+        status: "staged-rebase-successor-bound" as const,
+        ...base,
+        successor: Object.freeze({ ...context.source.successor }),
+      });
+    }
+    return Object.freeze({
+      status: "staged-rebase-preparation-ready" as const,
+      ...base,
+      preparation: Object.freeze({
+        kind: "guarded-rebase" as const,
+        reprepareOf: Object.freeze({ ...context.source.source }),
+        guardedRebase: rebase.reference,
+      }),
+    });
   }
 
   const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations =
@@ -3920,6 +4013,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         terminalAt: continuation.terminalAt,
       });
     },
+    resolveStagedRebase: resolveManagerBoundStagedRebase,
   };
   return capability;
 }

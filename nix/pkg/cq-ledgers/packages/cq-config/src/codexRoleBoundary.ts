@@ -274,8 +274,39 @@ export interface CodexImplementationCandidateCoordinatorRequest {
 }
 
 export type CodexImplementationCandidateCoordination =
-  | { readonly state: "empty" | "blocked" }
-  | { readonly state: "completed" | "successor-queued" };
+  | {
+      readonly state: "empty";
+      readonly partitionKey: string;
+      readonly partitionRevision: number;
+    }
+  | {
+      readonly state: "blocked";
+      readonly partitionKey: string;
+      readonly partitionRevision: number;
+      readonly front: DispatchHandle;
+      readonly frontState: string;
+      readonly sourceReference?: string;
+    }
+  | { readonly state: "completed"; readonly handle: DispatchHandle }
+  | {
+      readonly state: "successor-queued";
+      readonly source: DispatchHandle;
+      readonly successor: DispatchHandle;
+    };
+
+const STAGED_REBASE_SOURCE_REFERENCE = /^cq-staged-rebase-source:v1:[0-9a-f]{64}$/u;
+
+function isDispatchHandle(value: unknown): value is DispatchHandle {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).sort().join(",") === "attestationId,generation" &&
+    typeof record["attestationId"] === "string" &&
+    record["attestationId"].trim() !== "" &&
+    Number.isSafeInteger(record["generation"]) &&
+    (record["generation"] as number) >= 1
+  );
+}
 
 async function executeCodexImplementationCandidateQualifierAttempt(
   input: CodexImplementationCandidateQualifierRequest,
@@ -328,10 +359,14 @@ async function executeCodexImplementationCandidateQualifierAttempt(
   try {
     parsed = JSON.parse(stdout.trim());
   } catch {
-    throw new CodexRoleBoundaryError("implementation candidate qualification emitted non-JSON stdout");
+    throw new CodexRoleBoundaryError(
+      "implementation candidate qualification emitted non-JSON stdout",
+    );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new CodexRoleBoundaryError("implementation candidate qualification emitted a malformed acknowledgement");
+    throw new CodexRoleBoundaryError(
+      "implementation candidate qualification emitted a malformed acknowledgement",
+    );
   }
   const acknowledgement = parsed as Record<string, unknown>;
   const consumed = acknowledgement["result"] as Record<string, unknown> | undefined;
@@ -411,7 +446,11 @@ export async function executeCodexImplementationCandidateQualifier(
   });
   const deadlineMs = Date.now() + input.timeoutMs;
   let firstFailure: unknown;
-  for (let attempt = 1; attempt <= CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS; attempt += 1) {
+  for (
+    let attempt = 1;
+    attempt <= CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS;
+    attempt += 1
+  ) {
     const remainingMs = deadlineMs - Date.now();
     if (remainingMs <= 0) {
       throw new CodexRoleBoundaryError(
@@ -426,7 +465,8 @@ export async function executeCodexImplementationCandidateQualifier(
         firstFailure = error;
         continue;
       }
-      const firstMessage = firstFailure instanceof Error ? firstFailure.message : String(firstFailure);
+      const firstMessage =
+        firstFailure instanceof Error ? firstFailure.message : String(firstFailure);
       const replayMessage = error instanceof Error ? error.message : String(error);
       throw new CodexRoleBoundaryError(
         `implementation candidate qualification acknowledgement remained unavailable after exact replay: ${firstMessage}; ${replayMessage}`,
@@ -445,9 +485,7 @@ async function executeCodexImplementationCandidateCoordinatorAttempt(
     ...input.handle,
     holderId: input.holderId,
     parentGateCapability: input.parentGateCapability,
-    ...(input.successorLaunch === undefined
-      ? {}
-      : { successorLaunch: input.successorLaunch }),
+    ...(input.successorLaunch === undefined ? {} : { successorLaunch: input.successorLaunch }),
   };
   const child = Bun.spawn(
     [
@@ -493,25 +531,74 @@ async function executeCodexImplementationCandidateCoordinatorAttempt(
   try {
     parsed = JSON.parse(stdout.trim());
   } catch {
-    throw new CodexRoleBoundaryError("implementation candidate coordination emitted non-JSON stdout");
+    throw new CodexRoleBoundaryError(
+      "implementation candidate coordination emitted non-JSON stdout",
+    );
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new CodexRoleBoundaryError(
       "implementation candidate coordination emitted a malformed acknowledgement",
     );
   }
-  const state = (parsed as Record<string, unknown>)["state"];
+  const acknowledgement = parsed as Record<string, unknown>;
+  const state = acknowledgement["state"];
+  const keys = Object.keys(acknowledgement).sort().join(",");
+  const partitionKey = acknowledgement["partitionKey"];
+  const partitionRevision = acknowledgement["partitionRevision"];
   if (
-    state !== "empty" &&
-    state !== "blocked" &&
-    state !== "completed" &&
-    state !== "successor-queued"
+    state === "empty" &&
+    keys === "partitionKey,partitionRevision,state" &&
+    typeof partitionKey === "string" &&
+    partitionKey.trim() !== "" &&
+    Number.isSafeInteger(partitionRevision) &&
+    (partitionRevision as number) >= 0
   ) {
-    throw new CodexRoleBoundaryError(
-      "implementation candidate coordination emitted a foreign acknowledgement",
-    );
+    return Object.freeze({
+      ...acknowledgement,
+    }) as unknown as CodexImplementationCandidateCoordination;
   }
-  return Object.freeze({ state });
+  if (
+    state === "blocked" &&
+    (keys === "front,frontState,partitionKey,partitionRevision,state" ||
+      keys === "front,frontState,partitionKey,partitionRevision,sourceReference,state") &&
+    typeof partitionKey === "string" &&
+    partitionKey.trim() !== "" &&
+    Number.isSafeInteger(partitionRevision) &&
+    (partitionRevision as number) >= 0 &&
+    isDispatchHandle(acknowledgement["front"]) &&
+    typeof acknowledgement["frontState"] === "string" &&
+    acknowledgement["frontState"].trim() !== "" &&
+    (acknowledgement["frontState"] === "staged-rebase-retired"
+      ? typeof acknowledgement["sourceReference"] === "string" &&
+        STAGED_REBASE_SOURCE_REFERENCE.test(acknowledgement["sourceReference"])
+      : acknowledgement["sourceReference"] === undefined)
+  ) {
+    return Object.freeze({
+      ...acknowledgement,
+    }) as unknown as CodexImplementationCandidateCoordination;
+  }
+  if (
+    state === "completed" &&
+    keys === "handle,state" &&
+    isDispatchHandle(acknowledgement["handle"])
+  ) {
+    return Object.freeze({
+      ...acknowledgement,
+    }) as unknown as CodexImplementationCandidateCoordination;
+  }
+  if (
+    state === "successor-queued" &&
+    keys === "source,state,successor" &&
+    isDispatchHandle(acknowledgement["source"]) &&
+    isDispatchHandle(acknowledgement["successor"])
+  ) {
+    return Object.freeze({
+      ...acknowledgement,
+    }) as unknown as CodexImplementationCandidateCoordination;
+  }
+  throw new CodexRoleBoundaryError(
+    "implementation candidate coordination emitted a foreign acknowledgement",
+  );
 }
 
 /** Drain qualified fronts through separate admitted-run windows after child qualification. */
@@ -528,6 +615,7 @@ export async function executeCodexImplementationCandidateCoordinator(
       continue;
     }
     if (outcome.state === "blocked") {
+      if (outcome.frontState === "staged-rebase-retired") return outcome;
       const remainingMs = blockedDeadlineMs - Date.now();
       if (remainingMs <= 0) return outcome;
       await Bun.sleep(Math.min(25, remainingMs));
@@ -828,7 +916,12 @@ export class CodexRoleBoundaryError extends Error {
 }
 
 function parentGateAbortDiagnostic(details: DispatchJSONValue | undefined): string | undefined {
-  if (details === undefined || details === null || typeof details !== "object" || Array.isArray(details)) {
+  if (
+    details === undefined ||
+    details === null ||
+    typeof details !== "object" ||
+    Array.isArray(details)
+  ) {
     return undefined;
   }
   const record = details as Readonly<Record<string, DispatchJSONValue>>;

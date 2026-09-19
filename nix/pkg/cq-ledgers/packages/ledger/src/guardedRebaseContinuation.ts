@@ -53,7 +53,8 @@ export const GUARDED_REBASE_REFERENCE_PATTERN = /^cq-guarded-rebase:v1:[0-9a-f]{
 /** A prepare-facing rejection: the carry field is the exact launch-envelope path. */
 export class GuardedRebaseRejection extends Error {
   constructor(
-    readonly path: "guardedRebase" | "input.baseCommit" | "input.startingCommit" | "input.priorResultCommit",
+    readonly path:
+      "guardedRebase" | "input.baseCommit" | "input.startingCommit" | "input.priorResultCommit",
     message: string,
   ) {
     super(message);
@@ -165,11 +166,7 @@ function trustedGitEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function runGit(
-  cwd: string,
-  args: readonly string[],
-  input?: Uint8Array,
-): Promise<GitResult> {
+function runGit(cwd: string, args: readonly string[], input?: Uint8Array): Promise<GitResult> {
   const child = Bun.spawn(
     ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
     {
@@ -189,18 +186,21 @@ function runGit(
   });
 }
 
-async function checkedGit(cwd: string, args: readonly string[], input?: Uint8Array): Promise<Buffer> {
+async function checkedGit(
+  cwd: string,
+  args: readonly string[],
+  input?: Uint8Array,
+): Promise<Buffer> {
   const result = await runGit(cwd, args, input);
   if (result.code !== 0) {
-    throw new Error(`git ${args[0] ?? ""} failed (${result.code}): ${result.stderr.toString().trim()}`);
+    throw new Error(
+      `git ${args[0] ?? ""} failed (${result.code}): ${result.stderr.toString().trim()}`,
+    );
   }
   return result.stdout;
 }
 
-function guardedRebaseRoot(
-  binding: ManagedWorktreeDispatchBinding,
-  stateDir?: string,
-): string {
+function guardedRebaseRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
   return join(
     stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry"),
     "guarded-rebase",
@@ -330,16 +330,12 @@ async function readJournal(file: string): Promise<GuardedRebaseJournal | null> {
   }
 }
 
-async function liveTip(
-  binding: ManagedWorktreeDispatchBinding,
-): Promise<string> {
+async function liveTip(binding: ManagedWorktreeDispatchBinding): Promise<string> {
   const symbolic = await runGit(binding.worktreePath, ["symbolic-ref", "--quiet", "HEAD"]);
   if (symbolic.code !== 0 || symbolic.stdout.toString().trim() !== binding.ref) {
     throw new Error("guarded rebase requires the bound task ref checked out");
   }
-  const tip = (
-    await checkedGit(binding.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"])
-  )
+  const tip = (await checkedGit(binding.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"]))
     .toString()
     .trim();
   if (!FULL_COMMIT.test(tip)) throw new Error("guarded rebase observed a malformed live tip");
@@ -402,10 +398,7 @@ async function rangePatchId(
   return patchId;
 }
 
-function bridgeOf(
-  journal: GuardedRebaseJournal,
-  reference: string,
-): DispatchGuardedRebaseBridge {
+function bridgeOf(journal: GuardedRebaseJournal, reference: string): DispatchGuardedRebaseBridge {
   if (
     journal.state !== "finalized" ||
     journal.rebasedStartCommit === undefined ||
@@ -454,7 +447,9 @@ async function finalizeConflicted(
   now: () => Date,
 ): Promise<GuardedRebaseJournal> {
   if (await sequencerActive(binding)) {
-    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError(
+      "guarded rebase has not reached a verified terminal tip",
+    );
   }
   const receipts = await durableHandleConflictContinuationReceipts(binding, deps);
   const tip = await liveTip(binding);
@@ -465,7 +460,9 @@ async function finalizeConflicted(
     terminal.outcome.kind !== "terminal" ||
     terminal.newHead !== tip
   ) {
-    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError(
+      "guarded rebase has not reached a verified terminal tip",
+    );
   }
   const first = receipts[0]!;
   if (journal.conflictHead !== undefined && first.oldHead !== journal.conflictHead) {
@@ -506,7 +503,7 @@ async function finalizeConflicted(
  * admitted gate; this boundary owns the journal, the terminal verification,
  * and the opaque reference.
  */
-export async function runGuardedRebase(
+async function runGuardedRebaseCore(
   options: RunGuardedRebaseOptions,
 ): Promise<GuardedRebaseRunOutcome> {
   if (!OPERATION_ID.test(options.operationId)) {
@@ -517,50 +514,111 @@ export async function runGuardedRebase(
   }
   const binding = options.binding;
   const now = options.now ?? (() => new Date());
-  const requestDigest = guardedRebaseRequestDigest(binding, options.operationId, options.ontoCommit);
+  const requestDigest = guardedRebaseRequestDigest(
+    binding,
+    options.operationId,
+    options.ontoCommit,
+  );
   const reference = guardedRebaseReference(requestDigest);
   const root = operationRoot(binding, options.operationId, options.stateDir);
   const journalFile = join(root, "journal.json");
-  return await withManagedWorktreeEffectLock(
-    binding,
-    { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-    async () => {
-      let journal = await readJournal(journalFile);
-      if (journal !== null && journal.requestDigest !== requestDigest) {
+  {
+    let journal = await readJournal(journalFile);
+    if (journal !== null && journal.requestDigest !== requestDigest) {
+      throw new Error(
+        `guarded rebase operationId ${options.operationId} was reused with a different request`,
+      );
+    }
+    if (journal?.state === "finalized") {
+      const tip = await liveTip(binding);
+      if (tip !== journal.rebasedStartCommit) {
         throw new Error(
-          `guarded rebase operationId ${options.operationId} was reused with a different request`,
+          "guarded rebase reference is stale: the managed ref advanced past the journaled rebased head",
         );
       }
-      if (journal?.state === "finalized") {
-        const tip = await liveTip(binding);
-        if (tip !== journal.rebasedStartCommit) {
-          throw new Error(
-            "guarded rebase reference is stale: the managed ref advanced past the journaled rebased head",
-          );
-        }
+      return Object.freeze({
+        kind: "finalized" as const,
+        reference,
+        bridge: bridgeOf(journal, reference),
+        effect: null,
+      });
+    }
+    if (journal?.state === "rebase-stopped") {
+      let finalized: GuardedRebaseJournal;
+      try {
+        finalized = await finalizeConflicted(
+          binding,
+          journal,
+          { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+          now,
+        );
+      } catch (error) {
+        if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
+        return Object.freeze({
+          kind: "conflict-pending" as const,
+          effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
+        });
+      }
+      await writeJournal(journalFile, finalized);
+      return Object.freeze({
+        kind: "finalized" as const,
+        reference,
+        bridge: bridgeOf(finalized, reference),
+        effect: null,
+      });
+    }
+    // "intent": fresh start, or a restart after the durable intent but before
+    // (or during) the effect. Reconcile the live state before deciding.
+    if (journal !== null && (await sequencerActive(binding))) {
+      const conflict = await observeManagedWorktreeConflictState(binding, {
+        ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+      });
+      journal = Object.freeze({
+        ...journal,
+        state: "rebase-stopped" as const,
+        conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+        conflictHead: conflict.currentHead,
+        conflictIdentity: conflict.sequencer.identity,
+      });
+      await writeJournal(journalFile, journal);
+      try {
+        const finalized = await finalizeConflicted(
+          binding,
+          journal,
+          { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+          now,
+        );
+        await writeJournal(journalFile, finalized);
         return Object.freeze({
           kind: "finalized" as const,
           reference,
-          bridge: bridgeOf(journal, reference),
+          bridge: bridgeOf(finalized, reference),
           effect: null,
         });
+      } catch (error) {
+        if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
+        return Object.freeze({
+          kind: "conflict-pending" as const,
+          effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
+        });
       }
-      if (journal?.state === "rebase-stopped") {
-        let finalized: GuardedRebaseJournal;
-        try {
-          finalized = await finalizeConflicted(
-            binding,
-            journal,
-            { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-            now,
-          );
-        } catch (error) {
-          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
-          return Object.freeze({
-            kind: "conflict-pending" as const,
-            effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
-          });
-        }
+    }
+    if (journal !== null) {
+      const tip = await liveTip(binding);
+      if (tip !== journal.oldResultCommit) {
+        // The effect ran to completion but the outcome was never recorded.
+        const receipts = await durableHandleConflictContinuationReceipts(binding, {
+          ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+        });
+        const finalized =
+          receipts.length === 0
+            ? await finalizeClean(binding, journal, tip, now)
+            : await finalizeConflicted(
+                binding,
+                journal,
+                { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+                now,
+              );
         await writeJournal(journalFile, finalized);
         return Object.freeze({
           kind: "finalized" as const,
@@ -569,9 +627,33 @@ export async function runGuardedRebase(
           effect: null,
         });
       }
-      // "intent": fresh start, or a restart after the durable intent but before
-      // (or during) the effect. Reconcile the live state before deciding.
-      if (journal !== null && (await sequencerActive(binding))) {
+    }
+    if (journal === null) {
+      journal = Object.freeze({
+        version: 1 as const,
+        operationId: options.operationId,
+        requestDigest,
+        createdAt: now().toISOString(),
+        state: "intent" as const,
+        taskId: binding.taskId,
+        handleToken: binding.handleToken,
+        handleFingerprint: binding.handleFingerprint,
+        repositoryRoot: binding.repositoryRoot,
+        repositoryId: binding.repositoryId,
+        commonDir: binding.commonDir,
+        worktreePath: binding.worktreePath,
+        branch: binding.branch,
+        ref: binding.ref,
+        baseCommit: binding.baseCommit,
+        oldResultCommit: await liveTip(binding),
+        ontoCommit: options.ontoCommit,
+      });
+      await writeJournal(journalFile, journal);
+    }
+    await options.onIntent?.({ reference, requestDigest });
+    const effect = await options.runEffect();
+    if (effect.code !== 0) {
+      if (await sequencerActive(binding)) {
         const conflict = await observeManagedWorktreeConflictState(binding, {
           ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
         });
@@ -583,107 +665,37 @@ export async function runGuardedRebase(
           conflictIdentity: conflict.sequencer.identity,
         });
         await writeJournal(journalFile, journal);
-        try {
-          const finalized = await finalizeConflicted(
-            binding,
-            journal,
-            { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-            now,
-          );
-          await writeJournal(journalFile, finalized);
-          return Object.freeze({
-            kind: "finalized" as const,
-            reference,
-            bridge: bridgeOf(finalized, reference),
-            effect: null,
-          });
-        } catch (error) {
-          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
-          return Object.freeze({
-            kind: "conflict-pending" as const,
-            effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
-          });
-        }
+        return Object.freeze({ kind: "conflict-pending" as const, effect });
       }
-      if (journal !== null) {
-        const tip = await liveTip(binding);
-        if (tip !== journal.oldResultCommit) {
-          // The effect ran to completion but the outcome was never recorded.
-          const receipts = await durableHandleConflictContinuationReceipts(binding, {
-            ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-          });
-          const finalized =
-            receipts.length === 0
-              ? await finalizeClean(binding, journal, tip, now)
-              : await finalizeConflicted(
-                  binding,
-                  journal,
-                  { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-                  now,
-                );
-          await writeJournal(journalFile, finalized);
-          return Object.freeze({
-            kind: "finalized" as const,
-            reference,
-            bridge: bridgeOf(finalized, reference),
-            effect: null,
-          });
-        }
-      }
-      if (journal === null) {
-        journal = Object.freeze({
-          version: 1 as const,
-          operationId: options.operationId,
-          requestDigest,
-          createdAt: now().toISOString(),
-          state: "intent" as const,
-          taskId: binding.taskId,
-          handleToken: binding.handleToken,
-          handleFingerprint: binding.handleFingerprint,
-          repositoryRoot: binding.repositoryRoot,
-          repositoryId: binding.repositoryId,
-          commonDir: binding.commonDir,
-          worktreePath: binding.worktreePath,
-          branch: binding.branch,
-          ref: binding.ref,
-          baseCommit: binding.baseCommit,
-          oldResultCommit: await liveTip(binding),
-          ontoCommit: options.ontoCommit,
-        });
-        await writeJournal(journalFile, journal);
-      }
-      await options.onIntent?.({ reference, requestDigest });
-      const effect = await options.runEffect();
-      if (effect.code !== 0) {
-        if (await sequencerActive(binding)) {
-          const conflict = await observeManagedWorktreeConflictState(binding, {
-            ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-          });
-          journal = Object.freeze({
-            ...journal,
-            state: "rebase-stopped" as const,
-            conflictStateDigest: gitRebaseConflictStateDigest(conflict),
-            conflictHead: conflict.currentHead,
-            conflictIdentity: conflict.sequencer.identity,
-          });
-          await writeJournal(journalFile, journal);
-          return Object.freeze({ kind: "conflict-pending" as const, effect });
-        }
-        throw new Error(
-          `guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`,
-        );
-      }
-      const tip = await liveTip(binding);
-      const finalized = await finalizeClean(binding, journal, tip, now);
-      await writeJournal(journalFile, finalized);
-      return Object.freeze({
-        kind: "finalized" as const,
-        reference,
-        bridge: bridgeOf(finalized, reference),
-        effect,
-      });
-    },
+      throw new Error(`guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`);
+    }
+    const tip = await liveTip(binding);
+    const finalized = await finalizeClean(binding, journal, tip, now);
+    await writeJournal(journalFile, finalized);
+    return Object.freeze({
+      kind: "finalized" as const,
+      reference,
+      bridge: bridgeOf(finalized, reference),
+      effect,
+    });
+  }
+}
+
+export async function runGuardedRebase(
+  options: RunGuardedRebaseOptions,
+): Promise<GuardedRebaseRunOutcome> {
+  return await withManagedWorktreeEffectLock(
+    options.binding,
+    { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+    async () => await runGuardedRebaseCore(options),
   );
+}
+
+/** Reconcile a guarded journal when the caller already holds this binding's effect lock. */
+export async function runGuardedRebaseUnderManagedLock(
+  options: RunGuardedRebaseOptions,
+): Promise<GuardedRebaseRunOutcome> {
+  return await runGuardedRebaseCore(options);
 }
 
 async function readJournals(
@@ -777,9 +789,7 @@ function composeGuardedRebaseBridge(
   return Object.freeze({
     ...latest,
     oldResultCommit,
-    outcome: chain.some((journal) => journal.outcome === "conflicted")
-      ? "conflicted"
-      : "clean",
+    outcome: chain.some((journal) => journal.outcome === "conflicted") ? "conflicted" : "clean",
     exactTip: chain.every((journal) => journal.exactTip === true),
   });
 }
