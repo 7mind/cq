@@ -2,24 +2,39 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { createDirectSearchProjection } from "../src/search/DirectSearchProjection.js";
+import type { SearchProjectionCommand } from "../src/search/SearchProjection.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
-import { FaultableWorkerProjection } from "./searchProjectionFaultFixture.js";
 
 const DOCUMENTS = 20_000;
 
 test("two stores over 20000 documents project only changed keys and do not replay acknowledged self versions [Blackbox-GoodCommunication]", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "sqlite-scoped-coherence-"));
   const dbPath = path.join(root, "ledger.db");
-  const writerProjection = new FaultableWorkerProjection();
-  const readerProjection = new FaultableWorkerProjection();
+  const writerProjection = createDirectSearchProjection(1_000);
+  const readerProjection = createDirectSearchProjection(1_000);
+  const writerCommands: SearchProjectionCommand[] = [];
+  const readerCommands: SearchProjectionCommand[] = [];
   const writer = new SqliteLedgerStore({
     dbPath,
-    searchProjectionFactory: () => writerProjection.projection,
+    searchProjectionFactory: () => ({
+      execute: (command) => {
+        writerCommands.push(structuredClone(command));
+        return writerProjection.execute(command);
+      },
+      health: () => writerProjection.health(),
+    }),
   });
   const reader = new SqliteLedgerStore({
     dbPath,
-    searchProjectionFactory: () => readerProjection.projection,
+    searchProjectionFactory: () => ({
+      execute: (command) => {
+        readerCommands.push(structuredClone(command));
+        return readerProjection.execute(command);
+      },
+      health: () => readerProjection.health(),
+    }),
   });
   const notifications: string[] = [];
   try {
@@ -45,16 +60,16 @@ test("two stores over 20000 documents project only changed keys and do not repla
     reader.subscribeProjectionChanges((ledgerId) => {
       notifications.push(ledgerId);
     });
-    writerProjection.commands.length = 0;
-    readerProjection.commands.length = 0;
+    writerCommands.length = 0;
+    readerCommands.length = 0;
     await writer.updateItem("tasks", "T1", { fields: { headline: "changedonce" } });
     await writer.reconcileProjection();
     await writer.ftsSearch("changedonce");
     expect((await reader.ftsSearch("changedonce")).map((hit) => hit.item.id)).toEqual(["T1"]);
     await reader.reconcileProjection();
     expect(notifications).toEqual(["tasks"]);
-    for (const fixture of [writerProjection, readerProjection]) {
-      const writes = fixture.commands.filter(
+    for (const commands of [writerCommands, readerCommands]) {
+      const writes = commands.filter(
         (command) => command.kind === "snapshot" || command.kind === "delta",
       );
       expect(writes).toHaveLength(1);

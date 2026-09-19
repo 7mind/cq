@@ -9,6 +9,7 @@ import {
   awaitBeforeLaunchDeadline,
   boundedLaunchPhaseDeadlineMs,
   remainingLaunchDeadlineMs,
+  runOwnedLaunchOperationBeforeDeadline,
   validateLaunchDeadlineMs,
 } from "./launchDeadline.ts";
 import {
@@ -621,13 +622,14 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
         );
       }
     }
-    await awaitBeforeLaunchDeadline(
-      writeJsonAtomic(releasePath, {
-        nonce,
-        pgid: registration.pgid,
-        launcher,
-        launchDeadlineMs,
-      }),
+    await runOwnedLaunchOperationBeforeDeadline(
+      () =>
+        writeJsonAtomic(releasePath, {
+          nonce,
+          pgid: registration.pgid,
+          launcher,
+          launchDeadlineMs,
+        }),
       launchDeadlineMs,
       "registered-launch target release",
     );

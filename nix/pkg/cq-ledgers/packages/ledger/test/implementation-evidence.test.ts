@@ -1033,22 +1033,38 @@ describe("versioned protected implementation evidence [BG]", () => {
         author: "parent",
       });
       let durableWrites = 0;
+      const durableWriteStarted = Promise.withResolvers<void>();
+      const allowDurableWrite = Promise.withResolvers<void>();
+      const ordering: string[] = [];
       const slowEvidence: ImplementationEvidenceStore = new Proxy(f.evidence, {
         get(target, property) {
           const value: unknown = Reflect.get(target, property, target);
           if (typeof property === "symbol" && typeof value === "function") {
             return async (...args: unknown[]) => {
               durableWrites += 1;
-              if (durableWrites === 1) await Bun.sleep(120);
-              return await Reflect.apply(value, target, args);
+              ordering.push(`durable-write-${String(durableWrites)}-start`);
+              if (durableWrites === 1) {
+                durableWriteStarted.resolve();
+                await allowDurableWrite.promise;
+              }
+              const result = await Reflect.apply(value, target, args);
+              ordering.push(`durable-write-${String(durableWrites)}-end`);
+              return result;
             };
           }
           return typeof value === "function" ? value.bind(target) : value;
         },
       });
       const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-      const provider = await implementationCompletionMergeAdmissionProviderFromStore({
-        provider: underlying,
+      const providerPreparation = implementationCompletionMergeAdmissionProviderFromStore({
+        provider: {
+          acquire: async (input) => {
+            ordering.push("admission-start");
+            const admission = await underlying.acquire(input);
+            ordering.push("admission-held");
+            return admission;
+          },
+        },
         store: slowEvidence,
         binding: {
           kind: "merge",
@@ -1060,6 +1076,10 @@ describe("versioned protected implementation evidence [BG]", () => {
         },
         repositoryHead: async () => f.getHead(),
       });
+      await durableWriteStarted.promise;
+      expect(ordering).toEqual(["durable-write-1-start"]);
+      allowDurableWrite.resolve();
+      const provider = await providerPreparation;
       const marker = join(root, "target-ran");
       const broker = new WorksetEffectBroker({
         provider,
@@ -1077,8 +1097,9 @@ describe("versioned protected implementation evidence [BG]", () => {
         cwd: root,
         env: process.env,
         stdio: "ignore" as const,
-        launchDeadlineMs: Date.now() + 80,
+        launchDeadlineMs: Date.now() + 1_000,
         launchBootstrap: (specification) => {
+          ordering.push("bootstrap-launched");
           bootstrapLaunches += 1;
           return ignoredBootstrap(specification);
         },
@@ -1088,6 +1109,13 @@ describe("versioned protected implementation evidence [BG]", () => {
       expect(await Bun.file(marker).text()).toBe("ran");
       expect(durableWrites).toBe(1);
       expect(bootstrapLaunches).toBe(1);
+      expect(ordering).toEqual([
+        "durable-write-1-start",
+        "durable-write-1-end",
+        "admission-start",
+        "admission-held",
+        "bootstrap-launched",
+      ]);
       expect(underlying.activeAdmissionCount()).toBe(0);
       await expect(f.service.mergeAcknowledgement(completion.completionRef)).rejects.toThrow(
         "not durably merged",

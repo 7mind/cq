@@ -50,6 +50,7 @@ export async function awaitBeforeLaunchDeadline<T>(
   deadlineMs: number | undefined,
   phase: string,
 ): Promise<T> {
+  void operation.catch(() => undefined);
   const remainingMs = remainingLaunchDeadlineMs(deadlineMs, phase);
   if (remainingMs === undefined) return await operation;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -63,5 +64,25 @@ export async function awaitBeforeLaunchDeadline<T>(
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Starts owned finite work only while the boundary is live and observes its
+ * settlement before returning an error so the caller can safely clean up the
+ * resources used by that work.
+ */
+export async function runOwnedLaunchOperationBeforeDeadline<T>(
+  startOperation: () => Promise<T>,
+  deadlineMs: number | undefined,
+  phase: string,
+): Promise<T> {
+  remainingLaunchDeadlineMs(deadlineMs, phase);
+  const operation = startOperation();
+  try {
+    return await awaitBeforeLaunchDeadline(operation, deadlineMs, phase);
+  } catch (error) {
+    await operation.catch(() => undefined);
+    throw error;
   }
 }
