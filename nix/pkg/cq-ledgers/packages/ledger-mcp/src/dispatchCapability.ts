@@ -3742,6 +3742,7 @@ function available(
   ledgerStore?: LedgerStore,
   implementationEvidenceStore?: ImplementationEvidenceStore,
   implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"],
+  supervisedWorkerGateRunner?: SupervisedWorkerGateRunner,
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -3755,6 +3756,7 @@ function available(
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
       ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
       ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
+      ...(supervisedWorkerGateRunner === undefined ? {} : { supervisedWorkerGateRunner }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -3901,6 +3903,7 @@ export interface SingleProjectDispatchRuntimeOptions {
   readonly promptArtifactStore?: PromptArtifactStore;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"];
+  readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
 }
 
 export interface SingleProjectImplementationCandidateAuthority {
@@ -4047,6 +4050,7 @@ export async function createSingleProjectDispatchRuntime(
     options.resolved.store,
     options.resolved.implementationEvidenceStore,
     options.implementationSuccessorLauncher,
+    options.supervisedWorkerGateRunner,
   );
 }
 

@@ -2594,93 +2594,92 @@ throw new Error("unexpected controlled cq invocation");
     ]);
   }, 30_000);
 
-  test(
-    "D489 cross-process cancellation settles the registered gate root before terminal publication [Behavioral-Active, Effectual-GoodCommunication]",
-    async () => {
-      const subject = await fixtureWithDispatchBase(
-        new GateDummy(),
-        "managed",
-        () => "2026-08-12T20:00:00.000Z",
-        false,
-        false,
-        undefined,
-        artifactStore(),
-        "sqlite",
-      );
-      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
-      const bin = path.join(subject.repositoryRoot, "bin");
-      const processMarker = path.join(subject.repositoryRoot, "registered-gate-process");
-      await fs.mkdir(bin);
-      await fs.writeFile(
-        path.join(bin, "cq"),
-        [
-          "#!/bin/sh",
-          "set -eu",
-          `printf '%s %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d '[:space:]')" > ${JSON.stringify(processMarker)}`,
-          "trap 'exit 143' TERM INT",
-          "while :; do sleep 0.05; done",
-          "",
-        ].join("\n"),
-      );
-      await fs.chmod(path.join(bin, "cq"), 0o700);
-      const inheritedPath = process.env["PATH"];
-      if (inheritedPath === undefined || inheritedPath.trim() === "") {
-        throw new Error("cross-process cancellation test requires PATH");
-      }
-      const configPath = path.join(subject.repositoryRoot, "parent-gate-cancellation.json");
-      const readyDirectory = path.join(subject.repositoryRoot, "cancellation-ready");
-      await fs.mkdir(readyDirectory);
-      await fs.writeFile(
-        configPath,
-        `${JSON.stringify({
-          namespace: subject.backend.namespace,
-          dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
-          repositoryRoot: subject.repositoryRoot,
-          stateDir: subject.stateDir,
-          invocationMarker: path.join(subject.repositoryRoot, "unused-invocations"),
-          readyDirectory,
-          firstStartedMarker: path.join(subject.repositoryRoot, "unused-started"),
-          releaseFirstMarker: path.join(subject.repositoryRoot, "unused-release"),
-          now: "2026-08-12T20:00:00.000Z",
-          input: parentGateInput(subject),
-          runnerKind: "registered-process",
-          runtimePath: `${bin}${path.delimiter}${inheritedPath}`,
-        })}\n`,
-      );
-      const finalizing = spawnParentGateProcess(configPath, "first");
-      await waitForD342Marker(path.join(readyDirectory, "first"));
-      const identity = await waitForChildIdentityMarker(processMarker);
-      const terminalObservation = (async () => {
-        for (;;) {
-          const terminal = await subject.backend.transact(
-            { kind: "handle", handle: parentGateInput(subject) },
-            (store) => store.read(parentGateInput(subject))?.state === "aborted",
-          );
-          if (terminal) {
-            return {
-              processAbsent: d342ProcessAbsent(identity.pid),
-              groupAbsent: d342GroupAbsent(identity.pgid),
-            };
-          }
-          await Bun.sleep(1);
+  test("D489 cross-process cancellation settles the registered gate root before terminal publication [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      false,
+      undefined,
+      artifactStore(),
+      "sqlite",
+    );
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const bin = path.join(subject.repositoryRoot, "bin");
+    const processMarker = path.join(subject.repositoryRoot, "registered-gate-process");
+    await fs.mkdir(bin);
+    await fs.writeFile(
+      path.join(bin, "cq"),
+      [
+        "#!/bin/sh",
+        "set -eu",
+        `printf '%s %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d '[:space:]')" > ${JSON.stringify(processMarker)}`,
+        "trap 'exit 143' TERM INT",
+        "while :; do sleep 0.05; done",
+        "",
+      ].join("\n"),
+    );
+    await fs.chmod(path.join(bin, "cq"), 0o700);
+    const inheritedPath = process.env["PATH"];
+    if (inheritedPath === undefined || inheritedPath.trim() === "") {
+      throw new Error("cross-process cancellation test requires PATH");
+    }
+    const configPath = path.join(subject.repositoryRoot, "parent-gate-cancellation.json");
+    const readyDirectory = path.join(subject.repositoryRoot, "cancellation-ready");
+    await fs.mkdir(readyDirectory);
+    await fs.writeFile(
+      configPath,
+      `${JSON.stringify({
+        namespace: subject.backend.namespace,
+        dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+        repositoryRoot: subject.repositoryRoot,
+        stateDir: subject.stateDir,
+        invocationMarker: path.join(subject.repositoryRoot, "unused-invocations"),
+        readyDirectory,
+        firstStartedMarker: path.join(subject.repositoryRoot, "unused-started"),
+        releaseFirstMarker: path.join(subject.repositoryRoot, "unused-release"),
+        now: "2026-08-12T20:00:00.000Z",
+        input: parentGateInput(subject),
+        runnerKind: "registered-process",
+        runtimePath: `${bin}${path.delimiter}${inheritedPath}`,
+      })}\n`,
+    );
+    const finalizing = spawnParentGateProcess(configPath, "first");
+    await waitForD342Marker(path.join(readyDirectory, "first"));
+    const identity = await waitForChildIdentityMarker(processMarker);
+    const terminalObservation = (async () => {
+      for (;;) {
+        const terminal = await subject.backend.transact(
+          { kind: "handle", handle: parentGateInput(subject) },
+          (store) => {
+            const row = store.read(parentGateInput(subject));
+            return row !== undefined && !isAttestationTombstone(row) && row.state === "aborted";
+          },
+        );
+        if (terminal) {
+          return {
+            processAbsent: d342ProcessAbsent(identity.pid),
+            groupAbsent: d342GroupAbsent(identity.pgid),
+          };
         }
-      })();
-      const aborted = await subject.capability.abort({
-        attestationId: subject.prepared.attestationId,
-        generation: subject.prepared.generation,
-        reason: "cancelled",
-      });
-      expect(aborted).toMatchObject({ state: "aborted", reason: "cancelled" });
-      expect(await terminalObservation).toEqual({ processAbsent: true, groupAbsent: true });
-      const finalized = await finalizing;
-      expect(finalized).toMatchObject({ exitCode: 0 });
-      expect(JSON.parse(finalized.stdout)).toMatchObject({
-        ok: true,
-        outcome: { state: "aborted", result: { reason: "cancelled" } },
-      });
-    },
-    30_000,
-  );
+        await Bun.sleep(1);
+      }
+    })();
+    const aborted = await subject.capability.abort({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      reason: "cancelled",
+    });
+    expect(aborted).toMatchObject({ state: "aborted", reason: "cancelled" });
+    expect(await terminalObservation).toEqual({ processAbsent: true, groupAbsent: true });
+    const finalized = await finalizing;
+    expect(finalized).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(finalized.stdout)).toMatchObject({
+      ok: true,
+      outcome: { state: "aborted", result: { reason: "cancelled" } },
+    });
+  }, 30_000);
 
   test("D326 settles an admitted result after the child deadline using the submission instant [BG]", async () => {
     let current = Date.parse("2026-08-12T20:00:00.000Z");

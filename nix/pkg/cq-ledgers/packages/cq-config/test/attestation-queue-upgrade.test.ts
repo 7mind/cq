@@ -6,6 +6,8 @@ import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   PostgresAttestationBackend,
+  abortDispatchOn,
+  attestationRowDigest,
   dispatchPayloadDigest,
   fetchDispatchInputOn,
   openAttestationPgPool,
@@ -134,11 +136,15 @@ async function stage(
     },
     { now: target.now },
   );
-  if (stored.state !== "gate-pending") throw new Error(`expected gate-pending, got ${stored.state}`);
+  if (stored.state !== "gate-pending")
+    throw new Error(`expected gate-pending, got ${stored.state}`);
   return { prepared: prepared.prepared, pending: stored.result, binding };
 }
 
-function replaceRow(taskId: string, change: (row: AttestationEnvelope) => AttestationEnvelope): void {
+function replaceRow(
+  taskId: string,
+  change: (row: AttestationEnvelope) => AttestationEnvelope,
+): void {
   const row = store
     .rows()
     .find(
@@ -147,6 +153,51 @@ function replaceRow(taskId: string, change: (row: AttestationEnvelope) => Attest
     );
   if (row === undefined) throw new Error(`missing ${taskId}`);
   store.replace(row, Object.freeze(change(row)));
+}
+
+async function replaceTargetRow(
+  target: StageTarget,
+  taskId: string,
+  change: (row: AttestationEnvelope) => AttestationEnvelope,
+): Promise<void> {
+  await target.backend.transact({ kind: "namespace" }, (attestations) => {
+    const row = attestations
+      .rows()
+      .find(
+        (candidate): candidate is AttestationEnvelope =>
+          candidate.kind === "envelope" && candidate.gitEffectBinding?.taskId === taskId,
+      );
+    if (row === undefined) throw new Error(`missing ${taskId}`);
+    attestations.replace(row, Object.freeze(change(row)));
+  });
+}
+
+function rolloutCandidate(
+  row: AttestationEnvelope,
+  taskId: string,
+): Omit<
+  EnqueueImplementationCandidateRequest,
+  "namespace" | "actor" | "attestationId" | "generation" | "rollout" | "expectedLegacyRowDigest"
+> {
+  return {
+    repositoryId: row.gitEffectBinding!.repositoryId,
+    integrationRef: "refs/heads/main",
+    authority: {
+      taskId,
+      goalRef: "goals:G213",
+      finalizedManifestDigest: "d".repeat(64),
+    },
+    observedBaseCommit: row.gitEffectBinding!.baseCommit,
+    resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
+      "resultCommit"
+    ] as string,
+    resultTree: "e".repeat(40),
+    gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+    packagedEnvironmentDigest: "f".repeat(64),
+    gitReceipts: [],
+    gitEffectBinding: row.gitEffectBinding!,
+    stagedOutputDigest: row.gateSubmittedOutputDigest!,
+  };
 }
 
 describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", () => {
@@ -239,18 +290,18 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     expect(protectedTasks).toEqual(["T65211", "T65212", "T65213", "T65214"]);
 
     const byTask = new Map(
-      store.rows().flatMap((row) =>
-        row.kind === "envelope" && row.gitEffectBinding !== undefined
-          ? [[row.gitEffectBinding.taskId, row] as const]
-          : [],
-      ),
+      store
+        .rows()
+        .flatMap((row) =>
+          row.kind === "envelope" && row.gitEffectBinding !== undefined
+            ? [[row.gitEffectBinding.taskId, row] as const]
+            : [],
+        ),
     );
     expect(byTask.get("T65211")?.implementationQueue?.state).toBe("enqueued");
     expect(byTask.get("T65211")?.stagedCompletionQualification).toBeUndefined();
     expect(byTask.get("T65213")?.implementationQueue?.state).toBe("qualified");
-    expect(byTask.get("T65213")?.implementationQueueRollout?.disposition).toBe(
-      "adopted-qualified",
-    );
+    expect(byTask.get("T65213")?.implementationQueueRollout?.disposition).toBe("adopted-qualified");
     expect(byTask.get("T65212")?.implementationQueue).toBeUndefined();
     expect(byTask.get("T65212")?.implementationQueueRollout?.disposition).toBe(
       "execution-uncertain",
@@ -288,10 +339,12 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
         storedAt: now(),
       };
     });
-    const completed = store.rows().find(
-      (row): row is AttestationEnvelope =>
-        row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65215",
-    )!;
+    const completed = store
+      .rows()
+      .find(
+        (row): row is AttestationEnvelope =>
+          row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65215",
+      )!;
 
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
@@ -333,10 +386,12 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
         storedAt: now(),
       };
     });
-    const mismatched = store.rows().find(
-      (row): row is AttestationEnvelope =>
-        row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65217",
-    )!;
+    const mismatched = store
+      .rows()
+      .find(
+        (row): row is AttestationEnvelope =>
+          row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65217",
+      )!;
     const mismatchSummary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
@@ -359,7 +414,9 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       adoptedCompletedGreen: 0,
       parkedIncompatible: 1,
     });
-    expect((store.read(mismatched) as AttestationEnvelope).implementationQueueRollout).toMatchObject({
+    expect(
+      (store.read(mismatched) as AttestationEnvelope).implementationQueueRollout,
+    ).toMatchObject({
       disposition: "parked-incompatible",
       diagnosticArtifact: {
         detail: { reason: "completed-green-evidence-binding-mismatch" },
@@ -470,7 +527,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
   });
 
   test.skipIf(PG_URL === undefined)(
-    "persists the same pre-queue adoption through the production PostgreSQL backend",
+    "persists the full disposition matrix and skipped terminal states across PostgreSQL reopen",
     async () => {
       const pgNamespace: AttestationNamespace = {
         backend: "postgres",
@@ -484,58 +541,183 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       let pgInstant = Date.parse("2026-09-19T08:30:00.000Z");
       const pgNow = () => new Date(pgInstant++).toISOString();
       const target = { backend: pgBackend, namespace: pgNamespace, now: pgNow };
+      let reopened: PostgresAttestationBackend | undefined;
       try {
-        const staged = await stage("T65216", 106, target);
-        let protectedWorktrees = 0;
+        const unqualified = await stage("T65216", 106, target);
+        const qualified = await stage("T65220", 120, target);
+        const running = await stage("T65221", 121, target);
+        await replaceTargetRow(target, "T65221", (row) => ({
+          ...row,
+          state: "gate-running",
+          gateClaimedAt: pgNow(),
+          gateEpoch: 1,
+        }));
+        const completed = await stage("T65222", 122, target);
+        const supervisedGateEvidence = {
+          kind: "cq-supervised-gate-evidence",
+          version: 1,
+          command: "bun run check",
+          exitCode: 0,
+          completedAt: pgNow(),
+        } as const;
+        await replaceTargetRow(target, "T65222", (row) => {
+          const output = {
+            ...(row.output as Readonly<Record<string, DispatchJSONValue>>),
+            supervisedGateEvidence,
+          } as DispatchJSONValue;
+          return {
+            ...row,
+            state: "result-stored",
+            output,
+            outputDigest: dispatchPayloadDigest(output),
+            storedAt: pgNow(),
+          };
+        });
+        const incompatible = await stage("T65223", 123, target);
+        const prepared = await stage("T65224", 124, target);
+        await replaceTargetRow(target, "T65224", (row) => ({ ...row, state: "prepared" }));
+        const consumed = await stage("T65225", 125, target);
+        await replaceTargetRow(target, "T65225", (row) => ({
+          ...row,
+          state: "consumed",
+          consumedAt: pgNow(),
+          terminalAt: pgNow(),
+        }));
+        const aborted = await stage("T65226", 126, target);
+        await abortDispatchOn(
+          pgBackend,
+          {
+            namespace: pgNamespace,
+            actor: "trusted-parent",
+            attestationId: aborted.prepared.attestationId,
+            generation: aborted.prepared.generation,
+            reason: "cancelled",
+          },
+          { now: pgNow },
+        );
+        const ignoredBefore = await pgBackend.transact(
+          { kind: "namespace" },
+          (attestations) =>
+            new Map(
+              attestations
+                .rows()
+                .filter(
+                  (row): row is AttestationEnvelope =>
+                    row.kind === "envelope" &&
+                    ["T65224", "T65225", "T65226"].includes(row.gitEffectBinding?.taskId ?? ""),
+                )
+                .map((row) => [row.gitEffectBinding!.taskId, attestationRowDigest(row)] as const),
+            ),
+        );
+        const protectedTasks: string[] = [];
         const summary = await upgradeLiveImplementationQueueRows({
           backend: pgBackend,
           now: pgNow,
           withProtectedManagedWorktree: async (binding, operation) => {
-            expect(binding).toEqual(staged.binding);
-            protectedWorktrees += 1;
+            protectedTasks.push(binding.taskId);
             return await operation();
           },
-          resolve: async (row) => ({
-            state: "compatible" as const,
-            candidate: {
-              repositoryId: row.gitEffectBinding!.repositoryId,
-              integrationRef: "refs/heads/main",
-              authority: {
-                taskId: "T65216",
-                goalRef: "goals:G213",
-                finalizedManifestDigest: "d".repeat(64),
-              },
-              observedBaseCommit: row.gitEffectBinding!.baseCommit,
-              resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
-                "resultCommit"
-              ] as string,
-              resultTree: "e".repeat(40),
-              gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
-              packagedEnvironmentDigest: "f".repeat(64),
-              gitReceipts: [],
-              gitEffectBinding: row.gitEffectBinding!,
-              stagedOutputDigest: row.gateSubmittedOutputDigest!,
-            },
-          }),
+          resolve: async (row) => {
+            const taskId = row.gitEffectBinding!.taskId;
+            if (taskId === "T65223") {
+              return { state: "incompatible" as const, detail: { reason: "legacy-shape" } };
+            }
+            if (taskId === "T65222") {
+              return {
+                state: "completed-green" as const,
+                evidence: {
+                  outputDigest: row.outputDigest!,
+                  resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
+                    "resultCommit"
+                  ] as string,
+                  managedWorktreeBindingDigest: dispatchPayloadDigest(
+                    row.gitEffectBinding as unknown as DispatchJSONValue,
+                  ),
+                  supervisedGateEvidenceDigest: dispatchPayloadDigest(
+                    supervisedGateEvidence as unknown as DispatchJSONValue,
+                  ),
+                },
+              };
+            }
+            return {
+              state: "compatible" as const,
+              candidate: rolloutCandidate(row, taskId),
+              ...(taskId !== "T65220"
+                ? {}
+                : {
+                    completion: {
+                      stagedOutputDigest: qualified.pending.outputDigest,
+                      expectedChild: row.expectedChild,
+                      expectedProvenance: provenanceBindingOf(qualified.prepared),
+                      nativeCompletion: {
+                        kind: "native-completion" as const,
+                        actor: "trusted-parent" as const,
+                        childId: row.expectedChild.childId,
+                        runId: row.expectedChild.runId,
+                        completedAt: pgNow(),
+                      },
+                    },
+                  }),
+            };
+          },
         });
 
         expect(summary).toMatchObject({
           contract: "g213-t4",
-          considered: 1,
+          considered: 5,
           adoptedUnqualified: 1,
+          adoptedQualified: 1,
+          adoptedCompletedGreen: 1,
+          parkedIncompatible: 1,
+          executionUncertain: 1,
         });
-        expect(protectedWorktrees).toBe(1);
-        const persisted = (await pgBackend.storedRows()).find(
-          (row): row is AttestationEnvelope =>
-            row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65216",
+        expect(protectedTasks).toEqual(["T65216", "T65220", "T65221", "T65222", "T65223"]);
+        expect(summary.orderedHandles).toHaveLength(5);
+
+        await pgBackend.close();
+        reopened = await PostgresAttestationBackend.open({ namespace: pgNamespace, pool });
+        const byTask = new Map(
+          (await reopened.storedRows()).flatMap((row) =>
+            row.kind === "envelope" && row.gitEffectBinding !== undefined
+              ? [[row.gitEffectBinding.taskId, row] as const]
+              : [],
+          ),
         );
-        expect(persisted?.implementationQueue?.state).toBe("enqueued");
-        expect(persisted?.implementationQueueRollout?.contract).toBe("g213-t4");
+        expect(byTask.get("T65216")?.implementationQueue?.state).toBe("enqueued");
+        expect(byTask.get("T65220")?.implementationQueue?.state).toBe("qualified");
+        expect(byTask.get("T65221")?.implementationQueueRollout?.disposition).toBe(
+          "execution-uncertain",
+        );
+        expect(byTask.get("T65222")?.implementationQueueRollout?.disposition).toBe(
+          "adopted-completed-green",
+        );
+        expect(byTask.get("T65223")?.implementationQueueRollout?.disposition).toBe(
+          "parked-incompatible",
+        );
+        for (const taskId of ["T65224", "T65225", "T65226"]) {
+          const row = byTask.get(taskId);
+          if (row === undefined) throw new Error(`missing ignored row ${taskId}`);
+          const expectedDigest = ignoredBefore.get(taskId);
+          if (expectedDigest === undefined) throw new Error(`missing ignored digest ${taskId}`);
+          expect(attestationRowDigest(row)).toBe(expectedDigest);
+          expect(row.implementationQueue).toBeUndefined();
+          expect(row.implementationQueueRollout).toBeUndefined();
+        }
+        expect(byTask.get("T65224")?.state).toBe("prepared");
+        expect(byTask.get("T65225")?.state).toBe("consumed");
+        expect(byTask.get("T65226")?.state).toBe("aborted");
+        expect(unqualified.binding.taskId).toBe("T65216");
+        expect(running.binding.taskId).toBe("T65221");
+        expect(completed.binding.taskId).toBe("T65222");
+        expect(incompatible.binding.taskId).toBe("T65223");
+        expect(prepared.binding.taskId).toBe("T65224");
+        expect(consumed.binding.taskId).toBe("T65225");
       } finally {
         await pool`
           DELETE FROM ${pool(ATTESTATION_TABLE)}
            WHERE backend = ${pgNamespace.backend} AND project_key = ${pgNamespace.projectKey}
         `.catch(() => undefined);
+        await reopened?.close().catch(() => undefined);
         await pgBackend.close().catch(() => undefined);
         await pool.close().catch(() => undefined);
       }

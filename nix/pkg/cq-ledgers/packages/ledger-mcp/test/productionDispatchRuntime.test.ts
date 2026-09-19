@@ -16,6 +16,9 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   createInMemoryImplementationEvidenceStore,
   prepareManagedWorktree,
+  type SupervisedWorkerGateRunRequest,
+  type SupervisedWorkerGateRunResult,
+  type SupervisedWorkerGateRunner,
   type LedgerStore,
   type ResolvedLedgerStore,
 } from "@cq/ledger";
@@ -116,6 +119,22 @@ function finalizedTaskStore(taskId: string): LedgerStore {
   } as unknown as LedgerStore;
 }
 
+class CountingGateRunner implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    return {
+      gateExitCode: 0,
+      passCount: 1,
+      failCount: 0,
+      gateDurationMs: 1,
+      capturedAt: new Date().toISOString(),
+      outputTail: "1 pass\n0 fail",
+    };
+  }
+}
+
 describe("production dispatch runtime construction", () => {
   test("refuses unsupported construction and backend cells before registration", async () => {
     const store = await inMemoryStore();
@@ -207,6 +226,8 @@ describe("production dispatch runtime construction", () => {
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     const ledgerStore = finalizedTaskStore(taskId);
     const implementationEvidenceStore = createInMemoryImplementationEvidenceStore();
+    const gateRunner = new CountingGateRunner();
+    const rolloutStartedAt = new Date().toISOString();
     const environment = { XDG_STATE_HOME: stateHome };
     const namespace = await resolveSingleProjectAttestationNamespace({
       construction: "direct",
@@ -225,7 +246,7 @@ describe("production dispatch runtime construction", () => {
       repositoryRoot,
       ledgerStore,
       implementationEvidenceStore,
-      now: () => "2026-09-19T10:00:00.000Z",
+      now: () => rolloutStartedAt,
     });
     const prepared = await seedCapability.prepare({
       roleId: "implement-worker",
@@ -312,6 +333,7 @@ describe("production dispatch runtime construction", () => {
       },
       promptArtifactStore: workerArtifactStore("codex"),
       environment,
+      supervisedWorkerGateRunner: gateRunner,
     });
     expect(runtime.kind).toBe("available");
     if (runtime.kind === "unavailable") throw new Error(runtime.reason);
@@ -339,6 +361,50 @@ describe("production dispatch runtime construction", () => {
           contract: "g213-t4",
           disposition: "adopted-unqualified",
           worktreeProtected: true,
+        },
+      });
+      if (
+        runtime.capability.qualifyImplementationCandidate === undefined ||
+        runtime.capability.coordinateImplementationCandidate === undefined
+      ) {
+        throw new Error("local XDG implementation executor is unavailable");
+      }
+      const qualified = await runtime.capability.qualifyImplementationCandidate({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: "production-rollout",
+        childThreadId: "production-rollout-thread",
+        expectedRunId: "production-rollout-run",
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: new Date().toISOString(),
+        promptDigest: prepared.prepared.promptProvenance.promptDigest,
+      });
+      if (qualified.state !== "queued") {
+        throw new Error(`rollout candidate did not qualify: ${JSON.stringify(qualified)}`);
+      }
+      expect(
+        await runtime.capability.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: "production-rollout-coordinator",
+        }),
+      ).toMatchObject({
+        state: "completed",
+        handle: {
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+        },
+      });
+      expect(gateRunner.requests).toHaveLength(1);
+      const consumed = await peer.transact({ kind: "handle", handle: prepared.prepared }, (store) =>
+        store.read(prepared.prepared),
+      );
+      expect(consumed).toMatchObject({
+        state: "consumed",
+        implementationQueue: {
+          state: "leased",
+          lease: { holderId: "production-rollout-coordinator", generation: 1 },
         },
       });
     } finally {
