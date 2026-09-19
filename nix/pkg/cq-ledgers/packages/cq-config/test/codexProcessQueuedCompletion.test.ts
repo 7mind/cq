@@ -576,7 +576,6 @@ process.stdout.write([
             branch: binding.branch,
             baseCommit,
             startingCommit: baseCommit,
-            validationIntent: "final",
             resultCommit,
             clean: true,
             command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,

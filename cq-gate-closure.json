@@ -1183,7 +1183,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/implementDispatchConformance.test.ts",
-      "sha256": "1e9b1c682152df0d375325ff422984a680f59207473b88e1a2b02cae645b7e16",
+      "sha256": "3dac91b452c99f84b8c533277f9613ffcb3fe41ba303b235861c16b35dfdfccd",
       "targets": []
     },
     {
@@ -2311,13 +2311,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
-      "sha256": "96af287ec73eea65f829419bd0d7a296bbeb0900fa2c6f83dff4d753578312cc",
+      "sha256": "df28ebd9bbfd9e0d9c22960e481fcf5e752430d81f24fdeca557921ea7bb8d00",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
-      "sha256": "96af287ec73eea65f829419bd0d7a296bbeb0900fa2c6f83dff4d753578312cc",
+      "sha256": "df28ebd9bbfd9e0d9c22960e481fcf5e752430d81f24fdeca557921ea7bb8d00",
       "targets": []
     },
     {

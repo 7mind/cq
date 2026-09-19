@@ -16,7 +16,7 @@ const WORKFLOW = "implement-dispatch-workflow.md";
 const NARRATIVE_COURIER =
   "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
 const WORKER_REFS =
-  "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
+  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
 const FORBIDDEN = [
   'task: "<complete prompt>"',
   "validate_input",
