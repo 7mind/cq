@@ -3715,6 +3715,23 @@ throw new Error("unexpected controlled cq invocation");
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
       roots.push(root);
+      const sharedLongIdentity = `two distinct failures share this prefix ${"x".repeat(220)}`;
+      const firstLongIdentity = `${sharedLongIdentity} alpha`;
+      const secondLongIdentity = `${sharedLongIdentity} beta`;
+      const secret = `sk-${"A".repeat(32)}`;
+      const junit = [
+        "<testsuites><testsuite>",
+        '<testcase name="passing self-closing"/>',
+        '<testcase name="skipped case"><skipped/></testcase>',
+        `<testcase name="${firstLongIdentity}" file="packages/example/test/long.test.ts"><failure type="AssertionError" message="expected ${secret} alpha assertion to be safe" /></testcase>`,
+        `<testcase name="${secondLongIdentity}" file="packages/example/test/long.test.ts"><failure type="AssertionError">${"second assertion body ".repeat(24)}beta</failure></testcase>`,
+        ...Array.from(
+          { length: 4 },
+          (_, index) =>
+            `<testcase name="cascading failure ${String(index + 3)}"><failure message="cascading assertion ${String(index + 3)}" /></testcase>`,
+        ),
+        "</testsuite></testsuites>",
+      ].join("");
       const worktreePath = path.join(root, "worktree");
       await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
       await git(worktreePath, ["init", "-q"]);
@@ -3727,7 +3744,7 @@ throw new Error("unexpected controlled cq invocation");
           "#!/bin/sh",
           "set -eu",
           'test "${CQ_TEST_JUNIT_PATH:-/dev/null}" != /dev/null',
-          'printf \'%s\\n\' \'<testsuites><testsuite><testcase name="passing self-closing"/><testcase name="skipped case"><skipped/></testcase><testcase name="first cascading assertion sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"><failure type="AssertionError" message="expected secret sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA to equal safe" /></testcase><testcase name="second cascading assertion"><failure type="AssertionError">second assertion body</failure></testcase></testsuite></testsuites>\' > "$CQ_TEST_JUNIT_PATH"',
+          `printf '%s\\n' '${junit}' > "$CQ_TEST_JUNIT_PATH"`,
           "printf 'packages/example/test/failure.test.ts:\\n'",
           'i=1; while test "$i" -le 6; do printf \'(fail) dependent cascading identity %s\\n\' "$i"; i=$((i + 1)); done',
           'i=1; while test "$i" -le 21; do printf \'trailing diagnostic %s\\n\' "$i"; i=$((i + 1)); done',
@@ -3747,25 +3764,25 @@ throw new Error("unexpected controlled cq invocation");
           cancellationSignal: new AbortController().signal,
         });
         expect(result.gateExitCode).toBe(1);
-        expect(result.outputTail).toContain("(fail) first cascading assertion");
-        expect(result.outputTail).not.toContain("sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        expect(result.outputTail).toContain("[REDACTED:api-key]");
+        expect(result.outputTail).toContain("(fail) two distinct failures share this prefix");
+        expect(result.outputTail).not.toContain(secret);
         expect(result.outputTail).toContain("(fail) dependent cascading identity 1");
         expect(result.outputTail).toContain("7 fail");
-        expect(result.outputTail).toContain("trailing diagnostic 21");
         expect(Buffer.byteLength(result.outputTail, "utf8")).toBeLessThanOrEqual(896);
-        expect(result.diagnosticArtifact).toMatchObject({
-          failures: [
-            {
-              identity: "first cascading assertion [REDACTED:api-key]",
-              assertion: "expected secret [REDACTED:api-key] to equal safe",
-            },
-            {
-              identity: "second cascading assertion",
-              assertion: "second assertion body",
-            },
-          ],
+        expect(result.diagnosticArtifact?.failures).toHaveLength(6);
+        expect(result.diagnosticArtifact?.failures[0]).toMatchObject({
+          identity: firstLongIdentity,
+          reference: "packages/example/test/long.test.ts",
+          assertion: "expected [REDACTED:api-key] alpha assertion to be safe",
         });
+        expect(result.diagnosticArtifact?.failures[1]).toMatchObject({
+          identity: secondLongIdentity,
+          reference: "packages/example/test/long.test.ts",
+          assertion: `${"second assertion body ".repeat(24)}beta`,
+        });
+        expect(result.diagnosticArtifact?.failures[0]?.identity).not.toBe(
+          result.diagnosticArtifact?.failures[1]?.identity,
+        );
         expect(result.diagnosticArtifact?.failures.map(({ identity }) => identity)).not.toContain(
           "passing self-closing",
         );
