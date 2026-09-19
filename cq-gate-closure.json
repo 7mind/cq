@@ -643,13 +643,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "40278d7e2c998df7f0b6d215e93a3eda8cc65251a9de2739d06284d3e29564d1",
+      "sha256": "0623eabb46a75ba629fbdf124c751320d918990cc30eed667f9e16c292413772",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "40278d7e2c998df7f0b6d215e93a3eda8cc65251a9de2739d06284d3e29564d1",
+      "sha256": "0623eabb46a75ba629fbdf124c751320d918990cc30eed667f9e16c292413772",
       "targets": []
     },
     {
@@ -685,13 +685,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "cb4d905737f08ed3ece91e374beecb38464278a8a76b270437c8297c8f27b679",
+      "sha256": "e5bc4a0af213a53d99b64420e4ad21a59d157ff2c1f4c167fea40db16505c34f",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "cb4d905737f08ed3ece91e374beecb38464278a8a76b270437c8297c8f27b679",
+      "sha256": "e5bc4a0af213a53d99b64420e4ad21a59d157ff2c1f4c167fea40db16505c34f",
       "targets": []
     },
     {

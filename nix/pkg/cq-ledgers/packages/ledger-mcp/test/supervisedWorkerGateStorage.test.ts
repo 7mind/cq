@@ -2119,6 +2119,63 @@ throw new Error("unexpected controlled cq invocation");
         },
       }),
     ).toMatchObject({ state: "gate-pending" });
+    const sourceHandle = {
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+    };
+    const exactSource = subject.store.read(sourceHandle);
+    if (
+      exactSource === undefined ||
+      isAttestationTombstone(exactSource) ||
+      exactSource.gitEffectBinding === undefined ||
+      exactSource.abortDetails === undefined ||
+      exactSource.implementationQueue === undefined
+    ) {
+      throw new Error("rejected source evidence is unavailable");
+    }
+    const rejectCorruptedSource = async (
+      corruptedSource: typeof exactSource,
+      observedAt: string,
+    ) => {
+      subject.store.replace(exactSource, corruptedSource);
+      await expect(qualify(corrected.prepared, correctedChild, observedAt)).rejects.toThrow(
+        "cannot be resurrected",
+      );
+      subject.store.replace(corruptedSource, exactSource);
+    };
+    await rejectCorruptedSource(
+      Object.freeze({
+        ...exactSource,
+        gitEffectBinding: Object.freeze({
+          ...exactSource.gitEffectBinding,
+          repositoryId: "repository:foreign",
+        }),
+      }),
+      "2026-08-12T20:00:04.100Z",
+    );
+    await rejectCorruptedSource(
+      Object.freeze({
+        ...exactSource,
+        abortDetails: {
+          ...(exactSource.abortDetails as Readonly<Record<string, DispatchJSONValue>>),
+          outputTail: "forged gate rejection diagnostics",
+        },
+      }),
+      "2026-08-12T20:00:04.200Z",
+    );
+    await rejectCorruptedSource(
+      Object.freeze({
+        ...exactSource,
+        implementationQueue: Object.freeze({
+          ...exactSource.implementationQueue,
+          attempt: Object.freeze({
+            ...exactSource.implementationQueue.attempt,
+            gitReceiptLineageDigest: "0".repeat(64),
+          }),
+        }),
+      }),
+      "2026-08-12T20:00:04.300Z",
+    );
     const correctionQualified = await qualify(
       corrected.prepared,
       correctedChild,
