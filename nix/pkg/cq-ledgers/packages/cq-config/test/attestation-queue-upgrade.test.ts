@@ -8,6 +8,8 @@ import {
   PostgresAttestationBackend,
   abortDispatchOn,
   attestationRowDigest,
+  claimParentGateOn,
+  completeParentGateOn,
   dispatchPayloadDigest,
   fetchDispatchInputOn,
   openAttestationPgPool,
@@ -47,6 +49,64 @@ interface StageTarget {
   readonly backend: AttestationBackend;
   readonly namespace: AttestationNamespace;
   readonly now: () => string;
+}
+
+async function completeTrustedGreen(
+  target: StageTarget,
+  staged: StagedRow,
+): Promise<DispatchJSONValue> {
+  const parentGateCapability = staged.prepared.parentGateCapability;
+  if (parentGateCapability === undefined) throw new Error("staged worker has no parent gate");
+  const claimed = await claimParentGateOn(
+    target.backend,
+    { ...staged.prepared, parentGateCapability },
+    { now: target.now },
+  );
+  if (claimed.state !== "gate-running") throw new Error("expected authenticated gate claim");
+  const result = claimed.output as Readonly<Record<string, DispatchJSONValue>>;
+  const resultCommit = result["resultCommit"];
+  if (typeof resultCommit !== "string") throw new Error("staged worker result has no commit");
+  const context = claimed.context;
+  const supervisedGateEvidence = {
+    kind: "cq-supervised-gate-evidence" as const,
+    version: 1 as const,
+    attestationId: context.attestationId,
+    generation: context.generation,
+    roleId: "implement-worker" as const,
+    roleVersion: context.promptProvenance.version,
+    surface: "codex" as const,
+    promptDigest: context.promptProvenance.promptDigest,
+    catalogHash: context.promptProvenance.catalogHash,
+    inputDigest: context.promptProvenance.inputDigest,
+    taskId: context.taskId,
+    worktreePath: context.worktreePath,
+    branch: context.branch,
+    baseCommit: context.dispatchBaseCommit,
+    startingCommit: context.startingCommit,
+    resultCommit,
+    clean: true as const,
+    command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+    gateExitCode: 0 as const,
+    passCount: 1,
+    failCount: 0 as const,
+    gateDurationMs: 1,
+    capturedAt: target.now(),
+    filesTouchedDigest: dispatchPayloadDigest(result["filesTouched"] ?? null),
+    gitReceiptsDigest: dispatchPayloadDigest(result["gitReceipts"] ?? null),
+    mutationTableDigest: dispatchPayloadDigest(result["mutationTable"] ?? null),
+  };
+  const completed = await completeParentGateOn(
+    target.backend,
+    {
+      ...staged.prepared,
+      parentGateCapability,
+      gateEpoch: claimed.gateEpoch,
+      output: { ...result, supervisedGateEvidence },
+    },
+    { now: target.now },
+  );
+  if (completed.state !== "result-stored") throw new Error("trusted gate did not store result");
+  return supervisedGateEvidence as unknown as DispatchJSONValue;
 }
 
 async function stage(
@@ -318,27 +378,8 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
 
   test("accepts completed green evidence only when every durable binding is exact", async () => {
     instant += 1_000;
-    await stage("T65215", 105);
-    const supervisedGateEvidence = {
-      kind: "cq-supervised-gate-evidence",
-      version: 1,
-      command: "bun run check",
-      exitCode: 0,
-      completedAt: now(),
-    } as const;
-    replaceRow("T65215", (row) => {
-      const output = {
-        ...(row.output as Readonly<Record<string, DispatchJSONValue>>),
-        supervisedGateEvidence,
-      } as DispatchJSONValue;
-      return {
-        ...row,
-        state: "result-stored",
-        output,
-        outputDigest: dispatchPayloadDigest(output),
-        storedAt: now(),
-      };
-    });
+    const trusted = await stage("T65215", 105);
+    const supervisedGateEvidence = await completeTrustedGreen({ backend, namespace, now }, trusted);
     const completed = store
       .rows()
       .find(
@@ -372,20 +413,11 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     expect(migrated.implementationQueueRollout?.disposition).toBe("adopted-completed-green");
 
     instant += 1_000;
-    await stage("T65217", 107);
-    replaceRow("T65217", (row) => {
-      const output = {
-        ...(row.output as Readonly<Record<string, DispatchJSONValue>>),
-        supervisedGateEvidence,
-      } as DispatchJSONValue;
-      return {
-        ...row,
-        state: "result-stored",
-        output,
-        outputDigest: dispatchPayloadDigest(output),
-        storedAt: now(),
-      };
-    });
+    const mismatchedStage = await stage("T65217", 107);
+    const mismatchedGateEvidence = await completeTrustedGreen(
+      { backend, namespace, now },
+      mismatchedStage,
+    );
     const mismatched = store
       .rows()
       .find(
@@ -404,9 +436,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
           managedWorktreeBindingDigest: dispatchPayloadDigest(
             row.gitEffectBinding as unknown as DispatchJSONValue,
           ),
-          supervisedGateEvidenceDigest: dispatchPayloadDigest(
-            supervisedGateEvidence as unknown as DispatchJSONValue,
-          ),
+          supervisedGateEvidenceDigest: dispatchPayloadDigest(mismatchedGateEvidence),
         },
       }),
     });
@@ -553,26 +583,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
           gateEpoch: 1,
         }));
         const completed = await stage("T65222", 122, target);
-        const supervisedGateEvidence = {
-          kind: "cq-supervised-gate-evidence",
-          version: 1,
-          command: "bun run check",
-          exitCode: 0,
-          completedAt: pgNow(),
-        } as const;
-        await replaceTargetRow(target, "T65222", (row) => {
-          const output = {
-            ...(row.output as Readonly<Record<string, DispatchJSONValue>>),
-            supervisedGateEvidence,
-          } as DispatchJSONValue;
-          return {
-            ...row,
-            state: "result-stored",
-            output,
-            outputDigest: dispatchPayloadDigest(output),
-            storedAt: pgNow(),
-          };
-        });
+        const supervisedGateEvidence = await completeTrustedGreen(target, completed);
         const incompatible = await stage("T65223", 123, target);
         const prepared = await stage("T65224", 124, target);
         await replaceTargetRow(target, "T65224", (row) => ({ ...row, state: "prepared" }));
@@ -633,9 +644,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
                   managedWorktreeBindingDigest: dispatchPayloadDigest(
                     row.gitEffectBinding as unknown as DispatchJSONValue,
                   ),
-                  supervisedGateEvidenceDigest: dispatchPayloadDigest(
-                    supervisedGateEvidence as unknown as DispatchJSONValue,
-                  ),
+                  supervisedGateEvidenceDigest: dispatchPayloadDigest(supervisedGateEvidence),
                 },
               };
             }

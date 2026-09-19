@@ -137,9 +137,7 @@ interface TargetOutcome {
   readonly signal: NodeJS.Signals | null;
 }
 
-type LauncherMonitorResult =
-  | { readonly state: "launcher-lost" }
-  | { readonly state: "cancelled" };
+type LauncherMonitorResult = { readonly state: "launcher-lost" } | { readonly state: "cancelled" };
 
 function childExit(child: ChildProcess): Promise<TargetOutcome> {
   return new Promise((resolve) => {
@@ -253,20 +251,20 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   validateLaunchDeadlineMs(launchDeadlineMs);
   try {
     await authenticateInitialLauncher(launcher, launcherDarwinHelper);
-    await waitForRelease(
-      releasePath,
-      nonce,
-      process.pid,
-      launcher,
-      launcherDarwinHelper,
-      protocolDirectory,
-      launchDeadlineMs,
-    );
-    await rm(releasePath, { force: true });
   } catch (error) {
     await rm(protocolDirectory, { recursive: true, force: true });
     throw error;
   }
+  await waitForRelease(
+    releasePath,
+    nonce,
+    process.pid,
+    launcher,
+    launcherDarwinHelper,
+    protocolDirectory,
+    launchDeadlineMs,
+  );
+  await rm(releasePath, { force: true });
 
   let child: ChildProcess;
   let exited: Promise<TargetOutcome>;
@@ -327,12 +325,7 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
       child,
     );
     await waitWhileLauncherLives(
-      waitForCompletion(
-        completionPath,
-        nonce,
-        process.pid,
-        launcherMonitorController.signal,
-      ),
+      waitForCompletion(completionPath, nonce, process.pid, launcherMonitorController.signal),
       launcherMonitor,
       protocolDirectory,
       launcherDarwinHelper,

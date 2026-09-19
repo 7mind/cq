@@ -800,8 +800,12 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     roots.push(root);
     const publicationStarted = Promise.withResolvers<void>();
     const releasePublication = Promise.withResolvers<void>();
+    const publicationFinished = Promise.withResolvers<void>();
+    const returnFromPublication = Promise.withResolvers<void>();
     const registrations: ProcessGroupRegistration[] = [];
     let protocolDirectory: string | undefined;
+    let bootstrapExit:
+      Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> | undefined;
     const launchDeadlineMs = Date.now() + 1_000;
     const outcome = launchRegisteredProcessGroup({
       argv: [process.execPath, "-e", "process.exit(0)"],
@@ -816,25 +820,14 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         publicationStarted.resolve();
         await releasePublication.promise;
         await publish();
+        publicationFinished.resolve();
+        await returnFromPublication.promise;
       },
       launchBootstrap: (specification) => {
         protocolDirectory = specification.argv[2];
-        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-          cwd: specification.cwd,
-          env: specification.env,
-          detached: true,
-          stdio: "ignore",
-        });
-        return {
-          process: child,
-          pid: child.pid,
-          exited: exited(child),
-          outputDrained: Promise.resolve(),
-          resultFromTargetOutcome: (target) => target,
-          terminate: (signal: NodeJS.Signals) => {
-            child.kill(signal);
-          },
-        };
+        const bootstrap = nodeBootstrap(specification);
+        bootstrapExit = bootstrap.exited;
+        return bootstrap;
       },
     }).then(
       () => new Error("controlled release publication unexpectedly completed"),
@@ -842,12 +835,27 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     );
 
     await publicationStarted.promise;
-    await Bun.sleep(Math.max(0, launchDeadlineMs - Date.now()) + 25);
     try {
       if (protocolDirectory === undefined) throw new Error("test did not observe protocol path");
+      if (bootstrapExit === undefined) throw new Error("test did not observe bootstrap exit");
+      const bootstrapOutcome = await Promise.race([
+        bootstrapExit,
+        Bun.sleep(5_000).then(() => {
+          throw new Error("real command bootstrap did not expire");
+        }),
+      ]);
+      expect(bootstrapOutcome.exitCode).not.toBe(0);
+      expect(await pathExists(protocolDirectory)).toBe(true);
+      releasePublication.resolve();
+      await publicationFinished.promise;
+      const published = JSON.parse(
+        await readFile(join(protocolDirectory, "release.json"), "utf8"),
+      ) as Readonly<Record<string, unknown>>;
+      expect(published["pgid"]).toBe(registrations[0]?.pgid);
       expect(await pathExists(protocolDirectory)).toBe(true);
     } finally {
       releasePublication.resolve();
+      returnFromPublication.resolve();
     }
     const failure = await outcome;
     expect(failure).toBeInstanceOf(Error);
@@ -857,6 +865,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     expect((failure as Error).cause).toBeInstanceOf(WorksetEffectLaunchDeadlineError);
     expect(registrations).toHaveLength(1);
     await waitForIdentityToDisappear(registrations[0]!.leader.pid);
+    if (protocolDirectory === undefined) throw new Error("test lost protocol path");
+    expect(await pathExists(protocolDirectory)).toBe(false);
   });
 
   test("acknowledges target launch failures only after cleaning up the registered group", async () => {

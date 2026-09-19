@@ -1,4 +1,5 @@
-import { constants } from "node:os";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   CODEX_STAGED_TIMING_BASIS,
@@ -25,6 +26,7 @@ import {
   findOpenWipCheckpoints,
   recordManagedWorktreeSupervisedGateEvidence,
 } from "./managedWorktree.js";
+import { redactSecrets } from "./store/logRedaction.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
@@ -36,8 +38,7 @@ const FAILURE_IDENTITY_LINE_LIMIT = 4;
 const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
 const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
-const FAILURE_OUTPUT_TAIL_BYTE_LIMIT =
-  IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT;
+const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -105,10 +106,7 @@ export interface SuperviseImplementWorkerGateDeps {
 const GATE_CANCELLED_MESSAGE =
   "supervised worker gate cancelled by its authenticated dispatch epoch";
 
-async function observeGateCancellation<T>(
-  operation: Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
+async function observeGateCancellation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw new Error(GATE_CANCELLED_MESSAGE);
   let rejectCancellation!: (error: Error) => void;
   const cancelled = new Promise<never>((_resolve, reject) => {
@@ -134,7 +132,7 @@ function supervisedGateRejectionDetails(
     passCount: run.passCount,
     failCount: run.failCount,
     outputTail: truncateUtf8(
-      run.outputTail,
+      redactSecrets(run.outputTail),
       IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
     ),
   } as const;
@@ -259,24 +257,57 @@ function failureIdentityLines(output: string): string {
     .trimEnd()
     .split("\n")
     .filter((line) => BUN_FAILURE_IDENTITY_LINE.test(line))
-    .slice(-FAILURE_IDENTITY_LINE_LIMIT)
+    .slice(0, FAILURE_IDENTITY_LINE_LIMIT)
     .map((line) => truncateUtf8(line, FAILURE_IDENTITY_BYTE_LIMIT))
     .join("\n");
 }
 
-function outputTail(stdout: string, stderr: string, gateExitCode: number): string {
-  if (gateExitCode === 0) return tail(`${stdout}\n${stderr}`);
+function decodeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+function junitFailureIdentityLines(report: string): string {
+  const identities: string[] = [];
+  for (const match of report.matchAll(/<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/gu)) {
+    if (!/<failure\b/u.test(match[2] ?? "")) continue;
+    const name = /\bname="([^"]*)"/u.exec(match[1] ?? "")?.[1];
+    if (name === undefined || name.length === 0) continue;
+    identities.push(`(fail) ${decodeXmlAttribute(name)}`);
+    if (identities.length === FAILURE_IDENTITY_LINE_LIMIT) break;
+  }
+  return identities.map((line) => truncateUtf8(line, FAILURE_IDENTITY_BYTE_LIMIT)).join("\n");
+}
+
+function outputTail(
+  stdout: string,
+  stderr: string,
+  gateExitCode: number,
+  junitReport: string,
+): string {
+  if (gateExitCode === 0)
+    return truncateUtf8(
+      redactSecrets(tail(`${stdout}\n${stderr}`)),
+      FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
+    );
   return truncateUtf8(
-    [
-      failureIdentityLines(stdout),
-      failureIdentityLines(stderr),
-      failureSummaryWindow(stdout),
-      failureSummaryWindow(stderr),
-      tail(stdout),
-      tail(stderr),
-    ]
-      .filter((value) => value.length > 0)
-      .join("\n"),
+    redactSecrets(
+      [
+        junitFailureIdentityLines(junitReport),
+        failureIdentityLines(stdout),
+        failureIdentityLines(stderr),
+        failureSummaryWindow(stdout),
+        failureSummaryWindow(stderr),
+        tail(stdout),
+        tail(stderr),
+      ]
+        .filter((value) => value.length > 0)
+        .join("\n"),
+    ),
     FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
   );
 }
@@ -401,9 +432,10 @@ function settlementFailed(
 }
 
 /** Real host adapter: serialized admission, fixed command, execution deadline, full settlement. */
-async function runAdmittedNodeSupervisedWorkerGate(
+async function runAdmittedNodeSupervisedWorkerGateWithReport(
   request: SupervisedWorkerGateRunRequest,
   settlement: NodeSupervisedWorkerGateSettlement,
+  junitPath: string,
 ): Promise<SupervisedWorkerGateRunResult> {
   const startedAt = Date.now();
   let registration: ProcessGroupRegistration | undefined;
@@ -425,7 +457,7 @@ async function runAdmittedNodeSupervisedWorkerGate(
       "check",
     ],
     cwd: request.worktreePath,
-    env: process.env,
+    env: { ...process.env, CQ_TEST_JUNIT_PATH: junitPath },
     stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
     register: async (observed) => {
       registration = observed;
@@ -514,14 +546,35 @@ async function runAdmittedNodeSupervisedWorkerGate(
   const combined = `${raced.stdout}\n${raced.stderr}`;
   const passCount = lastCount(PASS_COUNT, combined) ?? 0;
   const failCount = lastCount(FAIL_COUNT, combined) ?? (raced.gateExitCode === 0 ? 0 : 1);
+  const junitReport = await readFile(junitPath, "utf8").catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  });
   return Object.freeze({
     gateExitCode: raced.gateExitCode,
     passCount,
     failCount,
     gateDurationMs: Date.now() - startedAt,
     capturedAt: new Date().toISOString(),
-    outputTail: outputTail(raced.stdout, raced.stderr, raced.gateExitCode),
+    outputTail: outputTail(raced.stdout, raced.stderr, raced.gateExitCode, junitReport),
   });
+}
+
+/** Own the per-run JUnit artifact so concurrent gates never share diagnostics. */
+async function runAdmittedNodeSupervisedWorkerGate(
+  request: SupervisedWorkerGateRunRequest,
+  settlement: NodeSupervisedWorkerGateSettlement,
+): Promise<SupervisedWorkerGateRunResult> {
+  const diagnosticDirectory = await mkdtemp(join(tmpdir(), "cq-supervised-gate-"));
+  try {
+    return await runAdmittedNodeSupervisedWorkerGateWithReport(
+      request,
+      settlement,
+      join(diagnosticDirectory, "junit.xml"),
+    );
+  } finally {
+    await rm(diagnosticDirectory, { recursive: true, force: true });
+  }
 }
 
 export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =

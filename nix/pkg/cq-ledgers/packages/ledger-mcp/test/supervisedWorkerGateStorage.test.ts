@@ -2290,6 +2290,49 @@ throw new Error("unexpected controlled cq invocation");
     });
   }
 
+  test("retains one redacted deterministic-red diagnostic through fetch without rerunning", async () => {
+    const secret = `sk-${"R".repeat(32)}`;
+    const runner = new GateDummy({
+      gateExitCode: 1,
+      passCount: 4,
+      failCount: 1,
+      gateDurationMs: 1,
+      capturedAt: "2026-08-12T20:00:01.000Z",
+      outputTail: `(fail) first deterministic assertion ${secret}\n4 pass\n1 fail`,
+    });
+    const subject = await fixture(runner);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const rejected = await finalize(subject);
+    expect(runner.requests).toHaveLength(1);
+    expect(rejected).toMatchObject({ state: "aborted", result: { reason: "gate-rejected" } });
+    if (rejected.state !== "aborted" || rejected.result.details === undefined) {
+      throw new Error("deterministic-red finalization details are missing");
+    }
+    const rejectedDetails = rejected.result.details as Readonly<Record<string, DispatchJSONValue>>;
+    const rejectedTail = rejectedDetails["outputTail"];
+    if (typeof rejectedTail !== "string") {
+      throw new Error("deterministic-red finalization output tail is missing");
+    }
+    expect(rejectedTail).toContain("[REDACTED:api-key]");
+    const fetched = await subject.capability.fetch({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+    });
+    expect(fetched).toEqual(rejected.result);
+    if (fetched.state !== "aborted" || fetched.details === undefined) {
+      throw new Error("deterministic-red diagnostic was not retrievable");
+    }
+    const details = fetched.details as Readonly<Record<string, DispatchJSONValue>>;
+    const retained = details["outputTail"];
+    if (typeof retained !== "string") {
+      throw new Error(`deterministic-red output tail is missing: ${JSON.stringify(fetched)}`);
+    }
+    expect(retained.includes(secret)).toBe(false);
+    expect(retained).toContain("[REDACTED:api-key]");
+    expect(await finalize(subject)).toEqual(rejected);
+    expect(runner.requests).toHaveLength(1);
+  });
+
   test("rejects dirty or moving tips and does not run the gate on replay", async () => {
     const dirtyRunner = new GateDummy();
     const dirty = await fixture(dirtyRunner);
@@ -2961,7 +3004,7 @@ throw new Error("unexpected controlled cq invocation");
 
   // Regression: the bounded runner diagnostic must retain Bun failure identities.
   test(
-    "D373 retains Bun failure identities before long same-stream diagnostics [Behavioral-Active Effectual-GoodCommunication]",
+    "D500 retains the first redacted JUnit failure before cascading diagnostics [Behavioral-Active Effectual-GoodCommunication]",
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
       roots.push(root);
@@ -2976,11 +3019,12 @@ throw new Error("unexpected controlled cq invocation");
         [
           "#!/bin/sh",
           "set -eu",
+          'test "${CQ_TEST_JUNIT_PATH:-/dev/null}" != /dev/null',
+          'printf \'%s\\n\' \'<testsuites><testsuite><testcase name="first cascading assertion sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"><failure type="AssertionError" /></testcase></testsuite></testsuites>\' > "$CQ_TEST_JUNIT_PATH"',
           "printf 'packages/example/test/failure.test.ts:\\n'",
-          "printf '(fail) first long-output regression identity [1.00ms]\\n'",
-          "printf '(fail) second long-output regression identity [2.00ms]\\n'",
+          'i=1; while test "$i" -le 6; do printf \'(fail) dependent cascading identity %s\\n\' "$i"; i=$((i + 1)); done',
           'i=1; while test "$i" -le 21; do printf \'trailing diagnostic %s\\n\' "$i"; i=$((i + 1)); done',
-          "printf '6989 pass\\n288 skip\\n2 fail\\n'",
+          "printf '6989 pass\\n288 skip\\n7 fail\\n'",
           "exit 1",
           "",
         ].join("\n"),
@@ -2996,9 +3040,11 @@ throw new Error("unexpected controlled cq invocation");
           cancellationSignal: new AbortController().signal,
         });
         expect(result.gateExitCode).toBe(1);
-        expect(result.outputTail).toContain("(fail) first long-output regression identity");
-        expect(result.outputTail).toContain("(fail) second long-output regression identity");
-        expect(result.outputTail).toContain("2 fail");
+        expect(result.outputTail).toContain("(fail) first cascading assertion");
+        expect(result.outputTail).not.toContain("sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        expect(result.outputTail).toContain("[REDACTED:api-key]");
+        expect(result.outputTail).toContain("(fail) dependent cascading identity 1");
+        expect(result.outputTail).toContain("7 fail");
         expect(result.outputTail).toContain("trailing diagnostic 21");
         expect(Buffer.byteLength(result.outputTail, "utf8")).toBeLessThanOrEqual(896);
       } finally {
