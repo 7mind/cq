@@ -395,7 +395,6 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
         });
         return authority;
       },
-      reserveCandidateAuthority,
       releaseCandidateAuthority: async (receipt, binding) => {
         const current = await backend.transact(
           { kind: "handle", handle: receipt.workerDispatch },

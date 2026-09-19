@@ -2583,12 +2583,6 @@ function claimStagedRebaseSuccessor(
         "a retained implementation queue requires its consumed envelope",
       );
     }
-    if (retainedQueue.completionReservation !== undefined) {
-      throw new AttestationBindingError(
-        "continuationClaim",
-        "dispatch continuation is fenced by a durable completion reservation",
-      );
-    }
     const supersededAt = deps.now();
     const sourceClaim = Object.freeze({
       continuationReference,

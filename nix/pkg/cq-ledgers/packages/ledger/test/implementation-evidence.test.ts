@@ -27,6 +27,7 @@ import {
   type ImplementationEvidenceServiceDependencies,
   type ImplementationEvidenceStore,
   type ImplementationCandidateAuthorityReceipt,
+  type ImplementationCandidateCompletionReservationBinding,
   type ImplementationReviewerIdentity,
 } from "../src/index.js";
 
@@ -90,6 +91,11 @@ function candidateAuthority(
   };
 }
 
+type ReserveCandidateAuthority = (
+  receipt: ImplementationCandidateAuthorityReceipt,
+  binding: ImplementationCandidateCompletionReservationBinding,
+) => Promise<void>;
+
 function prepared(attemptRef: string): DispatchPrepared {
   return {
     attestationId: `att_${attemptRef.slice(-12)}`,
@@ -140,9 +146,7 @@ async function fixture(
     readonly resultCommit?: string;
     readonly workerDispatch?: DispatchHandle;
     readonly recordLedgerCompletion?: ImplementationEvidenceServiceDependencies["recordLedgerCompletion"];
-    readonly reserveCandidateAuthority?: NonNullable<
-      ImplementationEvidenceServiceDependencies["reserveCandidateAuthority"]
-    >;
+    readonly reserveCandidateAuthority?: ReserveCandidateAuthority;
     readonly releaseCandidateAuthority?: NonNullable<
       ImplementationEvidenceServiceDependencies["releaseCandidateAuthority"]
     >;
@@ -155,9 +159,7 @@ async function fixture(
   let verificationClean = true;
   let candidateReservationCount = 0;
   let candidateReleaseCount = 0;
-  const reserveCandidateAuthority: NonNullable<
-    ImplementationEvidenceServiceDependencies["reserveCandidateAuthority"]
-  > =
+  const reserveCandidateAuthority: ReserveCandidateAuthority =
     options.reserveCandidateAuthority ??
     (async () => {
       candidateReservationCount += 1;
@@ -199,7 +201,6 @@ async function fixture(
       ? {}
       : {
           resolveCandidateAuthority: async () => options.resolveCandidateAuthority!(),
-          reserveCandidateAuthority,
           releaseCandidateAuthority:
             options.releaseCandidateAuthority ??
             (async () => {

@@ -181,6 +181,27 @@ describe("ledger-MCP implementation candidate queue", () => {
       qualificationDigest: qualified.queue.qualification.qualificationDigest,
       ...binding,
     } as const;
+    await expect(
+      subject.adapter.reserveCompletion({
+        ...request,
+        operationId: "invalid operation id",
+      }),
+    ).rejects.toThrow(AttestationContractError);
+    await expect(
+      subject.adapter.reserveCompletion({
+        ...request,
+        qualificationDigest: "not-a-digest",
+      }),
+    ).rejects.toThrow(AttestationContractError);
+    for (const changed of [
+      { qualificationDigest: "9".repeat(64) },
+      { taskRef: "tasks:T9999" },
+      { resultCommit: "8".repeat(40) },
+    ] as const) {
+      await expect(
+        subject.adapter.reserveCompletion({ ...request, ...changed }),
+      ).rejects.toMatchObject({ reason: "binding-mismatch" });
+    }
     const reservation = await subject.adapter.reserveCompletion(request);
     const reserved = await subject.adapter.inspectLease(acquired.lease);
     expect(reserved.completionReservation).toEqual(reservation);

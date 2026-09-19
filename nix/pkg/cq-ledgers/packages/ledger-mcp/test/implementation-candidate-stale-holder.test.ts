@@ -299,6 +299,19 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
     });
 
     await expect(
+      discoverDispatchContinuationOn(
+        backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          gitEffectBinding: staged.binding,
+          liveTip: staged.candidate.resultCommit,
+        },
+        { now: fixture.clock.now },
+      ),
+    ).rejects.toThrow("completion reservation");
+
+    await expect(
       prepareDispatchOn(
         backend,
         {
@@ -961,6 +974,22 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
           author: "parent",
         });
         expect(completion).toMatchObject({ status: "prepared", resultCommit: rebasedStartCommit });
+        if (capability.reserveImplementationCandidateAuthority === undefined) {
+          throw new Error("public implementation candidate reservation is unavailable");
+        }
+        const completionBinding = {
+          operationId: "public-successor-completion",
+          completionRef: completion.completionRef,
+          mergeOperationId: "public-successor-merge",
+          taskRef: "tasks:T6520",
+          resultCommit: rebasedStartCommit,
+        } as const;
+        await expect(
+          capability.reserveImplementationCandidateAuthority(
+            { ...authority, leaseGeneration: authority.leaseGeneration + 1 },
+            completionBinding,
+          ),
+        ).rejects.toThrow("authority changed before completion reservation");
 
         const finalAuthorization = Promise.withResolvers<void>();
         const allowGuardianShare = Promise.withResolvers<void>();

@@ -837,15 +837,6 @@ export function createProductionImplementationEvidenceService(
           resolveCandidateAuthority: async (input) =>
             await options.dispatchCapability.resolveImplementationCandidateAuthority!(input),
         }),
-    ...(options.dispatchCapability.reserveImplementationCandidateAuthority === undefined
-      ? {}
-      : {
-          reserveCandidateAuthority: async (receipt, binding) =>
-            await options.dispatchCapability.reserveImplementationCandidateAuthority!(
-              receipt,
-              binding,
-            ),
-        }),
     ...(options.dispatchCapability.releaseImplementationCandidateAuthority === undefined
       ? {}
       : {

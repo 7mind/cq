@@ -2334,8 +2334,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
           resolveCandidateAuthority: async (input) =>
             await capability.resolveImplementationCandidateAuthority!(input),
-          reserveCandidateAuthority: async (receipt, binding) =>
-            await capability.reserveImplementationCandidateAuthority!(receipt, binding),
           releaseCandidateAuthority: async (receipt, binding) =>
             await capability.releaseImplementationCandidateAuthority!(receipt, binding),
           readTaskAuthority: async (taskRef) => {

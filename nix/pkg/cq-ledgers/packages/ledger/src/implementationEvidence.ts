@@ -1611,10 +1611,6 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly taskRef: string;
     readonly resultCommit: string;
   }) => Promise<ImplementationCandidateAuthorityReceipt>;
-  readonly reserveCandidateAuthority?: (
-    receipt: ImplementationCandidateAuthorityReceipt,
-    binding: ImplementationCandidateCompletionReservationBinding,
-  ) => Promise<void>;
   readonly releaseCandidateAuthority?: (
     receipt: ImplementationCandidateAuthorityReceipt,
     binding: ImplementationCandidateCompletionReservationBinding,
