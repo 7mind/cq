@@ -2500,6 +2500,70 @@ throw new Error("unexpected controlled cq invocation");
       sourceReference,
       guardedRebase: expect.stringMatching(/^cq-guarded-rebase:v1:/u),
     });
+    expect(
+      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: restarted.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: subject.managed.handle,
+          sourceDispatch: first.front,
+          sourceReference,
+        },
+      )) as unknown as DispatchStagedRebaseResolution,
+    ).toEqual(pendingRecovery);
+    await expect(
+      WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: restarted.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: subject.managed.handle,
+          sourceDispatch: { ...first.front, generation: first.front.generation + 1 },
+          sourceReference,
+        },
+      ),
+    ).rejects.toThrow("source handle or reference changed");
+    await expect(
+      WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: restarted.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: subject.managed.handle,
+          sourceDispatch: first.front,
+          sourceReference: `cq-staged-rebase-source:v1:${"d".repeat(64)}`,
+        },
+      ),
+    ).rejects.toThrow("staged-rebase source does not resolve to one durable checkpoint");
+    await expect(
+      WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: restarted.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: { ...subject.managed.handle, branch: `${subject.managed.handle.branch}-foreign` },
+          sourceDispatch: first.front,
+          sourceReference,
+        },
+      ),
+    ).rejects.toThrow();
 
     const replay = await restarted.coordinateImplementationCandidate({
       partitionKey: qualified.partitionKey,
@@ -2606,6 +2670,22 @@ throw new Error("unexpected controlled cq invocation");
       },
     });
     expect(recovered.preparation.guardedRebase).toMatch(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u);
+    expect(
+      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: finalizedRestart.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: subject.managed.handle,
+          sourceDispatch: first.front,
+          sourceReference,
+        },
+      )) as unknown as DispatchStagedRebaseResolution,
+    ).toEqual(recovered);
     if (
       retired === undefined ||
       isAttestationTombstone(retired) ||
@@ -2645,6 +2725,30 @@ throw new Error("unexpected controlled cq invocation");
         ontoCommit: protectedHead,
         rebasedStartCommit: recovered.liveTip,
       },
+    });
+    expect(
+      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        subject.ledgerStore,
+        {
+          repositoryRoot: subject.repositoryRoot,
+          deps: { stateDir: subject.stateDir },
+          resolveStagedRebase: finalizedRestart.resolveStagedRebase,
+        },
+        {
+          operation: "resolve-staged-rebase",
+          handle: subject.managed.handle,
+          sourceDispatch: first.front,
+          sourceReference,
+        },
+      )) as unknown as DispatchStagedRebaseResolution,
+    ).toEqual({
+      status: "staged-rebase-successor-bound",
+      taskId: subject.managed.handle.taskId,
+      liveTip: recovered.liveTip,
+      source: first.front,
+      sourceReference,
+      guardedRebase: recovered.guardedRebase,
+      successor: successor.handle,
     });
 
     expect(

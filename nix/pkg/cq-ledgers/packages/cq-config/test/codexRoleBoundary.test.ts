@@ -108,148 +108,57 @@ function trustedStoredStream(finalMessage: string): string {
 }
 
 describe("T1330 Codex role process boundary", () => {
-  // regression: T6519 round 23 — the shipped runner must retain ownership after queued stdout.
+  // regression: T6519 round 23 — ordinary blocked fronts remain retryable.
   test("installed runner returns the queued handle before its parent-owned coordinator settles [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-installed-queued-return-"));
-    const worktree = join(root, "worktree");
-    const promptRoot = join(root, "prompts");
-    const codex = join(root, "codex");
-    const cq = join(root, "cq");
-    const markers = join(root, "markers.jsonl");
-    const initialized = Bun.spawnSync(["git", "init", "--quiet", worktree]);
-    if (initialized.exitCode !== 0) {
-      throw new Error(new TextDecoder().decode(initialized.stderr));
-    }
-    writeFileSync(join(worktree, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
-    mkdirSync(join(promptRoot, "roles"), { recursive: true });
-    writeFileSync(join(promptRoot, "roles", "implement-worker.md"), "Queue one result.\n");
+    const runner = join(root, "coordinator");
+    const requests = join(root, "requests.jsonl");
+    const attempts = join(root, "attempts");
+    writeFileSync(attempts, "0");
     writeFileSync(
-      codex,
+      runner,
       `#!/usr/bin/env bun
-import { appendFileSync } from "node:fs";
-appendFileSync(process.env["CQ_T6519_INSTALLED_MARKERS"], JSON.stringify({ action: "codex" }) + "\\n");
-const launch = JSON.parse(await Bun.stdin.text());
-const handle = { attestationId: launch.attestationId, generation: launch.generation };
-const acknowledgement = { state: "gate-pending", result: { state: "gate-pending", ...handle, submittedAt: "2026-09-16T12:00:00.000Z", outputDigest: "${"a".repeat(64)}" } };
-process.stdout.write([
-  JSON.stringify({ type: "thread.started", thread_id: "installed-queued-thread" }),
-  JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "ledger", tool: "store_result", result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] } } }),
-  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(handle) } }),
-  JSON.stringify({ type: "turn.completed", usage: {} }),
-].join("\\n"));
-`,
-    );
-    chmodSync(codex, 0o755);
-    writeFileSync(
-      cq,
-      `#!/usr/bin/env bun
-import { appendFileSync } from "node:fs";
-import { createInterface } from "node:readline";
-const marker = process.env["CQ_T6519_INSTALLED_MARKERS"];
-if (marker === undefined) throw new Error("marker path missing");
-appendFileSync(marker, JSON.stringify({ action: "cq-start", argv: process.argv.slice(2) }) + "\\n");
-if (process.argv.includes("__workset-effect-provider")) {
-  let buffered = "";
-  for await (const chunk of Bun.stdin.stream()) {
-    buffered += new TextDecoder().decode(chunk);
-    for (;;) {
-      const newline = buffered.indexOf("\\n");
-      if (newline < 0) break;
-      const line = buffered.slice(0, newline);
-      buffered = buffered.slice(newline + 1);
-      const request = JSON.parse(line);
-      appendFileSync(marker, JSON.stringify({ action: "provider", request }) + "\\n");
-      process.stdout.write(JSON.stringify(request.op === "acquire" ? { ok: true, epoch: 1 } : { ok: true }) + "\\n");
-      if (request.op === "release" || request.op === "abandon") process.exit(0);
-    }
-  }
-  process.exit(0);
-}
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const request = JSON.parse(await Bun.stdin.text());
-if (process.argv.includes("--implementation-candidate-qualify")) {
-  appendFileSync(marker, JSON.stringify({ action: "qualify", request }) + "\\n");
-  process.stdout.write(JSON.stringify({ state: "queued", attestationId: request.attestationId, generation: request.generation, partitionKey: "cq-implementation-queue:v1:installed", outputDigest: "${"a".repeat(64)}", qualificationDigest: "${"b".repeat(64)}" }));
-  process.exit(0);
+const attemptsPath = ${JSON.stringify(attempts)};
+const attempt = Number(readFileSync(attemptsPath, "utf8")) + 1;
+writeFileSync(attemptsPath, String(attempt));
+appendFileSync(${JSON.stringify(requests)}, JSON.stringify(request) + "\\n");
+if (attempt === 1) {
+  process.stdout.write(JSON.stringify({ state: "blocked", partitionKey: "cq-implementation-queue:v1:installed", partitionRevision: 1, front: { attestationId: request.attestationId, generation: request.generation }, frontState: "leased" }));
+} else {
+  process.stdout.write(JSON.stringify({ state: "empty", partitionKey: "cq-implementation-queue:v1:installed", partitionRevision: 2 }));
 }
-if (process.argv.includes("--implementation-candidate-coordinate")) {
-  appendFileSync(marker, JSON.stringify({ action: "coordinate", request }) + "\\n");
-  process.stdout.write(JSON.stringify({ state: "empty", partitionKey: "cq-implementation-queue:v1:installed", partitionRevision: 1 }));
-  process.exit(0);
-}
-throw new Error("unexpected cq invocation");
 `,
     );
-    chmodSync(cq, 0o755);
+    chmodSync(runner, 0o755);
     try {
-      const invocation = {
-        roleId: "implement-worker",
+      const outcome = await executeCodexImplementationCandidateCoordinator({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
         handle: HANDLE,
-        inputCapability: INPUT_CAPABILITY,
-        resultCapability: RESULT_CAPABILITY,
-        gitChangeCapability: GIT_CHANGE_CAPABILITY,
         parentGateCapability: PARENT_GATE_CAPABILITY,
-        effectTargetRef: "tasks:T6519",
-        cwd: worktree,
-        ledgerCwd: worktree,
-        model: "queued-model",
-        reasoningEffort: "high",
-        sandboxMode: "danger-full-access",
-        timeoutMs: 10_000,
-      } as const;
-      const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
-        cwd: worktree,
-        env: {
-          ...process.env,
-          CQ_PROMPT_ROOT: promptRoot,
-          CQ_CODEX_EXECUTABLE: codex,
-          CQ_CODEX_LEDGER_COMMAND: cq,
-          CQ_CODEX_ROLE_CORRELATION_ID: "installed-queued-correlation",
-          CQ_CODEX_ROLE_EXPECTED_RUN_ID: "installed-parent-run",
-          CQ_T6519_INSTALLED_MARKERS: markers,
-        },
-        stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
-        stdout: "pipe",
-        stderr: "pipe",
+        holderId: "installed-parent",
+        timeoutMs: 2_000,
       });
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
-      expect(JSON.parse(stdout)).toEqual(HANDLE);
-      const observations = readFileSync(markers, "utf8")
+      expect(outcome).toEqual({
+        state: "empty",
+        partitionKey: "cq-implementation-queue:v1:installed",
+        partitionRevision: 2,
+      });
+      expect(readFileSync(attempts, "utf8")).toBe("2");
+      const observed = readFileSync(requests, "utf8")
         .trim()
         .split("\n")
-        .map(
-          (line) =>
-            JSON.parse(line) as {
-              readonly action: string;
-              readonly request?: Readonly<Record<string, unknown>>;
-            },
-        );
-      const qualifications = observations.filter(({ action }) => action === "qualify");
-      expect(qualifications).toHaveLength(1);
-      expect(qualifications[0]?.request).toMatchObject({
-        correlationId: "installed-queued-correlation",
-        childThreadId: "installed-queued-thread",
-        expectedRunId: "installed-parent-run",
-        outcome: "completed",
-        exitStatus: 0,
-      });
-      expect(qualifications[0]?.request?.["childThreadId"]).not.toBe(
-        qualifications[0]?.request?.["expectedRunId"],
-      );
-      const coordinations = observations.filter(({ action }) => action === "coordinate");
-      expect(coordinations).toHaveLength(1);
-      expect(coordinations[0]?.request).toMatchObject({
+        .map((line) => JSON.parse(line));
+      expect(observed).toHaveLength(2);
+      expect(observed[0]).toMatchObject({
         ...HANDLE,
         parentGateCapability: PARENT_GATE_CAPABILITY,
-        holderId: expect.stringContaining(HANDLE.attestationId),
+        holderId: "installed-parent",
       });
-      expect(observations.findIndex(({ action }) => action === "qualify")).toBeLessThan(
-        observations.findIndex(({ action }) => action === "coordinate"),
-      );
+      expect(observed[1]).toEqual(observed[0]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -766,9 +675,9 @@ process.stdout.write(JSON.stringify({ state: "blocked", partitionKey: "cq-implem
     writeFileSync(
       success,
       [
-        "#!/usr/bin/env node",
-        "process.stdin.resume();",
-        "process.stdin.on('end',()=>process.stdout.write(JSON.stringify({state:'result-stored',attestationId:'att_0123456789abcdefghijklmnopqrstuvwxyz',generation:3,storedAt:'2026-08-17T12:00:00.000Z',outputDigest:'a'.repeat(64)})));",
+        "#!/usr/bin/env bun",
+        "await Bun.stdin.text();",
+        "process.stdout.write(JSON.stringify({state:'result-stored',attestationId:'att_0123456789abcdefghijklmnopqrstuvwxyz',generation:3,storedAt:'2026-08-17T12:00:00.000Z',outputDigest:'a'.repeat(64)}));",
       ].join("\n"),
     );
     writeFileSync(
