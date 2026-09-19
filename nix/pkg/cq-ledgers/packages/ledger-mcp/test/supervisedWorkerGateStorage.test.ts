@@ -2143,26 +2143,33 @@ throw new Error("unexpected controlled cq invocation");
         partitionKey: correctionQualified.partitionKey,
         holderId: "d508-correction-replay",
       }),
-    ).toMatchObject({ state: "empty" });
-    expect(runner.requests).toHaveLength(2);
-    expect(subject.store.rows()).toMatchObject([
-      {
-        generation: subject.prepared.generation,
-        state: "aborted",
-        abortReason: "gate-rejected",
-      },
-      {
-        generation: unchanged.prepared.generation,
-        state: "aborted",
-        abortReason: "cancelled",
-        implementationQueue: undefined,
-      },
-      {
+    ).toMatchObject({
+      state: "blocked",
+      front: {
+        attestationId: corrected.prepared.attestationId,
         generation: corrected.prepared.generation,
-        state: "consumed",
-        implementationQueue: { state: "leased" },
       },
-    ]);
+      frontState: "leased",
+    });
+    expect(runner.requests).toHaveLength(2);
+    const retainedRows = subject.store.rows();
+    expect(retainedRows).toHaveLength(3);
+    expect(retainedRows[0]).toMatchObject({
+      generation: subject.prepared.generation,
+      state: "aborted",
+      abortReason: "gate-rejected",
+    });
+    expect(retainedRows[1]).toMatchObject({
+      generation: unchanged.prepared.generation,
+      state: "aborted",
+      abortReason: "cancelled",
+    });
+    expect(retainedRows[1]).not.toHaveProperty("implementationQueue");
+    expect(retainedRows[2]).toMatchObject({
+      generation: corrected.prepared.generation,
+      state: "consumed",
+      implementationQueue: { state: "leased" },
+    });
   });
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {

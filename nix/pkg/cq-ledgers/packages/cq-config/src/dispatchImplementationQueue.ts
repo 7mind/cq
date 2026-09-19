@@ -32,7 +32,10 @@ import type {
   DispatchJSONValue,
   NativeCompletionProof,
 } from "./compactDispatchProtocol.js";
-import { IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND } from "./schemas/implement-worker.js";
+import {
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  isImplementWorkerSupervisedGateRejectionDetails,
+} from "./schemas/implement-worker.js";
 import { CODEX_STAGED_TIMING_BASIS } from "./codexStagedTiming.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -683,6 +686,108 @@ function isConsumedOrdinaryContinuationAncestor(
   );
 }
 
+function isGateRejectedCorrectionAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  successorReceipts: readonly DispatchGitChangeReceipt[],
+  successorResultCommit: string,
+): boolean {
+  if (isAttestationTombstone(candidate)) return false;
+  const control = candidate.implementationQueue;
+  const sourceBinding = candidate.gitEffectBinding;
+  const output =
+    candidate.output !== null &&
+    typeof candidate.output === "object" &&
+    !Array.isArray(candidate.output)
+      ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const sameManagerBinding =
+    sourceBinding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).every((field) => sourceBinding[field] === successorBinding[field]);
+  const sameLineageBridge =
+    sourceBinding?.guardedRebaseBridge === undefined
+      ? successorBinding.guardedRebaseBridge === undefined
+      : successorBinding.guardedRebaseBridge !== undefined &&
+        digest(sourceBinding.guardedRebaseBridge) ===
+          digest(successorBinding.guardedRebaseBridge);
+  if (
+    control === undefined ||
+    sourceBinding === undefined ||
+    output === undefined ||
+    candidate.attestationId !== successor.attestationId ||
+    candidate.generation >= successor.generation ||
+    candidate.state !== "aborted" ||
+    candidate.abortReason !== "gate-rejected" ||
+    candidate.parentGateCapabilityHash === undefined ||
+    candidate.abortDetails === undefined ||
+    candidate.abortDetailsDigest !== digest(candidate.abortDetails) ||
+    !isImplementWorkerSupervisedGateRejectionDetails(candidate.abortDetails) ||
+    control.state !== "terminal" ||
+    control.terminal?.reason !== "gate-rejected" ||
+    control.terminal.detailsDigest !== candidate.abortDetailsDigest ||
+    control.qualification === undefined ||
+    candidate.stagedCompletionQualification?.qualificationDigest !==
+      control.qualification.qualificationDigest ||
+    output["status"] !== "pass" ||
+    output["taskId"] !== control.attempt.taskId ||
+    output["resultCommit"] !== control.attempt.resultCommit ||
+    digest(output["gitReceipts"] ?? []) !== control.attempt.gitReceiptLineageDigest ||
+    digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
+    control.attempt.taskId !== successorBinding.taskId ||
+    control.attempt.repositoryId !== successorBinding.repositoryId ||
+    control.attempt.worktreePath !== successorBinding.worktreePath ||
+    !sameManagerBinding ||
+    !sameLineageBridge ||
+    successorResultCommit === control.attempt.resultCommit
+  ) {
+    return false;
+  }
+  const sourceClosure = control.attempt.gitReceipts;
+  const sourceInherited = sourceBinding.inheritedGitReceipts ?? [];
+  const successorClosure = successorReceipts;
+  const successorInherited = successorBinding.inheritedGitReceipts ?? [];
+  if (
+    sourceInherited.length > sourceClosure.length ||
+    digest(sourceInherited) !== digest(sourceClosure.slice(0, sourceInherited.length)) ||
+    successorInherited.length > successorClosure.length ||
+    digest(successorInherited) !==
+      digest(successorClosure.slice(0, successorInherited.length)) ||
+    sourceClosure.length >= successorClosure.length ||
+    digest(sourceClosure) !== digest(successorClosure.slice(0, sourceClosure.length)) ||
+    (sourceClosure.length > 0 &&
+      sourceClosure[sourceClosure.length - 1]?.newHead !== control.attempt.resultCommit)
+  ) {
+    return false;
+  }
+  const changedSuffix = successorClosure.slice(sourceClosure.length);
+  return changedSuffix.every((receipt, index) => {
+    const previousHead =
+      index === 0
+        ? control.attempt.resultCommit
+        : changedSuffix[index - 1]?.newHead;
+    return (
+      receipt.attestationId === successor.attestationId &&
+      receipt.taskId === successorBinding.taskId &&
+      receipt.generation > candidate.generation &&
+      receipt.generation <= successor.generation &&
+      receipt.oldHead === previousHead &&
+      (index !== changedSuffix.length - 1 || receipt.newHead === successorResultCommit)
+    );
+  });
+}
+
 function runnable(control: ImplementationQueueControl): boolean {
   return active(control) && control.state !== "parked" && control.state !== "yielded";
 }
@@ -974,7 +1079,14 @@ export function enqueueImplementationCandidate(
         candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired" &&
       !isConsumedGuardedContinuationAncestor(candidate, row, binding) &&
-      !isConsumedOrdinaryContinuationAncestor(candidate, row, binding),
+      !isConsumedOrdinaryContinuationAncestor(candidate, row, binding) &&
+      !isGateRejectedCorrectionAncestor(
+        candidate,
+        row,
+        binding,
+        request.gitReceipts,
+        request.resultCommit,
+      ),
   );
   if (terminalPrior !== undefined) {
     throw new ImplementationQueueConflictError(

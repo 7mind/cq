@@ -39,6 +39,11 @@ const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
 const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
 const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT;
+const DISPATCH_INVOCATION_ENVIRONMENT_KEYS = [
+  "CQ_CODEX_ROLE_CORRELATION_ID",
+  "CQ_CODEX_ROLE_EXPECTED_RUN_ID",
+  "CQ_CODEX_PRETURN_OBSERVATION_PATH",
+] as const;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -312,6 +317,13 @@ function outputTail(
   );
 }
 
+function hostGateEnvironment(junitPath: string): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const key of DISPATCH_INVOCATION_ENVIRONMENT_KEYS) delete environment[key];
+  environment["CQ_TEST_JUNIT_PATH"] = junitPath;
+  return environment;
+}
+
 export function createNodeSupervisedWorkerGateRunner(
   settlement: NodeSupervisedWorkerGateSettlement,
 ): SupervisedWorkerGateRunner {
@@ -457,7 +469,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
       "check",
     ],
     cwd: request.worktreePath,
-    env: { ...process.env, CQ_TEST_JUNIT_PATH: junitPath },
+    env: hostGateEnvironment(junitPath),
     stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
     register: async (observed) => {
       registration = observed;
