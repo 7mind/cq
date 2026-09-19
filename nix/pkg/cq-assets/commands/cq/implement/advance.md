@@ -140,7 +140,7 @@ the effect boundaries required by the shared contract.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
   capabilities or secrets. Before piping a transcript, require `test -s
-<transcript>` so empty or whitespace-only captures are skipped rather than
+  <transcript>` so empty or whitespace-only captures are skipped rather than
   written.
 - The surface-specific fragment defines dispatch input delivery and result
   materialization. Retain the parent-prepared handle. Interpret a native
@@ -371,7 +371,7 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    `illness-detected` rather than inventing acceptance.
 2. Call
    `ledger::materialize_operator_action({ task_id, expected_output_identity,
-expected_evidence, author, session })` before any ordinary readiness action.
+   expected_evidence, author, session })` before any ordinary readiness action.
    Accept only `created` or exact `existing`. This deterministically creates or
    restart-reuses one pending revision-1 action and one `user-action-required`
    handoff; conflicting identity/evidence fails closed.
@@ -385,7 +385,7 @@ expected_evidence, author, session })` before any ordinary readiness action.
    evidence exists, or a pending action's current acknowledgement epoch ended
    in recorded failure, this parent may call
    `ledger::revise_operator_action({ action_id, expected_revision,
-expected_output_identity, expected_evidence, revised_at, author, session })`
+   expected_output_identity, expected_evidence, revised_at, author, session })`
    with the exact current revision and complete replacement contract. For the
    evidence-bearing exception, require the terminal evidence entry and
    `lastFailure` to identify the same failed probe in the current revision and
@@ -407,7 +407,7 @@ expected_output_identity, expected_evidence, revised_at, author, session })`
    acknowledgement/failure epoch do not count toward verification.
 5. Only a `verified` action authorizes
    `ledger::complete_operator_action({ action_id, expected_revision, completion,
-author, session })`. Re-read the action and pass its current revision before
+   author, session })`. Re-read the action and pass its current revision before
    every acknowledgement, evidence, revision, or completion call. This typed
    transition marks the linked task `done`. Re-derive predicates; never use
    generic `update_item` or another resurrection operation to bypass verification.
