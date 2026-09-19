@@ -90,6 +90,8 @@ export interface SupervisedWorkerGateFailureDiagnostic {
 export interface SupervisedWorkerGateRunDiagnosticArtifact {
   readonly reportDigest: string;
   readonly failures: readonly SupervisedWorkerGateFailureDiagnostic[];
+  /** Complete redacted JUnit bytes; omitted only by synthetic runner dummies. */
+  readonly report?: string;
 }
 
 export interface SupervisedWorkerGateRunner {
@@ -199,6 +201,7 @@ function supervisedGateRejectionDetails(
 /** A completed host gate whose deterministic result rejects the candidate. */
 export class SupervisedWorkerGateRejectedError extends Error {
   readonly details: ImplementWorkerSupervisedGateRejectionDetails;
+  readonly #runDiagnosticArtifact: SupervisedWorkerGateRunDiagnosticArtifact | undefined;
 
   constructor(
     run: SupervisedWorkerGateRunResult,
@@ -212,6 +215,51 @@ export class SupervisedWorkerGateRejectedError extends Error {
     );
     this.name = "SupervisedWorkerGateRejectedError";
     this.details = details;
+    this.#runDiagnosticArtifact = run.diagnosticArtifact;
+  }
+
+  durableDiagnostic():
+    | {
+        readonly storagePath: string;
+        readonly artifactPath: string;
+        readonly artifactDigest: string;
+        readonly content: string;
+        readonly details: ImplementWorkerSupervisedGateRejectionDetails;
+      }
+    | undefined {
+    const runArtifact = this.#runDiagnosticArtifact;
+    if (runArtifact?.report === undefined || this.details.version !== 2) return undefined;
+    const publicArtifact = this.details.diagnosticArtifact;
+    const storagePath =
+      `supervised-gates/${publicArtifact.attestationId}/` +
+      `generation-${String(publicArtifact.generation)}-${publicArtifact.resultCommit}.json`;
+    const artifactPath = `.cq/logs/${storagePath}`;
+    const content = `${JSON.stringify({
+      kind: "cq-supervised-gate-diagnostic-log",
+      version: 1,
+      attestationId: publicArtifact.attestationId,
+      generation: publicArtifact.generation,
+      taskId: publicArtifact.taskId,
+      resultCommit: publicArtifact.resultCommit,
+      capturedAt: publicArtifact.capturedAt,
+      reportDigest: runArtifact.reportDigest,
+      report: runArtifact.report,
+      failures: runArtifact.failures,
+    })}\n`;
+    const artifactDigest = createHash("sha256").update(content).digest("hex");
+    const details: ImplementWorkerSupervisedGateRejectionDetails = Object.freeze({
+      ...this.details,
+      diagnosticArtifact: Object.freeze({
+        ...publicArtifact,
+        version: 2 as const,
+        artifactPath,
+        artifactDigest,
+      }),
+    });
+    if (!isImplementWorkerSupervisedGateRejectionDetails(details)) {
+      throw new Error("durable supervised worker gate diagnostic binding is invalid");
+    }
+    return Object.freeze({ storagePath, artifactPath, artifactDigest, content, details });
   }
 }
 
@@ -344,20 +392,21 @@ function boundedRedacted(value: string, byteLimit: number): string {
 }
 
 function junitFailureDiagnostic(report: string): SupervisedWorkerGateRunDiagnosticArtifact {
+  const redactedReport = redactSecrets(report);
   const failures: SupervisedWorkerGateFailureDiagnostic[] = [];
   let current:
     | { readonly identity: string; readonly reference: string; failure?: string }
     | undefined;
-  const tokens = report.matchAll(
+  const tokens = redactedReport.matchAll(
     /<testcase\b([^>]*?)(\/?)>|<\/testcase\s*>|<failure\b([^>]*?)(?:\/>|>([\s\S]*?)<\/failure\s*>)/gu,
   );
   const finish = (): void => {
     if (current?.failure !== undefined) {
       failures.push(
         Object.freeze({
-          identity: boundedRedacted(current.identity, FAILURE_IDENTITY_BYTE_LIMIT),
-          reference: boundedRedacted(current.reference, FAILURE_IDENTITY_BYTE_LIMIT),
-          assertion: boundedRedacted(current.failure, FAILURE_SUMMARY_WINDOW_BYTE_LIMIT),
+          identity: current.identity,
+          reference: current.reference,
+          assertion: current.failure,
         }),
       );
     }
@@ -388,8 +437,9 @@ function junitFailureDiagnostic(report: string): SupervisedWorkerGateRunDiagnost
   }
   if (current !== undefined) finish();
   return Object.freeze({
-    reportDigest: createHash("sha256").update(report).digest("hex"),
+    reportDigest: createHash("sha256").update(redactedReport).digest("hex"),
     failures: Object.freeze(failures),
+    report: redactedReport,
   });
 }
 

@@ -241,6 +241,7 @@ async function durableDispatch(label: string) {
       baseCommit,
       round: 0,
       startingCommit: baseCommit,
+      validationIntent: "final",
     },
     idempotencyKey: `T2042-peer-${label}`,
     timeoutMs: 600_000,
@@ -383,6 +384,7 @@ function guardedWorkerInput(
     baseCommit: fixture.baseCommit,
     round,
     startingCommit,
+    validationIntent: "final",
     ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
   };
 }
@@ -736,6 +738,7 @@ describe("dispatch-bound Git change capability", () => {
         baseCommit,
         round: 0,
         startingCommit: baseCommit,
+        validationIntent: "final",
       },
       idempotencyKey: "T2042-integration-round-0",
       timeoutMs: 600_000,
@@ -921,6 +924,7 @@ describe("dispatch-bound Git change capability", () => {
       baseCommit,
       round,
       startingCommit,
+      validationIntent: "final",
       ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
     });
     const first = await capability.prepare({
@@ -1157,6 +1161,7 @@ describe("dispatch-bound Git change capability", () => {
       baseCommit,
       round,
       startingCommit,
+      validationIntent: "final",
       ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
     });
     const first = await capability.prepare({
@@ -1305,6 +1310,7 @@ describe("dispatch-bound Git change capability", () => {
       baseCommit,
       round,
       startingCommit,
+      validationIntent: "final",
       ...(round === 0 ? {} : { priorResultCommit: startingCommit, priorCriticism }),
     });
     const firstChild = { childId: "t2896-continuation-r0", runId: "t2896-continuation-r0" };
@@ -1573,6 +1579,7 @@ describe("dispatch-bound Git change capability", () => {
         baseCommit,
         round: 0,
         startingCommit: baseCommit,
+        validationIntent: "final",
       },
       idempotencyKey: "T2119-inherited-reload-r0",
       timeoutMs: 600_000,
@@ -1634,6 +1641,7 @@ describe("dispatch-bound Git change capability", () => {
         baseCommit,
         round: 1,
         startingCommit: firstReceipt.newHead,
+        validationIntent: "final",
         priorResultCommit: firstReceipt.newHead,
       },
       idempotencyKey: "T2119-inherited-reload-r1",
@@ -1795,6 +1803,7 @@ describe("dispatch-bound Git change capability", () => {
       baseCommit,
       round,
       startingCommit,
+      validationIntent: "final",
       ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
     });
     const firstChild = { childId: "t2310-child-1", runId: "t2310-run-1" };
@@ -1974,6 +1983,7 @@ describe("dispatch-bound Git change capability", () => {
       baseCommit,
       round,
       startingCommit,
+      validationIntent: "final",
       ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
     });
     const firstChild = { childId: "t2312-child-1", runId: "t2312-run-1" };
@@ -2394,6 +2404,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d334OntoCommit,
           round: 1,
           startingCommit: d334RebasedHead,
+          validationIntent: "final",
           priorResultCommit: d334.firstReceipt.newHead,
         },
         idempotencyKey: "T2148-d334-guarded-rebase-round-1",
@@ -2468,6 +2479,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d334OntoCommit,
           round: 2,
           startingCommit: first.resultCommit,
+          validationIntent: "final",
           priorResultCommit: first.resultCommit,
         },
         idempotencyKey: "T2148-d334-guarded-rebase-round-2",
@@ -2526,6 +2538,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d334OntoCommit,
           round: 3,
           startingCommit: second.resultCommit,
+          validationIntent: "final",
           priorResultCommit: second.resultCommit,
         },
         idempotencyKey: "T2148-d451-parent-lost-source",
@@ -2565,6 +2578,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d334OntoCommit,
           round: 4,
           startingCommit: second.resultCommit,
+          validationIntent: "final",
           priorResultCommit: second.resultCommit,
         },
         idempotencyKey: "T2148-d451-parent-lost-recovery",
@@ -2669,6 +2683,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d443RestartOntoCommit,
           round: 1,
           startingCommit: d443RestartRebasedHead,
+          validationIntent: "final",
           priorResultCommit: d443Restart.firstReceipt.newHead,
         },
         idempotencyKey: "T2148-d443-guarded-rebase-round-1",
@@ -2731,6 +2746,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d446ConsecutiveOntoCommit,
           round: 1,
           startingCommit: d446ConsecutiveRebasedHead,
+          validationIntent: "final",
           priorResultCommit: d446Consecutive.firstReceipt.newHead,
         },
         idempotencyKey: "T2148-d446-consecutive-guarded-rebase-round-1",
@@ -2858,6 +2874,7 @@ describe("dispatch-bound Git change capability", () => {
           baseCommit: d447ConsumedOntoCommit,
           round: 1,
           startingCommit: d447ConsumedRebasedHead,
+          validationIntent: "final",
           priorResultCommit: d447Consumed.firstReceipt.newHead,
         },
         idempotencyKey: "T2148-d447-consumed-tombstone-round-1",
@@ -2894,6 +2911,7 @@ describe("dispatch-bound Git change capability", () => {
             baseCommit: d438RecoveryFenceOntoCommit,
             round: 3,
             startingCommit: d438RecoveryFenceRebasedHead,
+            validationIntent: "final",
             priorResultCommit: d438RecoveryFence.firstReceipt.newHead,
           },
           idempotencyKey: "T2148-recovery-fenced-guarded-rebase",
@@ -2971,6 +2989,7 @@ describe("dispatch-bound Git change capability", () => {
         baseCommit: ontoCommit,
         round,
         startingCommit,
+        validationIntent: "final",
         priorResultCommit,
       } as unknown as DispatchJSONValue;
     }
@@ -3057,6 +3076,7 @@ describe("dispatch-bound Git change capability", () => {
                 baseCommit: zeroSource.baseCommit,
                 round: 1,
                 startingCommit: zeroSource.baseCommit,
+                validationIntent: "final",
                 priorResultCommit: zeroSource.baseCommit,
               },
               idempotencyKey: "T2042-d456-zero-binding-source",
@@ -3887,6 +3907,7 @@ describe("dispatch-bound Git change capability", () => {
             baseCommit,
             round: 0,
             startingCommit: baseCommit,
+            validationIntent: "final",
           },
           idempotencyKey: `T2042-receipt-attempt-${attempt}`,
           timeoutMs: 600_000,

@@ -983,6 +983,7 @@ describe("packaged cq-codex-role Git broker", () => {
           baseCommit,
           round: 0,
           startingCommit: baseCommit,
+          validationIntent: "final",
         },
         idempotencyKey: "T2042-packaged-role",
         timeoutMs: 600_000,
@@ -1265,6 +1266,7 @@ describe("packaged cq-codex-role Git broker", () => {
           baseCommit,
           round: 1,
           startingCommit: firstResultCommit,
+          validationIntent: "final",
           priorResultCommit: firstResultCommit,
           priorCriticism: ["append a second installed-boundary round"],
         },
@@ -1526,6 +1528,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         baseCommit,
         round: 2,
         startingCommit: String(retryCapture.output["resultCommit"]),
+        validationIntent: "final",
         priorResultCommit: String(retryCapture.output["resultCommit"]),
       };
       const cancelledPrepared = await capability.prepare({

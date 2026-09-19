@@ -162,6 +162,7 @@ async function fixture(journalKind: "memory" | "filesystem", advance: boolean) {
       baseCommit,
       round: 0,
       startingCommit: baseCommit,
+      validationIntent: "final",
     };
     const prepared = await capability.prepare({
       roleId: "implement-worker",

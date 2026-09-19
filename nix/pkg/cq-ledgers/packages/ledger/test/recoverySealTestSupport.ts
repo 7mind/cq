@@ -73,6 +73,7 @@ export const RECOVERY_INPUT = {
   baseCommit: RECOVERY_BASE,
   round: 17,
   startingCommit: RECOVERY_TIP,
+  validationIntent: "final",
   priorResultCommit: RECOVERY_MIDDLE,
   resolvedModel: "gpt-5.6-sol",
 } as const;

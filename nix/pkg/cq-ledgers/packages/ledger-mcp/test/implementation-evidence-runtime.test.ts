@@ -236,6 +236,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       baseCommit,
       round: 0,
       startingCommit: baseCommit,
+      validationIntent: "final",
     } as const;
     const firstReceipt = {
       kind: "cq-git-change-receipt",
@@ -370,6 +371,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       baseCommit,
       round: 0,
       startingCommit: baseCommit,
+      validationIntent: "final",
     } as const;
     const workerOutput = {
       taskId: "T6571",
@@ -438,6 +440,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       baseCommit: ontoCommit,
       round: 1,
       startingCommit: rebasedStartCommit,
+      validationIntent: "final",
       guardedRebaseLineage: {
         guardedRebase: `cq-guarded-rebase:v1:${"f".repeat(64)}`,
         oldResultCommit: "e".repeat(40),
@@ -537,6 +540,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       baseCommit: ontoCommit,
       round: 2,
       startingCommit: correctionStartingCommit,
+      validationIntent: "final",
       priorResultCommit: correctionStartingCommit,
       guardedRebaseLineage: {
         guardedRebase,

@@ -94,6 +94,7 @@ describe("D250 invalid Codex final after result storage", () => {
           baseCommit: STARTING_COMMIT,
           round: 1,
           startingCommit: STARTING_COMMIT,
+          validationIntent: "final",
         },
         idempotencyKey: "T1629-round-1",
         timeoutMs: 600_000,

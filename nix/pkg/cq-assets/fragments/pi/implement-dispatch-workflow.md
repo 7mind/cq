@@ -11,7 +11,7 @@
 > and never supply activity-fence, registry, reconciliation, Git, or install
 > authority. Retain the returned opaque handle and refuse launch when adoption
 > refuses. Then compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`.
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }`.
 > Call `prepare_dispatch`; the server reads the task/review narrative, assembles
 > it against the generated role's `inputSchema`, and returns a handle. Retain
 > the exact prepared handle independently of every child-visible value, plus

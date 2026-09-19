@@ -163,6 +163,7 @@ async function completeAuthenticatedManagedTask(
           baseCommit: repository.baseCommit,
           round: 0,
           startingCommit: repository.baseCommit,
+          validationIntent: "final",
         },
         idempotencyKey: `${taskId}-d360-authenticated`,
         timeoutMs: 600_000,

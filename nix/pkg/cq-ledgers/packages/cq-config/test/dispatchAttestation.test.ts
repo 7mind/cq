@@ -694,6 +694,7 @@ describe("prepare validates role, input and timeout, then allocates", () => {
         },
         round: 0,
         startingCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+        validationIntent: "final",
       },
       { source, registry: DISPATCH_OVERLAY_REGISTRY },
     );

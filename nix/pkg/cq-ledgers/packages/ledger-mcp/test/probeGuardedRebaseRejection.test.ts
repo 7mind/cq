@@ -153,6 +153,7 @@ async function guardedRebaseSource(root: string, candidate: string): Promise<{
         baseCommit,
         round: 0,
         startingCommit: baseCommit,
+        validationIntent: "final",
       },
       idempotencyKey: "T6411-probe-source",
       timeoutMs: 60_000,

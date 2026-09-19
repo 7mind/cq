@@ -65,9 +65,8 @@ export interface ImplementWorkerSupervisedGateFailureDiagnostic {
   readonly assertion: string;
 }
 
-export interface ImplementWorkerSupervisedGateDiagnosticArtifact {
+interface ImplementWorkerSupervisedGateDiagnosticArtifactBase {
   readonly kind: "cq-supervised-gate-diagnostic-artifact";
-  readonly version: 1;
   readonly attestationId: string;
   readonly generation: number;
   readonly taskId: string;
@@ -77,6 +76,23 @@ export interface ImplementWorkerSupervisedGateDiagnosticArtifact {
   readonly firstFailure: ImplementWorkerSupervisedGateFailureDiagnostic | null;
   readonly failureIndex: readonly ImplementWorkerSupervisedGateFailureDiagnostic[];
 }
+
+export interface ImplementWorkerSupervisedGateDiagnosticArtifactV1
+  extends ImplementWorkerSupervisedGateDiagnosticArtifactBase {
+  readonly version: 1;
+}
+
+/** Durable full diagnostic retained in the ledger log store and bound by digest. */
+export interface ImplementWorkerSupervisedGateDiagnosticArtifactV2
+  extends ImplementWorkerSupervisedGateDiagnosticArtifactBase {
+  readonly version: 2;
+  readonly artifactPath: string;
+  readonly artifactDigest: string;
+}
+
+export type ImplementWorkerSupervisedGateDiagnosticArtifact =
+  | ImplementWorkerSupervisedGateDiagnosticArtifactV1
+  | ImplementWorkerSupervisedGateDiagnosticArtifactV2;
 
 export interface ImplementWorkerSupervisedGateRejectionDetailsV1
   extends ImplementWorkerSupervisedGateRejectionBase {
@@ -121,11 +137,31 @@ function isDiagnosticArtifact(
   const record = value as Readonly<Record<string, unknown>>;
   const failureIndex = record["failureIndex"];
   const firstFailure = record["firstFailure"];
+  const commonKeys = [
+    "attestationId",
+    "capturedAt",
+    "failureIndex",
+    "firstFailure",
+    "generation",
+    "kind",
+    "reportDigest",
+    "resultCommit",
+    "taskId",
+    "version",
+  ];
   return (
-    Object.keys(record).sort().join(",") ===
-      "attestationId,capturedAt,failureIndex,firstFailure,generation,kind,reportDigest,resultCommit,taskId,version" &&
+    (record["version"] === 1
+      ? Object.keys(record).sort().join(",") === commonKeys.sort().join(",")
+      : record["version"] === 2 &&
+        Object.keys(record).sort().join(",") ===
+          [...commonKeys, "artifactDigest", "artifactPath"].sort().join(",") &&
+        typeof record["artifactPath"] === "string" &&
+        /^\.cq\/logs\/supervised-gates\/att_[A-Za-z0-9_-]{32,}\/generation-[1-9][0-9]*-[0-9a-f]{40}\.json$/u.test(
+          record["artifactPath"],
+        ) &&
+        typeof record["artifactDigest"] === "string" &&
+        /^[0-9a-f]{64}$/u.test(record["artifactDigest"])) &&
     record["kind"] === "cq-supervised-gate-diagnostic-artifact" &&
-    record["version"] === 1 &&
     typeof record["attestationId"] === "string" &&
     /^att_[A-Za-z0-9_-]{32,}$/u.test(record["attestationId"]) &&
     Number.isSafeInteger(record["generation"]) &&

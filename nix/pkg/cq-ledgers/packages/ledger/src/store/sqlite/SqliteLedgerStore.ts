@@ -999,6 +999,47 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
+   * Persist one server-owned log artifact beneath the configured XDG log root.
+   * A sibling temporary file plus rename prevents an existing target symlink
+   * from redirecting the write outside that root.
+   */
+  async putLog(relPath: string, content: string): Promise<void> {
+    if (this.logsDir === undefined) {
+      throw new ReadLogNotImplementedError();
+    }
+    if (path.isAbsolute(relPath)) {
+      throw new LedgerError(`put_log: absolute paths are not allowed: ${relPath}`);
+    }
+    const rel = relPath.replace(LEDGER_LOGS_STRIP_RE, "");
+    const parts = rel.split(/[\\/]/u);
+    if (
+      rel.trim() === "" ||
+      parts.some((part) => part === "" || part === "." || part === "..")
+    ) {
+      throw new LedgerError(`put_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`);
+    }
+    const logsDir = this.logsDir;
+    await fs.mkdir(logsDir, { recursive: true });
+    const realLogsDir = await fs.realpath(logsDir);
+    const resolved = path.resolve(logsDir, rel);
+    const parent = path.dirname(resolved);
+    await fs.mkdir(parent, { recursive: true });
+    const realParent = await fs.realpath(parent);
+    if (realParent !== realLogsDir && !realParent.startsWith(realLogsDir + path.sep)) {
+      throw new LedgerError(
+        `put_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root after symlink resolution: ${relPath}`,
+      );
+    }
+    const temporary = path.join(realParent, `.${path.basename(resolved)}-${randomUUID()}.tmp`);
+    try {
+      await fs.writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      await fs.rename(temporary, resolved);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
+  }
+
+  /**
    * Bounded, root-confined read of a log file under the out-of-tree logs area
    * (T499) — the XDG backend's `read_log` capability rooted at `this.logsDir`
    * (`resolveLogsDir(projectKey)`, T495 layout).

@@ -90,6 +90,7 @@ describe("Codex prepared prompt provenance", () => {
         baseCommit: "1c0405a6a3c287eab42502520ed5f2807d6d3f7b",
         round: 0,
         startingCommit: "1c0405a6a3c287eab42502520ed5f2807d6d3f7b",
+        validationIntent: "final",
       },
       idempotencyKey: "T1627-codex-provenance",
       timeoutMs: 600_000,

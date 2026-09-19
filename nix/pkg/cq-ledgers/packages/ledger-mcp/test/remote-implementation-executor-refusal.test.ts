@@ -63,6 +63,7 @@ describe("remote implementation executor refusal", () => {
         branch: "implement/T6521",
         baseCommit: "a".repeat(40),
         startingCommit: "a".repeat(40),
+        validationIntent: "final",
         round: 0,
       },
       idempotencyKey: "remote-implementation-refusal",

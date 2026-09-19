@@ -11,7 +11,7 @@
 > never supply activity-fence, registry, reconciliation, Git, or install
 > authority. Retain the returned opaque handle and refuse launch when adoption
 > refuses. Then compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`,
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }`,
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the

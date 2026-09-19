@@ -328,6 +328,7 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
             baseCommit: staged.binding.baseCommit,
             round: staged.prepared.generation,
             startingCommit: staged.candidate.resultCommit,
+            validationIntent: "final",
             priorResultCommit: staged.candidate.resultCommit,
           },
           idempotencyKey: "resolved-before-completion-reservation",

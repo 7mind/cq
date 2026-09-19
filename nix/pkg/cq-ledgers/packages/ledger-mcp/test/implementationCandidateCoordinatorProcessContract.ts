@@ -281,6 +281,7 @@ async function stageCandidate(input: {
       baseCommit: input.baseCommit,
       round: 0,
       startingCommit: input.baseCommit,
+      validationIntent: "final",
     },
     idempotencyKey: `${input.taskId}-process-race`,
     timeoutMs: 600_000,

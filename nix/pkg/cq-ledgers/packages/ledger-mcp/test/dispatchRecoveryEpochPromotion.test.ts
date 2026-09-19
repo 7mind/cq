@@ -564,6 +564,7 @@ describe("journal recovery epoch promotion", () => {
         baseCommit,
         round: 17,
         startingCommit: baseCommit,
+        validationIntent: "final",
         priorResultCommit: baseCommit,
       } as const;
       const seedReceipt: GitChangeBrokerReceipt = {

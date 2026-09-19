@@ -61,6 +61,7 @@ const INLINE_INPUT = Object.freeze({
   baseCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
   round: 0,
   startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
+  validationIntent: "final",
 });
 
 const REVIEWER_INPUT = Object.freeze({
@@ -735,6 +736,7 @@ describe("live compact-dispatch capability", () => {
       },
       round: 0,
       startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
+      validationIntent: "final",
     } as const;
     const parentRequest = {
       refs,
@@ -969,6 +971,7 @@ describe("live compact-dispatch capability", () => {
         baseCommit,
         round: 0,
         startingCommit: baseCommit,
+        validationIntent: "final",
       } as const;
       const omitted = await capability.prepare({
         roleId: "implement-worker",

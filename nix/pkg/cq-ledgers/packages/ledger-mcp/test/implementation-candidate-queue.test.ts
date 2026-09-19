@@ -599,6 +599,7 @@ describe("ledger-MCP implementation candidate queue", () => {
               baseCommit: ontoCommit,
               round: first.prepared.generation,
               startingCommit: rebasedStartCommit,
+              validationIntent: "final",
               priorResultCommit: first.candidate.resultCommit,
             },
             idempotencyKey: `terminal-queue-${reason}-successor`,

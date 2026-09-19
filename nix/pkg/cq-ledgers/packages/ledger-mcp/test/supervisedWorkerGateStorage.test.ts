@@ -34,6 +34,7 @@ import {
   prepareManagedWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
+  SqliteLedgerStore,
   settleProcessGroups,
   settleWorktreeGateCommands,
   type NodeSupervisedWorkerGateSettlement,
@@ -107,6 +108,7 @@ function artifactStore(
 
 function finalizedTaskStore(): LedgerStore {
   const workset = createInMemoryWorksetStore();
+  const logs = new Map<string, string>();
   const task = {
     id: "T2081",
     milestoneId: "M2081",
@@ -126,6 +128,15 @@ function finalizedTaskStore(): LedgerStore {
   };
   return {
     worksetStore: () => workset,
+    putLog: async (logPath: string, content: string) => {
+      logs.set(logPath, content);
+    },
+    readLog: async (logPath: string) => {
+      const normalized = logPath.replace(/^\.cq\/logs\//u, "");
+      const content = logs.get(normalized);
+      if (content === undefined) throw new Error(`missing test log artifact ${logPath}`);
+      return { path: logPath, content };
+    },
     fetchItem: (ledgerId: string) =>
       ledgerId === "tasks"
         ? task
@@ -311,6 +322,7 @@ async function fixtureWithDispatchBase(
   attestationBackend: "memory" | "sqlite" = "memory",
   validationIntent: "final" | "focused-only" = "final",
   prepareForm: "inline" | "refs" = "inline",
+  ledgerStoreOverride?: LedgerStore,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -391,7 +403,7 @@ async function fixtureWithDispatchBase(
           dbPath: path.join(repositoryRoot, "attestations.sqlite"),
         })
       : new InMemoryAttestationBackend(store);
-  const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
+  const ledgerStore = withLedgerStore ? (ledgerStoreOverride ?? finalizedTaskStore()) : undefined;
   const implementationEvidenceStore = createInMemoryImplementationEvidenceStore();
   const capabilityOptions = {
     backend,
@@ -2219,7 +2231,7 @@ throw new Error("unexpected controlled cq invocation");
           attestationId: subject.prepared.attestationId,
           generation: subject.prepared.generation,
           roleId: "implement-worker",
-          roleVersion: 10,
+          roleVersion: subject.prepared.promptProvenance.version,
           surface: "codex",
           taskId: "T2081",
           resultCommit: subject.receipt.newHead,
@@ -2313,6 +2325,7 @@ throw new Error("unexpected controlled cq invocation");
         baseCommit: subject.dispatchBaseCommit,
         round: 1,
         startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
         priorResultCommit: subject.receipt.newHead,
       },
       idempotencyKey: `T2081-${String(sequence)}-unchanged-correction`,
@@ -2367,6 +2380,7 @@ throw new Error("unexpected controlled cq invocation");
         baseCommit: subject.dispatchBaseCommit,
         round: 2,
         startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
         priorResultCommit: subject.receipt.newHead,
       },
       idempotencyKey: `T2081-${String(sequence)}-changed-correction`,
@@ -3170,6 +3184,7 @@ throw new Error("unexpected controlled cq invocation");
         baseCommit,
         round: 0,
         startingCommit: baseCommit,
+        validationIntent: "final",
       },
       idempotencyKey: `T2081-unbound-${sequence}`,
       timeoutMs: 600_000,
@@ -3709,9 +3724,9 @@ throw new Error("unexpected controlled cq invocation");
     D326_TEST_TIMEOUT_MS,
   );
 
-  // Regression: the bounded runner diagnostic must retain Bun failure identities.
+  // Regression: complete diagnostics outlive the runner's temporary JUnit file.
   test(
-    "D500 retains the first redacted JUnit failure before cascading diagnostics [Behavioral-Active Effectual-GoodCommunication]",
+    "D500 retains complete redacted JUnit diagnostics through terminal retrieval after cleanup [Behavioral-Active Effectual-GoodCommunication]",
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
       roots.push(root);
@@ -3732,9 +3747,6 @@ throw new Error("unexpected controlled cq invocation");
         ),
         "</testsuite></testsuites>",
       ].join("");
-      const worktreePath = path.join(root, "worktree");
-      await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
-      await git(worktreePath, ["init", "-q"]);
       const bin = path.join(root, "bin");
       await fs.mkdir(bin, { recursive: true });
       const cq = path.join(bin, "cq");
@@ -3756,40 +3768,130 @@ throw new Error("unexpected controlled cq invocation");
       await fs.chmod(cq, 0o700);
       const priorPath = process.env["PATH"];
       process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      const diagnosticStore = new SqliteLedgerStore({
+        dbPath: path.join(root, "diagnostic-ledger.db"),
+        logsDir: path.join(root, "logs"),
+      });
+      await diagnosticStore.init();
+      const taskStore = finalizedTaskStore();
+      const durableTaskStore = Object.assign(taskStore, {
+        putLog: (logPath: string, content: string) => diagnosticStore.putLog(logPath, content),
+        readLog: (logPath: string) => diagnosticStore.readLog(logPath),
+      });
       try {
-        const result = await nodeSupervisedWorkerGateRunner.run({
-          worktreePath,
-          admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
-          executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
-          cancellationSignal: new AbortController().signal,
+        const subject = await fixtureWithDispatchBase(
+          nodeSupervisedWorkerGateRunner,
+          "managed",
+          () => "2026-08-12T20:00:00.000Z",
+          false,
+          true,
+          undefined,
+          artifactStore(),
+          "memory",
+          "final",
+          "inline",
+          durableTaskStore,
+        );
+        expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+        const rejected = await finalize(subject);
+        expect(rejected).toMatchObject({
+          state: "aborted",
+          result: {
+            reason: "gate-rejected",
+            details: {
+              gateExitCode: 1,
+              passCount: 6989,
+              failCount: 7,
+              diagnosticArtifact: {
+                version: 2,
+                attestationId: subject.prepared.attestationId,
+                generation: subject.prepared.generation,
+                taskId: "T2081",
+                resultCommit: subject.receipt.newHead,
+              },
+            },
+          },
         });
-        expect(result.gateExitCode).toBe(1);
-        expect(result.outputTail).toContain("(fail) two distinct failures share this prefix");
-        expect(result.outputTail).not.toContain(secret);
-        expect(result.outputTail).toContain("(fail) dependent cascading identity 1");
-        expect(result.outputTail).toContain("7 fail");
-        expect(Buffer.byteLength(result.outputTail, "utf8")).toBeLessThanOrEqual(896);
-        expect(result.diagnosticArtifact?.failures).toHaveLength(6);
-        expect(result.diagnosticArtifact?.failures[0]).toMatchObject({
+        if (rejected.state !== "aborted" || rejected.result.details === undefined) {
+          throw new Error("D500 gate rejection omitted terminal details");
+        }
+        const fetched = await subject.capability.fetch({
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        });
+        expect(fetched).toEqual(rejected.result);
+        const details = rejected.result.details as Readonly<Record<string, DispatchJSONValue>>;
+        const publicArtifact = details["diagnosticArtifact"] as Readonly<
+          Record<string, DispatchJSONValue>
+        >;
+        const artifactPath = publicArtifact["artifactPath"];
+        const artifactDigest = publicArtifact["artifactDigest"];
+        expect(typeof artifactPath).toBe("string");
+        expect(typeof artifactDigest).toBe("string");
+        if (typeof artifactPath !== "string" || typeof artifactDigest !== "string") {
+          throw new Error("D500 terminal diagnostic omitted its durable artifact binding");
+        }
+        const publicFailures = publicArtifact["failureIndex"] as readonly Readonly<
+          Record<string, DispatchJSONValue>
+        >[];
+        expect(publicFailures).toHaveLength(6);
+        for (const failure of publicFailures) {
+          for (const field of ["identity", "reference", "assertion"] as const) {
+            expect(Buffer.byteLength(String(failure[field]), "utf8"), field).toBeLessThanOrEqual(
+              256,
+            );
+          }
+        }
+
+        const ledgerStore = subject.ledgerStore as LedgerStore & {
+          readLog(path: string): Promise<{ readonly path: string; readonly content: string }>;
+        };
+        const retainedLog = await ledgerStore.readLog(artifactPath);
+        expect(sha256(retainedLog.content)).toBe(artifactDigest);
+        expect(retainedLog.content).not.toContain(secret);
+        expect(retainedLog.content).toContain("[REDACTED:api-key]");
+        const retained = JSON.parse(retainedLog.content) as {
+          readonly kind: string;
+          readonly attestationId: string;
+          readonly generation: number;
+          readonly taskId: string;
+          readonly resultCommit: string;
+          readonly reportDigest: string;
+          readonly report: string;
+          readonly failures: readonly {
+            readonly identity: string;
+            readonly reference: string;
+            readonly assertion: string;
+          }[];
+        };
+        expect(retained).toMatchObject({
+          kind: "cq-supervised-gate-diagnostic-log",
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+          taskId: "T2081",
+          resultCommit: subject.receipt.newHead,
+        });
+        expect(sha256(retained.report)).toBe(retained.reportDigest);
+        expect(retained.report).toContain('name="passing self-closing"');
+        expect(retained.report).toContain('name="skipped case"');
+        expect(retained.failures).toHaveLength(6);
+        expect(retained.failures[0]).toMatchObject({
           identity: firstLongIdentity,
           reference: "packages/example/test/long.test.ts",
           assertion: "expected [REDACTED:api-key] alpha assertion to be safe",
         });
-        expect(result.diagnosticArtifact?.failures[1]).toMatchObject({
+        expect(retained.failures[1]).toMatchObject({
           identity: secondLongIdentity,
           reference: "packages/example/test/long.test.ts",
           assertion: `${"second assertion body ".repeat(24)}beta`,
         });
-        expect(result.diagnosticArtifact?.failures[0]?.identity).not.toBe(
-          result.diagnosticArtifact?.failures[1]?.identity,
-        );
-        expect(result.diagnosticArtifact?.failures.map(({ identity }) => identity)).not.toContain(
+        expect(retained.failures[0]?.identity).not.toBe(retained.failures[1]?.identity);
+        expect(retained.failures.map(({ identity }) => identity)).not.toContain(
           "passing self-closing",
         );
-        expect(result.diagnosticArtifact?.failures.map(({ identity }) => identity)).not.toContain(
-          "skipped case",
-        );
+        expect(retained.failures.map(({ identity }) => identity)).not.toContain("skipped case");
       } finally {
+        await diagnosticStore.dispose();
         if (priorPath === undefined) delete process.env["PATH"];
         else process.env["PATH"] = priorPath;
       }

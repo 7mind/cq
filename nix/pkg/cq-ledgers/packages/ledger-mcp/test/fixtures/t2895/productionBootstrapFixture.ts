@@ -272,6 +272,7 @@ function workerInput(
     baseCommit,
     round,
     startingCommit,
+    validationIntent: "final",
     ...(round === 0 ? {} : { priorResultCommit: startingCommit, priorCriticism }),
   };
 }

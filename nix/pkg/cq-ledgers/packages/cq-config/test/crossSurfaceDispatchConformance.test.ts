@@ -291,7 +291,7 @@ const DISPATCH_EDGE_INPUTS: readonly {
 ];
 
 const T977_WORKER_REFS =
-  "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
+  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
 
 describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () => {
   it(

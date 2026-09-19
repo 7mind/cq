@@ -146,6 +146,16 @@ function dispatchObject(
   );
 }
 
+function ledgerLogWriter(
+  store: LedgerStore | undefined,
+): ((path: string, content: string) => Promise<void>) | undefined {
+  if (store === undefined) return undefined;
+  const candidate = (store as { readonly putLog?: unknown }).putLog;
+  if (typeof candidate !== "function") return undefined;
+  const putLog = candidate as (path: string, content: string) => Promise<void>;
+  return (path, content) => putLog.call(store, path, content);
+}
+
 async function readOnlyGit(repositoryRoot: string, args: readonly string[]): Promise<string> {
   const child = Bun.spawn(["git", "-C", repositoryRoot, ...args], {
     stdin: "ignore",
@@ -1107,11 +1117,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (cancellationObserverError !== undefined) throw cancellationObserverError;
     if (gateError !== undefined) {
       if (gateError instanceof SupervisedWorkerGateRejectedError) {
+        let details = gateError.details;
+        const diagnostic = gateError.durableDiagnostic();
+        if (diagnostic !== undefined) {
+          const putLog = ledgerLogWriter(options.ledgerStore);
+          if (putLog === undefined) {
+            throw new Error(
+              "supervised worker gate rejection requires durable ledger log storage",
+              { cause: gateError },
+            );
+          }
+          await putLog(diagnostic.storagePath, diagnostic.content);
+          details = diagnostic.details;
+        }
         const rejected = await abortWithRecovery(
           {
             ...handle,
             reason: "gate-rejected",
-            details: gateError.details as unknown as DispatchJSONValue,
+            details: details as unknown as DispatchJSONValue,
           },
           binding,
           true,

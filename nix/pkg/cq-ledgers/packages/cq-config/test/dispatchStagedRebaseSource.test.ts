@@ -79,6 +79,7 @@ function input(base: string, startingCommit: string, round: number): DispatchJSO
     baseCommit: base,
     round,
     startingCommit,
+    validationIntent: "final",
   };
 }
 

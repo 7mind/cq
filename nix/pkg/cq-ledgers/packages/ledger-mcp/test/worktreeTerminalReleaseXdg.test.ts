@@ -556,6 +556,7 @@ describe("D336 production XDG terminal worktree release", () => {
                 baseCommit,
                 round: 0,
                 startingCommit: baseCommit,
+                validationIntent: "final",
               },
               idempotencyKey: "d336-terminal-release",
               timeoutMs: 600_000,
