@@ -282,7 +282,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       now,
       withProtectedManagedWorktree: async (binding, operation) => {
         protectedTasks.push(binding.taskId);
-        return await operation();
+        return { state: "protected", value: await operation() };
       },
       resolve: async (row) => {
         const taskId = row.gitEffectBinding!.taskId;
@@ -390,7 +390,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
+      withProtectedManagedWorktree: async (_binding, operation) => ({
+        state: "protected",
+        value: await operation(),
+      }),
       resolve: async (row) => ({
         state: "completed-green",
         evidence: {
@@ -427,7 +430,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const mismatchSummary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
+      withProtectedManagedWorktree: async (_binding, operation) => ({
+        state: "protected",
+        value: await operation(),
+      }),
       resolve: async (row) => ({
         state: "completed-green",
         evidence: {
@@ -460,7 +466,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
+      withProtectedManagedWorktree: async (_binding, operation) => ({
+        state: "protected",
+        value: await operation(),
+      }),
       resolve: async (row) => ({
         state: "compatible" as const,
         candidate: {
@@ -517,7 +526,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const upgrading = upgradeLiveImplementationQueueRows({
       backend,
       now,
-      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
+      withProtectedManagedWorktree: async (_binding, operation) => ({
+        state: "protected",
+        value: await operation(),
+      }),
       resolve: async (row) => {
         markResolutionStarted();
         await resolutionReleased;
@@ -626,7 +638,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
           now: pgNow,
           withProtectedManagedWorktree: async (binding, operation) => {
             protectedTasks.push(binding.taskId);
-            return await operation();
+            return { state: "protected", value: await operation() };
           },
           resolve: async (row) => {
             const taskId = row.gitEffectBinding!.taskId;

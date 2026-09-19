@@ -69,7 +69,10 @@ export interface UpgradeLiveImplementationQueueOptions {
   withProtectedManagedWorktree<T>(
     binding: DispatchGitEffectBinding,
     operation: () => Promise<T>,
-  ): Promise<T>;
+  ): Promise<
+    | { readonly state: "protected"; readonly value: T }
+    | { readonly state: "incompatible"; readonly detail: DispatchJSONValue }
+  >;
 }
 
 export interface UpgradeLiveImplementationQueueSummary {
@@ -346,10 +349,19 @@ export async function upgradeLiveImplementationQueueRows(
       await processRow(row, false);
       continue;
     }
-    await options.withProtectedManagedWorktree(
+    const protection = await options.withProtectedManagedWorktree(
       row.gitEffectBinding,
       async () => await processRow(row, true),
     );
+    if (protection.state === "incompatible") {
+      await recordDisposition(
+        options,
+        row,
+        attestationRowDigest(row),
+        rollout("parked-incompatible", options.now(), protection.detail, false),
+      );
+      counts.parkedIncompatible += 1;
+    }
   }
 
   return Object.freeze({

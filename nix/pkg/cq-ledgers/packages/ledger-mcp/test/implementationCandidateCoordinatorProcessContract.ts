@@ -417,6 +417,7 @@ export async function runCoordinatorProcessContract(
       promptArtifactStore: artifactStore(),
       ledgerStore: finalizedTaskStore(),
       implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      implementationExecutorMode: "local-xdg",
       repositoryRoot,
       worktreeStateDir: stateDir,
       supervisedWorkerGateRunner: new MarkerGateRunner(gateMarker),

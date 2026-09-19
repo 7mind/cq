@@ -193,6 +193,7 @@ try {
       promptArtifactStore: artifactStore(),
       ledgerStore: finalizedTaskStore(),
       implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      implementationExecutorMode: "local-xdg",
       repositoryRoot: config.repositoryRoot,
       worktreeStateDir: config.stateDir,
       supervisedWorkerGateRunner: new MarkerGateRunner(config.gateMarker),

@@ -4045,8 +4045,20 @@ export async function createSingleProjectDispatchRuntime(
           await resolveLegacyImplementationQueueRow(row, options.resolved.store),
         withProtectedManagedWorktree: async (binding, operation) =>
           await withManagedWorktreeEffectLock(binding, {}, async () => {
+            const liveBinding = await resolveManagedWorktreeDispatchBinding({
+              repositoryRoot: binding.repositoryRoot,
+              taskId: binding.taskId,
+              worktreePath: binding.worktreePath,
+              branch: binding.branch,
+            });
+            if (liveBinding === null) {
+              return {
+                state: "incompatible" as const,
+                detail: { reason: "managed-worktree-binding-no-longer-live" },
+              };
+            }
             await assertManagedWorktreeDispatchBindingLive(binding);
-            return await operation();
+            return { state: "protected" as const, value: await operation() };
           }),
       });
     } catch (error) {

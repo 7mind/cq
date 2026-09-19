@@ -16,6 +16,7 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   createInMemoryImplementationEvidenceStore,
   prepareManagedWorktree,
+  releaseManagedWorktree,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
@@ -319,7 +320,99 @@ describe("production dispatch runtime construction", () => {
         output,
       }),
     ).toMatchObject({ state: "gate-pending" });
+
+    const staleTaskId = "T6522";
+    const staleManaged = await prepareManagedWorktree(
+      { repositoryRoot, taskId: staleTaskId, baseCommit },
+      { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (staleManaged.status !== "prepared") {
+      throw new Error(`unexpected stale prepare ${staleManaged.status}`);
+    }
+    const stalePrepared = await seedCapability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: staleTaskId,
+        headline: "Park a released legacy candidate",
+        description: "Classify the legacy row without reviving its released worktree.",
+        acceptance: "The row is parked without claiming worktree protection.",
+        worktreePath: staleManaged.handle.absolutePath,
+        branch: staleManaged.handle.branch,
+        baseCommit,
+        round: 0,
+        startingCommit: baseCommit,
+      },
+      idempotencyKey: "T6522-production-rollout-stale",
+      timeoutMs: 600_000,
+      expectedChild: {
+        childId: "implement-worker#production-rollout-stale",
+        runId: "production-rollout-stale-run",
+      },
+    });
+    if (!stalePrepared.accepted || stalePrepared.prepared.gitChangeCapability === undefined) {
+      throw new Error("stale legacy rollout seed dispatch was rejected");
+    }
+    await seedCapability.fetchInput({
+      attestationId: stalePrepared.prepared.attestationId,
+      generation: stalePrepared.prepared.generation,
+      inputCapability: stalePrepared.prepared.inputCapability,
+    });
+    const staleCandidateBody = "stale candidate\n";
+    await writeFile(
+      path.join(staleManaged.handle.absolutePath, "stale-candidate.txt"),
+      staleCandidateBody,
+    );
+    const staleReceipt = await seedCapability.gitCommit!({
+      attestationId: stalePrepared.prepared.attestationId,
+      generation: stalePrepared.prepared.generation,
+      gitChangeCapability: stalePrepared.prepared.gitChangeCapability,
+      operationId: "T6522-production-rollout-result",
+      expectedHead: baseCommit,
+      message: "stage released production rollout candidate",
+      changes: [
+        {
+          kind: "add",
+          path: "stale-candidate.txt",
+          newState: {
+            mode: "100644",
+            digest: createHash("sha256").update(staleCandidateBody).digest("hex"),
+          },
+        },
+      ],
+    });
+    const staleOutput = {
+      taskId: staleTaskId,
+      status: "pass",
+      resultCommit: staleReceipt.newHead,
+      branch: staleManaged.handle.branch,
+      actualWorktreePath: staleManaged.handle.absolutePath,
+      filesTouched: [...staleReceipt.paths],
+      gitReceipts: [
+        { ...staleReceipt, objectOids: [...staleReceipt.objectOids], paths: [...staleReceipt.paths] },
+      ],
+      checkSummary: "legacy focused checks passed before release",
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit,
+        headCommit: staleReceipt.newHead,
+      },
+      summary: "released legacy result awaiting queue rollout",
+    } as const;
+    expect(
+      await seedCapability.storeResult({
+        resultCapability: stalePrepared.prepared.resultCapability,
+        output: staleOutput,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
     await seedBackend.close();
+    expect(
+      await releaseManagedWorktree({
+        handle: staleManaged.handle,
+        terminalDisposition: "done",
+        resultCommit: staleReceipt.newHead,
+      }),
+    ).toMatchObject({ status: "released" });
 
     const runtime = await createSingleProjectDispatchRuntime({
       construction: "direct",
@@ -339,11 +432,11 @@ describe("production dispatch runtime construction", () => {
     if (runtime.kind === "unavailable") throw new Error(runtime.reason);
     expect(runtime.implementationQueueRollout).toMatchObject({
       contract: "g213-t4",
-      considered: 1,
+      considered: 2,
       adoptedUnqualified: 1,
       adoptedQualified: 0,
       adoptedCompletedGreen: 0,
-      parkedIncompatible: 0,
+      parkedIncompatible: 1,
       executionUncertain: 0,
     });
     const peer = await createAttestationStoreForConstruction({
@@ -353,8 +446,14 @@ describe("production dispatch runtime construction", () => {
     });
     try {
       const rows = await peer.transact({ kind: "namespace" }, (store) => store.rows());
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({
+      expect(rows).toHaveLength(2);
+      const liveRow = rows.find(
+        (row) => row.attestationId === prepared.prepared.attestationId,
+      );
+      const staleRow = rows.find(
+        (row) => row.attestationId === stalePrepared.prepared.attestationId,
+      );
+      expect(liveRow).toMatchObject({
         state: "gate-pending",
         implementationQueue: { state: "enqueued" },
         implementationQueueRollout: {
@@ -363,6 +462,18 @@ describe("production dispatch runtime construction", () => {
           worktreeProtected: true,
         },
       });
+      expect(staleRow).toMatchObject({
+        state: "gate-pending",
+        implementationQueueRollout: {
+          contract: "g213-t4",
+          disposition: "parked-incompatible",
+          worktreeProtected: false,
+          diagnosticArtifact: {
+            detail: { reason: "managed-worktree-binding-no-longer-live" },
+          },
+        },
+      });
+      expect(staleRow?.implementationQueue).toBeUndefined();
       if (
         runtime.capability.qualifyImplementationCandidate === undefined ||
         runtime.capability.coordinateImplementationCandidate === undefined

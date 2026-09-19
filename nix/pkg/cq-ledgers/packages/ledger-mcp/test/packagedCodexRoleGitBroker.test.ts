@@ -1846,6 +1846,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         promptArtifactStore: artifactStore("implement-worker"),
         repositoryRoot,
         ledgerStore: seededStore.store,
+        implementationEvidenceStore,
+        implementationExecutorMode: "local-xdg",
         now: serviceNow,
         randomBytes: dispatchRandomBytes,
       });
@@ -2066,6 +2068,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           promptArtifactStore: artifactStore("implement-worker"),
           repositoryRoot,
           ledgerStore: seededStore.store,
+          implementationEvidenceStore,
+          implementationExecutorMode: "local-xdg",
           now: serviceNow,
           randomBytes: dispatchRandomBytes,
         });
