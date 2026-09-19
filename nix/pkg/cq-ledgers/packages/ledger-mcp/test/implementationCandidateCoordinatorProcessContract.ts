@@ -20,6 +20,7 @@ import {
 } from "@cq/config";
 import {
   PLAN_FINALIZED_MANIFEST_FIELD,
+  createInMemoryImplementationEvidenceStore,
   createInMemoryWorksetStore,
   prepareManagedWorktree,
   type LedgerStore,
@@ -415,6 +416,7 @@ export async function runCoordinatorProcessContract(
       backend,
       promptArtifactStore: artifactStore(),
       ledgerStore: finalizedTaskStore(),
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
       repositoryRoot,
       worktreeStateDir: stateDir,
       supervisedWorkerGateRunner: new MarkerGateRunner(gateMarker),

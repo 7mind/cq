@@ -18,7 +18,11 @@ import {
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
 } from "@cq/config";
-import { PLAN_FINALIZED_MANIFEST_FIELD, type LedgerStore } from "@cq/ledger";
+import {
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  createInMemoryImplementationEvidenceStore,
+  type LedgerStore,
+} from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import { currentRecoveryTaskEvidence } from "../src/dispatchRecoverySeal.js";
 import { ImplementationCandidateQueueAdapter } from "../src/implementationCandidateQueue.js";
@@ -177,6 +181,8 @@ async function stagedQualificationSubject(label: string) {
       backend,
       promptArtifactStore: {} as PromptArtifactStore,
       ledgerStore: finalizedTaskStore(),
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      repositoryRoot,
       now: clock.now,
     }),
     clock,
@@ -283,6 +289,8 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       backend,
       promptArtifactStore: {} as PromptArtifactStore,
       ledgerStore: finalizedTaskStore(),
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      repositoryRoot,
       now: clock.now,
     });
 
@@ -700,6 +708,8 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       backend,
       promptArtifactStore: {} as PromptArtifactStore,
       ledgerStore,
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      repositoryRoot,
       now: clock.now,
     });
 

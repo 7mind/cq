@@ -9,6 +9,7 @@ import {
 } from "@cq/config";
 import {
   PLAN_FINALIZED_MANIFEST_FIELD,
+  createInMemoryImplementationEvidenceStore,
   createInMemoryWorksetStore,
   type LedgerStore,
   type SupervisedWorkerGateRunRequest,
@@ -191,6 +192,7 @@ try {
       backend,
       promptArtifactStore: artifactStore(),
       ledgerStore: finalizedTaskStore(),
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
       repositoryRoot: config.repositoryRoot,
       worktreeStateDir: config.stateDir,
       supervisedWorkerGateRunner: new MarkerGateRunner(config.gateMarker),
