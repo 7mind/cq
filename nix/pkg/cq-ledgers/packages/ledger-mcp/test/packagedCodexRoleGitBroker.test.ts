@@ -637,6 +637,7 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
         worktreePath: managedHandle.absolutePath,
         branch: managedHandle.branch,
         baseCommit,
+        validationIntent: "focused-only",
         conflictingFiles: ["a.txt"],
         conflictState,
       }),
@@ -2014,6 +2015,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             baseCommit,
             round: 0,
             startingCommit: baseCommit,
+            validationIntent: "final",
           },
           idempotencyKey: `${taskId}-guarded-round-0`,
         });
@@ -2085,6 +2087,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           baseCommit: ontoCommit,
           round: 1,
           startingCommit: rebasedStartCommit,
+          validationIntent: "final",
           priorResultCommit: oldResultCommit,
         };
 
