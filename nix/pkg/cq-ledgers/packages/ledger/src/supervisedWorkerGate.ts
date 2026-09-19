@@ -59,6 +59,7 @@ export interface SupervisedWorkerGateRunRequest {
   readonly worktreePath: string;
   readonly admissionTimeoutMs: number;
   readonly executionTimeoutMs: number;
+  readonly cancellationSignal: AbortSignal;
 }
 
 export interface SupervisedWorkerGateRunResult {
@@ -98,6 +99,28 @@ export interface SuperviseImplementWorkerGateDeps {
   readonly runner?: SupervisedWorkerGateRunner;
   readonly stateDir?: string;
   readonly now?: () => Date;
+  readonly cancellationSignal: AbortSignal;
+}
+
+const GATE_CANCELLED_MESSAGE =
+  "supervised worker gate cancelled by its authenticated dispatch epoch";
+
+async function observeGateCancellation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) throw new Error(GATE_CANCELLED_MESSAGE);
+  let rejectCancellation!: (error: Error) => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const cancel = (): void => rejectCancellation(new Error(GATE_CANCELLED_MESSAGE));
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    return await Promise.race([operation, cancelled]);
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
 }
 
 function supervisedGateRejectionDetails(
@@ -281,16 +304,19 @@ export function createNodeSupervisedWorkerGateRunner(
       );
       let admissionTimer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await Promise.race([
-          predecessor,
-          new Promise<never>((_resolve, reject) => {
-            admissionTimer = setTimeout(
-              () =>
-                reject(new Error("supervised worker gate exceeded its host admission deadline")),
-              request.admissionTimeoutMs,
-            );
-          }),
-        ]);
+        await observeGateCancellation(
+          Promise.race([
+            predecessor,
+            new Promise<never>((_resolve, reject) => {
+              admissionTimer = setTimeout(
+                () =>
+                  reject(new Error("supervised worker gate exceeded its host admission deadline")),
+                request.admissionTimeoutMs,
+              );
+            }),
+          ]),
+          request.cancellationSignal,
+        );
         if (admissionTimer !== undefined) clearTimeout(admissionTimer);
         return await runAdmittedNodeSupervisedWorkerGate(request, settlement);
       } finally {
@@ -449,7 +475,10 @@ async function runAdmittedNodeSupervisedWorkerGate(
         request.executionTimeoutMs,
       );
     });
-    raced = await Promise.race([processResult, timeout]);
+    raced = await observeGateCancellation(
+      Promise.race([processResult, timeout]),
+      request.cancellationSignal,
+    );
   } catch (error) {
     originalError = error;
   } finally {
@@ -504,7 +533,7 @@ export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =
  */
 export async function superviseImplementWorkerGate(
   request: SuperviseImplementWorkerGateRequest,
-  deps: SuperviseImplementWorkerGateDeps = {},
+  deps: SuperviseImplementWorkerGateDeps,
 ): Promise<DispatchJSONValue> {
   const output = record(request.output, "worker result");
   if (Object.hasOwn(output, "supervisedGateEvidence")) {
@@ -616,6 +645,7 @@ export async function superviseImplementWorkerGate(
     worktreePath: context.worktreePath,
     admissionTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
     executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+    cancellationSignal: deps.cancellationSignal,
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
     throw new SupervisedWorkerGateRejectedError(run);

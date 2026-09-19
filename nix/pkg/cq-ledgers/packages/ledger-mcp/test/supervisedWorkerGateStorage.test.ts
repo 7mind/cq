@@ -213,7 +213,16 @@ class BlockingGateDummy implements SupervisedWorkerGateRunner {
   async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
     this.requests.push(request);
     this.resolveStarted();
-    await this.released;
+    await new Promise<void>((resolve, reject) => {
+      const cancelled = (): void => {
+        reject(new Error("blocking gate observed authenticated cancellation"));
+      };
+      request.cancellationSignal.addEventListener("abort", cancelled, { once: true });
+      void this.released.then(() => {
+        request.cancellationSignal.removeEventListener("abort", cancelled);
+        resolve();
+      });
+    });
     return {
       gateExitCode: 0,
       passCount: 17,
@@ -724,6 +733,7 @@ async function runD342Scenario(options: {
       worktreePath,
       admissionTimeoutMs: D342_ADMISSION_TIMEOUT_MS,
       executionTimeoutMs: D342_EXECUTION_TIMEOUT_MS,
+      cancellationSignal: new AbortController().signal,
     });
     failure = new Error("D342 scenario unexpectedly completed the supervised gate");
   } catch (error) {
@@ -1799,6 +1809,7 @@ throw new Error("unexpected controlled cq invocation");
         worktreePath: subject.managed.handle.absolutePath,
         admissionTimeoutMs: 3_600_000,
         executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+        cancellationSignal: expect.any(AbortSignal),
       },
     ]);
     const confirmation = await subject.capability.confirmCompletion({
@@ -2431,6 +2442,60 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(1);
   });
 
+  test.each(["memory", "sqlite"] as const)(
+    "D489 serializes %s peer capabilities into one durable gate attempt [Behavioral-Active, Effectual-Group]",
+    async (attestationBackend) => {
+      const runner = new BlockingGateDummy();
+      const subject = await fixtureWithDispatchBase(
+        runner,
+        "managed",
+        () => "2026-08-12T20:00:00.000Z",
+        false,
+        false,
+        undefined,
+        artifactStore(),
+        attestationBackend,
+      );
+      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+      const peerBackend =
+        attestationBackend === "memory"
+          ? new InMemoryAttestationBackend(subject.store)
+          : new SqliteAttestationBackend({
+              namespace: subject.backend.namespace,
+              dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+            });
+      const peer = createDispatchCapability({
+        backend: peerBackend,
+        promptArtifactStore: artifactStore(),
+        implementationEvidenceStore: subject.implementationEvidenceStore,
+        repositoryRoot: subject.repositoryRoot,
+        worktreeStateDir: subject.stateDir,
+        supervisedWorkerGateRunner: runner,
+        now: () => "2026-08-12T20:00:00.000Z",
+      });
+      if (peer.finalizeParentGate === undefined) {
+        throw new Error("peer parent gate finalizer is unavailable");
+      }
+      const first = finalize(subject);
+      await runner.started;
+      const second = peer.finalizeParentGate(parentGateInput(subject));
+      try {
+        await Bun.sleep(50);
+        expect(runner.requests).toHaveLength(1);
+        runner.release();
+        await expect(Promise.all([first, second])).resolves.toMatchObject([
+          { state: "result-stored" },
+          { state: "result-stored" },
+        ]);
+      } finally {
+        runner.release();
+        await Promise.allSettled([first, second]);
+        await peerBackend.close();
+      }
+      expect(runner.requests).toHaveLength(1);
+    },
+  );
+
   test("D326 settles an admitted result after the child deadline using the submission instant [BG]", async () => {
     let current = Date.parse("2026-08-12T20:00:00.000Z");
     const runner = new ClockAdvancingGateDummy(() => {
@@ -2641,6 +2706,7 @@ throw new Error("unexpected controlled cq invocation");
             worktreePath,
             admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
             executionTimeoutMs: QUEUED_EXECUTION_TIMEOUT_MS,
+            cancellationSignal: new AbortController().signal,
           })
           .then(
             () => ({ kind: "completed" as const }),
@@ -2662,6 +2728,7 @@ throw new Error("unexpected controlled cq invocation");
           worktreePath,
           admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
           executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          cancellationSignal: new AbortController().signal,
         });
         expect(prompt.gateExitCode).toBe(0);
         expect(prompt.passCount).toBeGreaterThan(0);
@@ -2713,6 +2780,7 @@ throw new Error("unexpected controlled cq invocation");
           worktreePath,
           admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
           executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          cancellationSignal: new AbortController().signal,
         });
         expect(result.gateExitCode).toBe(1);
         expect(result.outputTail).toContain("(fail) first long-output regression identity");

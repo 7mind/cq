@@ -306,6 +306,37 @@ export class ImplementationExecutorUnavailableError extends Error {
   }
 }
 
+type ParentGateFinalization = ReturnType<
+  NonNullable<DispatchCapability["finalizeParentGate"]>
+>;
+
+interface ActiveParentGateFinalization {
+  readonly cancellation: AbortController;
+  readonly promise: ParentGateFinalization;
+  gateEpoch: number | null;
+  cancelledResult: Awaited<ReturnType<typeof abortDispatchOn>> | null;
+}
+
+const ACTIVE_PARENT_GATE_FINALIZATIONS = new Map<
+  string,
+  ActiveParentGateFinalization
+>();
+
+function parentGateFinalizationKey(
+  namespace: AttestationBackend["namespace"],
+  binding: ManagedWorktreeDispatchBinding,
+  handle: { readonly attestationId: string; readonly generation: number },
+): string {
+  return [
+    namespace.backend,
+    namespace.projectKey,
+    binding.repositoryId,
+    binding.handleFingerprint,
+    handle.attestationId,
+    String(handle.generation),
+  ].join("\u0000");
+}
+
 function brokerResultEvidence(
   output: DispatchJSONValue,
 ): GitChangeBrokerResultEvidence | undefined {
@@ -489,10 +520,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   }
   const prepares = new Map<string, CachedPrepare>();
   const preparesByHandle = new Map<string, CachedPrepare>();
-  const parentGateFinalizations = new Map<
-    string,
-    ReturnType<NonNullable<DispatchCapability["finalizeParentGate"]>>
-  >();
   const recoveryJournal =
     options.recoveryJournal ??
     (options.repositoryRoot === undefined
@@ -1092,6 +1119,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           ...(options.supervisedWorkerGateRunner === undefined
             ? {}
             : { runner: options.supervisedWorkerGateRunner }),
+          cancellationSignal: new AbortController().signal,
         },
       );
     } catch (error) {
@@ -3223,26 +3251,29 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (binding === undefined) {
         throw new Error("parent gate finalization requires a managed worktree binding");
       }
-      const finalizationKey = `${input.attestationId}#${String(input.generation)}`;
-      const activeFinalization = parentGateFinalizations.get(finalizationKey);
-      if (activeFinalization !== undefined) return await activeFinalization;
-      const claimed = await withManagedWorktreeEffectLock(
-        binding,
-        {
-          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
-          effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
-        },
-        async () => await claimParentGateOn(options.backend, input, { now }),
-      );
-      if (claimed.state === "result-stored") {
-        return Object.freeze({ state: "result-stored" as const, result: claimed.result });
-      }
-      if (claimed.state === "aborted") {
-        return Object.freeze({ state: "aborted" as const, result: claimed.result });
-      }
-      const existingFinalization = parentGateFinalizations.get(finalizationKey);
-      if (existingFinalization !== undefined) return await existingFinalization;
-      const finalization = (async () => {
+      const finalizationKey = parentGateFinalizationKey(namespace, binding, input);
+      const activeFinalization = ACTIVE_PARENT_GATE_FINALIZATIONS.get(finalizationKey);
+      if (activeFinalization !== undefined) return await activeFinalization.promise;
+      const cancellation = new AbortController();
+      let finalizationEntry!: ActiveParentGateFinalization;
+      const finalization: ParentGateFinalization = (async () => {
+        const claimed = await withManagedWorktreeEffectLock(
+          binding,
+          {
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+            effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+          },
+          async () => await claimParentGateOn(options.backend, input, { now }),
+        );
+        if (claimed.state === "result-stored") {
+          return Object.freeze({ state: "result-stored" as const, result: claimed.result });
+        }
+        if (claimed.state === "aborted") {
+          return Object.freeze({ state: "aborted" as const, result: claimed.result });
+        }
+        finalizationEntry.gateEpoch = claimed.gateEpoch;
         let output: DispatchJSONValue;
         try {
           output = await superviseImplementWorkerGate(
@@ -3254,9 +3285,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               ...(options.supervisedWorkerGateRunner === undefined
                 ? {}
                 : { runner: options.supervisedWorkerGateRunner }),
+              cancellationSignal: cancellation.signal,
             },
           );
         } catch (error) {
+          if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
+            return Object.freeze({
+              state: "aborted" as const,
+              result: finalizationEntry.cancelledResult,
+            });
+          }
           if (error instanceof SupervisedWorkerGateRejectedError) {
             const rejected = await abortWithRecovery(
               {
@@ -3289,29 +3327,51 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           throw error;
         }
-        const result = await withManagedWorktreeEffectLock(
-          binding,
-          {
-            ...(options.worktreeStateDir === undefined
-              ? {}
-              : { stateDir: options.worktreeStateDir }),
-            effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
-          },
-          async () =>
-            await completeParentGateOn(
-              options.backend,
-              { ...input, gateEpoch: claimed.gateEpoch, output },
-              { now },
-            ),
-        );
-        return Object.freeze({ state: "result-stored" as const, result });
+        if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
+          return Object.freeze({
+            state: "aborted" as const,
+            result: finalizationEntry.cancelledResult,
+          });
+        }
+        try {
+          const result = await withManagedWorktreeEffectLock(
+            binding,
+            {
+              ...(options.worktreeStateDir === undefined
+                ? {}
+                : { stateDir: options.worktreeStateDir }),
+              effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+            },
+            async () =>
+              await completeParentGateOn(
+                options.backend,
+                { ...input, gateEpoch: claimed.gateEpoch, output },
+                { now },
+              ),
+          );
+          return Object.freeze({ state: "result-stored" as const, result });
+        } catch (error) {
+          if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
+            return Object.freeze({
+              state: "aborted" as const,
+              result: finalizationEntry.cancelledResult,
+            });
+          }
+          throw error;
+        }
       })();
-      parentGateFinalizations.set(finalizationKey, finalization);
+      finalizationEntry = {
+        cancellation,
+        promise: finalization,
+        gateEpoch: null,
+        cancelledResult: null,
+      };
+      ACTIVE_PARENT_GATE_FINALIZATIONS.set(finalizationKey, finalizationEntry);
       try {
         return await finalization;
       } finally {
-        if (parentGateFinalizations.get(finalizationKey) === finalization) {
-          parentGateFinalizations.delete(finalizationKey);
+        if (ACTIVE_PARENT_GATE_FINALIZATIONS.get(finalizationKey) === finalizationEntry) {
+          ACTIVE_PARENT_GATE_FINALIZATIONS.delete(finalizationKey);
         }
       }
     },
@@ -3371,6 +3431,29 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     abort: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
       const result = await abortWithRecovery(input, binding);
+      if (binding !== undefined) {
+        const finalization = ACTIVE_PARENT_GATE_FINALIZATIONS.get(
+          parentGateFinalizationKey(namespace, binding, input),
+        );
+        const persistedGateEpoch = await options.backend.transact(
+          { kind: "handle", handle: input },
+          (store): number | null => {
+            const row = store.read(input);
+            return row === undefined || isAttestationTombstone(row) || row.gateEpoch === undefined
+              ? null
+              : row.gateEpoch;
+          },
+        );
+        if (
+          finalization !== undefined &&
+          finalization.gateEpoch !== null &&
+          finalization.gateEpoch === persistedGateEpoch
+        ) {
+          finalization.cancelledResult = result;
+          finalization.cancellation.abort();
+          await finalization.promise;
+        }
+      }
       rememberTerminal(result, result.abortedAt);
       return result;
     },

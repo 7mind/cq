@@ -838,6 +838,7 @@ describe("packaged cq-codex-role Git broker", () => {
             worktreePath,
             admissionTimeoutMs: 5_000,
             executionTimeoutMs: 1,
+            cancellationSignal: new AbortController().signal,
           }),
         ).rejects.toThrow("host execution deadline");
         await expect(
@@ -845,6 +846,7 @@ describe("packaged cq-codex-role Git broker", () => {
             worktreePath,
             admissionTimeoutMs: 5_000,
             executionTimeoutMs: 1_500,
+            cancellationSignal: new AbortController().signal,
           }),
         ).rejects.toThrow("host execution deadline");
         expect(await readFile(startedPath, "utf8")).toBe("");
@@ -856,6 +858,7 @@ describe("packaged cq-codex-role Git broker", () => {
             worktreePath,
             admissionTimeoutMs: 5_000,
             executionTimeoutMs: 5_000,
+            cancellationSignal: new AbortController().signal,
           }),
         ).resolves.toMatchObject({ gateExitCode: 0, passCount: 1, failCount: 0 });
       } finally {
