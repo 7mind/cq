@@ -107,7 +107,7 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       integrationRef: "refs/heads/main",
       goalRef: "goals:G211",
       finalizedManifestDigest: "b".repeat(64),
-      resultCommit: "1".repeat(40),
+      withReceipt: true,
     });
     const qualified = await fixture.adapter.qualifyNativeCompletion({
       candidate: staged.candidate,
@@ -184,7 +184,10 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
             ...lease,
             nativeCompletion,
             expectedProvenance: control.qualification.expectedProvenance,
-            continuationContext: { liveTip: staged.binding.baseCommit, gitReceipts: [] },
+            continuationContext: {
+              liveTip: staged.candidate.resultCommit,
+              gitReceipts: staged.candidate.gitReceipts,
+            },
           },
           { now: fixture.clock.now },
         );
@@ -316,7 +319,7 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
           },
           baseAncestry: {
             status: "verified",
-            relation: "equal",
+            relation: "descendant",
             baseCommit: staged.binding.baseCommit,
             resultCommit: staged.candidate.resultCommit,
             mergeBase: staged.binding.baseCommit,
@@ -489,17 +492,6 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
         }
       },
     });
-    await expect(
-      fixture.prepareOnly({
-        taskId: "T6520",
-        repositoryId: "a".repeat(64),
-        integrationRef: "refs/heads/main",
-        goalRef: "goals:G211",
-        finalizedManifestDigest: "b".repeat(64),
-        idempotencyKey: "continuation-after-merge-authorization",
-        reprepareOf: staged,
-      }),
-    ).rejects.toThrow("completion reservation");
     const admission = await mergeProvider.acquire({ kind: "merge", targetRef: "tasks:T6520" });
     await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
     await admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });

@@ -20,6 +20,7 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   createInMemoryWorksetStore,
   createInMemoryImplementationEvidenceStore,
+  implementationCompletionMergeAdmissionProviderFromStore,
   prepareManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
   type ImplementationCandidateAuthorityReceipt,
@@ -724,8 +725,9 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
           launch: "native",
           adapterId: "codex:native",
         };
+        const evidenceStore = createInMemoryImplementationEvidenceStore();
         const service = new ImplementationEvidenceService({
-          store: createInMemoryImplementationEvidenceStore(),
+          store: evidenceStore,
           resolveReviewerRoster: () => [reviewer],
           nativeFallback: reviewer,
           now: fixture.clock.now,
@@ -856,6 +858,68 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
           author: "parent",
         });
         expect(completion).toMatchObject({ status: "prepared", resultCommit: rebasedStartCommit });
+
+        const finalAuthorization = Promise.withResolvers<void>();
+        const allowGuardianShare = Promise.withResolvers<void>();
+        let authorizationCount = 0;
+        const mergeProvider = await implementationCompletionMergeAdmissionProviderFromStore({
+          provider: {
+            acquire: async (input) => ({
+              id: "public-successor-merge-admission",
+              epoch: 1,
+              kind: input.kind,
+              targetRef: input.targetRef,
+              registerProcessGroup: () => {},
+              prepareGuardianShare: async () => {
+                finalAuthorization.resolve();
+                await allowGuardianShare.promise;
+              },
+              shareWithGuardian: () => {},
+              markSettled: () => {},
+              releaseAfterSettlement: async () => {},
+              abandonBeforeRegistration: async () => {},
+            }),
+          },
+          store: evidenceStore,
+          binding: {
+            kind: "merge",
+            targetRef: "tasks:T6520",
+            repositoryRoot: root,
+            commit: rebasedStartCommit,
+            completionRef: completion.completionRef,
+            mergeOperationId: "public-successor-merge",
+          },
+          repositoryHead: async () => ontoCommit,
+          authorizeCandidate: async (receipt) => {
+            authorizationCount += 1;
+            await resolveAuthority({
+              workerDispatch: receipt.workerDispatch,
+              taskRef: receipt.taskRef,
+              resultCommit: receipt.resultCommit,
+            });
+          },
+        });
+        const admission = await mergeProvider.acquire({
+          kind: "merge",
+          targetRef: "tasks:T6520",
+        });
+        await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
+        const guardianShare = admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });
+        await finalAuthorization.promise;
+        expect(authorizationCount).toBe(2);
+        const continuationFixture = new ImplementationCandidateQueueFixture(restartedBackend);
+        try {
+          await expect(
+            continuationFixture.prepareOnly({
+              ...common,
+              idempotencyKey: "continuation-after-final-merge-authorization",
+              reprepareOf: successor,
+            }),
+          ).rejects.toThrow("completion reservation");
+        } finally {
+          allowGuardianShare.resolve();
+          await guardianShare;
+        }
       } finally {
         await restartedBackend.close();
       }
