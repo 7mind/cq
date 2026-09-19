@@ -94,6 +94,10 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
    * bootstrap receives its target-release record.
    */
   readonly shareLeaseWithGuardian?: (registration: ProcessGroupRegistration) => Promise<void>;
+  /** Wrap the atomic target-release publication for adapter-owned I/O coordination. */
+  readonly releasePublicationBoundary?: (
+    publish: () => Promise<void>,
+  ) => Promise<void>;
   /** Await adapter-owned settlement after target exit and before bootstrap release. */
   readonly onTargetExit?: (
     registration: ProcessGroupRegistration,
@@ -623,14 +627,18 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       }
     }
     const releaseRegistration = registration;
-    await runOwnedLaunchOperationBeforeDeadline(
-      () =>
-        writeJsonAtomic(releasePath, {
+    const publishRelease = () =>
+      writeJsonAtomic(releasePath, {
           nonce,
           pgid: releaseRegistration.pgid,
           launcher,
           launchDeadlineMs,
-        }),
+        });
+    await runOwnedLaunchOperationBeforeDeadline(
+      () =>
+        options.releasePublicationBoundary === undefined
+          ? publishRelease()
+          : options.releasePublicationBoundary(publishRelease),
       launchDeadlineMs,
       "registered-launch target release",
     );

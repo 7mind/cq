@@ -10,6 +10,7 @@ import {
   launchRegisteredProcessGroup,
   isProcessGroupAlive,
   REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+  WorksetEffectLaunchDeadlineError,
   readProcessIdentity,
   settleProcessGroups,
   signalProcessGroup,
@@ -792,6 +793,70 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     expect(registrations).toHaveLength(1);
     await waitForIdentityToDisappear(registrations[0]!.leader.pid);
     expect(await Bun.file(marker).exists()).toBe(false);
+  });
+
+  test("D504 keeps the bootstrap protocol directory until an expired release publication settles [Behavioral-Active Blackbox-Atomic]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-release-deadline-"));
+    roots.push(root);
+    const publicationStarted = Promise.withResolvers<void>();
+    const releasePublication = Promise.withResolvers<void>();
+    const registrations: ProcessGroupRegistration[] = [];
+    let protocolDirectory: string | undefined;
+    const launchDeadlineMs = Date.now() + 1_000;
+    const outcome = launchRegisteredProcessGroup({
+      argv: [process.execPath, "-e", "process.exit(0)"],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchDeadlineMs,
+      register: async (candidate) => {
+        registrations.push(candidate);
+      },
+      releasePublicationBoundary: async (publish) => {
+        publicationStarted.resolve();
+        await releasePublication.promise;
+        await publish();
+      },
+      launchBootstrap: (specification) => {
+        protocolDirectory = specification.argv[2];
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          cwd: specification.cwd,
+          env: specification.env,
+          detached: true,
+          stdio: "ignore",
+        });
+        return {
+          process: child,
+          pid: child.pid,
+          exited: exited(child),
+          outputDrained: Promise.resolve(),
+          resultFromTargetOutcome: (target) => target,
+          terminate: (signal: NodeJS.Signals) => {
+            child.kill(signal);
+          },
+        };
+      },
+    }).then(
+      () => new Error("controlled release publication unexpectedly completed"),
+      (error: unknown) => error,
+    );
+
+    await publicationStarted.promise;
+    await Bun.sleep(Math.max(0, launchDeadlineMs - Date.now()) + 25);
+    try {
+      if (protocolDirectory === undefined) throw new Error("test did not observe protocol path");
+      expect(await pathExists(protocolDirectory)).toBe(true);
+    } finally {
+      releasePublication.resolve();
+    }
+    const failure = await outcome;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "deadline expired during registered-launch target release",
+    );
+    expect((failure as Error).cause).toBeInstanceOf(WorksetEffectLaunchDeadlineError);
+    expect(registrations).toHaveLength(1);
+    await waitForIdentityToDisappear(registrations[0]!.leader.pid);
   });
 
   test("acknowledges target launch failures only after cleaning up the registered group", async () => {
