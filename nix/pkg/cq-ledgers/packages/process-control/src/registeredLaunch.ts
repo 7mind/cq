@@ -622,11 +622,12 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
         );
       }
     }
+    const releaseRegistration = registration;
     await runOwnedLaunchOperationBeforeDeadline(
       () =>
         writeJsonAtomic(releasePath, {
           nonce,
-          pgid: registration.pgid,
+          pgid: releaseRegistration.pgid,
           launcher,
           launchDeadlineMs,
         }),
