@@ -36,6 +36,7 @@ function failOutput(overrides: Readonly<Record<string, unknown>> = {}): Record<s
     filesResolved: ["a.txt"],
     conflictReceipts: [receipt()],
     checkSummary: "continuation stopped at the next conflict",
+    focusedChecks: [{ command: "bun test a.test.ts", exitCode: 0, passCount: 1, failCount: 0 }],
     summary: "the durable first step must remain attributable",
     blockedReason: "the next resolution could not be produced",
     ...overrides,

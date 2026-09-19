@@ -1,6 +1,6 @@
 ---
 name: implement-conflict-resolver
-description: Resolve one rebase conflict in an implementation worktree, preserve both intents, run the full gate, and store a structured result.
+description: Resolve one rebase conflict in an implementation worktree, preserve both intents, run focused checks, and store a structured result for the parent-owned full gate.
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
@@ -16,7 +16,7 @@ outputs:
   - "stored structured result with durable continuation receipts and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires completed rebase and green full gate"
+  - "pass requires completed rebase and non-empty typed green focused-check evidence; the trusted parent owns the only final full gate"
 ```
 
 Resolve the supplied rebase conflict inside its worktree. Preserve both the
@@ -27,10 +27,14 @@ deletion) to `git_resolve_continue`, retaining its receipt verbatim. Supply the
 parent's `conflictState` unchanged to the first call. If a receipt returns a
 next conflict, resolve it and supply only that receipt's exact state to a new
 operation; stop after a terminal receipt. Marker-free resolutions are valid.
-Then run `bun run check` in the worktree foreground. Never push, mutate the
+Then run the smallest focused checks that cover the resolved paths. Record each
+command, exit code, pass count, and fail count in `focusedChecks`; a passing
+result requires at least one executed test and no failure. Never run `bun run
+check` or another repository-wide gate: the trusted parent owns the single
+final full-gate invocation after the resolver exits. Never push, mutate the
 ledger, operate on another checkout, or spawn a child.
 
-If the intents require task redesign or the gate cannot pass through conflict
+If the intents require task redesign or focused validation cannot pass through conflict
 resolution alone, leave the worktree for inspection and return `fail` with a
 precise reason. A failure still reports the bound branch and absolute worktree
 path plus the complete receipt chain (empty only when no continuation occurred);
@@ -45,7 +49,8 @@ after a durable step the last receipt must describe the live next conflict.
   "actualWorktreePath": "<absolute bound worktree path>",
   "filesResolved": ["<path>"],
   "conflictReceipts": ["<each git_resolve_continue receipt object in order>"],
-  "checkSummary": "<real gate result and tail>",
+  "checkSummary": "<focused-check result and tail>",
+  "focusedChecks": [{"command":"<exact command>","exitCode":0,"passCount":1,"failCount":0}],
   "summary": "<how both intents were preserved>",
   "blockedReason": "<fail only>"
 }

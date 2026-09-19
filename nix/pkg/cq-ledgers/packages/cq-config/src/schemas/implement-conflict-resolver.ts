@@ -82,6 +82,18 @@ const rebaseStateSchema = {
   additionalProperties: false,
 } as const;
 
+const focusedCheckSchema = {
+  type: "object",
+  properties: {
+    command: { type: "string", minLength: 1 },
+    exitCode: { type: "integer" },
+    passCount: { type: "integer", minimum: 0 },
+    failCount: { type: "integer", minimum: 0 },
+  },
+  required: ["command", "exitCode", "passCount", "failCount"],
+  additionalProperties: false,
+} as const;
+
 /**
  * The parent-supplied input contract for a conflict-resolver dispatch: the task
  * identity, the mid-rebase worktree coordinates, the conflicting files, and an
@@ -145,6 +157,7 @@ const outputSchema = {
     resultCommit: { type: ["string", "null"], pattern: GIT_OBJECT_ID_PATTERN },
     filesResolved: { type: "array", items: { type: "string" } },
     checkSummary: { type: "string" },
+    focusedChecks: { type: "array", minItems: 1, items: focusedCheckSchema },
     summary: { type: "string" },
     blockedReason: { type: "string" },
     actualWorktreePath: {
@@ -170,6 +183,7 @@ const outputSchema = {
     "resultCommit",
     "filesResolved",
     "checkSummary",
+    "focusedChecks",
     "summary",
     "actualWorktreePath",
     "branch",

@@ -189,6 +189,7 @@ describe("dispatch-bound Git conflict capability", () => {
       resultCommit: null,
       filesResolved: ["a.txt"],
       checkSummary: "stopped after one durable continuation",
+      focusedChecks: [{ command: "bun test a.test.ts", exitCode: 0, passCount: 1, failCount: 0 }],
       summary: "receipt evidence was omitted",
       blockedReason: "cannot resolve the next conflict",
     };

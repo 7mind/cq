@@ -7,3 +7,6 @@ as the complete conflict-resolution assignment. A missing capability, failed
 retrieval, or second retrieval is a protocol failure. Retain
 `gitConflictCapability` only for `git_resolve_continue`; never print it or
 store it in a file or result.
+
+This child reports only typed focused-check evidence. It must not invoke the
+repository-wide full gate; trusted result storage owns that final invocation.

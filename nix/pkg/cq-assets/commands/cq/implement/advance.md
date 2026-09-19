@@ -457,6 +457,33 @@ LOST REPORT or an incomplete turn, harvest first, then resume.
 A base-only repair / reprepare / rebase maintenance round does **not** count as
 criticism, no-files output, or an ill-loop counter increment.
 
+**Canonical queue execution boundary.** Enqueue, qualification, acquisition,
+lease transitions, staged rebase, parent gate, review, completion, and merge
+run only through the local XDG construction that owns the repository root and
+implementation-evidence authority. A private `cq serve`/PostgreSQL backend is
+metadata and status only: `executor-unavailable` must be returned before a
+runnable implementation row, qualification, acquisition, or Git effect. Never
+forward mounts, credentials, or PostgreSQL/XDG state to manufacture a remote
+executor.
+
+At rollout version 1, adopt pre-queue live rows under the stable `g213-t4`
+contract in `(gateSubmittedAt, attestationId, generation)` order. Protect every
+managed worktree before adoption. Compatible `gate-pending` rows enter
+unqualified and become qualified only from an exact trusted completion binding;
+incompatible rows are durably parked and legacy `gate-running` rows are
+`execution-uncertain`. Existing exact green evidence may be adopted only after
+its output, result commit, managed-worktree binding, and supervised-gate digest
+all match. Never synthesize completion evidence or revive an old generation.
+G191 consumes this contract; G213 does not depend on G191.
+
+**Full-gate cardinality.** Worker and conflict-resolver children run typed
+focused checks only. For each candidate generation, trusted result storage runs
+the repository-wide full gate exactly once after the child exits and records
+the actual invocation count. Reviewers consume that bound evidence without a
+rerun. A correction or guarded-rebase successor is a new candidate generation
+and receives its own one parent-owned final gate; intermediate staging and
+resolver turns receive zero full-gate invocations.
+
 ## 4. Review
 
 Before any review dispatch, require

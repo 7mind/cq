@@ -9,3 +9,6 @@ file or result.
 A missing capability, failed retrieval, or second retrieval is a protocol
 failure: stop and return `status: "fail"` rather than reading task narrative
 from the ledger or improvising it from the compact launch reference.
+
+Brokered workers may run focused checks but never the repository-wide full
+gate. Trusted result storage runs the only final gate after this child exits.
