@@ -376,6 +376,167 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     });
   });
 
+  test("keeps an unprotected running gate execution-uncertain", async () => {
+    instant += 1_000;
+    const pending = await stage("T65227", 127);
+    instant += 1_000;
+    const stored = await stage("T65228", 128);
+    await completeTrustedGreen({ backend, namespace, now }, stored);
+    instant += 1_000;
+    const running = await stage("T65229", 129);
+    const parentGateCapability = running.prepared.parentGateCapability;
+    if (parentGateCapability === undefined) throw new Error("staged worker has no parent gate");
+    const claimed = await claimParentGateOn(
+      backend,
+      { ...running.prepared, parentGateCapability },
+      { now },
+    );
+    if (claimed.state !== "gate-running") throw new Error("expected authenticated gate claim");
+
+    const originals = new Map(
+      store
+        .rows()
+        .flatMap((row) =>
+          row.kind === "envelope" &&
+          ["T65227", "T65228", "T65229"].includes(row.gitEffectBinding?.taskId ?? "")
+            ? [
+                [
+                  row.gitEffectBinding!.taskId,
+                  {
+                    state: row.state,
+                    output: structuredClone(row.output),
+                    binding: structuredClone(row.gitEffectBinding),
+                  },
+                ] as const,
+              ]
+            : [],
+        ),
+    );
+    let resolutionCalls = 0;
+    let protectionCalls = 0;
+    const upgrade = async () =>
+      await upgradeLiveImplementationQueueRows({
+        backend,
+        now,
+        withProtectedManagedWorktree: async () => {
+          protectionCalls += 1;
+          return {
+            state: "incompatible" as const,
+            detail: { reason: "managed-worktree-binding-no-longer-live" },
+          };
+        },
+        resolve: async () => {
+          resolutionCalls += 1;
+          throw new Error("unprotected legacy rows must not reach resolution");
+        },
+      });
+
+    expect(await upgrade()).toMatchObject({
+      considered: 3,
+      adoptedUnqualified: 0,
+      adoptedQualified: 0,
+      adoptedCompletedGreen: 0,
+      parkedIncompatible: 2,
+      executionUncertain: 1,
+    });
+    expect({ protectionCalls, resolutionCalls }).toEqual({ protectionCalls: 3, resolutionCalls: 0 });
+    const migrated = new Map(
+      store
+        .rows()
+        .flatMap((row) =>
+          row.kind === "envelope" &&
+          ["T65227", "T65228", "T65229"].includes(row.gitEffectBinding?.taskId ?? "")
+            ? [[row.gitEffectBinding!.taskId, row] as const]
+            : [],
+        ),
+    );
+    expect(migrated.get("T65227")?.implementationQueueRollout).toMatchObject({
+      disposition: "parked-incompatible",
+      worktreeProtected: false,
+    });
+    expect(migrated.get("T65228")?.implementationQueueRollout).toMatchObject({
+      disposition: "parked-incompatible",
+      worktreeProtected: false,
+    });
+    expect(migrated.get("T65229")?.implementationQueueRollout).toMatchObject({
+      disposition: "execution-uncertain",
+      worktreeProtected: false,
+    });
+    for (const taskId of ["T65227", "T65228", "T65229"]) {
+      const original = originals.get(taskId);
+      const row = migrated.get(taskId);
+      if (original === undefined || row === undefined) throw new Error(`missing ${taskId}`);
+      expect({ state: row.state, output: row.output, binding: row.gitEffectBinding }).toEqual(original);
+      expect(row.implementationQueue).toBeUndefined();
+      expect(row.stagedCompletionQualification).toBeUndefined();
+    }
+    expect(await upgrade()).toMatchObject({ considered: 0, executionUncertain: 0 });
+    expect({ protectionCalls, resolutionCalls }).toEqual({ protectionCalls: 3, resolutionCalls: 0 });
+
+    instant += 1_000;
+    const changed = await stage("T65230", 130);
+    const changedGateCapability = changed.prepared.parentGateCapability;
+    if (changedGateCapability === undefined) throw new Error("staged worker has no parent gate");
+    const changedClaim = await claimParentGateOn(
+      backend,
+      { ...changed.prepared, parentGateCapability: changedGateCapability },
+      { now },
+    );
+    if (changedClaim.state !== "gate-running") throw new Error("expected authenticated gate claim");
+    await expect(
+      upgradeLiveImplementationQueueRows({
+        backend,
+        now,
+        withProtectedManagedWorktree: async () => {
+          instant += 1_000;
+          replaceRow("T65230", (row) => ({ ...row, gateClaimedAt: now() }));
+          return {
+            state: "incompatible" as const,
+            detail: { reason: "managed-worktree-binding-no-longer-live" },
+          };
+        },
+        resolve: async () => {
+          throw new Error("unprotected running gate must not reach resolution");
+        },
+      }),
+    ).rejects.toThrow("changed during rollout");
+    expect((store.read(changed.prepared) as AttestationEnvelope).implementationQueueRollout).toBeUndefined();
+
+    expect(
+      await upgradeLiveImplementationQueueRows({
+        backend,
+        now,
+        withProtectedManagedWorktree: async () => ({
+          state: "incompatible" as const,
+          detail: { reason: "managed-worktree-binding-no-longer-live" },
+        }),
+        resolve: async () => {
+          throw new Error("unprotected running gate must not reach resolution");
+        },
+      }),
+    ).toMatchObject({ executionUncertain: 1 });
+
+    instant += 1_000;
+    const failedProtection = await stage("T65231", 131);
+    await expect(
+      upgradeLiveImplementationQueueRows({
+        backend,
+        now,
+        withProtectedManagedWorktree: async () => {
+          throw new Error("protection subsystem failed");
+        },
+        resolve: async () => {
+          throw new Error("failed protection must not reach resolution");
+        },
+      }),
+    ).rejects.toThrow("protection subsystem failed");
+    const failedRow = store.read(failedProtection.prepared) as AttestationEnvelope;
+    expect(failedRow.implementationQueue).toBeUndefined();
+    expect(failedRow.implementationQueueRollout).toBeUndefined();
+    expect(failedRow.state).toBe("gate-pending");
+    expect(pending.binding.taskId).toBe("T65227");
+  });
+
   test("accepts completed green evidence only when every durable binding is exact", async () => {
     instant += 1_000;
     const trusted = await stage("T65215", 105);
