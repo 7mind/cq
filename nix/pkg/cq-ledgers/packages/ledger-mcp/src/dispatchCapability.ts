@@ -82,6 +82,7 @@ import {
   GuardedRebaseRejection,
   materializeGuardedRebaseBridge,
   reverifyGuardedRebaseBridge,
+  redactSecrets,
   validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
@@ -313,6 +314,20 @@ export class ImplementationExecutorUnavailableError extends Error {
 }
 
 const PARENT_GATE_CANCELLATION_POLL_MS = 5;
+const PARENT_GATE_DIAGNOSTIC_BYTE_LIMIT = 1_024;
+
+function durableParentGateDiagnostic(error: unknown): string {
+  const redacted = redactSecrets(error instanceof Error ? error.message : String(error));
+  let byteCount = 0;
+  let end = 0;
+  for (const character of redacted) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (byteCount + characterBytes > PARENT_GATE_DIAGNOSTIC_BYTE_LIMIT) break;
+    byteCount += characterBytes;
+    end += character.length;
+  }
+  return redacted.slice(0, end);
+}
 
 function brokerResultEvidence(
   output: DispatchJSONValue,
@@ -1109,7 +1124,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           {
             ...handle,
             reason: "parent-lost",
-            details: { phase: "supervised-gate", message: message.slice(0, 1024) },
+            details: { phase: "supervised-gate", message: durableParentGateDiagnostic(gateError) },
           },
           binding,
           true,

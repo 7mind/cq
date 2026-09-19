@@ -2335,6 +2335,34 @@ throw new Error("unexpected controlled cq invocation");
     }
   });
 
+  test("retains a bounded redacted first-runner diagnostic through terminal retrieval", async () => {
+    const secret = `sk-${"A".repeat(32)}`;
+    const runner = new ThrowingGateDummy(`first runner ${secret} ${"é".repeat(1_000)}`);
+    const subject = await fixture(runner);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    await expect(finalize(subject)).rejects.toThrow(secret);
+    const row = subject.store.rows()[0];
+    if (row === undefined || isAttestationTombstone(row)) {
+      throw new Error("first-runner terminal row is unavailable");
+    }
+    expect(row.abortDetails).toMatchObject({ phase: "supervised-gate" });
+    const retained = (row.abortDetails as Readonly<Record<string, DispatchJSONValue>>)["message"];
+    if (typeof retained !== "string") throw new Error("runner diagnostic message is unavailable");
+    expect(retained).not.toContain(secret);
+    expect(retained).toContain("[REDACTED:api-key]");
+    expect(Buffer.byteLength(retained, "utf8")).toBeLessThanOrEqual(1_024);
+    expect(
+      await subject.capability.fetch({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      }),
+    ).toMatchObject({
+      state: "aborted",
+      reason: "parent-lost",
+      details: { phase: "supervised-gate", message: retained },
+    });
+  });
+
   test("authenticated cancellation settles while the parent gate runner is still active", async () => {
     const runner = new BlockingGateDummy();
     const subject = await fixture(runner);
