@@ -3427,9 +3427,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (cancellation.state === "cancellation-requested") {
           await settleWorktreeGateCommands({
             worktree: binding.worktreePath,
-            ...(options.worktreeStateDir === undefined
-              ? {}
-              : { stateDir: options.worktreeStateDir }),
           });
         }
       }

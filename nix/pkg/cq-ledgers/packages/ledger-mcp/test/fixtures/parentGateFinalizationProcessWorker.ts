@@ -6,6 +6,7 @@ import {
 } from "@cq/config";
 import {
   createInMemoryImplementationEvidenceStore,
+  nodeSupervisedWorkerGateRunner,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
@@ -24,6 +25,8 @@ interface WorkerConfig {
   readonly releaseFirstMarker: string;
   readonly now: string;
   readonly input: ParentGateFinalizeRequest;
+  readonly runnerKind?: "blocking-marker" | "registered-process";
+  readonly runtimePath?: string;
 }
 
 const WAIT_TIMEOUT_MS = 30_000;
@@ -89,6 +92,7 @@ if (configPath === undefined || workerId === undefined) {
 
 const config = JSON.parse(await readFile(configPath, "utf8")) as WorkerConfig;
 await writeFile(`${config.readyDirectory}/${workerId}`, `${String(process.pid)}\n`, { flag: "wx" });
+if (config.runtimePath !== undefined) process.env["PATH"] = config.runtimePath;
 const backend = new SqliteAttestationBackend({
   namespace: config.namespace,
   dbPath: config.dbPath,
@@ -100,7 +104,10 @@ try {
     implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
     repositoryRoot: config.repositoryRoot,
     worktreeStateDir: config.stateDir,
-    supervisedWorkerGateRunner: new ProcessGateRunner(workerId, config),
+    supervisedWorkerGateRunner:
+      config.runnerKind === "registered-process"
+        ? nodeSupervisedWorkerGateRunner
+        : new ProcessGateRunner(workerId, config),
     now: () => config.now,
   });
   if (capability.finalizeParentGate === undefined) {
