@@ -7,6 +7,7 @@ import {
   DispatchAttestationExtensionError,
   DispatchStateConflictError,
   assertDispatchHandle,
+  attestationRowDigest,
   attestationInstantMs,
   attestationNamespacesEqual,
   dispatchPayloadDigest,
@@ -325,6 +326,8 @@ export interface EnqueueImplementationCandidateRequest extends DispatchHandle {
   readonly stagedOutputDigest: string;
   /** Migration-only durable decision, persisted atomically with queue enrollment. */
   readonly rollout?: ImplementationQueueRollout;
+  /** Migration-only compare-and-set fence captured before asynchronous resolution. */
+  readonly expectedLegacyRowDigest?: string;
   /** Required when this attempt succeeds one staged-rebase-retired enrollment. */
   readonly stagedRebaseSource?: {
     readonly sourceReference: string;
@@ -836,6 +839,29 @@ export function enqueueImplementationCandidate(
   assertOwnNamespace(request.namespace, deps.store);
   assertTrustedActor(request.actor);
   const row = requireEnvelope(request, deps);
+  if (request.rollout === undefined && request.expectedLegacyRowDigest !== undefined) {
+    throw new AttestationContractError(
+      "expectedLegacyRowDigest",
+      "a legacy row fence is valid only for a rollout enrollment",
+    );
+  }
+  if (request.rollout !== undefined) {
+    if (
+      request.expectedLegacyRowDigest === undefined ||
+      !SHA256.test(request.expectedLegacyRowDigest)
+    ) {
+      throw new AttestationContractError(
+        "expectedLegacyRowDigest",
+        "rollout enrollment requires the pre-resolution row digest",
+      );
+    }
+    if (attestationRowDigest(row) !== request.expectedLegacyRowDigest) {
+      throw new ImplementationQueueConflictError(
+        "binding-mismatch",
+        `legacy implementation row ${row.attestationId}#${String(row.generation)} changed during rollout`,
+      );
+    }
+  }
   if (
     (row.state !== "gate-pending" || row.gateSubmittedOutputDigest === undefined) &&
     !(row.state === "gate-running" && row.implementationQueue !== undefined)

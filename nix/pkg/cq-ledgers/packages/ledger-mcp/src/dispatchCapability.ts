@@ -48,6 +48,7 @@ import {
   resolveDispatchRecoveryOn,
   resolveDispatchContinuationOn,
   storeDispatchResultOn,
+  upgradeLiveImplementationQueueRows,
   validateAgainstSchema,
   validateDispatchInput,
   type AttestationBackend,
@@ -59,12 +60,15 @@ import {
   type DispatchPreLaunchRejection,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
+  type LegacyImplementationResolution,
+  type UpgradeLiveImplementationQueueSummary,
 } from "@cq/config";
 import type { SQL } from "bun";
 import { resolve } from "node:path";
 import {
   assertAttestationConstructionSupported,
   assertManagedWorktreeDispatchBindingLive,
+  assertManagedWorktreeWipClosure,
   assertImplementationEvidenceBootstrapDispatchAdmission,
   implementationEvidenceBootstrapAdmissionForTask,
   attestationNamespaceForTrustedHubProject,
@@ -3738,6 +3742,7 @@ export type DispatchRuntime =
   | {
       readonly kind: "available";
       readonly capability: DispatchCapability;
+      readonly implementationQueueRollout: UpgradeLiveImplementationQueueSummary | null;
       close(): Promise<void>;
     }
   | {
@@ -3758,6 +3763,7 @@ function available(
   backend: AttestationBackend,
   promptArtifactStore: PromptArtifactStore,
   implementationExecutorMode: "local-xdg" | "metadata-only",
+  implementationQueueRollout: UpgradeLiveImplementationQueueSummary | null,
   narrativeSource?: DispatchNarrativeSource,
   repositoryRoot?: string,
   ledgerStore?: LedgerStore,
@@ -3766,6 +3772,7 @@ function available(
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
+    implementationQueueRollout,
     capability: createDispatchCapability({
       backend,
       promptArtifactStore,
@@ -3778,6 +3785,141 @@ function available(
     }),
     close: async (): Promise<void> => backend.close(),
   });
+}
+
+async function resolveLegacyImplementationQueueRow(
+  row: AttestationEnvelope,
+  ledgerStore: LedgerStore,
+): Promise<LegacyImplementationResolution> {
+  const incompatible = (reason: string, detail?: string): LegacyImplementationResolution => ({
+    state: "incompatible",
+    detail: {
+      reason,
+      ...(detail === undefined ? {} : { detail: detail.slice(0, 512) }),
+    },
+  });
+  const binding = row.gitEffectBinding;
+  if (binding === undefined || row.promptProvenance.roleId !== "implement-worker") {
+    return incompatible("managed-worktree-binding-unavailable");
+  }
+  let evidence: GitChangeBrokerResultEvidence | undefined;
+  try {
+    evidence = brokerResultEvidence(row.output ?? null);
+  } catch (error) {
+    return incompatible(
+      "worker-result-evidence-malformed",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (evidence === undefined) return incompatible("passing-worker-result-unavailable");
+  let normalized: GitChangeBrokerResultEvidence;
+  try {
+    normalized = await validateGitChangeBrokerResultEvidence(
+      {
+        ...binding,
+        attestationId: row.attestationId,
+        generation: row.generation,
+        roleId: "implement-worker",
+        surface: row.promptProvenance.surface,
+        childCancelAt: row.deadlines.childCancelAt,
+      },
+      evidence,
+    );
+  } catch (error) {
+    return incompatible(
+      "worker-result-evidence-rejected",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const resultCommit = normalized.resultCommit;
+  if (resultCommit === null) return incompatible("worker-result-commit-unavailable");
+  if (row.gateSubmittedOutputDigest === undefined) {
+    return incompatible("staged-output-digest-unavailable");
+  }
+
+  if (row.state === "result-stored") {
+    const output = row.output;
+    if (!dispatchObject(output) || row.outputDigest !== dispatchPayloadDigest(output)) {
+      return incompatible("completed-output-binding-mismatch");
+    }
+    const gate = output["supervisedGateEvidence"];
+    if (
+      !dispatchObject(gate) ||
+      !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+      gate["attestationId"] !== row.attestationId ||
+      gate["generation"] !== row.generation ||
+      gate["taskId"] !== binding.taskId ||
+      gate["worktreePath"] !== binding.worktreePath ||
+      gate["branch"] !== binding.branch ||
+      gate["resultCommit"] !== resultCommit ||
+      gate["promptDigest"] !== row.promptProvenance.promptDigest ||
+      gate["catalogHash"] !== row.promptProvenance.catalogHash ||
+      gate["inputDigest"] !== row.promptProvenance.inputDigest
+    ) {
+      return incompatible("completed-green-evidence-rejected");
+    }
+    try {
+      await assertManagedWorktreeWipClosure(binding, resultCommit);
+    } catch (error) {
+      return incompatible(
+        "completed-green-worktree-projection-rejected",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    return {
+      state: "completed-green",
+      evidence: {
+        outputDigest: row.outputDigest,
+        resultCommit,
+        managedWorktreeBindingDigest: dispatchPayloadDigest(
+          binding as unknown as DispatchJSONValue,
+        ),
+        supervisedGateEvidenceDigest: dispatchPayloadDigest(gate),
+      },
+    };
+  }
+  if (row.state !== "gate-pending") {
+    return incompatible(`unsupported-legacy-state-${row.state}`);
+  }
+
+  try {
+    const taskEvidence = currentRecoveryTaskEvidence(ledgerStore, binding.taskId);
+    const integrationRef = await readOnlyGit(binding.repositoryRoot, [
+      "symbolic-ref",
+      "--quiet",
+      "HEAD",
+    ]);
+    const resultTree = await readOnlyGit(binding.worktreePath, [
+      "rev-parse",
+      "--verify",
+      `${resultCommit}^{tree}`,
+    ]);
+    return {
+      state: "compatible",
+      candidate: {
+        repositoryId: binding.repositoryId,
+        integrationRef,
+        authority: {
+          taskId: binding.taskId,
+          goalRef: exactGoalRef(ledgerStore, binding.taskId),
+          finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
+        },
+        observedBaseCommit: binding.guardedRebaseBridge?.ontoCommit ?? binding.baseCommit,
+        resultCommit,
+        resultTree,
+        gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+        packagedEnvironmentDigest: row.promptProvenance.catalogHash,
+        gitReceipts: normalized.gitReceipts,
+        gitEffectBinding: binding,
+        stagedOutputDigest: row.gateSubmittedOutputDigest,
+      },
+    };
+  } catch (error) {
+    return incompatible(
+      "queue-candidate-binding-rejected",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 export interface SingleProjectDispatchRuntimeOptions {
@@ -3902,10 +4044,31 @@ export async function createSingleProjectDispatchRuntime(
     ...(options.environment === undefined ? {} : { env: options.environment }),
   });
 
+  let implementationQueueRollout: UpgradeLiveImplementationQueueSummary | null = null;
+  if (options.resolved.implementationEvidenceStore !== undefined) {
+    try {
+      implementationQueueRollout = await upgradeLiveImplementationQueueRows({
+        backend: attestationBackend,
+        now: () => new Date().toISOString(),
+        resolve: async (row) =>
+          await resolveLegacyImplementationQueueRow(row, options.resolved.store),
+        withProtectedManagedWorktree: async (binding, operation) =>
+          await withManagedWorktreeEffectLock(binding, {}, async () => {
+            await assertManagedWorktreeDispatchBindingLive(binding);
+            return await operation();
+          }),
+      });
+    } catch (error) {
+      await attestationBackend.close();
+      throw error;
+    }
+  }
+
   return available(
     attestationBackend,
     options.promptArtifactStore,
     options.resolved.implementationEvidenceStore === undefined ? "metadata-only" : "local-xdg",
+    implementationQueueRollout,
     createDispatchNarrativeSource(options.resolved.store, namespace.projectKey),
     options.resolved.configRoot,
     options.resolved.store,
@@ -3939,6 +4102,7 @@ export async function createPostgresHubDispatchRuntime(
     backend,
     options.promptArtifactStore,
     "metadata-only",
+    null,
     options.store === undefined
       ? undefined
       : createDispatchNarrativeSource(options.store, namespace.projectKey),

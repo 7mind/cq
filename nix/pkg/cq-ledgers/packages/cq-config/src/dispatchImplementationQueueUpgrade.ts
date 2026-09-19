@@ -1,5 +1,6 @@
 import {
   dispatchPayloadDigest,
+  attestationRowDigest,
   isAttestationTombstone,
   type AttestationEnvelope,
   type DispatchGitEffectBinding,
@@ -24,7 +25,12 @@ export const IMPLEMENTATION_QUEUE_ROLLOUT_CONTRACT = Object.freeze({
 
 type Candidate = Omit<
   EnqueueImplementationCandidateRequest,
-  "namespace" | "actor" | "attestationId" | "generation" | "rollout"
+  | "namespace"
+  | "actor"
+  | "attestationId"
+  | "generation"
+  | "rollout"
+  | "expectedLegacyRowDigest"
 >;
 
 export interface RecoveredImplementationCompletion {
@@ -60,7 +66,10 @@ export interface UpgradeLiveImplementationQueueOptions {
   readonly backend: AttestationBackend;
   readonly now: () => string;
   resolve(row: AttestationEnvelope): Promise<LegacyImplementationResolution>;
-  protectManagedWorktree(binding: DispatchGitEffectBinding): Promise<void>;
+  withProtectedManagedWorktree<T>(
+    binding: DispatchGitEffectBinding,
+    operation: () => Promise<T>,
+  ): Promise<T>;
 }
 
 export interface UpgradeLiveImplementationQueueSummary {
@@ -168,6 +177,7 @@ function exactCompletedGreenEvidence(
 async function recordDisposition(
   options: UpgradeLiveImplementationQueueOptions,
   row: AttestationEnvelope,
+  expectedRowDigest: string,
   decision: ImplementationQueueRollout,
 ): Promise<void> {
   await options.backend.transact({ kind: "handle", handle: row }, (store) => {
@@ -176,6 +186,9 @@ async function recordDisposition(
       throw new Error(`legacy implementation row ${handleKey(row)} disappeared during rollout`);
     }
     if (current.implementationQueueRollout !== undefined) return;
+    if (attestationRowDigest(current) !== expectedRowDigest) {
+      throw new Error(`legacy implementation row ${handleKey(row)} changed during rollout`);
+    }
     if (current.implementationQueue !== undefined) {
       throw new Error(`legacy implementation row ${handleKey(row)} entered the queue concurrently`);
     }
@@ -214,17 +227,14 @@ export async function upgradeLiveImplementationQueueRows(
     executionUncertain: 0,
   };
 
-  for (const row of rows) {
-    let worktreeProtected = false;
-    if (row.gitEffectBinding !== undefined) {
-      await options.protectManagedWorktree(row.gitEffectBinding);
-      worktreeProtected = true;
-    }
+  const processRow = async (row: AttestationEnvelope, worktreeProtected: boolean) => {
+    const expectedRowDigest = attestationRowDigest(row);
     const decidedAt = options.now();
     if (row.state === "gate-running") {
       await recordDisposition(
         options,
         row,
+        expectedRowDigest,
         rollout(
           "execution-uncertain",
           decidedAt,
@@ -233,7 +243,7 @@ export async function upgradeLiveImplementationQueueRows(
         ),
       );
       counts.executionUncertain += 1;
-      continue;
+      return;
     }
 
     const resolution = await options.resolve(row);
@@ -241,16 +251,18 @@ export async function upgradeLiveImplementationQueueRows(
       await recordDisposition(
         options,
         row,
+        expectedRowDigest,
         rollout("parked-incompatible", decidedAt, resolution.detail, worktreeProtected),
       );
       counts.parkedIncompatible += 1;
-      continue;
+      return;
     }
     if (resolution.state === "completed-green") {
       if (!exactCompletedGreenEvidence(row, resolution.evidence)) {
         await recordDisposition(
           options,
           row,
+          expectedRowDigest,
           rollout(
             "parked-incompatible",
             decidedAt,
@@ -259,11 +271,12 @@ export async function upgradeLiveImplementationQueueRows(
           ),
         );
         counts.parkedIncompatible += 1;
-        continue;
+        return;
       }
       await recordDisposition(
         options,
         row,
+        expectedRowDigest,
         rollout(
           "adopted-completed-green",
           decidedAt,
@@ -272,7 +285,7 @@ export async function upgradeLiveImplementationQueueRows(
         ),
       );
       counts.adoptedCompletedGreen += 1;
-      continue;
+      return;
     }
     if (row.state !== "gate-pending") {
       throw new Error(`compatible queue adoption requires gate-pending, observed ${row.state}`);
@@ -293,12 +306,13 @@ export async function upgradeLiveImplementationQueueRows(
         generation: row.generation,
         ...resolution.candidate,
         rollout: unqualifiedRollout,
+        expectedLegacyRowDigest: expectedRowDigest,
       },
       { now: options.now },
     );
     if (!exactCompletion) {
       counts.adoptedUnqualified += 1;
-      continue;
+      return;
     }
     const qualifiedRollout = rollout(
       "adopted-qualified",
@@ -325,6 +339,17 @@ export async function upgradeLiveImplementationQueueRows(
       throw new Error(`exact recovered completion for ${handleKey(row)} was not qualified`);
     }
     counts.adoptedQualified += 1;
+  };
+
+  for (const row of rows) {
+    if (row.gitEffectBinding === undefined) {
+      await processRow(row, false);
+      continue;
+    }
+    await options.withProtectedManagedWorktree(
+      row.gitEffectBinding,
+      async () => await processRow(row, true),
+    );
   }
 
   return Object.freeze({

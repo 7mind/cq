@@ -169,8 +169,9 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      protectManagedWorktree: async (binding) => {
+      withProtectedManagedWorktree: async (binding, operation) => {
         protectedTasks.push(binding.taskId);
+        return await operation();
       },
       resolve: async (row) => {
         const taskId = row.gitEffectBinding!.taskId;
@@ -295,7 +296,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      protectManagedWorktree: async () => undefined,
+      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
       resolve: async (row) => ({
         state: "completed-green",
         evidence: {
@@ -339,7 +340,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const mismatchSummary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      protectManagedWorktree: async () => undefined,
+      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
       resolve: async (row) => ({
         state: "completed-green",
         evidence: {
@@ -372,7 +373,7 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const summary = await upgradeLiveImplementationQueueRows({
       backend,
       now,
-      protectManagedWorktree: async () => undefined,
+      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
       resolve: async (row) => ({
         state: "compatible" as const,
         candidate: {
@@ -415,6 +416,59 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     expect(migrated.stagedCompletionQualification).toBeUndefined();
   });
 
+  test("fences a legacy row changed during asynchronous resolution", async () => {
+    instant += 1_000;
+    const staged = await stage("T65219", 109);
+    let releaseResolution!: () => void;
+    const resolutionReleased = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    let markResolutionStarted!: () => void;
+    const resolutionStarted = new Promise<void>((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    const upgrading = upgradeLiveImplementationQueueRows({
+      backend,
+      now,
+      withProtectedManagedWorktree: async (_binding, operation) => await operation(),
+      resolve: async (row) => {
+        markResolutionStarted();
+        await resolutionReleased;
+        return {
+          state: "compatible" as const,
+          candidate: {
+            repositoryId: row.gitEffectBinding!.repositoryId,
+            integrationRef: "refs/heads/main",
+            authority: {
+              taskId: "T65219",
+              goalRef: "goals:G213",
+              finalizedManifestDigest: "d".repeat(64),
+            },
+            observedBaseCommit: row.gitEffectBinding!.baseCommit,
+            resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
+              "resultCommit"
+            ] as string,
+            resultTree: "e".repeat(40),
+            gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            packagedEnvironmentDigest: "f".repeat(64),
+            gitReceipts: [],
+            gitEffectBinding: row.gitEffectBinding!,
+            stagedOutputDigest: row.gateSubmittedOutputDigest!,
+          },
+        };
+      },
+    });
+    await resolutionStarted;
+    instant += 1_000;
+    replaceRow("T65219", (row) => ({ ...row, gateSubmittedAt: now() }));
+    releaseResolution();
+
+    await expect(upgrading).rejects.toThrow("changed during rollout");
+    const persisted = store.read(staged.prepared) as AttestationEnvelope;
+    expect(persisted.implementationQueue).toBeUndefined();
+    expect(persisted.implementationQueueRollout).toBeUndefined();
+  });
+
   test.skipIf(PG_URL === undefined)(
     "persists the same pre-queue adoption through the production PostgreSQL backend",
     async () => {
@@ -436,9 +490,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
         const summary = await upgradeLiveImplementationQueueRows({
           backend: pgBackend,
           now: pgNow,
-          protectManagedWorktree: async (binding) => {
+          withProtectedManagedWorktree: async (binding, operation) => {
             expect(binding).toEqual(staged.binding);
             protectedWorktrees += 1;
+            return await operation();
           },
           resolve: async (row) => ({
             state: "compatible" as const,

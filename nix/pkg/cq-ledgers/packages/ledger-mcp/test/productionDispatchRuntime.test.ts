@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -9,12 +10,18 @@ import { ATTESTATION_TABLE, type PromptSurface } from "@cq/config";
 import {
   attestationNamespaceForTrustedHubProject,
   createAttestationStoreForConstruction,
+  resolveSingleProjectAttestationNamespace,
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  createInMemoryImplementationEvidenceStore,
+  prepareManagedWorktree,
+  type LedgerStore,
   type ResolvedLedgerStore,
 } from "@cq/ledger";
 import {
   createPostgresHubDispatchRuntime,
+  createDispatchCapability,
   createSingleProjectDispatchRuntime,
   refuseDispatchRuntime,
 } from "../src/dispatchCapability.js";
@@ -63,6 +70,50 @@ function workerArtifactStore(surface: PromptSurface): PromptArtifactStore {
       return { metadata, bytes: new Uint8Array([1]) };
     },
   };
+}
+
+function git(repositoryRoot: string, ...args: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", repositoryRoot, ...args], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  return result.stdout.toString().trim();
+}
+
+function finalizedTaskStore(taskId: string): LedgerStore {
+  const task = {
+    id: taskId,
+    milestoneId: "M6521",
+    status: "wip",
+    fields: {
+      headline: "Adopt legacy queue candidate",
+      description: "Upgrade the staged row before local queue service starts.",
+      acceptance: "The staged result is enrolled without invented completion.",
+      ledgerRefs: ["goals:G213"],
+      worksetOwnerRef: "goals:G213",
+      worksetOwnerEdgeKind: "active-current-draft",
+    },
+    createdAt: "2026-09-19T10:00:00.000Z",
+    updatedAt: "2026-09-19T10:00:00.000Z",
+    author: "planner",
+    session: "plan",
+  };
+  return {
+    fetchItem: (ledgerId: string) =>
+      ledgerId === "tasks"
+        ? task
+        : {
+            fields: {
+              [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify({
+                revision: 1,
+                milestones: [{ key: "queue", id: "M6521" }],
+                tasks: [{ key: "adopt", id: taskId }],
+              }),
+            },
+          },
+  } as unknown as LedgerStore;
 }
 
 describe("production dispatch runtime construction", () => {
@@ -129,6 +180,171 @@ describe("production dispatch runtime construction", () => {
     await runtime.close();
     await expect(runtime.capability.fetch(handle)).rejects.toThrow(/closed/i);
     await store.dispose();
+  });
+
+  test("upgrades legacy staged rows before exposing the local XDG executor", async () => {
+    const repositoryRoot = await mkdtemp(path.join(tmpdir(), "ledger-mcp-rollout-runtime-"));
+    const stateHome = await mkdtemp(path.join(tmpdir(), "ledger-mcp-rollout-state-"));
+    roots.push(repositoryRoot, stateHome);
+    const projectId = `rollout-runtime-${crypto.randomUUID()}`;
+    await writeFile(
+      path.join(repositoryRoot, "cq.toml"),
+      `[ledger]\nbackend = "xdg"\nprojectId = "${projectId}"\n`,
+      "utf8",
+    );
+    git(repositoryRoot, "init", "-q", "-b", "main");
+    git(repositoryRoot, "config", "user.name", "T6521");
+    git(repositoryRoot, "config", "user.email", "t6521@example.invalid");
+    await writeFile(path.join(repositoryRoot, "base.txt"), "base\n");
+    git(repositoryRoot, "add", "base.txt");
+    git(repositoryRoot, "commit", "-q", "-m", "seed rollout runtime");
+    const baseCommit = git(repositoryRoot, "rev-parse", "HEAD");
+    const taskId = "T6521";
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot, taskId, baseCommit },
+      { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const ledgerStore = finalizedTaskStore(taskId);
+    const implementationEvidenceStore = createInMemoryImplementationEvidenceStore();
+    const environment = { XDG_STATE_HOME: stateHome };
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "direct",
+      backend: "xdg",
+      repoRoot: repositoryRoot,
+      projectId,
+    });
+    const seedBackend = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: environment,
+    });
+    const seedCapability = createDispatchCapability({
+      backend: seedBackend,
+      promptArtifactStore: workerArtifactStore("codex"),
+      repositoryRoot,
+      ledgerStore,
+      implementationEvidenceStore,
+      now: () => "2026-09-19T10:00:00.000Z",
+    });
+    const prepared = await seedCapability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId,
+        headline: "Adopt legacy queue candidate",
+        description: "Upgrade the staged row before local queue service starts.",
+        acceptance: "The staged result is enrolled without invented completion.",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        baseCommit,
+        round: 0,
+        startingCommit: baseCommit,
+      },
+      idempotencyKey: "T6521-production-rollout",
+      timeoutMs: 600_000,
+      expectedChild: {
+        childId: "implement-worker#production-rollout",
+        runId: "production-rollout-run",
+      },
+    });
+    if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+      throw new Error("legacy rollout seed dispatch was rejected");
+    }
+    await seedCapability.fetchInput({
+      attestationId: prepared.prepared.attestationId,
+      generation: prepared.prepared.generation,
+      inputCapability: prepared.prepared.inputCapability,
+    });
+    const candidateBody = "candidate\n";
+    await writeFile(path.join(managed.handle.absolutePath, "candidate.txt"), candidateBody);
+    const receipt = await seedCapability.gitCommit!({
+      attestationId: prepared.prepared.attestationId,
+      generation: prepared.prepared.generation,
+      gitChangeCapability: prepared.prepared.gitChangeCapability,
+      operationId: "T6521-production-rollout-result",
+      expectedHead: baseCommit,
+      message: "stage production rollout candidate",
+      changes: [
+        {
+          kind: "add",
+          path: "candidate.txt",
+          newState: {
+            mode: "100644",
+            digest: createHash("sha256").update(candidateBody).digest("hex"),
+          },
+        },
+      ],
+    });
+    const output = {
+      taskId,
+      status: "pass",
+      resultCommit: receipt.newHead,
+      branch: managed.handle.branch,
+      actualWorktreePath: managed.handle.absolutePath,
+      filesTouched: [...receipt.paths],
+      gitReceipts: [{ ...receipt, objectOids: [...receipt.objectOids], paths: [...receipt.paths] }],
+      checkSummary: "legacy focused checks passed",
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit,
+        headCommit: receipt.newHead,
+      },
+      summary: "legacy result awaiting queue rollout",
+    } as const;
+    expect(
+      await seedCapability.storeResult({
+        resultCapability: prepared.prepared.resultCapability,
+        output,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    await seedBackend.close();
+
+    const runtime = await createSingleProjectDispatchRuntime({
+      construction: "direct",
+      resolved: {
+        store: ledgerStore,
+        implementationEvidenceStore,
+        configRoot: repositoryRoot,
+        backend: "xdg",
+        branch: "cq-ledger",
+        projectKey: projectId,
+      },
+      promptArtifactStore: workerArtifactStore("codex"),
+      environment,
+    });
+    expect(runtime.kind).toBe("available");
+    if (runtime.kind === "unavailable") throw new Error(runtime.reason);
+    expect(runtime.implementationQueueRollout).toMatchObject({
+      contract: "g213-t4",
+      considered: 1,
+      adoptedUnqualified: 1,
+      adoptedQualified: 0,
+      adoptedCompletedGreen: 0,
+      parkedIncompatible: 0,
+      executionUncertain: 0,
+    });
+    const peer = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: environment,
+    });
+    try {
+      const rows = await peer.transact({ kind: "namespace" }, (store) => store.rows());
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        state: "gate-pending",
+        implementationQueue: { state: "enqueued" },
+        implementationQueueRollout: {
+          contract: "g213-t4",
+          disposition: "adopted-unqualified",
+          worktreeProtected: true,
+        },
+      });
+    } finally {
+      await peer.close();
+      await runtime.close();
+    }
   });
 
   livePgTest(
