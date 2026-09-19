@@ -18,6 +18,82 @@ afterAll(() => {
 });
 
 describe("ledger-MCP SQLite implementation queue races", () => {
+  test("completion reservation survives reopen and only its exact release retires the lease", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-t6520-completion-reservation-"));
+    roots.push(root);
+    const namespace: AttestationNamespace = {
+      backend: "xdg",
+      projectKey: "ledger-mcp-sqlite-completion-reservation",
+    };
+    const registry = new SqliteAttestationConnectionRegistry();
+    const open = (): SqliteAttestationBackend =>
+      new SqliteAttestationBackend({
+        namespace,
+        dbPath: join(root, ATTESTATION_DB_FILENAME),
+        registry,
+      });
+    const primary = open();
+    const fixture = new ImplementationCandidateQueueFixture(primary);
+    const staged = await fixture.stage({
+      taskId: "T6520",
+      repositoryId: "d".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G6518",
+      finalizedManifestDigest: "e".repeat(64),
+    });
+    const qualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "sqlite-completion-holder",
+    });
+    if (acquired.state !== "leased" || qualified.queue.qualification === undefined) {
+      throw new Error("SQLite completion candidate did not lease with qualification");
+    }
+    const binding = {
+      operationId: "sqlite-completion-reservation",
+      completionRef: `cq-implementation-completion:v1:${"1".repeat(64)}`,
+      mergeOperationId: "sqlite-completion-merge",
+      taskRef: "tasks:T6520",
+      resultCommit: staged.candidate.resultCommit,
+    } as const;
+    await fixture.adapter.reserveCompletion({
+      ...acquired.lease,
+      expectedPartitionRevision: acquired.partitionRevision,
+      qualificationDigest: qualified.queue.qualification.qualificationDigest,
+      ...binding,
+    });
+    await primary.close();
+
+    const restarted = open();
+    const restartedAdapter = new ImplementationCandidateQueueAdapter({
+      backend: restarted,
+      actor: "trusted-parent",
+      now: fixture.clock.now,
+    });
+    try {
+      const retained = await restartedAdapter.inspectLease(acquired.lease);
+      expect(retained.completionReservation).toMatchObject(binding);
+      await expect(
+        restartedAdapter.park({
+          ...acquired.lease,
+          expectedPartitionRevision: retained.partitionRevision,
+        }),
+      ).rejects.toMatchObject({ reason: "completion-reserved" });
+      const released = await restartedAdapter.releaseCompletion({
+        ...acquired.lease,
+        expectedPartitionRevision: retained.partitionRevision,
+        ...binding,
+        detail: { operation: "protected-completion", ...binding },
+      });
+      expect(released.state).toBe("released");
+    } finally {
+      await restarted.close();
+    }
+  });
+
   test("peer processes elect one lease winner and fence one stale recovery after reopen", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-t6518-queue-race-"));
     roots.push(root);
