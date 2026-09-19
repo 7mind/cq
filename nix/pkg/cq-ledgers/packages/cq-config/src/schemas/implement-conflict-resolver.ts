@@ -275,12 +275,12 @@ const outputSchema = {
 
 /**
  * The conflict-resolver per-role schema sidecar (storage-format decision 3).
- * `version: 4` requires durable conflict-continuation evidence for both
- * terminal statuses and closes their resultCommit/blockedReason invariants.
+ * `version: 5` (bumped from 4, T6521) requires typed focused-check evidence in
+ * addition to durable conflict-continuation evidence for both terminal states.
  */
 export const implementConflictResolverSidecar: RoleSchemaSidecar = {
   id: "implement-conflict-resolver",
-  version: 4,
+  version: 5,
   inputSchema,
   outputSchema,
 };

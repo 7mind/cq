@@ -215,8 +215,9 @@ const STAGED_OUTPUT: DispatchJSONValue = {
 };
 
 const OTHER_OUTPUT: DispatchJSONValue = {
-  ...(OUTPUT as object),
+  ...(STAGED_OUTPUT as object),
   status: "fail",
+  resultCommit: null,
   blockedReason: "x",
 } as DispatchJSONValue;
 

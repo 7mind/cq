@@ -684,15 +684,15 @@ export const implementWorkerStagedOutputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 10` (bumped from 9, T2852): inherited receipts leave the worker
- * input and every correction output carries only its fresh receipt suffix.
- * The server reconstructs and validates the complete durable chain. A stale
- * deployed root rendered against the v9 contract must not be mistaken for this one.
+ * `version: 11` (bumped from 10, T6521): terminal status now determines the
+ * result-commit, blocked-reason, and gate-evidence arms for both staged and
+ * finalized output. A stale deployed root rendered against the v10 contract
+ * must not be mistaken for this one.
  * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 10,
+  version: 11,
   inputSchema,
   outputSchema,
 };
