@@ -204,8 +204,8 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
     expect(validateAgainstSchema(implementWorkerSidecar.outputSchema, fabricated).ok).toBe(false);
   });
 
-  test("sidecar version advanced for the T2852 bounded receipt-suffix contract", () => {
-    expect(implementWorkerSidecar.version).toBe(10);
+  test("sidecar version includes the validation-intent contract", () => {
+    expect(implementWorkerSidecar.version).toBe(12);
   });
 });
 

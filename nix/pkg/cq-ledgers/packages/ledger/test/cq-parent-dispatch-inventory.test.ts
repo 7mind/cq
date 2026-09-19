@@ -247,7 +247,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     const narrativeCourier =
       "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
     const refsOnly =
-      "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
+      '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
 
     for (const body of [claudeImplementDispatch, codexImplementDispatch, piImplementDispatch]) {
       expect(normalize(body)).toContain(normalize(refsOnly));

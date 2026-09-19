@@ -474,7 +474,8 @@ incompatible rows are durably parked and legacy `gate-running` rows are
 `execution-uncertain`. Existing exact green evidence may be adopted only after
 its output, result commit, managed-worktree binding, and supervised-gate digest
 all match. Never synthesize completion evidence or revive an old generation.
-G191 consumes this contract; G213 does not depend on G191.
+The downstream implementation consumer uses this contract; the queue rollout
+producer does not depend on that consumer.
 
 **Full-gate cardinality.** Worker and conflict-resolver children run typed
 focused checks only. For each candidate generation, trusted result storage runs

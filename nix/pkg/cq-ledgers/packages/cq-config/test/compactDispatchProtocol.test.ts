@@ -130,6 +130,7 @@ const ROLE_INPUTS = {
     worktreePath: "/tmp/wt-T682",
     branch: "implement/T682",
     baseCommit: "92129aeb".padEnd(40, "0"),
+    validationIntent: "focused-only",
     conflictingFiles: ["src/compactDispatchProtocol.ts"],
     conflictState: TEST_GIT_CONFLICT_STATE,
   },

@@ -92,6 +92,7 @@ describe("D143 implement-role worktreePath contract [BA]", () => {
       taskId: "T2010",
       branch: "implement/T2010",
       baseCommit: "a".repeat(40),
+      validationIntent: "focused-only",
       conflictingFiles: ["a.ts"],
       conflictState: TEST_GIT_CONFLICT_STATE,
     };

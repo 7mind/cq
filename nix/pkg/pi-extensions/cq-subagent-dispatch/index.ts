@@ -1705,7 +1705,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 10,
+    version: 12,
     input: [
       {
         required: [
@@ -1715,6 +1715,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "round",
           "startingCommit",
           "taskId",
+          "validationIntent",
         ],
         kinds: {
           acceptance: ["string"],
@@ -1729,6 +1730,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           round: ["integer"],
           startingCommit: ["string"],
           taskId: ["string"],
+          validationIntent: ["string"],
           worktreePath: ["string"],
         },
         closed: true,
@@ -1754,6 +1756,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           branch: ["string"],
           checkSummary: ["string"],
           filesTouched: ["array"],
+          focusedChecks: ["array"],
           gateDurationMs: ["integer"],
           gitLineage: ["object"],
           gitReceipts: ["array"],
@@ -1911,10 +1914,17 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-conflict-resolver": {
-    version: 4,
+    version: 6,
     input: [
       {
-        required: ["baseCommit", "branch", "conflictState", "conflictingFiles", "taskId"],
+        required: [
+          "baseCommit",
+          "branch",
+          "conflictState",
+          "conflictingFiles",
+          "taskId",
+          "validationIntent",
+        ],
         kinds: {
           baseCommit: ["string"],
           baseSideNote: ["string"],
@@ -1924,6 +1934,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           description: ["string"],
           headline: ["string"],
           taskId: ["string"],
+          validationIntent: ["string"],
           worktreePath: ["string"],
         },
         closed: true,
@@ -1937,6 +1948,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "checkSummary",
           "conflictReceipts",
           "filesResolved",
+          "focusedChecks",
           "resultCommit",
           "status",
           "summary",
@@ -1949,6 +1961,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           checkSummary: ["string"],
           conflictReceipts: ["array"],
           filesResolved: ["array"],
+          focusedChecks: ["array"],
           resultCommit: ["null", "string"],
           status: ["string"],
           summary: ["string"],

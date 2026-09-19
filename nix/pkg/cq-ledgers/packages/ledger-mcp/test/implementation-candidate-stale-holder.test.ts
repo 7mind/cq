@@ -787,6 +787,7 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
           backend: restartedBackend,
           promptArtifactStore: candidatePromptArtifacts(),
           ledgerStore,
+          implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
           repositoryRoot: root,
           worktreeStateDir: stateDir,
           now: fixture.clock.now,

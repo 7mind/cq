@@ -139,6 +139,7 @@ async function fixture() {
       worktreePath: managed.handle.absolutePath,
       branch: managed.handle.branch,
       baseCommit,
+      validationIntent: "focused-only",
       conflictingFiles: ["a.txt"],
       conflictState,
     })) as DispatchJSONValue,
