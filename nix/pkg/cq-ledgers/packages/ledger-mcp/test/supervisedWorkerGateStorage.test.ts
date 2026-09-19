@@ -1090,6 +1090,88 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       state: "consumed",
       output: { focusedChecks: [{ exitCode: 0, passCount: 1, failCount: 0 }] },
     });
+    if (subject.prepared.parentGateCapability === undefined) {
+      throw new Error("focused dispatch omitted parent coordination authority");
+    }
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        holderId: "focused-validation-coordinator",
+        parentGateCapability: subject.prepared.parentGateCapability,
+      }),
+    ).toMatchObject({ state: "empty", partitionKey: qualified.partitionKey });
+    expect(runner.requests).toHaveLength(0);
+  });
+
+  test("parent validation intent rejects focused/final evidence substitution before the gate [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const scenarios = [
+      {
+        intent: "final" as const,
+        output: (subject: GateFixture) => ({
+          ...subject.output,
+          focusedChecks: [
+            { command: "bun test substituted.test.ts", exitCode: 0, passCount: 1, failCount: 0 },
+          ],
+        }),
+        expected: "final validation cannot substitute",
+      },
+      {
+        intent: "focused-only" as const,
+        output: (subject: GateFixture) => {
+          const { focusedChecks: _focusedChecks, ...withoutFocusedChecks } = subject.output as
+            typeof subject.output & { readonly focusedChecks?: DispatchJSONValue };
+          return withoutFocusedChecks;
+        },
+        expected: "focused-only validation requires",
+      },
+    ];
+    for (const scenario of scenarios) {
+      const runner = new GateDummy();
+      const subject = await fixtureWithDispatchBase(
+        runner,
+        "managed",
+        () => "2026-08-12T20:00:00.000Z",
+        false,
+        true,
+        undefined,
+        artifactStore(),
+        "memory",
+        scenario.intent,
+      );
+      expect(
+        await subject.capability.storeResult({
+          resultCapability: subject.prepared.resultCapability,
+          output: scenario.output(subject),
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      if (
+        subject.capability.qualifyImplementationCandidate === undefined ||
+        subject.capability.coordinateImplementationCandidate === undefined
+      ) {
+        throw new Error("implementation candidate runtime is unavailable");
+      }
+      const qualified = await subject.capability.qualifyImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+        childThreadId: `${scenario.intent}-substitution-child-thread`,
+        expectedRunId: subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: "2026-08-12T20:00:02.000Z",
+        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      });
+      if (qualified.state !== "queued") throw new Error("substitution candidate did not qualify");
+      await expect(
+        subject.capability.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: `${scenario.intent}-substitution-coordinator`,
+        }),
+      ).rejects.toThrow(scenario.expected);
+      expect(runner.requests).toHaveLength(0);
+    }
   });
 
   // regression: T6520 round 3 — uniqueness is namespace-wide and a
@@ -2666,11 +2748,21 @@ throw new Error("unexpected controlled cq invocation");
           reason: "gate-rejected",
           details: {
             kind: "cq-supervised-gate-rejection",
-            version: 1,
+            version: 2,
             command:
               'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check',
             ...result,
             outputTail: "controlled red gate",
+            diagnosticArtifact: {
+              kind: "cq-supervised-gate-diagnostic-artifact",
+              version: 1,
+              attestationId: subject.prepared.attestationId,
+              generation: subject.prepared.generation,
+              taskId: "T2081",
+              resultCommit: subject.receipt.newHead,
+              firstFailure: null,
+              failureIndex: [],
+            },
           },
         },
       });
@@ -2719,6 +2811,69 @@ throw new Error("unexpected controlled cq invocation");
     }
     expect(retained.includes(secret)).toBe(false);
     expect(retained).toContain("[REDACTED:api-key]");
+    expect(await finalize(subject)).toEqual(rejected);
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  test("D500 retains a redacted exact-attempt failure index through terminal fetch [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const secret = `sk-${"D".repeat(32)}`;
+    const runner = new GateDummy({
+      gateExitCode: 1,
+      passCount: 2,
+      failCount: 2,
+      gateDurationMs: 7,
+      capturedAt: "2026-08-12T20:00:07.000Z",
+      outputTail: `(fail) first ${secret}\n2 pass\n2 fail`,
+      diagnosticArtifact: {
+        reportDigest: "d".repeat(64),
+        failures: [
+          {
+            identity: `first ${secret}`,
+            reference: "packages/example/test/first.test.ts",
+            assertion: `expected ${secret} to be absent`,
+          },
+          {
+            identity: "second failure",
+            reference: "packages/example/test/second.test.ts",
+            assertion: "expected true to be false",
+          },
+        ],
+      },
+    });
+    const subject = await fixture(runner);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const rejected = await finalize(subject);
+    expect(rejected).toMatchObject({ state: "aborted", result: { reason: "gate-rejected" } });
+    if (rejected.state !== "aborted") throw new Error("D500 gate unexpectedly passed");
+    const fetched = await subject.capability.fetch({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+    });
+    expect(fetched).toEqual(rejected.result);
+    expect(fetched).toMatchObject({
+      state: "aborted",
+      details: {
+        version: 2,
+        diagnosticArtifact: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+          taskId: "T2081",
+          resultCommit: subject.receipt.newHead,
+          capturedAt: "2026-08-12T20:00:07.000Z",
+          reportDigest: "d".repeat(64),
+          firstFailure: {
+            identity: "first [REDACTED:api-key]",
+            assertion: "expected [REDACTED:api-key] to be absent",
+          },
+          failureIndex: [
+            { identity: "first [REDACTED:api-key]" },
+            { identity: "second failure" },
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(fetched)).not.toContain(secret);
+    expect(runner.requests).toHaveLength(1);
     expect(await finalize(subject)).toEqual(rejected);
     expect(runner.requests).toHaveLength(1);
   });

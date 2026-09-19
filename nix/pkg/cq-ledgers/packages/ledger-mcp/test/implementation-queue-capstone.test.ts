@@ -439,6 +439,7 @@ describe("canonical implementation queue capstone [Behavioral-Active Blackbox-Gr
           baseCommit,
           round: 0,
           startingCommit: baseCommit,
+          validationIntent: "final",
         },
         idempotencyKey: "T6521-capstone-public-flow",
         timeoutMs: 600_000,

@@ -38,6 +38,11 @@ import type { RoleSchemaSidecar } from "../promptCatalog.js";
 /** The two worker terminal-status tokens. */
 export const IMPLEMENT_WORKER_STATUSES = ["pass", "fail"] as const;
 
+/** Parent-selected validation scope; the child may report but never broaden it. */
+export const IMPLEMENT_WORKER_VALIDATION_INTENTS = ["focused-only", "final"] as const;
+export type ImplementWorkerValidationIntent =
+  (typeof IMPLEMENT_WORKER_VALIDATION_INTENTS)[number];
+
 /** Full lowercase object SHA — every commit field on this contract uses it. */
 export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
 
@@ -45,10 +50,8 @@ export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
 export const IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND =
   'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
 
-/** Typed terminal details for a completed deterministic parent-gate rejection. */
-export interface ImplementWorkerSupervisedGateRejectionDetails {
+interface ImplementWorkerSupervisedGateRejectionBase {
   readonly kind: "cq-supervised-gate-rejection";
-  readonly version: 1;
   readonly command: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
   readonly gateExitCode: number;
   readonly passCount: number;
@@ -56,9 +59,93 @@ export interface ImplementWorkerSupervisedGateRejectionDetails {
   readonly outputTail: string;
 }
 
+export interface ImplementWorkerSupervisedGateFailureDiagnostic {
+  readonly identity: string;
+  readonly reference: string;
+  readonly assertion: string;
+}
+
+export interface ImplementWorkerSupervisedGateDiagnosticArtifact {
+  readonly kind: "cq-supervised-gate-diagnostic-artifact";
+  readonly version: 1;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly taskId: string;
+  readonly resultCommit: string;
+  readonly capturedAt: string;
+  readonly reportDigest: string;
+  readonly firstFailure: ImplementWorkerSupervisedGateFailureDiagnostic | null;
+  readonly failureIndex: readonly ImplementWorkerSupervisedGateFailureDiagnostic[];
+}
+
+export interface ImplementWorkerSupervisedGateRejectionDetailsV1
+  extends ImplementWorkerSupervisedGateRejectionBase {
+  readonly version: 1;
+}
+
+/** Current rejection details retain a redacted exact-attempt failure index. */
+export interface ImplementWorkerSupervisedGateRejectionDetailsV2
+  extends ImplementWorkerSupervisedGateRejectionBase {
+  readonly version: 2;
+  readonly diagnosticArtifact: ImplementWorkerSupervisedGateDiagnosticArtifact;
+}
+
+export type ImplementWorkerSupervisedGateRejectionDetails =
+  | ImplementWorkerSupervisedGateRejectionDetailsV1
+  | ImplementWorkerSupervisedGateRejectionDetailsV2;
+
 export const IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND =
   "cq-supervised-gate-rejection" as const;
 export const IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT = 896;
+export const IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT = 256;
+
+function isFailureDiagnostic(value: unknown): value is ImplementWorkerSupervisedGateFailureDiagnostic {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return (
+    Object.keys(record).sort().join(",") === "assertion,identity,reference" &&
+    ["identity", "reference", "assertion"].every(
+      (field) =>
+        typeof record[field] === "string" &&
+        (record[field] as string).length > 0 &&
+        Buffer.byteLength(record[field] as string, "utf8") <=
+          IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
+    )
+  );
+}
+
+function isDiagnosticArtifact(
+  value: unknown,
+): value is ImplementWorkerSupervisedGateDiagnosticArtifact {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  const failureIndex = record["failureIndex"];
+  const firstFailure = record["firstFailure"];
+  return (
+    Object.keys(record).sort().join(",") ===
+      "attestationId,capturedAt,failureIndex,firstFailure,generation,kind,reportDigest,resultCommit,taskId,version" &&
+    record["kind"] === "cq-supervised-gate-diagnostic-artifact" &&
+    record["version"] === 1 &&
+    typeof record["attestationId"] === "string" &&
+    /^att_[A-Za-z0-9_-]{32,}$/u.test(record["attestationId"]) &&
+    Number.isSafeInteger(record["generation"]) &&
+    (record["generation"] as number) >= 1 &&
+    typeof record["taskId"] === "string" &&
+    /^T[0-9]+$/u.test(record["taskId"]) &&
+    typeof record["resultCommit"] === "string" &&
+    /^[0-9a-f]{40}$/u.test(record["resultCommit"]) &&
+    typeof record["capturedAt"] === "string" &&
+    record["capturedAt"].length > 0 &&
+    typeof record["reportDigest"] === "string" &&
+    /^[0-9a-f]{64}$/u.test(record["reportDigest"]) &&
+    Array.isArray(failureIndex) &&
+    failureIndex.every(isFailureDiagnostic) &&
+    (firstFailure === null || isFailureDiagnostic(firstFailure)) &&
+    (failureIndex.length === 0
+      ? firstFailure === null
+      : JSON.stringify(firstFailure) === JSON.stringify(failureIndex[0]))
+  );
+}
 
 export function isImplementWorkerSupervisedGateRejectionDetails(
   value: unknown,
@@ -66,21 +153,22 @@ export function isImplementWorkerSupervisedGateRejectionDetails(
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Readonly<Record<string, unknown>>;
   const keys = Object.keys(record).sort();
-  const expectedKeys = [
+  const commonKeys = [
     "command",
     "failCount",
     "gateExitCode",
     "kind",
     "outputTail",
     "passCount",
-    "version",
   ];
   const countFields = ["gateExitCode", "passCount", "failCount"] as const;
   return (
-    keys.length === expectedKeys.length &&
-    keys.every((key, index) => key === expectedKeys[index]) &&
+    (record["version"] === 1
+      ? keys.join(",") === [...commonKeys, "version"].sort().join(",")
+      : record["version"] === 2 &&
+        keys.join(",") === [...commonKeys, "diagnosticArtifact", "version"].sort().join(",") &&
+        isDiagnosticArtifact(record["diagnosticArtifact"])) &&
     record["kind"] === IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND &&
-    record["version"] === 1 &&
     record["command"] === IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND &&
     countFields.every(
       (field) => Number.isSafeInteger(record[field]) && (record[field] as number) >= 0,
@@ -390,6 +478,12 @@ const inputSchema = {
       description: "The authoritative worktree tip immediately before this round launches.",
       pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
     },
+    validationIntent: {
+      type: "string",
+      enum: [...IMPLEMENT_WORKER_VALIDATION_INTENTS],
+      description:
+        "Parent-owned validation scope. focused-only accepts explicit green focused checks without launching the canonical full gate; final requires the trusted parent gate.",
+    },
     priorResultCommit: {
       type: ["string", "null"],
       description:
@@ -445,7 +539,15 @@ const inputSchema = {
       description: "The resolved model class (informational).",
     },
   },
-  required: ["taskId", "acceptance", "branch", "baseCommit", "round", "startingCommit"],
+  required: [
+    "taskId",
+    "acceptance",
+    "branch",
+    "baseCommit",
+    "round",
+    "startingCommit",
+    "validationIntent",
+  ],
   additionalProperties: false,
 } as const;
 
@@ -496,6 +598,18 @@ const failStatusArm = {
       ],
     },
   },
+} as const;
+
+const focusedCheckSchema = {
+  type: "object",
+  properties: {
+    command: { type: "string", minLength: 1 },
+    exitCode: { type: "integer" },
+    passCount: { type: "integer", minimum: 0 },
+    failCount: { type: "integer", minimum: 0 },
+  },
+  required: ["command", "exitCode", "passCount", "failCount"],
+  additionalProperties: false,
 } as const;
 
 const outputMutationTableArm = {
@@ -569,6 +683,13 @@ const outputSchema = {
       additionalProperties: false,
     },
     checkSummary: { type: "string" },
+    focusedChecks: {
+      type: "array",
+      minItems: 1,
+      items: focusedCheckSchema,
+      description:
+        "Typed focused-only evidence. The host accepts it only when the prepared input selected focused-only validation and every row is green with a nonzero aggregate pass count.",
+    },
     summary: { type: "string" },
     baseVerification: {
       ...implementWorkerBaseVerificationSchema,
@@ -636,7 +757,16 @@ const outputSchema = {
           },
           {
             required: ["supervisedGateEvidence"],
-            not: { required: ["gateDurationMs"] },
+            not: { anyOf: [{ required: ["gateDurationMs"] }, { required: ["focusedChecks"] }] },
+          },
+          {
+            required: ["focusedChecks"],
+            not: {
+              anyOf: [
+                { required: ["gateDurationMs"] },
+                { required: ["supervisedGateEvidence"] },
+              ],
+            },
           },
         ],
         properties: {
@@ -684,15 +814,15 @@ export const implementWorkerStagedOutputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 11` (bumped from 10, T6521): terminal status now determines the
- * result-commit, blocked-reason, and gate-evidence arms for both staged and
- * finalized output. A stale deployed root rendered against the v10 contract
+ * `version: 12` (bumped from 11, T6521): input now carries the parent-owned
+ * focused-only/final validation intent and finalized output has a closed
+ * focused-check arm. A stale deployed root rendered against the v11 contract
  * must not be mistaken for this one.
  * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 11,
+  version: 12,
   inputSchema,
   outputSchema,
 };

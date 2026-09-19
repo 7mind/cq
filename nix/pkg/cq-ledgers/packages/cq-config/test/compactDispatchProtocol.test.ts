@@ -82,6 +82,7 @@ const ROLE_INPUTS = {
     baseCommit: "92129aeb".padEnd(40, "0"),
     round: 0,
     startingCommit: "9".repeat(40),
+    validationIntent: "final",
   },
   "implement-reviewer": {
     taskId: "T682",

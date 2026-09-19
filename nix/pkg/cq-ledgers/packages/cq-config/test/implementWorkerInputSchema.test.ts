@@ -17,6 +17,7 @@ function baseInputPayload(): Record<string, unknown> {
     baseCommit: "a".repeat(40),
     round: 0,
     startingCommit: "b".repeat(40),
+    validationIntent: "final",
   };
 }
 
@@ -48,6 +49,24 @@ describe("D119/T903 implement-worker inputSchema", () => {
       }
     });
   }
+
+  test("parent validation intent is required and closed against substitution", () => {
+    const omitted = baseInputPayload();
+    delete omitted.validationIntent;
+    expect(validateAgainstSchema(implementWorkerSidecar.inputSchema, omitted).ok).toBe(false);
+    expect(
+      validateAgainstSchema(implementWorkerSidecar.inputSchema, {
+        ...baseInputPayload(),
+        validationIntent: "focused-only",
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateAgainstSchema(implementWorkerSidecar.inputSchema, {
+        ...baseInputPayload(),
+        validationIntent: "child-selected",
+      }).ok,
+    ).toBe(false);
+  });
 
   test("malformed startingCommit and round are rejected", () => {
     expect(

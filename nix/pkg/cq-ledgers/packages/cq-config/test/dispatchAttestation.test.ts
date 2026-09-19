@@ -160,6 +160,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
   round: 0,
   startingCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+  validationIntent: "final",
 };
 
 const REVIEWER_INPUT: DispatchJSONValue = {
@@ -1122,6 +1123,7 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       taskId: "T685",
       branch: "implement/T685",
       baseCommit: "c".repeat(40),
+      validationIntent: "focused-only",
       conflictingFiles: ["conflict.txt"],
       conflictState: TEST_GIT_CONFLICT_STATE,
     };

@@ -364,6 +364,7 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
       "baseCommit",
       "round",
       "startingCommit",
+      "validationIntent",
       "priorResultCommit",
       "resolvedModel",
     ]);
@@ -400,6 +401,7 @@ describe("server-side assembly reads the narrative the parent no longer carries"
       ...COORDINATES,
       round: 0,
       startingCommit: STARTING_COMMIT,
+      validationIntent: "final",
     });
     expect(assembled.assembledFrom).toEqual(["tasks:T978"]);
     expect(assembled.roleId).toBe("implement-worker");
@@ -895,7 +897,11 @@ describe("a refs-assembly rejection is T976's rejection, not a lifecycle state",
     // from T685's prepare (covered in dispatchAttestation.test.ts); everything
     // else is here.
     const placementOnly = ["unknown-validator-placement", "undeclared-child-side-validation"];
-    const prepareOnly = ["invalid-launch-envelope", "journal-recovery-required"];
+    const prepareOnly = [
+      "executor-unavailable",
+      "invalid-launch-envelope",
+      "journal-recovery-required",
+    ];
     expect([...observed, ...placementOnly, ...prepareOnly].sort()).toEqual(
       [...DISPATCH_PRE_LAUNCH_REJECTION_REASONS].sort(),
     );

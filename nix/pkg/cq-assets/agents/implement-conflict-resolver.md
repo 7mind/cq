@@ -11,7 +11,7 @@ description: Resolve one rebase conflict in an implementation worktree, preserve
 ## Catalogue
 ```yaml
 inputs:
-  - "task context, conflicted worktree/branch, base commit, conflicting files, parent-observed conflictState, and optional base-side note"
+  - "task context, conflicted worktree/branch, base commit, validationIntent=focused-only, conflicting files, parent-observed conflictState, and optional base-side note"
 outputs:
   - "stored structured result with durable continuation receipts and handle-only final reply"
 ioSchema:
@@ -27,6 +27,7 @@ deletion) to `git_resolve_continue`, retaining its receipt verbatim. Supply the
 parent's `conflictState` unchanged to the first call. If a receipt returns a
 next conflict, resolve it and supply only that receipt's exact state to a new
 operation; stop after a terminal receipt. Marker-free resolutions are valid.
+The parent-supplied `validationIntent` must be exactly `focused-only`.
 Then run the smallest focused checks that cover the resolved paths. Record each
 command, exit code, pass count, and fail count in `focusedChecks`; a passing
 result requires at least one executed test and no failure. Never run `bun run

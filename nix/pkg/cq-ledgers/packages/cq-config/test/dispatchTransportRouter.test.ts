@@ -354,6 +354,7 @@ function preparedFixture(
         baseCommit: "2fe2c7d5".padEnd(40, "0"),
         round: 0,
         startingCommit: "2".repeat(40),
+        validationIntent: "final",
       },
       idempotencyKey: `T1631-${targetHarness}-${sequence}`,
       timeoutMs: options?.timeoutMs ?? 60_000,

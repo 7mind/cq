@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
   CODEX_STAGED_TIMING_BASIS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
+  IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
   dispatchPayloadDigest,
   isImplementWorkerSupervisedGateRejectionDetails,
   type AuthorizedSupervisedWorkerGateContext,
@@ -75,6 +77,19 @@ export interface SupervisedWorkerGateRunResult {
   readonly gateDurationMs: number;
   readonly capturedAt: string;
   readonly outputTail: string;
+  readonly diagnosticArtifact?: SupervisedWorkerGateRunDiagnosticArtifact;
+}
+
+export interface SupervisedWorkerGateFailureDiagnostic {
+  readonly identity: string;
+  readonly reference: string;
+  readonly assertion: string;
+}
+
+/** Runner-owned, redacted JUnit index before the broker adds exact attempt binding. */
+export interface SupervisedWorkerGateRunDiagnosticArtifact {
+  readonly reportDigest: string;
+  readonly failures: readonly SupervisedWorkerGateFailureDiagnostic[];
 }
 
 export interface SupervisedWorkerGateRunner {
@@ -128,10 +143,30 @@ async function observeGateCancellation<T>(operation: Promise<T>, signal: AbortSi
 
 function supervisedGateRejectionDetails(
   run: SupervisedWorkerGateRunResult,
+  context: AuthorizedSupervisedWorkerGateContext,
+  resultCommit: string,
 ): ImplementWorkerSupervisedGateRejectionDetails {
+  const failureIndex = Object.freeze(
+    (run.diagnosticArtifact?.failures ?? []).map((failure) =>
+      Object.freeze({
+        identity: boundedRedacted(
+          failure.identity,
+          IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
+        ),
+        reference: boundedRedacted(
+          failure.reference,
+          IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
+        ),
+        assertion: boundedRedacted(
+          failure.assertion,
+          IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
+        ),
+      }),
+    ),
+  );
   const details = {
     kind: IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
-    version: 1,
+    version: 2,
     command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
     gateExitCode: run.gateExitCode,
     passCount: run.passCount,
@@ -140,6 +175,20 @@ function supervisedGateRejectionDetails(
       redactSecrets(run.outputTail),
       IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
     ),
+    diagnosticArtifact: Object.freeze({
+      kind: "cq-supervised-gate-diagnostic-artifact" as const,
+      version: 1 as const,
+      attestationId: context.attestationId,
+      generation: context.generation,
+      taskId: context.taskId,
+      resultCommit,
+      capturedAt: run.capturedAt,
+      reportDigest:
+        run.diagnosticArtifact?.reportDigest ??
+        createHash("sha256").update(redactSecrets(run.outputTail)).digest("hex"),
+      firstFailure: failureIndex[0] ?? null,
+      failureIndex,
+    }),
   } as const;
   if (!isImplementWorkerSupervisedGateRejectionDetails(details)) {
     throw new Error("supervised worker gate runner returned invalid rejection evidence");
@@ -151,8 +200,12 @@ function supervisedGateRejectionDetails(
 export class SupervisedWorkerGateRejectedError extends Error {
   readonly details: ImplementWorkerSupervisedGateRejectionDetails;
 
-  constructor(run: SupervisedWorkerGateRunResult) {
-    const details = supervisedGateRejectionDetails(run);
+  constructor(
+    run: SupervisedWorkerGateRunResult,
+    context: AuthorizedSupervisedWorkerGateContext,
+    resultCommit: string,
+  ) {
+    const details = supervisedGateRejectionDetails(run, context, resultCommit);
     super(
       `supervised worker gate rejected exit=${String(details.gateExitCode)} ` +
         `pass=${String(details.passCount)} fail=${String(details.failCount)}\n${details.outputTail}`,
@@ -276,16 +329,75 @@ function decodeXmlAttribute(value: string): string {
     .replaceAll("&amp;", "&");
 }
 
-function junitFailureIdentityLines(report: string): string {
-  const identities: string[] = [];
-  for (const match of report.matchAll(/<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/gu)) {
-    if (!/<failure\b/u.test(match[2] ?? "")) continue;
-    const name = /\bname="([^"]*)"/u.exec(match[1] ?? "")?.[1];
-    if (name === undefined || name.length === 0) continue;
-    identities.push(`(fail) ${decodeXmlAttribute(name)}`);
-    if (identities.length === FAILURE_IDENTITY_LINE_LIMIT) break;
+function xmlAttribute(attributes: string, name: string): string | undefined {
+  const match = new RegExp(`\\b${name}=(?:"([^"]*)"|'([^']*)')`, "u").exec(attributes);
+  const value = match?.[1] ?? match?.[2];
+  return value === undefined ? undefined : decodeXmlAttribute(value);
+}
+
+function xmlText(value: string): string {
+  return decodeXmlAttribute(value.replaceAll(/<[^>]+>/gu, " ").replaceAll(/\s+/gu, " ").trim());
+}
+
+function boundedRedacted(value: string, byteLimit: number): string {
+  return truncateUtf8(redactSecrets(value), byteLimit);
+}
+
+function junitFailureDiagnostic(report: string): SupervisedWorkerGateRunDiagnosticArtifact {
+  const failures: SupervisedWorkerGateFailureDiagnostic[] = [];
+  let current:
+    | { readonly identity: string; readonly reference: string; failure?: string }
+    | undefined;
+  const tokens = report.matchAll(
+    /<testcase\b([^>]*?)(\/?)>|<\/testcase\s*>|<failure\b([^>]*?)(?:\/>|>([\s\S]*?)<\/failure\s*>)/gu,
+  );
+  const finish = (): void => {
+    if (current?.failure !== undefined) {
+      failures.push(
+        Object.freeze({
+          identity: boundedRedacted(current.identity, FAILURE_IDENTITY_BYTE_LIMIT),
+          reference: boundedRedacted(current.reference, FAILURE_IDENTITY_BYTE_LIMIT),
+          assertion: boundedRedacted(current.failure, FAILURE_SUMMARY_WINDOW_BYTE_LIMIT),
+        }),
+      );
+    }
+    current = undefined;
+  };
+  for (const token of tokens) {
+    if (token[1] !== undefined) {
+      if (current !== undefined) finish();
+      const attributes = token[1];
+      const identity = xmlAttribute(attributes, "name") ?? "unnamed testcase";
+      const reference =
+        xmlAttribute(attributes, "file") ??
+        xmlAttribute(attributes, "classname") ??
+        identity;
+      current = { identity, reference };
+      if (token[2] === "/") finish();
+      continue;
+    }
+    if (token[0].startsWith("</testcase")) {
+      finish();
+      continue;
+    }
+    if (token[3] !== undefined && current !== undefined) {
+      const assertion =
+        xmlAttribute(token[3], "message") ?? (xmlText(token[4] ?? "") || "failure");
+      current.failure = assertion;
+    }
   }
-  return identities.map((line) => truncateUtf8(line, FAILURE_IDENTITY_BYTE_LIMIT)).join("\n");
+  if (current !== undefined) finish();
+  return Object.freeze({
+    reportDigest: createHash("sha256").update(report).digest("hex"),
+    failures: Object.freeze(failures),
+  });
+}
+
+function junitFailureIdentityLines(report: string): string {
+  return junitFailureDiagnostic(report)
+    .failures.slice(0, FAILURE_IDENTITY_LINE_LIMIT)
+    .map(({ identity }) => `(fail) ${identity}`)
+    .join("\n");
 }
 
 function outputTail(
@@ -569,6 +681,9 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
     gateDurationMs: Date.now() - startedAt,
     capturedAt: new Date().toISOString(),
     outputTail: outputTail(raced.stdout, raced.stderr, raced.gateExitCode, junitReport),
+    ...(raced.gateExitCode === 0
+      ? {}
+      : { diagnosticArtifact: junitFailureDiagnostic(junitReport) }),
   });
 }
 
@@ -706,6 +821,10 @@ export async function superviseImplementWorkerGate(
     throw new Error("supervised gate requires mutation evidence for every changed test or guard");
   }
 
+  if (context.validationIntent === "focused-only") {
+    return request.output;
+  }
+
   const run = await (deps.runner ?? nodeSupervisedWorkerGateRunner).run({
     worktreePath: context.worktreePath,
     admissionTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
@@ -713,7 +832,7 @@ export async function superviseImplementWorkerGate(
     cancellationSignal: deps.cancellationSignal,
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
-    throw new SupervisedWorkerGateRejectedError(run);
+    throw new SupervisedWorkerGateRejectedError(run, context, resultCommit);
   }
   if (
     (await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !==

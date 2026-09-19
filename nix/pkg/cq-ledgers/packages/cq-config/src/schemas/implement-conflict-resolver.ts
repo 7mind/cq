@@ -121,6 +121,12 @@ const inputSchema = {
       pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
     },
     baseCommit: { type: "string", minLength: 1 },
+    validationIntent: {
+      type: "string",
+      const: "focused-only",
+      description:
+        "Parent-owned validation scope. Conflict resolution proves focused checks only; the final implement-worker owns the canonical full gate.",
+    },
     conflictingFiles: {
       type: "array",
       items: { type: "string" },
@@ -137,7 +143,14 @@ const inputSchema = {
         "Complete parent-observed rebase transaction supplied unchanged to the first git_resolve_continue call.",
     },
   },
-  required: ["taskId", "branch", "baseCommit", "conflictingFiles", "conflictState"],
+  required: [
+    "taskId",
+    "branch",
+    "baseCommit",
+    "validationIntent",
+    "conflictingFiles",
+    "conflictState",
+  ],
   additionalProperties: false,
 } as const;
 
@@ -275,12 +288,12 @@ const outputSchema = {
 
 /**
  * The conflict-resolver per-role schema sidecar (storage-format decision 3).
- * `version: 5` (bumped from 4, T6521) requires typed focused-check evidence in
- * addition to durable conflict-continuation evidence for both terminal states.
+ * `version: 6` (bumped from 5, T6521) binds conflict resolution to the
+ * parent-owned focused-only validation intent.
  */
 export const implementConflictResolverSidecar: RoleSchemaSidecar = {
   id: "implement-conflict-resolver",
-  version: 5,
+  version: 6,
   inputSchema,
   outputSchema,
 };

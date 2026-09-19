@@ -72,6 +72,7 @@ import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-revi
 import {
   implementWorkerStagedOutputSchema,
   isImplementWorkerSupervisedGateRejectionDetails,
+  type ImplementWorkerValidationIntent,
 } from "./schemas/implement-worker.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import { LEDGER_BACKENDS, type LedgerBackend } from "./types.js";
@@ -1124,6 +1125,7 @@ export interface AuthorizedSupervisedWorkerGateContext extends AuthorizedDispatc
   readonly promptProvenance: DispatchPromptProvenance;
   readonly dispatchBaseCommit: string;
   readonly startingCommit: string;
+  readonly validationIntent: ImplementWorkerValidationIntent;
 }
 
 function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSONValue {
@@ -3550,6 +3552,15 @@ function supervisedWorkerGateContextOf(
       "Codex implement-worker supervision requires a full starting commit",
     );
   }
+  const validationIntent = (row.input as Readonly<Record<string, DispatchJSONValue>>)[
+    "validationIntent"
+  ];
+  if (validationIntent !== "focused-only" && validationIntent !== "final") {
+    throw new AttestationContractError(
+      "row.input.validationIntent",
+      "Codex implement-worker supervision requires an explicit focused-only or final intent",
+    );
+  }
   return Object.freeze({
     ...row.gitEffectBinding,
     attestationId: row.attestationId,
@@ -3560,7 +3571,59 @@ function supervisedWorkerGateContextOf(
     promptProvenance: row.promptProvenance,
     dispatchBaseCommit,
     startingCommit,
+    validationIntent,
   });
+}
+
+function assertParentValidationIntent(
+  context: AuthorizedSupervisedWorkerGateContext,
+  output: DispatchJSONValue,
+): void {
+  if (output === null || typeof output !== "object" || Array.isArray(output)) {
+    throw new AttestationContractError("output", "staged worker output must be an object");
+  }
+  const record = output as Readonly<Record<string, DispatchJSONValue>>;
+  const focusedChecks = record["focusedChecks"];
+  if (context.validationIntent === "final") {
+    if (focusedChecks !== undefined) {
+      throw new AttestationContractError(
+        "output.focusedChecks",
+        "final validation cannot substitute child-authored focused-only evidence",
+      );
+    }
+    return;
+  }
+  if (!Array.isArray(focusedChecks) || focusedChecks.length === 0) {
+    throw new AttestationContractError(
+      "output.focusedChecks",
+      "focused-only validation requires non-empty typed focused checks",
+    );
+  }
+  let passCount = 0;
+  for (const check of focusedChecks) {
+    if (check === null || typeof check !== "object" || Array.isArray(check)) {
+      throw new AttestationContractError("output.focusedChecks", "focused check is malformed");
+    }
+    const row = check as Readonly<Record<string, DispatchJSONValue>>;
+    if (
+      row["exitCode"] !== 0 ||
+      row["failCount"] !== 0 ||
+      !Number.isSafeInteger(row["passCount"]) ||
+      (row["passCount"] as number) < 0
+    ) {
+      throw new AttestationContractError(
+        "output.focusedChecks",
+        "focused-only validation requires green focused checks",
+      );
+    }
+    passCount += row["passCount"] as number;
+  }
+  if (passCount <= 0) {
+    throw new AttestationContractError(
+      "output.focusedChecks",
+      "focused-only validation requires a nonzero test count",
+    );
+  }
 }
 
 export interface ParentGateFinalizeRequest extends DispatchHandle {
@@ -3739,6 +3802,7 @@ function claimParentGateRow(
   if (context === undefined) {
     throw new AttestationContractError("row", "a staged parent gate must bind a Codex worker");
   }
+  assertParentValidationIntent(context, row.output);
   const { at } = readNow(deps);
   const gateEpoch = (row.gateEpoch ?? 0) + 1;
   const { parentGateCancellationRequest: _priorCancellation, ...claimable } = row;

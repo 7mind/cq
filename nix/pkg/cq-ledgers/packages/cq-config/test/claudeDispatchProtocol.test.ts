@@ -154,6 +154,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "936bfa146d99b9dc42da116d94420c1d23921bae",
   round: 0,
   startingCommit: "936bfa146d99b9dc42da116d94420c1d23921bae",
+  validationIntent: "final",
 };
 
 /**

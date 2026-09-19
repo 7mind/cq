@@ -51,6 +51,7 @@ const input: DispatchJSONValue = {
   baseCommit,
   round: 0,
   startingCommit: baseCommit,
+  validationIntent: "final",
 };
 
 const stagedOutput: DispatchJSONValue = {

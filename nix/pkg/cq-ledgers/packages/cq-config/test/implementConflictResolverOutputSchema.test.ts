@@ -44,6 +44,31 @@ function failOutput(overrides: Readonly<Record<string, unknown>> = {}): Record<s
 }
 
 describe("implement-conflict-resolver status-dependent output evidence", () => {
+  test("resolver input requires the parent-owned focused-only intent", () => {
+    const input = {
+      taskId: "T2043",
+      branch: "implement/T2043",
+      baseCommit: OID,
+      validationIntent: "focused-only",
+      conflictingFiles: ["a.txt"],
+      conflictState: TEST_GIT_CONFLICT_STATE,
+    };
+    expect(validateAgainstSchema(implementConflictResolverSidecar.inputSchema, input).ok).toBe(
+      true,
+    );
+    expect(
+      validateAgainstSchema(implementConflictResolverSidecar.inputSchema, {
+        ...input,
+        validationIntent: "final",
+      }).ok,
+    ).toBe(false);
+    const omitted = { ...input } as Record<string, unknown>;
+    delete omitted.validationIntent;
+    expect(validateAgainstSchema(implementConflictResolverSidecar.inputSchema, omitted).ok).toBe(
+      false,
+    );
+  });
+
   test("fail cannot omit the branch, worktree, or durable receipt chain", () => {
     const output = failOutput();
     delete output.branch;

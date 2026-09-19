@@ -30,6 +30,7 @@ function workerInput(overrides: Record<string, unknown> = {}): Record<string, un
     baseCommit: "a".repeat(40),
     round: 0,
     startingCommit: "b".repeat(40),
+    validationIntent: "final",
     ...overrides,
   };
 }

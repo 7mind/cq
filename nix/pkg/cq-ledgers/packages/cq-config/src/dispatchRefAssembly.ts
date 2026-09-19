@@ -168,6 +168,7 @@ export const REFS_SUPPLIED_INPUT_FIELDS = [
   "baseCommit",
   "round",
   "startingCommit",
+  "validationIntent",
   "priorResultCommit",
   "resolvedModel",
 ] as const;
@@ -946,6 +947,7 @@ function assembleImplementWorkerInput(
     baseCommit: refs.coordinates.baseCommit,
     round: refs.round,
     startingCommit: refs.startingCommit,
+    validationIntent: "final",
     ...(refs.priorResultCommit === undefined
       ? {}
       : { priorResultCommit: refs.priorResultCommit }),

@@ -114,6 +114,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "7e3bfd579800a3e0db18dac15d5939ba08edbdb4",
   round: 0,
   startingCommit: "7e3bfd579800a3e0db18dac15d5939ba08edbdb4",
+  validationIntent: "final",
 };
 
 function prepared(promptDigest: string = PROMPT_DIGEST): DispatchPrepared {

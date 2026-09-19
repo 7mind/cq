@@ -1181,6 +1181,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const control = row.implementationQueue;
         const output = dispatchObject(row.output) ? row.output : undefined;
         const gate = output === undefined ? undefined : output["supervisedGateEvidence"];
+        const validationIntent = dispatchObject(row.input)
+          ? row.input["validationIntent"]
+          : undefined;
+        const focusedChecks = Array.isArray(output?.["focusedChecks"])
+          ? output["focusedChecks"]
+          : undefined;
+        const focusedSettled =
+          validationIntent === "focused-only" &&
+          gate === undefined &&
+          focusedChecks !== undefined &&
+          focusedChecks.length > 0;
         if (
           control === undefined ||
           control.state !== "leased" ||
@@ -1196,12 +1207,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           output?.["status"] !== "pass" ||
           output["taskId"] !== control.attempt.taskId ||
           output["resultCommit"] !== control.attempt.resultCommit ||
-          !dispatchObject(gate) ||
-          !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
-          gate["taskId"] !== control.attempt.taskId ||
-          gate["resultCommit"] !== control.attempt.resultCommit ||
-          gate["worktreePath"] !== control.attempt.worktreePath ||
-          gate["command"] !== control.attempt.gateCommand
+          (!focusedSettled &&
+            (!dispatchObject(gate) ||
+              !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+              gate["taskId"] !== control.attempt.taskId ||
+              gate["resultCommit"] !== control.attempt.resultCommit ||
+              gate["worktreePath"] !== control.attempt.worktreePath ||
+              gate["command"] !== control.attempt.gateCommand))
         ) {
           throw new Error("consumed implementation front lost its exact gate and lease authority");
         }

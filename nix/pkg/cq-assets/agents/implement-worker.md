@@ -10,7 +10,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage"
+  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, parent-owned validationIntent, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage"
 outputs:
   - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
@@ -35,6 +35,9 @@ Treat the resolved task headline, description, and acceptance as the
 specification. Address every supplied prior criticism. `round` is required on
 every dispatch (zero-based). Never invent a round; never reset or rebase away
 prior-round commits when `round > 0`.
+Require `validationIntent` to be `final` for an implementation deliverable. A
+`focused-only` dispatch reports non-empty typed green `focusedChecks` and never
+runs or requests the canonical full gate; the trusted host enforces this scope.
 
 The protected inherited receipt prefix is never placed in fetched input. Report
 in `gitReceipts` only the fresh receipts returned by this generation's
@@ -186,7 +189,13 @@ receipt path union.
    replaces the marker with a same-titled plain test and removes its annotation
    and inventory entry. Never use a red full gate as expected-failure evidence.
 
-5. **Obtain a green full gate through the dispatch's trusted path.** When the
+5. **Obtain the parent-selected validation.** A `focused-only` dispatch reports
+   non-empty `focusedChecks` with exact command, exit code, pass count, and fail
+   count; every row must be green and the aggregate pass count nonzero. It never
+   invokes or requests a full gate.
+
+   For `validationIntent: "final"`, obtain a green full gate through the
+   dispatch's trusted path. When the
    private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`
    inside the sandbox. Finish the commit and verification in Step 6, then
    call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.

@@ -443,10 +443,12 @@ export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-review
 export {
   implementWorkerSidecar,
   IMPLEMENT_WORKER_STATUSES,
+  IMPLEMENT_WORKER_VALIDATION_INTENTS,
   IMPLEMENT_WORKER_FULL_SHA_PATTERN,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
+  IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
   isImplementWorkerSupervisedGateRejectionDetails,
   IMPLEMENT_WORKER_SUPERVISED_GATE_KIND,
   IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS,
@@ -457,7 +459,12 @@ export {
   implementWorkerSupervisedGateEvidenceSchema,
   implementWorkerStagedOutputSchema,
 } from "./schemas/implement-worker.js";
-export type { ImplementWorkerSupervisedGateRejectionDetails } from "./schemas/implement-worker.js";
+export type {
+  ImplementWorkerValidationIntent,
+  ImplementWorkerSupervisedGateRejectionDetails,
+  ImplementWorkerSupervisedGateDiagnosticArtifact,
+  ImplementWorkerSupervisedGateFailureDiagnostic,
+} from "./schemas/implement-worker.js";
 export type {
   ImplementWorkerBaseUnresolvableReason,
   ImplementWorkerSupervisedGateEvidence,

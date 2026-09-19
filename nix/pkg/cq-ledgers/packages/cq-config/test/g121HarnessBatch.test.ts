@@ -40,6 +40,7 @@ function workerInput(overrides: Record<string, unknown> = {}): Record<string, un
     baseCommit: SHA_A,
     round: 0,
     startingCommit: SHA_B,
+    validationIntent: "final",
     ...overrides,
   };
 }

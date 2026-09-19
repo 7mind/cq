@@ -201,6 +201,7 @@ describe("the inside-prepare validation entry point", () => {
       baseCommit: "557c7e7a".padEnd(40, "0"),
       round: 0,
       startingCommit: "5".repeat(40),
+      validationIntent: "final",
     };
     expect(rejectionOf(validate({ input: workerInput })).reason).toBe("invalid-role-input");
     expect(validate({ roleId: "implement-worker", input: workerInput }).accepted).toBe(true);

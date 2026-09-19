@@ -45,6 +45,7 @@ const request: PrepareDispatchRequest = {
     baseCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
     round: 0,
     startingCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+    validationIntent: "final",
   },
   idempotencyKey,
   timeoutMs: 600_000,

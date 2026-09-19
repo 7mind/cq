@@ -137,6 +137,7 @@ export class ImplementationCandidateQueueFixture {
       baseCommit,
       round: prior?.prepared.generation ?? 0,
       startingCommit: guarded?.rebasedStartCommit ?? prior?.candidate.resultCommit ?? baseCommit,
+      validationIntent: "final",
       ...(prior === undefined ? {} : { priorResultCommit: prior.candidate.resultCommit }),
     };
     const priorState =

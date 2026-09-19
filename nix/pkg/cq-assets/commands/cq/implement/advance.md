@@ -422,8 +422,8 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
 6. Dispatch `implement-worker` with the exact task specification, advisory
    `worktreePath` from prepare, branch, verified full-SHA base, required
    `round` (0 on first dispatch; increment on each criticism re-dispatch),
-   authoritative `startingCommit`, optional `priorResultCommit` on round>0, and
-   any prior criticism.
+   authoritative `startingCommit`, parent-owned `validationIntent: "final"`,
+   optional `priorResultCommit` on round>0, and any prior criticism.
 7. Materialize only a consumed, schema-valid result through the dispatch
    protocol. Before accepting a passing result, require its `resultCommit` to be
    a commit, the worker branch tip to equal it,

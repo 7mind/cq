@@ -138,6 +138,7 @@ async function stage(
     baseCommit,
     round: 0,
     startingCommit: baseCommit,
+    validationIntent: "final",
   };
   const prepared = await prepareDispatchOn(
     target.backend,

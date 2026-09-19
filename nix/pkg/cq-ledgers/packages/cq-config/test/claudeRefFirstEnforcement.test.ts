@@ -74,6 +74,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "f91fc407e4aa357c563b432c0d2750ff8dfb584c",
   round: 0,
   startingCommit: "f91fc407e4aa357c563b432c0d2750ff8dfb584c",
+  validationIntent: "final",
 };
 
 const OUTPUT: DispatchJSONValue = {

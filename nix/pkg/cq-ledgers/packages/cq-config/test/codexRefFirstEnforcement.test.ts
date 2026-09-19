@@ -135,6 +135,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "ae216ede790ff72842c5ff10c54fbdb8438b9449",
   round: 0,
   startingCommit: "ae216ede790ff72842c5ff10c54fbdb8438b9449",
+  validationIntent: "final",
 };
 
 /** The sentinel that must appear in exactly ONE protocol response: the fetch. */

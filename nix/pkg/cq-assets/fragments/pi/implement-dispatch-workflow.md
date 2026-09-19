@@ -38,7 +38,7 @@
 > shared `CQ::implement-review` rubric.
 >
 > **Conflict-resolver dispatch.** On a merge
-> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }` for
+> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, validationIntent: "focused-only", conflictingFiles, conflictState, baseSideNote? }` for
 > `implement-conflict-resolver` and use the frontier model through the same
 > handle-only sequence with `isolation: "worktree"` only when the extension
 > delivers a prepare-bound `gitConflictCapability` to the child. Conflict

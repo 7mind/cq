@@ -42,6 +42,7 @@ describe("D77 — implement-worker inputSchema.branch accepts both namings", () 
     baseCommit: "a".repeat(40),
     round: 0,
     startingCommit: "d".repeat(40),
+    validationIntent: "final",
   };
 
   test("accepts implement/T123", () => {
@@ -136,6 +137,7 @@ describe("D77 — implement-conflict-resolver inputSchema.branch accepts both na
     baseCommit: "deadbeef",
     conflictingFiles: ["a.ts"],
     conflictState: TEST_GIT_CONFLICT_STATE,
+    validationIntent: "focused-only",
   };
 
   test("accepts implement/T123", () => {
@@ -167,6 +169,7 @@ describe("D77 — validateAgainstSchema (the exact ledger-mcp validate_input cod
       baseCommit: "25c189a29555c03456521fa99eba469fe09b3820",
       round: 0,
       startingCommit: "25c189a29555c03456521fa99eba469fe09b3820",
+      validationIntent: "final",
     };
     const result = validateAgainstSchema(implementWorkerSidecar.inputSchema, payload);
     expect(result.ok).toBe(true);
