@@ -470,6 +470,34 @@ const guardedReceiptSuffixArm = {
   then: { required: ["gitReceipts"] },
 } as const;
 
+const passStatusArm = {
+  if: {
+    properties: { status: { const: "pass" } },
+    required: ["status"],
+  },
+  then: {
+    properties: { resultCommit: fullShaString },
+    not: { required: ["blockedReason"] },
+  },
+} as const;
+
+const failStatusArm = {
+  if: {
+    properties: { status: { const: "fail" } },
+    required: ["status"],
+  },
+  then: {
+    properties: { resultCommit: { type: "null" } },
+    required: ["blockedReason"],
+    not: {
+      anyOf: [
+        { required: ["gateDurationMs"] },
+        { required: ["supervisedGateEvidence"] },
+      ],
+    },
+  },
+} as const;
+
 const outputMutationTableArm = {
   if: {
     properties: {
@@ -591,6 +619,8 @@ const outputSchema = {
   ],
   additionalProperties: false,
   allOf: [
+    passStatusArm,
+    failStatusArm,
     {
       if: {
         properties: {
@@ -630,6 +660,8 @@ const outputSchema = {
 export const implementWorkerStagedOutputSchema = {
   ...outputSchema,
   allOf: [
+    passStatusArm,
+    failStatusArm,
     {
       if: {
         properties: { status: { const: "pass" } },

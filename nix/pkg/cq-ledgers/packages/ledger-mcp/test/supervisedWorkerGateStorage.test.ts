@@ -2024,6 +2024,20 @@ throw new Error("unexpected controlled cq invocation");
     ).toBe(true);
   });
 
+  // regression: I51 — incomplete task-local work must stop before the costly host gate.
+  test("open non-gate WIP checkpoints invoke zero full gates [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "inherited-current-open",
+    );
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    await expect(finalize(subject)).rejects.toThrow("implementation");
+    expect(runner.requests).toEqual([]);
+  });
+
   test("gate projection rejects integration history outside the exact result ancestry [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const subject = await fixtureWithDispatchBase(new GateDummy(), "managed");
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });

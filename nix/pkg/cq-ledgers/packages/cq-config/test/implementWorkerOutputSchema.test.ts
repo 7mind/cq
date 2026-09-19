@@ -11,7 +11,12 @@
  * fail this suite even though it would pass every other clause.
  */
 import { describe, expect, test } from "bun:test";
-import { implementWorkerSidecar, TEST_GUARD_GLOBS, validateAgainstSchema } from "@cq/config";
+import {
+  implementWorkerSidecar,
+  implementWorkerStagedOutputSchema,
+  TEST_GUARD_GLOBS,
+  validateAgainstSchema,
+} from "@cq/config";
 
 const SHA = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -91,6 +96,34 @@ describe("T894 implement-worker outputSchema", () => {
       },
     });
     expect(result.ok).toBe(true);
+  });
+
+  // regression: D495/H368 — status and commit presence must be correlated.
+  test("(a) fail status rejects a non-null resultCommit", () => {
+    const result = validateAgainstSchema(implementWorkerSidecar.outputSchema, {
+      ...basePassPayload({
+        status: "fail",
+        blockedReason: "controlled failure",
+      }),
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test("(a) pass status rejects a null resultCommit", () => {
+    const result = validateAgainstSchema(
+      implementWorkerSidecar.outputSchema,
+      basePassPayload({ resultCommit: null }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test("(a) staged writes enforce the same status/resultCommit correlation", () => {
+    const pass = basePassPayload({ resultCommit: null });
+    delete pass.gateDurationMs;
+    const fail = basePassPayload({ status: "fail", blockedReason: "controlled failure" });
+    delete fail.gateDurationMs;
+    expect(validateAgainstSchema(implementWorkerStagedOutputSchema, pass).ok).toBe(false);
+    expect(validateAgainstSchema(implementWorkerStagedOutputSchema, fail).ok).toBe(false);
   });
 
   // --- (b) fully valid pass payload passes ------------------------------------

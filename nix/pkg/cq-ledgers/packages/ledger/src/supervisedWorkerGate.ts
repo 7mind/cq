@@ -22,6 +22,7 @@ import {
 } from "@cq/process-control";
 import {
   assertManagedWorktreeDispatchBindingLive,
+  findOpenWipCheckpoints,
   recordManagedWorktreeSupervisedGateEvidence,
 } from "./managedWorktree.js";
 
@@ -526,6 +527,22 @@ export async function superviseImplementWorkerGate(
   if (branch !== context.branch) throw new Error("worker branch substitution");
   if (resolve(actualWorktreePath) !== resolve(context.worktreePath)) {
     throw new Error("worker worktree substitution");
+  }
+  const wip = await findOpenWipCheckpoints(
+    context.worktreePath,
+    { taskId: context.taskId },
+    new Set([`WIP-${context.taskId}.md`]),
+    context.taskId,
+  );
+  if (wip.status === "malformed") {
+    throw new Error(`supervised gate denied malformed WIP artifact ${wip.path}: ${wip.detail}`);
+  }
+  if (wip.status === "open") {
+    throw new Error(
+      `supervised gate denied open WIP checkpoints: ${wip.findings
+        .flatMap((finding) => finding.openCheckpoints)
+        .join(", ")}`,
+    );
   }
   const branchTip = await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref]);
   if (branchTip !== resultCommit) throw new Error("supervised gate requires the exact branch tip");

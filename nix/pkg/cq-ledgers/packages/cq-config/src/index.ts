@@ -455,6 +455,7 @@ export {
   implementWorkerVerifiedBaseVerificationSchema,
   implementWorkerUnresolvableBaseVerificationSchema,
   implementWorkerSupervisedGateEvidenceSchema,
+  implementWorkerStagedOutputSchema,
 } from "./schemas/implement-worker.js";
 export type { ImplementWorkerSupervisedGateRejectionDetails } from "./schemas/implement-worker.js";
 export type {
