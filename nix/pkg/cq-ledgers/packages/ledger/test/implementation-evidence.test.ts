@@ -140,6 +140,9 @@ async function fixture(
     readonly resultCommit?: string;
     readonly workerDispatch?: DispatchHandle;
     readonly recordLedgerCompletion?: ImplementationEvidenceServiceDependencies["recordLedgerCompletion"];
+    readonly reserveCandidateAuthority?: NonNullable<
+      ImplementationEvidenceServiceDependencies["reserveCandidateAuthority"]
+    >;
     readonly releaseCandidateAuthority?: NonNullable<
       ImplementationEvidenceServiceDependencies["releaseCandidateAuthority"]
     >;
@@ -150,7 +153,15 @@ async function fixture(
   let head = BASE;
   let ledgerWrites = 0;
   let verificationClean = true;
+  let candidateReservationCount = 0;
   let candidateReleaseCount = 0;
+  const reserveCandidateAuthority: NonNullable<
+    ImplementationEvidenceServiceDependencies["reserveCandidateAuthority"]
+  > =
+    options.reserveCandidateAuthority ??
+    (async () => {
+      candidateReservationCount += 1;
+    });
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: evidence,
     resolveReviewerRoster: options.reviewerRoster ?? (() => [reviewer]),
@@ -188,6 +199,7 @@ async function fixture(
       ? {}
       : {
           resolveCandidateAuthority: async () => options.resolveCandidateAuthority!(),
+          reserveCandidateAuthority,
           releaseCandidateAuthority:
             options.releaseCandidateAuthority ??
             (async () => {
@@ -246,7 +258,9 @@ async function fixture(
       verificationClean = value;
     },
     getLedgerWrites: () => ledgerWrites,
+    getCandidateReservationCount: () => candidateReservationCount,
     getCandidateReleaseCount: () => candidateReleaseCount,
+    reserveCandidateAuthority,
     resultCommit,
     workerDispatch,
     restart: () => new ImplementationEvidenceService(dependencies),
@@ -487,6 +501,7 @@ describe("versioned protected implementation evidence [BG]", () => {
           throw new Error("candidate authority changed at merge authorization");
         }
       },
+      reserveCandidate: f.reserveCandidateAuthority,
     });
     const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
     await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
@@ -517,6 +532,7 @@ describe("versioned protected implementation evidence [BG]", () => {
       }),
     ).resolves.toMatchObject({ status: "existing" });
     expect(f.getCandidateReleaseCount()).toBe(2);
+    expect(f.getCandidateReservationCount()).toBe(2);
   });
 
   // regression: T6520 round 13 — code-identity gate counts belong at the
@@ -641,6 +657,7 @@ describe("versioned protected implementation evidence [BG]", () => {
   test("every protected handoff cut restart-converges to one ledger completion and one queue release [Behavioral-Active Blackbox-Group]", async () => {
     for (const cut of [
       "before-merge-launch",
+      "after-completion-reservation",
       "after-merge-launch",
       "after-ref-advancement",
       "after-merged-persistence",
@@ -671,11 +688,25 @@ describe("versioned protected implementation evidence [BG]", () => {
         },
       });
       const ledgerEffects = new Map<string, string>();
+      const reservationEffects = new Map<string, string>();
       const releaseEffects = new Map<string, string>();
+      let failAfterReservation = cut === "after-completion-reservation";
       let failAfterLedgerRecording = cut === "after-ledger-recording";
       let failAfterQueueRelease = cut === "after-queue-release";
       const f = await fixture(evidence, {
         resolveCandidateAuthority: () => candidateAuthority(),
+        reserveCandidateAuthority: async (receipt, binding) => {
+          const requestDigest = evidenceDigest({ receipt, binding });
+          const prior = reservationEffects.get(binding.operationId);
+          if (prior !== undefined && prior !== requestDigest) {
+            throw new Error("reservation operation id was reused with different authority");
+          }
+          reservationEffects.set(binding.operationId, requestDigest);
+          if (failAfterReservation) {
+            failAfterReservation = false;
+            throw new Error("injected fault after completion reservation");
+          }
+        },
         recordLedgerCompletion: async ({ completion: current }) => {
           if (current.recordOperationId === null) {
             throw new Error("recording completion omitted its durable operation id");
@@ -696,14 +727,13 @@ describe("versioned protected implementation evidence [BG]", () => {
           }
           return { reviewRef: "reviews:R2345" };
         },
-        releaseCandidateAuthority: async (receipt) => {
-          const operationId = `release-${cut}`;
-          const requestDigest = evidenceDigest(receipt);
-          const prior = releaseEffects.get(operationId);
+        releaseCandidateAuthority: async (receipt, binding) => {
+          const requestDigest = evidenceDigest({ receipt, binding });
+          const prior = releaseEffects.get(binding.operationId);
           if (prior !== undefined && prior !== requestDigest) {
             throw new Error("release operation id was reused with different authority");
           }
-          releaseEffects.set(operationId, requestDigest);
+          releaseEffects.set(binding.operationId, requestDigest);
           if (failAfterQueueRelease) {
             failAfterQueueRelease = false;
             throw new Error("injected fault after queue release");
@@ -730,23 +760,43 @@ describe("versioned protected implementation evidence [BG]", () => {
         completionRef: completion.completionRef,
         mergeOperationId: `merge-${cut}`,
       };
+      const reservationBinding = {
+        operationId: `completion-${cut}`,
+        completionRef: completion.completionRef,
+        mergeOperationId: `merge-${cut}`,
+        taskRef: "tasks:T2345",
+        resultCommit: RESULT,
+      } as const;
 
       let recovered = f.restart();
       if (cut === "after-merge-launch") {
         await recovered.markMergeStarted(completion.completionRef, BASE);
         recovered = f.restart();
       }
-      if (cut === "before-merge-launch" || cut === "after-merge-launch") {
+      if (
+        cut === "before-merge-launch" ||
+        cut === "after-completion-reservation" ||
+        cut === "after-merge-launch"
+      ) {
         const underlying = createStrictInMemoryWorksetEffectAdmissionProvider();
-        const provider = await implementationCompletionMergeAdmissionProviderFromStore({
-          provider: underlying,
-          store: evidence,
-          binding,
-          repositoryHead: async () => f.getHead(),
-          authorizeCandidate: async (receipt) => {
-            expect(receipt).toEqual(candidateAuthority());
-          },
-        });
+        const prepareProvider = () =>
+          implementationCompletionMergeAdmissionProviderFromStore({
+            provider: underlying,
+            store: evidence,
+            binding,
+            repositoryHead: async () => f.getHead(),
+            authorizeCandidate: async (receipt) => {
+              expect(receipt).toEqual(candidateAuthority());
+            },
+            reserveCandidate: f.reserveCandidateAuthority,
+          });
+        if (cut === "after-completion-reservation") {
+          await expect(prepareProvider()).rejects.toThrow(
+            "injected fault after completion reservation",
+          );
+          recovered = f.restart();
+        }
+        const provider = await prepareProvider();
         const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
         await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });
         await admission.shareWithGuardian({ pgid: 6520, leaderPid: 6520 });
@@ -756,6 +806,7 @@ describe("versioned protected implementation evidence [BG]", () => {
         expect(underlying.activeAdmissionCount()).toBe(0);
         recovered = f.restart();
       } else {
+        await f.reserveCandidateAuthority(candidateAuthority(), reservationBinding);
         await recovered.markMergeStarted(completion.completionRef, BASE);
         f.setHead(RESULT);
         if (cut !== "after-ref-advancement") {
@@ -793,7 +844,8 @@ describe("versioned protected implementation evidence [BG]", () => {
       });
       await expect(record()).resolves.toMatchObject({ status: "existing" });
       expect([...ledgerEffects.keys()], cut).toEqual([`record-${cut}`]);
-      expect([...releaseEffects.keys()], cut).toEqual([`release-${cut}`]);
+      expect([...reservationEffects.keys()], cut).toEqual([`completion-${cut}`]);
+      expect([...releaseEffects.keys()], cut).toEqual([`completion-${cut}`]);
       expect((await evidence.snapshot()).completions[completion.completionRef]).toMatchObject({
         state: "recorded",
         reviewRef: "reviews:R2345",

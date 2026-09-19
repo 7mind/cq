@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DISPATCH_OVERLAY_REGISTRY,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
@@ -10,7 +11,10 @@ import {
   claimQualifiedParentGateOn,
   completeQualifiedParentGateOn,
   confirmDispatchCompletionOn,
+  discoverDispatchContinuationOn,
   enqueueImplementationCandidateOn,
+  prepareDispatchOn,
+  sequentialDispatchRandomBytes,
   type AttestationBackend,
   type DispatchJSONValue,
   type ImplementationQueueLeaseBinding,
@@ -240,6 +244,105 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
         { now: fixture.clock.now },
       ),
     ).resolves.toMatchObject({ state: "gate-running" });
+  });
+
+  test("a continuation resolved before completion reservation cannot claim a successor afterward [Behavioral-Active Blackbox-Group]", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const staged = await fixture.stage({
+      taskId: "T6520",
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+      withReceipt: true,
+    });
+    const qualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await fixture.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "completion-holder",
+    });
+    if (acquired.state !== "leased") throw new Error("expected completion lease");
+    await completeCandidate(
+      backend,
+      fixture,
+      staged,
+      acquired.lease,
+      staged.binding.baseCommit,
+      staged.binding.baseCommit,
+      staged.candidate.resultCommit,
+    );
+    const continuation = await discoverDispatchContinuationOn(
+      backend,
+      {
+        namespace,
+        actor: "trusted-parent",
+        gitEffectBinding: staged.binding,
+        liveTip: staged.candidate.resultCommit,
+      },
+      { now: fixture.clock.now },
+    );
+    const current = await fixture.adapter.inspectLease(acquired.lease);
+    if (current.qualification === undefined) throw new Error("completion qualification disappeared");
+    await fixture.adapter.reserveCompletion({
+      ...acquired.lease,
+      expectedPartitionRevision: current.partitionRevision,
+      operationId: "resolved-continuation-reservation",
+      completionRef: `cq-implementation-completion:v1:${"1".repeat(64)}`,
+      mergeOperationId: "resolved-continuation-merge",
+      taskRef: "tasks:T6520",
+      resultCommit: staged.candidate.resultCommit,
+      qualificationDigest: current.qualification.qualificationDigest,
+    });
+
+    await expect(
+      prepareDispatchOn(
+        backend,
+        {
+          namespace,
+          roleId: "implement-worker",
+          surface: "codex",
+          input: {
+            taskId: "T6520",
+            headline: "Continue a completion-reserved candidate",
+            description: "Exercise the post-resolution queue fence.",
+            acceptance: "A reserved completion cannot transfer its lease.",
+            worktreePath: staged.binding.worktreePath,
+            branch: staged.binding.branch,
+            baseCommit: staged.binding.baseCommit,
+            round: staged.prepared.generation,
+            startingCommit: staged.candidate.resultCommit,
+            priorResultCommit: staged.candidate.resultCommit,
+          },
+          idempotencyKey: "resolved-before-completion-reservation",
+          timeoutMs: 600_000,
+          registry: DISPATCH_OVERLAY_REGISTRY,
+          promptDigest: "a".repeat(64),
+          catalogHash: "b".repeat(64),
+          expectedChild: {
+            childId: "resolved-continuation-child",
+            runId: "resolved-continuation-run",
+          },
+          reprepareOf: staged.prepared,
+          gitEffectBinding: staged.binding,
+          continuationClaim: {
+            continuationReference: continuation.continuationReference,
+            actor: "trusted-parent",
+            liveTip: continuation.liveTip,
+          },
+        },
+        {
+          mode: "manager-bound",
+          now: fixture.clock.now,
+          randomBytes: sequentialDispatchRandomBytes(6520),
+          lineageFenceGuard: async () => null,
+          withLineageLock: async (operation) => await operation(),
+        },
+      ),
+    ).rejects.toThrow("completion reservation");
   });
 
   // regression: T6520 round 11 — same-enrollment resume coverage did not prove

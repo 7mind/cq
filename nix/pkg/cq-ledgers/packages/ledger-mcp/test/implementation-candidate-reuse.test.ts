@@ -24,6 +24,7 @@ import {
   createInMemoryImplementationEvidenceStore,
   implementationCompletionMergeAdmissionProviderFromStore,
   type ImplementationCandidateAuthorityReceipt,
+  type ImplementationCandidateCompletionReservationBinding,
   type ImplementationReviewerIdentity,
 } from "@cq/ledger";
 import { ImplementationCandidateCoordinator } from "../src/implementationCandidateQueue.js";
@@ -277,6 +278,30 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
     const evidence = createInMemoryImplementationEvidenceStore();
     let ledgerWrites = 0;
     const releaseEffects: string[] = [];
+    const reserveCandidateAuthority = async (
+      receipt: ImplementationCandidateAuthorityReceipt,
+      binding: ImplementationCandidateCompletionReservationBinding,
+    ): Promise<void> => {
+      const current = await backend.transact(
+        { kind: "handle", handle: receipt.workerDispatch },
+        (store) => store.read(receipt.workerDispatch),
+      );
+      if (current?.implementationQueue?.state !== "leased") {
+        throw new Error("completion reservation lost its live candidate lease");
+      }
+      await fixture.adapter.reserveCompletion({
+        attestationId: receipt.workerDispatch.attestationId,
+        generation: receipt.workerDispatch.generation,
+        partitionKey: receipt.partitionKey,
+        enrollmentId: receipt.enrollmentId,
+        attemptId: receipt.attemptId,
+        holderId: receipt.leaseHolderId,
+        leaseGeneration: receipt.leaseGeneration,
+        expectedPartitionRevision: current.implementationQueue.partitionRevision,
+        qualificationDigest: receipt.qualificationDigest,
+        ...binding,
+      });
+    };
     const service = new ImplementationEvidenceService({
       store: evidence,
       resolveReviewerRoster: () => [reviewer],
@@ -370,7 +395,8 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
         });
         return authority;
       },
-      releaseCandidateAuthority: async (receipt) => {
+      reserveCandidateAuthority,
+      releaseCandidateAuthority: async (receipt, binding) => {
         const current = await backend.transact(
           { kind: "handle", handle: receipt.workerDispatch },
           (store) => store.read(receipt.workerDispatch),
@@ -380,23 +406,18 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
           throw new Error("completion release lost its live candidate lease");
         }
         releaseEffects.push("protected-completion-release");
-        await releaseImplementationCandidateOn(
-          backend,
-          {
-            namespace,
-            actor: "trusted-parent",
-            attestationId: receipt.workerDispatch.attestationId,
-            generation: receipt.workerDispatch.generation,
-            partitionKey: receipt.partitionKey,
-            enrollmentId: receipt.enrollmentId,
-            attemptId: receipt.attemptId,
-            holderId: receipt.leaseHolderId,
-            leaseGeneration: receipt.leaseGeneration,
-            expectedPartitionRevision: current.implementationQueue.partitionRevision,
-            detail: { operation: "protected-completion" },
-          },
-          { now: fixture.clock.now },
-        );
+        await fixture.adapter.releaseCompletion({
+          attestationId: receipt.workerDispatch.attestationId,
+          generation: receipt.workerDispatch.generation,
+          partitionKey: receipt.partitionKey,
+          enrollmentId: receipt.enrollmentId,
+          attemptId: receipt.attemptId,
+          holderId: receipt.leaseHolderId,
+          leaseGeneration: receipt.leaseGeneration,
+          expectedPartitionRevision: current.implementationQueue.partitionRevision,
+          ...binding,
+          detail: { operation: "protected-completion", ...binding },
+        });
       },
       readTaskAuthority: async () => ({
         taskRef: "tasks:T6520",
@@ -491,6 +512,7 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
           throw new Error("merge candidate authority changed");
         }
       },
+      reserveCandidate: reserveCandidateAuthority,
     });
     const admission = await mergeProvider.acquire({ kind: "merge", targetRef: "tasks:T6520" });
     await admission.registerProcessGroup({ pgid: 6520, leaderPid: 6520 });

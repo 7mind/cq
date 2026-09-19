@@ -151,6 +151,136 @@ describe("ledger-MCP implementation candidate queue", () => {
     });
   });
 
+  // regression: T6520 round 19 — final merge authorization left the live
+  // queue lease transferable before the protected ref settled.
+  test("a replay-safe completion reservation fences every competing lease transition until exact release [Behavioral-Active Blackbox-Group]", async () => {
+    const subject = fixture();
+    const staged = await subject.stage(candidate("T6520", { withReceipt: true }));
+    const qualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: staged.candidate,
+      ...staged.qualification,
+    });
+    const acquired = await subject.adapter.acquire({
+      partitionKey: qualified.queue.partition.partitionKey,
+      holderId: "completion-holder",
+    });
+    if (acquired.state !== "leased") throw new Error("expected completion lease");
+    if (qualified.queue.qualification === undefined) {
+      throw new Error("qualified candidate lost its qualification");
+    }
+    const binding = {
+      operationId: "completion-reservation",
+      completionRef: `cq-implementation-completion:v1:${"1".repeat(64)}`,
+      mergeOperationId: "completion-merge",
+      taskRef: "tasks:T6520",
+      resultCommit: staged.candidate.resultCommit,
+    } as const;
+    const request = {
+      ...acquired.lease,
+      expectedPartitionRevision: acquired.partitionRevision,
+      qualificationDigest: qualified.queue.qualification.qualificationDigest,
+      ...binding,
+    } as const;
+    const reservation = await subject.adapter.reserveCompletion(request);
+    const reserved = await subject.adapter.inspectLease(acquired.lease);
+    expect(reserved.completionReservation).toEqual(reservation);
+    expect(
+      await subject.adapter.reserveCompletion({
+        ...request,
+        expectedPartitionRevision: reserved.partitionRevision,
+      }),
+    ).toEqual(reservation);
+
+    await expect(
+      subject.adapter.reserveCompletion({
+        ...request,
+        expectedPartitionRevision: reserved.partitionRevision,
+        operationId: "different-completion-reservation",
+      }),
+    ).rejects.toMatchObject({ reason: "completion-reserved" });
+    await expect(
+      subject.adapter.reserveCompletion({
+        ...request,
+        expectedPartitionRevision: reserved.partitionRevision,
+        holderId: "losing-holder",
+      }),
+    ).rejects.toThrow("exact live lease generation");
+    for (const transition of [
+      subject.adapter.park.bind(subject.adapter),
+      subject.adapter.yield.bind(subject.adapter),
+      subject.adapter.release.bind(subject.adapter),
+    ]) {
+      await expect(
+        transition({
+          ...acquired.lease,
+          expectedPartitionRevision: reserved.partitionRevision,
+        }),
+      ).rejects.toMatchObject({ reason: "completion-reserved" });
+    }
+    await expect(
+      subject.adapter.recover({
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+        partitionKey: acquired.lease.partitionKey,
+        enrollmentId: acquired.lease.enrollmentId,
+        attemptId: acquired.lease.attemptId,
+        staleLeaseGeneration: acquired.lease.leaseGeneration,
+        expectedPartitionRevision: reserved.partitionRevision,
+      }),
+    ).rejects.toMatchObject({ reason: "completion-reserved" });
+    await expect(
+      subject.adapter.terminalize({
+        attestationId: staged.prepared.attestationId,
+        generation: staged.prepared.generation,
+        partitionKey: acquired.lease.partitionKey,
+        enrollmentId: acquired.lease.enrollmentId,
+        attemptId: acquired.lease.attemptId,
+        expectedPartitionRevision: reserved.partitionRevision,
+        reason: "cancelled",
+      }),
+    ).rejects.toMatchObject({ reason: "completion-reserved" });
+    await expect(
+      subject.adapter.retireStagedRebaseSource({
+        ...acquired.lease,
+        expectedPartitionRevision: reserved.partitionRevision,
+        stagedOutputDigest: staged.candidate.stagedOutputDigest,
+        effectLock: {
+          kind: "managed-worktree-effect-lock",
+          bindingDigest: qualified.queue.attempt.managedWorktreeBindingDigest,
+        },
+        live: {
+          clean: true,
+          liveTip: staged.candidate.resultCommit,
+          resultCommit: staged.candidate.resultCommit,
+          resultTree: staged.candidate.resultTree,
+          repositoryId: staged.candidate.repositoryId,
+          worktreePath: staged.binding.worktreePath,
+          gitReceipts: staged.candidate.gitReceipts,
+        },
+        ontoCommit: "f".repeat(40),
+        guardedRebase: `cq-guarded-rebase:v1:${"2".repeat(64)}`,
+        guardedRebaseJournalDigest: "3".repeat(64),
+      }),
+    ).rejects.toMatchObject({ reason: "completion-reserved" });
+    await expect(
+      subject.adapter.releaseCompletion({
+        ...acquired.lease,
+        expectedPartitionRevision: reserved.partitionRevision,
+        ...binding,
+        operationId: "different-completion-reservation",
+      }),
+    ).rejects.toMatchObject({ reason: "completion-reserved" });
+
+    const released = await subject.adapter.releaseCompletion({
+      ...acquired.lease,
+      expectedPartitionRevision: reserved.partitionRevision,
+      ...binding,
+      detail: { operation: "protected-completion", ...binding },
+    });
+    expect(released.state).toBe("released");
+    expect(released.completionReservation).toBeUndefined();
+  });
+
   test("one active task/goal/manifest enrollment refuses a duplicate attempt", async () => {
     const subject = fixture();
     const first = await subject.stage(candidate("T6518"));
