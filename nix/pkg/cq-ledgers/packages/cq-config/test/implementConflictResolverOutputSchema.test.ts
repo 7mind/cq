@@ -84,4 +84,13 @@ describe("implement-conflict-resolver status-dependent output evidence", () => {
       true,
     );
   });
+
+  test("every resolver result carries at least one typed focused check", () => {
+    expect(
+      validateAgainstSchema(
+        implementConflictResolverSidecar.outputSchema,
+        failOutput({ focusedChecks: [] }),
+      ).ok,
+    ).toBe(false);
+  });
 });

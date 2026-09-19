@@ -100,12 +100,12 @@ describe("T894 implement-worker outputSchema", () => {
 
   // regression: D495/H368 — status and commit presence must be correlated.
   test("(a) fail status rejects a non-null resultCommit", () => {
-    const result = validateAgainstSchema(implementWorkerSidecar.outputSchema, {
-      ...basePassPayload({
-        status: "fail",
-        blockedReason: "controlled failure",
-      }),
+    const payload = basePassPayload({
+      status: "fail",
+      blockedReason: "controlled failure",
     });
+    delete payload.gateDurationMs;
+    const result = validateAgainstSchema(implementWorkerSidecar.outputSchema, payload);
     expect(result.ok).toBe(false);
   });
 
