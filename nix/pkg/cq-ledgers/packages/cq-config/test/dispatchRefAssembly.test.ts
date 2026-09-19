@@ -140,6 +140,7 @@ const REFS: DispatchInputRefs = {
   coordinates: COORDINATES,
   round: 0,
   startingCommit: STARTING_COMMIT,
+  validationIntent: "final",
 };
 
 function assemble(
@@ -247,6 +248,7 @@ describe("the refs-only launch form is schema-pinned and narrative-free", () => 
       "coordinates",
       "round",
       "startingCommit",
+      "validationIntent",
       "priorResultCommit",
       "priorReviewId",
       "guidance",
@@ -438,6 +440,32 @@ describe("server-side assembly reads the narrative the parent no longer carries"
   test("the non-narrative resolvedModel passes through unchanged", () => {
     const assembled = assembledOf(assemble({ resolvedModel: "opus" }));
     expect((assembled.input as { readonly resolvedModel: string }).resolvedModel).toBe("opus");
+  });
+
+  // regression: D497 — the refs boundary must carry parent authority verbatim.
+  test("the parent-owned validation intent passes through without a default", () => {
+    const focused = assembledOf(assemble({ validationIntent: "focused-only" }));
+    expect(
+      (focused.input as { readonly validationIntent: string }).validationIntent,
+    ).toBe("focused-only");
+
+    const omitted = { ...REFS } as Record<string, unknown>;
+    delete omitted.validationIntent;
+    expect(validateAgainstSchema(DISPATCH_INPUT_REFS_SCHEMA, omitted).ok).toBe(false);
+    const rejection = rejectionOf(
+      assembleDispatchInput(omitted, {
+        source: sourceFor(),
+        registry: DISPATCH_OVERLAY_REGISTRY,
+      }),
+    );
+    expect(rejection.reason).toBe("invalid-refs-form");
+    expect(rejection.path).toBe("refs.validationIntent");
+
+    for (const invalid of ["", "child-selected", true, null]) {
+      const changed = rejectionOf(assemble({ validationIntent: invalid }));
+      expect(changed.reason, String(invalid)).toBe("invalid-refs-form");
+      expect(changed.path, String(invalid)).toBe("refs.validationIntent");
+    }
   });
 
   test("assembly flows THROUGH T976's inside-prepare validation, not around it", () => {
