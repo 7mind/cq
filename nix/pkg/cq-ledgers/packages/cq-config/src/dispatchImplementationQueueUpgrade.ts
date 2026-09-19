@@ -25,12 +25,7 @@ export const IMPLEMENTATION_QUEUE_ROLLOUT_CONTRACT = Object.freeze({
 
 type Candidate = Omit<
   EnqueueImplementationCandidateRequest,
-  | "namespace"
-  | "actor"
-  | "attestationId"
-  | "generation"
-  | "rollout"
-  | "expectedLegacyRowDigest"
+  "namespace" | "actor" | "attestationId" | "generation" | "rollout" | "expectedLegacyRowDigest"
 >;
 
 export interface RecoveredImplementationCompletion {
@@ -354,6 +349,10 @@ export async function upgradeLiveImplementationQueueRows(
       async () => await processRow(row, true),
     );
     if (protection.state === "incompatible") {
+      if (row.state === "gate-running") {
+        await processRow(row, false);
+        continue;
+      }
       await recordDisposition(
         options,
         row,

@@ -394,23 +394,21 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     if (claimed.state !== "gate-running") throw new Error("expected authenticated gate claim");
 
     const originals = new Map(
-      store
-        .rows()
-        .flatMap((row) =>
-          row.kind === "envelope" &&
-          ["T65227", "T65228", "T65229"].includes(row.gitEffectBinding?.taskId ?? "")
-            ? [
-                [
-                  row.gitEffectBinding!.taskId,
-                  {
-                    state: row.state,
-                    output: structuredClone(row.output),
-                    binding: structuredClone(row.gitEffectBinding),
-                  },
-                ] as const,
-              ]
-            : [],
-        ),
+      store.rows().flatMap((row) =>
+        row.kind === "envelope" &&
+        ["T65227", "T65228", "T65229"].includes(row.gitEffectBinding?.taskId ?? "")
+          ? [
+              [
+                row.gitEffectBinding!.taskId,
+                {
+                  state: row.state,
+                  output: structuredClone(row.output),
+                  binding: structuredClone(row.gitEffectBinding),
+                },
+              ] as const,
+            ]
+          : [],
+      ),
     );
     let resolutionCalls = 0;
     let protectionCalls = 0;
@@ -439,7 +437,10 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       parkedIncompatible: 2,
       executionUncertain: 1,
     });
-    expect({ protectionCalls, resolutionCalls }).toEqual({ protectionCalls: 3, resolutionCalls: 0 });
+    expect({ protectionCalls, resolutionCalls }).toEqual({
+      protectionCalls: 3,
+      resolutionCalls: 0,
+    });
     const migrated = new Map(
       store
         .rows()
@@ -466,12 +467,17 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       const original = originals.get(taskId);
       const row = migrated.get(taskId);
       if (original === undefined || row === undefined) throw new Error(`missing ${taskId}`);
-      expect({ state: row.state, output: row.output, binding: row.gitEffectBinding }).toEqual(original);
+      expect({ state: row.state, output: row.output, binding: row.gitEffectBinding }).toEqual(
+        original,
+      );
       expect(row.implementationQueue).toBeUndefined();
       expect(row.stagedCompletionQualification).toBeUndefined();
     }
     expect(await upgrade()).toMatchObject({ considered: 0, executionUncertain: 0 });
-    expect({ protectionCalls, resolutionCalls }).toEqual({ protectionCalls: 3, resolutionCalls: 0 });
+    expect({ protectionCalls, resolutionCalls }).toEqual({
+      protectionCalls: 3,
+      resolutionCalls: 0,
+    });
 
     instant += 1_000;
     const changed = await stage("T65230", 130);
@@ -500,7 +506,9 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
         },
       }),
     ).rejects.toThrow("changed during rollout");
-    expect((store.read(changed.prepared) as AttestationEnvelope).implementationQueueRollout).toBeUndefined();
+    expect(
+      (store.read(changed.prepared) as AttestationEnvelope).implementationQueueRollout,
+    ).toBeUndefined();
 
     expect(
       await upgradeLiveImplementationQueueRows({
