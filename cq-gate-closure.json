@@ -470,7 +470,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogStore.test.ts",
-      "sha256": "ba222092c493311b8917823f3da35988fb02df2cfcb912d8e6c4c39647e45db8",
+      "sha256": "160389c4c8c32ec9ae28fce6497a47df4323029b52d3bd03d867be258055a795",
       "targets": []
     },
     {
