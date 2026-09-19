@@ -163,6 +163,19 @@ class GateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
+class GateSequenceDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  constructor(private readonly results: readonly SupervisedWorkerGateRunResult[]) {}
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    const result = this.results[this.requests.length - 1];
+    if (result === undefined) throw new Error("supervised gate sequence exhausted");
+    return result;
+  }
+}
+
 class ThrowingGateDummy implements SupervisedWorkerGateRunner {
   readonly requests: SupervisedWorkerGateRunRequest[] = [];
 
@@ -1907,6 +1920,251 @@ throw new Error("unexpected controlled cq invocation");
     });
   });
 
+  // regression: D508 — a genuine red gate made every later changed generation terminal.
+  test("a genuine rejected gate admits only a changed receipt-bound correction and gates it once [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const runner = new GateSequenceDummy([
+      {
+        gateExitCode: 1,
+        passCount: 16,
+        failCount: 1,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:03.000Z",
+        outputTail: "(fail) deterministic source rejection\n16 pass\n1 fail",
+      },
+      {
+        gateExitCode: 0,
+        passCount: 17,
+        failCount: 0,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:06.000Z",
+        outputTail: "17 pass\n0 fail",
+      },
+    ]);
+    const subject = await fixture(runner, true);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("implementation candidate runtime is unavailable");
+    }
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      expectedChild: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await subject.capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: expectedChild.childId.slice("implement-worker#".length),
+        childThreadId: `correction-thread-${String(prepared.generation)}`,
+        expectedRunId: expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+
+    const sourceQualified = await qualify(
+      subject.prepared,
+      subject.expectedChild,
+      "2026-08-12T20:00:02.000Z",
+    );
+    if (sourceQualified.state !== "queued") throw new Error("red source did not qualify");
+    await expect(
+      subject.capability.coordinateImplementationCandidate({
+        partitionKey: sourceQualified.partitionKey,
+        holderId: "d508-red-source",
+      }),
+    ).rejects.toThrow();
+    expect(runner.requests).toHaveLength(1);
+    expect(subject.store.rows()[0]).toMatchObject({
+      state: "aborted",
+      abortReason: "gate-rejected",
+      implementationQueue: { state: "terminal", terminal: { reason: "gate-rejected" } },
+    });
+
+    const unchangedChild = {
+      childId: `implement-worker#unchanged-correction-${String(sequence)}`,
+      runId: `unchanged-correction-run-${String(sequence)}`,
+    };
+    const unchanged = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-unchanged-correction`,
+      timeoutMs: 600_000,
+      expectedChild: unchangedChild,
+      reprepareOf: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+    });
+    if (!unchanged.accepted) throw new Error(`unchanged correction refused: ${unchanged.detail}`);
+    await subject.capability.fetchInput({
+      attestationId: unchanged.prepared.attestationId,
+      generation: unchanged.prepared.generation,
+      inputCapability: unchanged.prepared.inputCapability,
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: unchanged.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          gitReceipts: [],
+          checkSummary: "unchanged correction must not rerun the gate",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    await expect(
+      qualify(unchanged.prepared, unchangedChild, "2026-08-12T20:00:04.000Z"),
+    ).rejects.toThrow("cannot be resurrected");
+    expect(runner.requests).toHaveLength(1);
+    expect(
+      await subject.capability.abort({
+        attestationId: unchanged.prepared.attestationId,
+        generation: unchanged.prepared.generation,
+        reason: "cancelled",
+      }),
+    ).toMatchObject({ state: "aborted", reason: "cancelled" });
+
+    const correctedChild = {
+      childId: `implement-worker#changed-correction-${String(sequence)}`,
+      runId: `changed-correction-run-${String(sequence)}`,
+    };
+    const corrected = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-changed-correction`,
+      timeoutMs: 600_000,
+      expectedChild: correctedChild,
+      reprepareOf: {
+        attestationId: unchanged.prepared.attestationId,
+        generation: unchanged.prepared.generation,
+      },
+    });
+    if (
+      !corrected.accepted ||
+      corrected.prepared.gitChangeCapability === undefined
+    ) {
+      throw new Error("changed correction did not receive Git authority");
+    }
+    await subject.capability.fetchInput({
+      attestationId: corrected.prepared.attestationId,
+      generation: corrected.prepared.generation,
+      inputCapability: corrected.prepared.inputCapability,
+    });
+    await fs.writeFile(path.join(subject.managed.handle.absolutePath, "file.txt"), "corrected\n");
+    if (subject.capability.gitCommit === undefined) throw new Error("git_commit unavailable");
+    const correctionReceipt = await subject.capability.gitCommit({
+      attestationId: corrected.prepared.attestationId,
+      generation: corrected.prepared.generation,
+      gitChangeCapability: corrected.prepared.gitChangeCapability,
+      operationId: `T2081-${String(sequence)}-changed-correction-commit`,
+      expectedHead: subject.receipt.newHead,
+      message: "correct rejected candidate",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("after\n") },
+          newState: { mode: "100644", digest: sha256("corrected\n") },
+        },
+      ],
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: corrected.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: correctionReceipt.newHead,
+          filesTouched: [...correctionReceipt.paths],
+          gitReceipts: [
+            {
+              ...correctionReceipt,
+              objectOids: [...correctionReceipt.objectOids],
+              paths: [...correctionReceipt.paths],
+            },
+          ],
+          checkSummary: "changed correction checks passed",
+          summary: "changed correction retains the rejected source receipt prefix",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: subject.dispatchBaseCommit,
+            headCommit: correctionReceipt.newHead,
+          },
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const correctionQualified = await qualify(
+      corrected.prepared,
+      correctedChild,
+      "2026-08-12T20:00:05.000Z",
+    );
+    if (correctionQualified.state !== "queued") throw new Error("changed correction did not qualify");
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: correctionQualified.partitionKey,
+        holderId: "d508-changed-correction",
+      }),
+    ).toMatchObject({
+      state: "completed",
+      handle: {
+        attestationId: corrected.prepared.attestationId,
+        generation: corrected.prepared.generation,
+      },
+    });
+    expect(runner.requests).toHaveLength(2);
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: correctionQualified.partitionKey,
+        holderId: "d508-correction-replay",
+      }),
+    ).toMatchObject({ state: "empty" });
+    expect(runner.requests).toHaveLength(2);
+    expect(subject.store.rows()).toMatchObject([
+      {
+        generation: subject.prepared.generation,
+        state: "aborted",
+        abortReason: "gate-rejected",
+      },
+      {
+        generation: unchanged.prepared.generation,
+        state: "aborted",
+        abortReason: "cancelled",
+        implementationQueue: undefined,
+      },
+      {
+        generation: corrected.prepared.generation,
+        state: "consumed",
+        implementationQueue: { state: "leased" },
+      },
+    ]);
+  });
+
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
     const subject = await fixtureWithDispatchBase(
       new GateDummy(),
@@ -3050,6 +3308,77 @@ throw new Error("unexpected controlled cq invocation");
       } finally {
         if (priorPath === undefined) delete process.env["PATH"];
         else process.env["PATH"] = priorPath;
+      }
+    },
+    FIRST_EXECUTION_TIMEOUT_MS,
+  );
+
+  // regression: D506 — a coordinator role identity leaked into the host gate and nested fixtures.
+  test(
+    "D506 host gate removes dispatch identity while preserving runtime and test settings [Behavioral-Active Effectual-GoodCommunication]",
+    async () => {
+      const root = await fs.mkdtemp(path.join(tmpdir(), "t2081-host-gate-environment-"));
+      roots.push(root);
+      const worktreePath = path.join(root, "worktree");
+      await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
+      await git(worktreePath, ["init", "-q"]);
+      const bin = path.join(root, "bin");
+      await fs.mkdir(bin, { recursive: true });
+      const cq = path.join(bin, "cq");
+      await fs.writeFile(
+        cq,
+        [
+          "#!/bin/sh",
+          "set -eu",
+          'test -z "${CQ_CODEX_ROLE_CORRELATION_ID+x}"',
+          'test -z "${CQ_CODEX_ROLE_EXPECTED_RUN_ID+x}"',
+          'test -z "${CQ_CODEX_PRETURN_OBSERVATION_PATH+x}"',
+          'test "$CQ_TEST_PG_URL" = "postgresql://fixture/d506"',
+          'test "$CQ_TEST_REQUIRE_PG" = "1"',
+          'test "$NODE_OPTIONS" = "--no-warnings"',
+          'test "$CQ_D506_RUNTIME_SETTING" = "retained"',
+          'test "$CQ_CODEX_LEDGER_COMMAND" = "/fixture/cq"',
+          'test "$CQ_CODEX_EXECUTABLE" = "/fixture/codex"',
+          "printf '1 pass\\n0 fail\\n'",
+          "",
+        ].join("\n"),
+      );
+      await fs.chmod(cq, 0o700);
+      const inherited = {
+        PATH: process.env["PATH"],
+        CQ_CODEX_ROLE_CORRELATION_ID: process.env["CQ_CODEX_ROLE_CORRELATION_ID"],
+        CQ_CODEX_ROLE_EXPECTED_RUN_ID: process.env["CQ_CODEX_ROLE_EXPECTED_RUN_ID"],
+        CQ_CODEX_PRETURN_OBSERVATION_PATH: process.env["CQ_CODEX_PRETURN_OBSERVATION_PATH"],
+        CQ_TEST_PG_URL: process.env["CQ_TEST_PG_URL"],
+        CQ_TEST_REQUIRE_PG: process.env["CQ_TEST_REQUIRE_PG"],
+        NODE_OPTIONS: process.env["NODE_OPTIONS"],
+        CQ_D506_RUNTIME_SETTING: process.env["CQ_D506_RUNTIME_SETTING"],
+        CQ_CODEX_LEDGER_COMMAND: process.env["CQ_CODEX_LEDGER_COMMAND"],
+        CQ_CODEX_EXECUTABLE: process.env["CQ_CODEX_EXECUTABLE"],
+      };
+      process.env["PATH"] = `${bin}${path.delimiter}${inherited.PATH ?? ""}`;
+      process.env["CQ_CODEX_ROLE_CORRELATION_ID"] = "d506-coordinator";
+      process.env["CQ_CODEX_ROLE_EXPECTED_RUN_ID"] = "d506-run";
+      process.env["CQ_CODEX_PRETURN_OBSERVATION_PATH"] = path.join(root, "observation.json");
+      process.env["CQ_TEST_PG_URL"] = "postgresql://fixture/d506";
+      process.env["CQ_TEST_REQUIRE_PG"] = "1";
+      process.env["NODE_OPTIONS"] = "--no-warnings";
+      process.env["CQ_D506_RUNTIME_SETTING"] = "retained";
+      process.env["CQ_CODEX_LEDGER_COMMAND"] = "/fixture/cq";
+      process.env["CQ_CODEX_EXECUTABLE"] = "/fixture/codex";
+      try {
+        const result = await nodeSupervisedWorkerGateRunner.run({
+          worktreePath,
+          admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          cancellationSignal: new AbortController().signal,
+        });
+        expect(result).toMatchObject({ gateExitCode: 0, passCount: 1, failCount: 0 });
+      } finally {
+        for (const [key, value] of Object.entries(inherited)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
       }
     },
     FIRST_EXECUTION_TIMEOUT_MS,
