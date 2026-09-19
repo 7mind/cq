@@ -309,6 +309,7 @@ async function fixtureWithDispatchBase(
   >,
   promptArtifactStore: PromptArtifactStore = artifactStore(),
   attestationBackend: "memory" | "sqlite" = "memory",
+  validationIntent: "final" | "focused-only" = "final",
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -420,6 +421,7 @@ async function fixtureWithDispatchBase(
       baseCommit: dispatchBaseCommit,
       round: 0,
       startingCommit: dispatchBaseCommit,
+      validationIntent,
     },
     idempotencyKey: `T2081-${sequence}`,
     timeoutMs: 600_000,
@@ -501,6 +503,18 @@ async function fixtureWithDispatchBase(
     filesTouched: [...receipt.paths],
     gitReceipts: [{ ...receipt, objectOids: [...receipt.objectOids], paths: [...receipt.paths] }],
     checkSummary: "runner-supervised gate requested",
+    ...(validationIntent === "focused-only"
+      ? {
+          focusedChecks: [
+            {
+              command: "bun test focused.test.ts",
+              exitCode: 0,
+              passCount: 1,
+              failCount: 0,
+            },
+          ],
+        }
+      : {}),
     summary: "candidate exact tip",
     baseVerification: {
       status: "verified",
@@ -1022,6 +1036,60 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       }),
     ).resolves.toMatchObject({ state: "output-already-materialized" });
     expect(runner.requests).toHaveLength(1);
+  });
+
+  // regression: D497 — a child PASS is not parent authority to broaden focused validation.
+  test("focused-only validation stages and coordinates without invoking the full gate [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      "memory",
+      "focused-only",
+    );
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("focused implementation candidate runtime is unavailable");
+    }
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+      childThreadId: "focused-validation-child-thread",
+      expectedRunId: subject.expectedChild.runId,
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("focused candidate did not qualify");
+
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "focused-validation-coordinator",
+      }),
+    ).toMatchObject({
+      state: "completed",
+      handle: {
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+      },
+    });
+    expect(runner.requests).toHaveLength(0);
+    expect(subject.store.rows()[0]).toMatchObject({
+      state: "consumed",
+      output: { focusedChecks: [{ exitCode: 0, passCount: 1, failCount: 0 }] },
+    });
   });
 
   // regression: T6520 round 3 — uniqueness is namespace-wide and a
@@ -3342,7 +3410,7 @@ throw new Error("unexpected controlled cq invocation");
           "#!/bin/sh",
           "set -eu",
           'test "${CQ_TEST_JUNIT_PATH:-/dev/null}" != /dev/null',
-          'printf \'%s\\n\' \'<testsuites><testsuite><testcase name="first cascading assertion sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"><failure type="AssertionError" /></testcase></testsuite></testsuites>\' > "$CQ_TEST_JUNIT_PATH"',
+          'printf \'%s\\n\' \'<testsuites><testsuite><testcase name="passing self-closing"/><testcase name="skipped case"><skipped/></testcase><testcase name="first cascading assertion sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"><failure type="AssertionError" message="expected secret sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA to equal safe" /></testcase><testcase name="second cascading assertion"><failure type="AssertionError">second assertion body</failure></testcase></testsuite></testsuites>\' > "$CQ_TEST_JUNIT_PATH"',
           "printf 'packages/example/test/failure.test.ts:\\n'",
           'i=1; while test "$i" -le 6; do printf \'(fail) dependent cascading identity %s\\n\' "$i"; i=$((i + 1)); done',
           'i=1; while test "$i" -le 21; do printf \'trailing diagnostic %s\\n\' "$i"; i=$((i + 1)); done',
@@ -3369,6 +3437,24 @@ throw new Error("unexpected controlled cq invocation");
         expect(result.outputTail).toContain("7 fail");
         expect(result.outputTail).toContain("trailing diagnostic 21");
         expect(Buffer.byteLength(result.outputTail, "utf8")).toBeLessThanOrEqual(896);
+        expect(result.diagnosticArtifact).toMatchObject({
+          failures: [
+            {
+              identity: "first cascading assertion [REDACTED:api-key]",
+              assertion: "expected secret [REDACTED:api-key] to equal safe",
+            },
+            {
+              identity: "second cascading assertion",
+              assertion: "second assertion body",
+            },
+          ],
+        });
+        expect(result.diagnosticArtifact?.failures.map(({ identity }) => identity)).not.toContain(
+          "passing self-closing",
+        );
+        expect(result.diagnosticArtifact?.failures.map(({ identity }) => identity)).not.toContain(
+          "skipped case",
+        );
       } finally {
         if (priorPath === undefined) delete process.env["PATH"];
         else process.env["PATH"] = priorPath;
