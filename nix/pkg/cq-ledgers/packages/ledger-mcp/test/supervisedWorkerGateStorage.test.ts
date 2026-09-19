@@ -2397,111 +2397,98 @@ throw new Error("unexpected controlled cq invocation");
     ).toBe("");
   }, 30_000);
 
-  test("a fresh production coordinator replays one persisted conflict without gating or relaunching it", async () => {
-    const runner = new GateDummy();
-    const subject = await fixture(runner, true);
-    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
-    if (
-      subject.capability.qualifyImplementationCandidate === undefined ||
-      subject.capability.coordinateImplementationCandidate === undefined ||
-      subject.ledgerStore === undefined
-    ) {
-      throw new Error("implementation candidate runtime is unavailable");
-    }
-    const correlationId = subject.expectedChild.childId.slice("implement-worker#".length);
-    const qualified = await subject.capability.qualifyImplementationCandidate({
-      attestationId: subject.prepared.attestationId,
-      generation: subject.prepared.generation,
-      roleId: "implement-worker",
-      correlationId,
-      childThreadId: "conflicted-child-thread",
-      expectedRunId: subject.expectedChild.runId,
-      outcome: "completed",
-      exitStatus: 0,
-      observedAt: "2026-08-12T20:00:02.000Z",
-      promptDigest: subject.prepared.promptProvenance.promptDigest,
-    });
-    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
-    await fs.writeFile(path.join(subject.repositoryRoot, "file.txt"), "protected\n");
-    await git(subject.repositoryRoot, ["add", "file.txt"]);
-    await git(subject.repositoryRoot, ["commit", "-q", "-m", "conflict protected head"]);
-    await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
-    await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
-    const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
-
-    const first = await subject.capability.coordinateImplementationCandidate({
-      partitionKey: qualified.partitionKey,
-      holderId: "production-conflict-coordinator",
-    });
-
-    expect(first).toMatchObject({
-      state: "blocked",
-      front: {
+  test.each(["memory", "sqlite"] as const)(
+    "a fresh production coordinator replays one persisted conflict without gating or relaunching it (%s)",
+    async (attestationBackend) => {
+      const runner = new GateDummy();
+      const subject = await fixtureWithDispatchBase(
+        runner,
+        "managed",
+        () => "2026-08-12T20:00:00.000Z",
+        false,
+        true,
+        undefined,
+        artifactStore(),
+        attestationBackend,
+      );
+      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+      if (
+        subject.capability.qualifyImplementationCandidate === undefined ||
+        subject.capability.coordinateImplementationCandidate === undefined ||
+        subject.ledgerStore === undefined
+      ) {
+        throw new Error("implementation candidate runtime is unavailable");
+      }
+      const correlationId = subject.expectedChild.childId.slice("implement-worker#".length);
+      const qualified = await subject.capability.qualifyImplementationCandidate({
         attestationId: subject.prepared.attestationId,
         generation: subject.prepared.generation,
-      },
-      frontState: "staged-rebase-retired",
-    });
-    if (first.state !== "blocked" || !("sourceReference" in first)) {
-      throw new Error("conflicted retirement did not return its staged-source handoff");
-    }
-    const sourceReference = first.sourceReference;
-    expect(runner.requests).toHaveLength(0);
-    const retired = subject.store
-      .rows()
-      .find(
-        (row) =>
-          row.attestationId === subject.prepared.attestationId &&
-          row.generation === subject.prepared.generation,
-      );
-    expect(retired?.implementationQueue).toMatchObject({
-      state: "staged-rebase-retired",
-      stagedRebaseDisposition: { state: "conflict-pending" },
-    });
-    const persistedControl = retired?.implementationQueue;
+        roleId: "implement-worker",
+        correlationId,
+        childThreadId: "conflicted-child-thread",
+        expectedRunId: subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: "2026-08-12T20:00:02.000Z",
+        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      });
+      if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+      await fs.writeFile(path.join(subject.repositoryRoot, "file.txt"), "protected\n");
+      await git(subject.repositoryRoot, ["add", "file.txt"]);
+      await git(subject.repositoryRoot, ["commit", "-q", "-m", "conflict protected head"]);
+      await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
+      await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
+      const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
 
-    const restarted = createDispatchCapability({
-      backend: new InMemoryAttestationBackend(subject.store),
-      promptArtifactStore: artifactStore(),
-      ledgerStore: subject.ledgerStore,
-      implementationEvidenceStore: subject.implementationEvidenceStore,
-      repositoryRoot: subject.repositoryRoot,
-      worktreeStateDir: subject.stateDir,
-      supervisedWorkerGateRunner: runner,
-      now: () => "2026-08-12T20:00:00.000Z",
-      randomBytes: sequentialDispatchRandomBytes(sequence * 64),
-    });
-    if (restarted.coordinateImplementationCandidate === undefined) {
-      throw new Error("restarted implementation coordinator is unavailable");
-    }
+      const first = await subject.capability.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "production-conflict-coordinator",
+      });
 
-    if (restarted.resolveStagedRebase === undefined) {
-      throw new Error("public staged-rebase recovery is unavailable");
-    }
-    const pendingRecovery = (await WORKTREE_MANAGE_TOOL_SPEC.run(
-      subject.ledgerStore,
-      {
+      expect(first).toMatchObject({
+        state: "blocked",
+        front: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        },
+        frontState: "staged-rebase-retired",
+      });
+      if (first.state !== "blocked" || !("sourceReference" in first)) {
+        throw new Error("conflicted retirement did not return its staged-source handoff");
+      }
+      const readPersisted = async (handle: {
+        readonly attestationId: string;
+        readonly generation: number;
+      }) =>
+        await subject.backend.transact({ kind: "handle", handle }, (store) => store.read(handle));
+      const sourceReference = first.sourceReference;
+      expect(runner.requests).toHaveLength(0);
+      const retired = await readPersisted(subject.prepared);
+      expect(retired?.implementationQueue).toMatchObject({
+        state: "staged-rebase-retired",
+        stagedRebaseDisposition: { state: "conflict-pending" },
+      });
+      const persistedControl = retired?.implementationQueue;
+
+      const restarted = createDispatchCapability({
+        backend: subject.backend,
+        promptArtifactStore: artifactStore(),
+        ledgerStore: subject.ledgerStore,
+        implementationEvidenceStore: subject.implementationEvidenceStore,
         repositoryRoot: subject.repositoryRoot,
-        deps: { stateDir: subject.stateDir },
-        resolveStagedRebase: restarted.resolveStagedRebase,
-      },
-      {
-        operation: "resolve-staged-rebase",
-        handle: subject.managed.handle,
-        sourceDispatch: first.front,
-        sourceReference,
-      },
-    )) as unknown as DispatchStagedRebaseResolution;
-    expect(pendingRecovery).toEqual({
-      status: "staged-rebase-conflict-pending",
-      taskId: subject.managed.handle.taskId,
-      liveTip: expect.any(String),
-      source: first.front,
-      sourceReference,
-      guardedRebase: expect.stringMatching(/^cq-guarded-rebase:v1:/u),
-    });
-    expect(
-      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        worktreeStateDir: subject.stateDir,
+        supervisedWorkerGateRunner: runner,
+        now: () => "2026-08-12T20:00:00.000Z",
+        randomBytes: sequentialDispatchRandomBytes(sequence * 64),
+      });
+      if (restarted.coordinateImplementationCandidate === undefined) {
+        throw new Error("restarted implementation coordinator is unavailable");
+      }
+
+      if (restarted.resolveStagedRebase === undefined) {
+        throw new Error("public staged-rebase recovery is unavailable");
+      }
+      const pendingRecovery = (await WORKTREE_MANAGE_TOOL_SPEC.run(
         subject.ledgerStore,
         {
           repositoryRoot: subject.repositoryRoot,
@@ -2514,164 +2501,152 @@ throw new Error("unexpected controlled cq invocation");
           sourceDispatch: first.front,
           sourceReference,
         },
-      )) as unknown as DispatchStagedRebaseResolution,
-    ).toEqual(pendingRecovery);
-    await expect(
-      WORKTREE_MANAGE_TOOL_SPEC.run(
-        subject.ledgerStore,
-        {
-          repositoryRoot: subject.repositoryRoot,
-          deps: { stateDir: subject.stateDir },
-          resolveStagedRebase: restarted.resolveStagedRebase,
-        },
-        {
-          operation: "resolve-staged-rebase",
-          handle: subject.managed.handle,
-          sourceDispatch: { ...first.front, generation: first.front.generation + 1 },
-          sourceReference,
-        },
-      ),
-    ).rejects.toThrow("source handle or reference changed");
-    await expect(
-      WORKTREE_MANAGE_TOOL_SPEC.run(
-        subject.ledgerStore,
-        {
-          repositoryRoot: subject.repositoryRoot,
-          deps: { stateDir: subject.stateDir },
-          resolveStagedRebase: restarted.resolveStagedRebase,
-        },
-        {
-          operation: "resolve-staged-rebase",
-          handle: subject.managed.handle,
-          sourceDispatch: first.front,
-          sourceReference: `cq-staged-rebase-source:v1:${"d".repeat(64)}`,
-        },
-      ),
-    ).rejects.toThrow("staged-rebase source does not resolve to one durable checkpoint");
-    await expect(
-      WORKTREE_MANAGE_TOOL_SPEC.run(
-        subject.ledgerStore,
-        {
-          repositoryRoot: subject.repositoryRoot,
-          deps: { stateDir: subject.stateDir },
-          resolveStagedRebase: restarted.resolveStagedRebase,
-        },
-        {
-          operation: "resolve-staged-rebase",
-          handle: { ...subject.managed.handle, branch: `${subject.managed.handle.branch}-foreign` },
-          sourceDispatch: first.front,
-          sourceReference,
-        },
-      ),
-    ).rejects.toThrow();
-
-    const replay = await restarted.coordinateImplementationCandidate({
-      partitionKey: qualified.partitionKey,
-      holderId: "restarted-conflict-coordinator",
-    });
-
-    expect(replay).toEqual(first);
-    expect(runner.requests).toHaveLength(0);
-    expect(
-      subject.store
-        .rows()
-        .find(
-          (row) =>
-            row.attestationId === subject.prepared.attestationId &&
-            row.generation === subject.prepared.generation,
-        )?.implementationQueue,
-    ).toEqual(persistedControl);
-
-    const binding = await resolveManagedWorktreeDispatchBinding(
-      {
-        repositoryRoot: subject.repositoryRoot,
+      )) as unknown as DispatchStagedRebaseResolution;
+      expect(pendingRecovery).toEqual({
+        status: "staged-rebase-conflict-pending",
         taskId: subject.managed.handle.taskId,
-        worktreePath: subject.managed.handle.absolutePath,
-        branch: subject.managed.handle.branch,
-        allowDetachedRebase: true,
-      },
-      { stateDir: subject.stateDir },
-    );
-    if (binding === null) throw new Error("conflicted managed binding did not resolve");
-    const conflict = await observeManagedWorktreeConflictState(binding, {
-      stateDir: subject.stateDir,
-    });
-    const resolvedBody = "protected + candidate\n";
-    await fs.writeFile(path.join(subject.managed.handle.absolutePath, "file.txt"), resolvedBody);
-    await continueManagedWorktreeRebase(
-      {
-        authorization: {
-          ...binding,
-          attestationId: "cq_attest_t2081_conflict_resolver",
-          generation: 1,
-          roleId: "implement-conflict-resolver",
-          surface: "codex",
-          childCancelAt: "2099-01-01T00:00:00.000Z",
-          conflictStateDigest: gitRebaseConflictStateDigest(conflict),
-        },
-        operationId: "t2081-conflict-resolution",
-        expectedState: conflict,
-        resolutions: [
-          {
-            kind: "regular",
-            path: "file.txt",
-            newState: { mode: "100644", digest: sha256(resolvedBody) },
-          },
-        ],
-      },
-      { stateDir: subject.stateDir, authorize: async () => undefined },
-    );
-    const finalizedRestart = createDispatchCapability({
-      backend: new InMemoryAttestationBackend(subject.store),
-      promptArtifactStore: artifactStore(),
-      ledgerStore: subject.ledgerStore,
-      implementationEvidenceStore: subject.implementationEvidenceStore,
-      repositoryRoot: subject.repositoryRoot,
-      worktreeStateDir: subject.stateDir,
-      supervisedWorkerGateRunner: runner,
-      now: () => "2026-08-12T20:00:00.000Z",
-      randomBytes: sequentialDispatchRandomBytes(sequence * 96),
-    });
-    if (finalizedRestart.coordinateImplementationCandidate === undefined) {
-      throw new Error("finalized-journal coordinator is unavailable");
-    }
-
-    if (finalizedRestart.resolveStagedRebase === undefined) {
-      throw new Error("finalized staged-rebase recovery is unavailable");
-    }
-    const recovered = (await WORKTREE_MANAGE_TOOL_SPEC.run(
-      subject.ledgerStore,
-      {
-        repositoryRoot: subject.repositoryRoot,
-        deps: { stateDir: subject.stateDir },
-        resolveStagedRebase: finalizedRestart.resolveStagedRebase,
-      },
-      {
-        operation: "resolve-staged-rebase",
-        handle: subject.managed.handle,
-        sourceDispatch: first.front,
+        liveTip: expect.any(String),
+        source: first.front,
         sourceReference,
-      },
-    )) as unknown as DispatchStagedRebaseResolution;
-    if (recovered.status !== "staged-rebase-preparation-ready") {
-      throw new Error("terminal staged-rebase recovery did not return preparation authority");
-    }
-    const recoveredGuardedRebase = recovered.guardedRebase;
-    expect(recovered).toMatchObject({
-      status: "staged-rebase-preparation-ready",
-      taskId: subject.managed.handle.taskId,
-      source: first.front,
-      sourceReference,
-      guardedRebase: recoveredGuardedRebase,
-      preparation: {
-        kind: "guarded-rebase",
-        reprepareOf: first.front,
-        guardedRebase: recoveredGuardedRebase,
-      },
-    });
-    expect(recovered.preparation.guardedRebase).toMatch(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u);
-    expect(
-      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        guardedRebase: expect.stringMatching(/^cq-guarded-rebase:v1:/u),
+      });
+      expect(
+        (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: restarted.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: first.front,
+            sourceReference,
+          },
+        )) as unknown as DispatchStagedRebaseResolution,
+      ).toEqual(pendingRecovery);
+      await expect(
+        WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: restarted.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: { ...first.front, generation: first.front.generation + 1 },
+            sourceReference,
+          },
+        ),
+      ).rejects.toThrow("source handle or reference changed");
+      await expect(
+        WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: restarted.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: first.front,
+            sourceReference: `cq-staged-rebase-source:v1:${"d".repeat(64)}`,
+          },
+        ),
+      ).rejects.toThrow("staged-rebase source does not resolve to one durable checkpoint");
+      await expect(
+        WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: restarted.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: {
+              ...subject.managed.handle,
+              branch: `${subject.managed.handle.branch}-foreign`,
+            },
+            sourceDispatch: first.front,
+            sourceReference,
+          },
+        ),
+      ).rejects.toThrow();
+
+      const replay = await restarted.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: "restarted-conflict-coordinator",
+      });
+
+      expect(replay).toEqual(first);
+      expect(runner.requests).toHaveLength(0);
+      expect((await readPersisted(subject.prepared))?.implementationQueue).toEqual(
+        persistedControl,
+      );
+
+      const binding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: subject.repositoryRoot,
+          taskId: subject.managed.handle.taskId,
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          allowDetachedRebase: true,
+        },
+        { stateDir: subject.stateDir },
+      );
+      if (binding === null) throw new Error("conflicted managed binding did not resolve");
+      const conflict = await observeManagedWorktreeConflictState(binding, {
+        stateDir: subject.stateDir,
+      });
+      const resolvedBody = "protected + candidate\n";
+      await fs.writeFile(path.join(subject.managed.handle.absolutePath, "file.txt"), resolvedBody);
+      await continueManagedWorktreeRebase(
+        {
+          authorization: {
+            ...binding,
+            attestationId: "cq_attest_t2081_conflict_resolver",
+            generation: 1,
+            roleId: "implement-conflict-resolver",
+            surface: "codex",
+            childCancelAt: "2099-01-01T00:00:00.000Z",
+            conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+          },
+          operationId: "t2081-conflict-resolution",
+          expectedState: conflict,
+          resolutions: [
+            {
+              kind: "regular",
+              path: "file.txt",
+              newState: { mode: "100644", digest: sha256(resolvedBody) },
+            },
+          ],
+        },
+        { stateDir: subject.stateDir, authorize: async () => undefined },
+      );
+      const finalizedRestart = createDispatchCapability({
+        backend: subject.backend,
+        promptArtifactStore: artifactStore(),
+        ledgerStore: subject.ledgerStore,
+        implementationEvidenceStore: subject.implementationEvidenceStore,
+        repositoryRoot: subject.repositoryRoot,
+        worktreeStateDir: subject.stateDir,
+        supervisedWorkerGateRunner: runner,
+        now: () => "2026-08-12T20:00:00.000Z",
+        randomBytes: sequentialDispatchRandomBytes(sequence * 96),
+      });
+      if (finalizedRestart.coordinateImplementationCandidate === undefined) {
+        throw new Error("finalized-journal coordinator is unavailable");
+      }
+
+      if (finalizedRestart.resolveStagedRebase === undefined) {
+        throw new Error("finalized staged-rebase recovery is unavailable");
+      }
+      const recovered = (await WORKTREE_MANAGE_TOOL_SPEC.run(
         subject.ledgerStore,
         {
           repositoryRoot: subject.repositoryRoot,
@@ -2684,100 +2659,135 @@ throw new Error("unexpected controlled cq invocation");
           sourceDispatch: first.front,
           sourceReference,
         },
-      )) as unknown as DispatchStagedRebaseResolution,
-    ).toEqual(recovered);
-    if (
-      retired === undefined ||
-      isAttestationTombstone(retired) ||
-      retired.input === null ||
-      typeof retired.input !== "object" ||
-      Array.isArray(retired.input)
-    ) {
-      throw new Error("retired source input is unavailable");
-    }
-    const successor = await finalizedRestart.prepare({
-      roleId: "implement-worker",
-      input: {
-        ...retired.input,
+      )) as unknown as DispatchStagedRebaseResolution;
+      if (recovered.status !== "staged-rebase-preparation-ready") {
+        throw new Error("terminal staged-rebase recovery did not return preparation authority");
+      }
+      const recoveredGuardedRebase = recovered.guardedRebase;
+      expect(recovered).toMatchObject({
+        status: "staged-rebase-preparation-ready",
+        taskId: subject.managed.handle.taskId,
+        source: first.front,
+        sourceReference,
+        guardedRebase: recoveredGuardedRebase,
+        preparation: {
+          kind: "guarded-rebase",
+          reprepareOf: first.front,
+          guardedRebase: recoveredGuardedRebase,
+        },
+      });
+      expect(recovered.preparation.guardedRebase).toMatch(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u);
+      expect(
+        (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: finalizedRestart.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: first.front,
+            sourceReference,
+          },
+        )) as unknown as DispatchStagedRebaseResolution,
+      ).toEqual(recovered);
+      if (
+        retired === undefined ||
+        isAttestationTombstone(retired) ||
+        retired.input === null ||
+        typeof retired.input !== "object" ||
+        Array.isArray(retired.input)
+      ) {
+        throw new Error("retired source input is unavailable");
+      }
+      const successor = await finalizedRestart.prepare({
+        roleId: "implement-worker",
+        input: {
+          ...retired.input,
+          baseCommit: protectedHead,
+          startingCommit: recovered.liveTip,
+          priorResultCommit: subject.receipt.newHead,
+          round: 1,
+        },
+        idempotencyKey: "t6573-public-staged-rebase-successor",
+        timeoutMs: 600_000,
+        expectedChild: subject.expectedChild,
+        reprepareOf: recovered.preparation.reprepareOf,
+        guardedRebase: recovered.preparation.guardedRebase,
+      });
+      if (!successor.accepted) throw new Error(successor.detail);
+      const successorInput = await finalizedRestart.fetchInput({
+        ...successor.handle,
+        inputCapability: successor.prepared.inputCapability,
+      });
+      expect(successorInput.input).toMatchObject({
         baseCommit: protectedHead,
         startingCommit: recovered.liveTip,
         priorResultCommit: subject.receipt.newHead,
         round: 1,
-      },
-      idempotencyKey: "t6573-public-staged-rebase-successor",
-      timeoutMs: 600_000,
-      expectedChild: subject.expectedChild,
-      reprepareOf: recovered.preparation.reprepareOf,
-      guardedRebase: recovered.preparation.guardedRebase,
-    });
-    if (!successor.accepted) throw new Error(successor.detail);
-    const successorInput = await finalizedRestart.fetchInput({
-      ...successor.handle,
-      inputCapability: successor.prepared.inputCapability,
-    });
-    expect(successorInput.input).toMatchObject({
-      baseCommit: protectedHead,
-      startingCommit: recovered.liveTip,
-      priorResultCommit: subject.receipt.newHead,
-      round: 1,
-      guardedRebaseLineage: {
+        guardedRebaseLineage: {
+          guardedRebase: recovered.guardedRebase,
+          ontoCommit: protectedHead,
+          rebasedStartCommit: recovered.liveTip,
+        },
+      });
+      expect(
+        (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: finalizedRestart.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: first.front,
+            sourceReference,
+          },
+        )) as unknown as DispatchStagedRebaseResolution,
+      ).toEqual({
+        status: "staged-rebase-successor-bound",
+        taskId: subject.managed.handle.taskId,
+        liveTip: recovered.liveTip,
+        source: first.front,
+        sourceReference,
         guardedRebase: recovered.guardedRebase,
-        ontoCommit: protectedHead,
-        rebasedStartCommit: recovered.liveTip,
-      },
-    });
-    expect(
-      (await WORKTREE_MANAGE_TOOL_SPEC.run(
-        subject.ledgerStore,
-        {
-          repositoryRoot: subject.repositoryRoot,
-          deps: { stateDir: subject.stateDir },
-          resolveStagedRebase: finalizedRestart.resolveStagedRebase,
-        },
-        {
-          operation: "resolve-staged-rebase",
-          handle: subject.managed.handle,
-          sourceDispatch: first.front,
-          sourceReference,
-        },
-      )) as unknown as DispatchStagedRebaseResolution,
-    ).toEqual({
-      status: "staged-rebase-successor-bound",
-      taskId: subject.managed.handle.taskId,
-      liveTip: recovered.liveTip,
-      source: first.front,
-      sourceReference,
-      guardedRebase: recovered.guardedRebase,
-      successor: successor.handle,
-    });
+        successor: successor.handle,
+      });
 
-    expect(
-      await finalizedRestart.coordinateImplementationCandidate({
-        partitionKey: qualified.partitionKey,
-        holderId: "finalized-journal-coordinator",
-      }),
-    ).toEqual({
-      state: "successor-queued",
-      source: {
-        attestationId: subject.prepared.attestationId,
-        generation: subject.prepared.generation,
-      },
-      successor: {
+      expect(
+        await finalizedRestart.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: "finalized-journal-coordinator",
+        }),
+      ).toEqual({
+        state: "successor-queued",
+        source: {
+          attestationId: subject.prepared.attestationId,
+          generation: subject.prepared.generation,
+        },
+        successor: {
+          attestationId: successor.handle.attestationId,
+          generation: successor.handle.generation,
+        },
+      });
+      expect(runner.requests).toHaveLength(0);
+      expect(await readPersisted(successor.handle)).toMatchObject({
         attestationId: successor.handle.attestationId,
         generation: successor.handle.generation,
-      },
-    });
-    expect(runner.requests).toHaveLength(0);
-    expect(
-      subject.store
-        .rows()
-        .filter(
-          (row) =>
-            row.attestationId === subject.prepared.attestationId &&
-            row.generation === subject.prepared.generation + 1,
-        ),
-    ).toHaveLength(1);
-  });
+      });
+      expect(
+        await readPersisted({
+          attestationId: successor.handle.attestationId,
+          generation: successor.handle.generation + 1,
+        }),
+      ).toBeUndefined();
+      await subject.backend.close();
+    },
+  );
 
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {
     const runner = new GateDummy();
