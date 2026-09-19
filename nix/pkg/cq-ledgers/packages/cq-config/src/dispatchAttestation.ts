@@ -1200,6 +1200,8 @@ export interface AttestationEnvelope {
   readonly gateSubmittedOutputDigest?: string;
   readonly gateClaimedAt?: string;
   readonly gateEpoch?: number;
+  /** Authenticated cancellation intent observed by the exact active gate owner. */
+  readonly parentGateCancellationRequest?: ParentGateCancellationRequestRecord;
   /** Durable queue identity and lease state for a supervised implementation candidate. */
   readonly implementationQueue?: ImplementationQueueControl;
   /** Versioned rollout decision for a live row that predates the canonical queue. */
@@ -1311,6 +1313,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "gateSubmittedOutputDigest",
   "gateClaimedAt",
   "gateEpoch",
+  "parentGateCancellationRequest",
   "stagedCompletionQualification",
   "consumedAt",
   "outputMaterializedAt",
@@ -2547,18 +2550,20 @@ function claimStagedRebaseSuccessor(
   const managerBindingChanged =
     priorManagerBinding !== undefined &&
     (gitEffectBinding === undefined ||
-      ([
-        "taskId",
-        "handleToken",
-        "handleFingerprint",
-        "repositoryRoot",
-        "repositoryId",
-        "commonDir",
-        "worktreePath",
-        "branch",
-        "ref",
-        "baseCommit",
-      ] as const).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
+      (
+        [
+          "taskId",
+          "handleToken",
+          "handleFingerprint",
+          "repositoryRoot",
+          "repositoryId",
+          "commonDir",
+          "worktreePath",
+          "branch",
+          "ref",
+          "baseCommit",
+        ] as const
+      ).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
   const input =
     typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
       ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
@@ -2607,9 +2612,16 @@ function claimStagedRebaseSuccessor(
         deps.store,
         retainedQueue.partition.partitionKey,
       ),
-      terminal: Object.freeze({ reason: "superseded" as const, terminalAt: supersededAt, detailsDigest }),
+      terminal: Object.freeze({
+        reason: "superseded" as const,
+        terminalAt: supersededAt,
+        detailsDigest,
+      }),
     });
-    deps.store.replace(previous, Object.freeze({ ...previous, implementationQueue: terminalQueue }));
+    deps.store.replace(
+      previous,
+      Object.freeze({ ...previous, implementationQueue: terminalQueue }),
+    );
     return sourceClaim;
   };
   if (
@@ -2672,7 +2684,11 @@ function claimStagedRebaseSuccessor(
         deps.store,
         retainedQueue.partition.partitionKey,
       ),
-      terminal: Object.freeze({ reason: "staged-rebase" as const, terminalAt: retiredAt, detailsDigest }),
+      terminal: Object.freeze({
+        reason: "staged-rebase" as const,
+        terminalAt: retiredAt,
+        detailsDigest,
+      }),
       stagedRebaseSource: claimedSource,
     });
     deps.store.replace(
@@ -2702,8 +2718,7 @@ function claimStagedRebaseSuccessor(
     input["startingCommit"] === retainedContinuation!.liveTip &&
     dispatchPayloadDigest(
       (gitEffectBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
-    ) ===
-      dispatchPayloadDigest(retainedContinuation!.gitReceipts as unknown as DispatchJSONValue)
+    ) === dispatchPayloadDigest(retainedContinuation!.gitReceipts as unknown as DispatchJSONValue)
   ) {
     return supersedeRetainedQueue(queue!, retainedContinuation!.continuationReference);
   }
@@ -3583,6 +3598,31 @@ export interface CompleteQualifiedParentGateRequest extends QualifiedParentGateF
   readonly output: DispatchJSONValue;
 }
 
+export interface ParentGateCancellationRequestRecord {
+  readonly gateEpoch: number;
+  readonly requestedAt: string;
+  readonly reason: DispatchAbortReason;
+  readonly details?: DispatchJSONValue;
+}
+
+export interface RequestParentGateCancellationRequest extends DispatchHandle {
+  readonly namespace: AttestationNamespace;
+  readonly actor: TrustedDispatchActor;
+  readonly reason: DispatchAbortReason;
+  readonly details?: DispatchJSONValue;
+}
+
+export type RequestParentGateCancellationOutcome =
+  | {
+      readonly state: "cancellation-requested";
+      readonly request: ParentGateCancellationRequestRecord;
+    }
+  | { readonly state: "not-running" }
+  | {
+      readonly state: "aborted";
+      readonly result: AbortedDispatchResult<DispatchAbortReason>;
+    };
+
 function requireParentGateRow(
   request: ParentGateFinalizeRequest,
   deps: DispatchServiceDeps,
@@ -3701,8 +3741,9 @@ function claimParentGateRow(
   }
   const { at } = readNow(deps);
   const gateEpoch = (row.gateEpoch ?? 0) + 1;
+  const { parentGateCancellationRequest: _priorCancellation, ...claimable } = row;
   const next: AttestationEnvelope = Object.freeze({
-    ...row,
+    ...claimable,
     state: "gate-running" as const,
     gateEpoch,
     gateClaimedAt: at,
@@ -3766,6 +3807,13 @@ function completeParentGateRow(
     );
   }
   assertParentGateQueueLease(row, request.queueLease);
+  if (row.parentGateCancellationRequest?.gateEpoch === request.gateEpoch) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `parent gate epoch ${String(request.gateEpoch)} has an authenticated cancellation request`,
+    );
+  }
   if (row.gateEpoch !== request.gateEpoch) {
     throw new DispatchStateConflictError(
       STORE_RESULT,
@@ -4347,6 +4395,82 @@ const ABORT_REASON_SET: ReadonlySet<string> = new Set([
   "operational-abstention",
 ]);
 
+/** Persist cancellation intent without waiting for the gate owner's worktree lock. */
+export function requestParentGateCancellation(
+  request: RequestParentGateCancellationRequest,
+  deps: DispatchServiceDeps,
+): RequestParentGateCancellationOutcome {
+  assertTrustedNamespace(request.namespace, deps, ABORT);
+  const actor: unknown = request.actor;
+  if (typeof actor !== "string" || !TRUSTED_ACTOR_SET.has(actor)) {
+    throw new DispatchAuthorizationError(ABORT, `untrusted abort actor "${String(actor)}"`);
+  }
+  const reason: unknown = request.reason;
+  if (typeof reason !== "string" || !ABORT_REASON_SET.has(reason)) {
+    throw new AttestationContractError("reason", `unknown abort reason "${String(reason)}"`);
+  }
+  const row = requireRow(assertDispatchHandle(request), deps);
+  if (isAttestationTombstone(row)) {
+    throw new DispatchStateConflictError(
+      ABORT,
+      "terminal-envelope-expired",
+      `attestation "${row.attestationId}" is terminal and its envelope has expired`,
+    );
+  }
+  const details = request.details;
+  if (row.state === "aborted") {
+    const sameReason = row.abortReason === reason;
+    const sameDetails =
+      details === undefined
+        ? row.abortDetailsDigest === undefined
+        : row.abortDetailsDigest === dispatchPayloadDigest(details);
+    if (sameReason && sameDetails) {
+      return Object.freeze({
+        state: "aborted" as const,
+        result: abortedResultOf(row, reason as DispatchAbortReason),
+      });
+    }
+    throw new DispatchStateConflictError(
+      ABORT,
+      row.state,
+      `attestation "${row.attestationId}" is already aborted (${String(row.abortReason)})`,
+    );
+  }
+  if (row.state !== "gate-running" || row.parentGateCapabilityHash === undefined) {
+    return Object.freeze({ state: "not-running" as const });
+  }
+  if (reason === "gate-rejected") assertSupervisedGateRejectionDetails(details);
+  const existing = row.parentGateCancellationRequest;
+  if (existing !== undefined) {
+    const sameReason = existing.reason === reason;
+    const sameDetails =
+      details === undefined
+        ? existing.details === undefined
+        : existing.details !== undefined &&
+          dispatchPayloadDigest(existing.details) === dispatchPayloadDigest(details);
+    if (existing.gateEpoch === row.gateEpoch && sameReason && sameDetails) {
+      return Object.freeze({ state: "cancellation-requested" as const, request: existing });
+    }
+    throw new DispatchStateConflictError(
+      ABORT,
+      row.state,
+      `attestation "${row.attestationId}" already has a different parent gate cancellation request`,
+    );
+  }
+  if (row.gateEpoch === undefined) {
+    throw new AttestationContractError("row", "a running parent gate must carry an epoch");
+  }
+  const { at } = readNow(deps);
+  const cancellation = Object.freeze({
+    gateEpoch: row.gateEpoch,
+    requestedAt: at,
+    reason: reason as DispatchAbortReason,
+    ...(details === undefined ? {} : { details }),
+  });
+  deps.store.replace(row, Object.freeze({ ...row, parentGateCancellationRequest: cancellation }));
+  return Object.freeze({ state: "cancellation-requested" as const, request: cancellation });
+}
+
 /**
  * THE trusted terminal abort (T685). It wins from `prepared` AND from
  * `result-stored` — a stored result is not consumable after an abort — and it
@@ -4772,7 +4896,10 @@ function continuationBindingOfRow(
 ): DispatchContinuationBinding | undefined {
   const binding = row.dispatchContinuationBinding;
   if (binding === undefined) return undefined;
-  if (!isAttestationTombstone(row) && row.implementationQueue?.completionReservation !== undefined) {
+  if (
+    !isAttestationTombstone(row) &&
+    row.implementationQueue?.completionReservation !== undefined
+  ) {
     throw new DispatchContinuationError(
       "already-claimed",
       "dispatch continuation is fenced by a durable completion reservation",

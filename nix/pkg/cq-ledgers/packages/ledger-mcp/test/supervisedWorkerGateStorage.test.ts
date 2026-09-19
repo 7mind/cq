@@ -53,6 +53,9 @@ const exec = promisify(execFile);
 const CODEX_ROLE_DISPATCH_SCRIPT = fileURLToPath(
   new URL("../../cq-config/scripts/codex-role-dispatch.ts", import.meta.url),
 );
+const PARENT_GATE_PROCESS_WORKER = fileURLToPath(
+  new URL("./fixtures/parentGateFinalizationProcessWorker.ts", import.meta.url),
+);
 const roots: string[] = [];
 let sequence = 0;
 
@@ -380,9 +383,7 @@ async function fixtureWithDispatchBase(
     promptArtifactStore,
     ...(ledgerStore === undefined ? {} : { ledgerStore }),
     implementationEvidenceStore,
-    ...(implementationSuccessorLauncher === undefined
-      ? {}
-      : { implementationSuccessorLauncher }),
+    ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
@@ -590,6 +591,48 @@ async function waitForD342Marker(markerPath: string): Promise<void> {
         `D342 marker timeout: blocking child reported no live marker within ${String(D342_MARKER_TIMEOUT_MS)} ms`,
       );
     }
+    await Bun.sleep(5);
+  }
+}
+
+interface ParentGateProcessResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function spawnParentGateProcess(
+  configPath: string,
+  workerId: "first" | "peer",
+): Promise<ParentGateProcessResult> {
+  const child = Bun.spawn([process.execPath, PARENT_GATE_PROCESS_WORKER, configPath, workerId], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]).then(([exitCode, stdout, stderr]) => ({ exitCode, stdout, stderr }));
+}
+
+async function readInvocationMarker(markerPath: string): Promise<string[]> {
+  try {
+    const body = await fs.readFile(markerPath, "utf8");
+    return body.trim() === "" ? [] : body.trim().split("\n");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function observeForbiddenPeerInvocation(markerPath: string): Promise<string[]> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    const invocations = await readInvocationMarker(markerPath);
+    if (invocations.length > 1 || Date.now() >= deadline) return invocations;
     await Bun.sleep(5);
   }
 }
@@ -1668,11 +1711,13 @@ throw new Error("unexpected controlled cq invocation");
       frontState: "staged-rebase-retired",
     });
     expect(runner.requests).toHaveLength(0);
-    const retired = subject.store.rows().find(
-      (row) =>
-        row.attestationId === subject.prepared.attestationId &&
-        row.generation === subject.prepared.generation,
-    );
+    const retired = subject.store
+      .rows()
+      .find(
+        (row) =>
+          row.attestationId === subject.prepared.attestationId &&
+          row.generation === subject.prepared.generation,
+      );
     expect(retired?.implementationQueue).toMatchObject({
       state: "staged-rebase-retired",
       stagedRebaseDisposition: { state: "conflict-pending" },
@@ -1702,11 +1747,13 @@ throw new Error("unexpected controlled cq invocation");
     expect(replay).toEqual(first);
     expect(runner.requests).toHaveLength(0);
     expect(
-      subject.store.rows().find(
-        (row) =>
-          row.attestationId === subject.prepared.attestationId &&
-          row.generation === subject.prepared.generation,
-      )?.implementationQueue,
+      subject.store
+        .rows()
+        .find(
+          (row) =>
+            row.attestationId === subject.prepared.attestationId &&
+            row.generation === subject.prepared.generation,
+        )?.implementationQueue,
     ).toEqual(persistedControl);
 
     const binding = await resolveManagedWorktreeDispatchBinding(
@@ -1781,11 +1828,13 @@ throw new Error("unexpected controlled cq invocation");
     });
     expect(runner.requests).toHaveLength(0);
     expect(
-      subject.store.rows().filter(
-        (row) =>
-          row.attestationId === subject.prepared.attestationId &&
-          row.generation === subject.prepared.generation + 1,
-      ),
+      subject.store
+        .rows()
+        .filter(
+          (row) =>
+            row.attestationId === subject.prepared.attestationId &&
+            row.generation === subject.prepared.generation + 1,
+        ),
     ).toHaveLength(1);
   });
 
@@ -2311,9 +2360,7 @@ throw new Error("unexpected controlled cq invocation");
       await finalizing.catch(() => undefined);
       await aborting.catch(() => undefined);
     }
-    expect(subject.store.rows()).toMatchObject([
-      { state: "aborted", abortReason: "cancelled" },
-    ]);
+    expect(subject.store.rows()).toMatchObject([{ state: "aborted", abortReason: "cancelled" }]);
   });
 
   // Regression: an unbound process worker could store fabricated supervised evidence.
@@ -2495,6 +2542,57 @@ throw new Error("unexpected controlled cq invocation");
       expect(runner.requests).toHaveLength(1);
     },
   );
+
+  test("D489 serializes independent SQLite processes into one durable gate attempt [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      false,
+      undefined,
+      artifactStore(),
+      "sqlite",
+    );
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const configPath = path.join(subject.repositoryRoot, "parent-gate-process.json");
+    const invocationMarker = path.join(subject.repositoryRoot, "gate-invocations.txt");
+    const readyDirectory = path.join(subject.repositoryRoot, "process-ready");
+    const firstStartedMarker = path.join(subject.repositoryRoot, "first-gate-started");
+    const releaseFirstMarker = path.join(subject.repositoryRoot, "release-first-gate");
+    await fs.mkdir(readyDirectory);
+    await fs.writeFile(
+      configPath,
+      `${JSON.stringify({
+        namespace: subject.backend.namespace,
+        dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+        repositoryRoot: subject.repositoryRoot,
+        stateDir: subject.stateDir,
+        invocationMarker,
+        readyDirectory,
+        firstStartedMarker,
+        releaseFirstMarker,
+        now: "2026-08-12T20:00:00.000Z",
+        input: parentGateInput(subject),
+      })}\n`,
+    );
+    const first = spawnParentGateProcess(configPath, "first");
+    await waitForD342Marker(firstStartedMarker);
+    const peer = spawnParentGateProcess(configPath, "peer");
+    await waitForD342Marker(path.join(readyDirectory, "peer"));
+    try {
+      const invocations = await observeForbiddenPeerInvocation(invocationMarker);
+      expect(invocations).toEqual(["first"]);
+    } finally {
+      await fs.writeFile(releaseFirstMarker, "release\n");
+    }
+    const outcomes = await Promise.all([first, peer]);
+    expect(outcomes).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+    expect(outcomes.map(({ stdout }) => JSON.parse(stdout))).toMatchObject([
+      { ok: true, outcome: { state: "result-stored" } },
+      { ok: true, outcome: { state: "result-stored" } },
+    ]);
+  }, 30_000);
 
   test("D326 settles an admitted result after the child deadline using the submission instant [BG]", async () => {
     let current = Date.parse("2026-08-12T20:00:00.000Z");

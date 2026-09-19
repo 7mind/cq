@@ -93,6 +93,7 @@ import {
   gitEffectBindingForHandle,
   supervisedWorkerGateContextForResultCapability,
   prepareDispatch,
+  requestParentGateCancellation,
   resolveDispatchRecovery,
   resolveDispatchContinuation,
   storeDispatchResult,
@@ -123,6 +124,8 @@ import {
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type ParentGateFinalizeRequest,
+  type RequestParentGateCancellationOutcome,
+  type RequestParentGateCancellationRequest,
   type QualifiedParentGateFinalizeRequest,
   type StoreDispatchResultOutcome,
   type StoredDispatchResultView,
@@ -1045,6 +1048,16 @@ export async function completeQualifiedParentGateOn(
 ): Promise<StoredDispatchResultView> {
   return backend.transact(handleLoadScope(request), (store) =>
     completeQualifiedParentGate(request, { store, now: deps.now }),
+  );
+}
+
+export async function requestParentGateCancellationOn(
+  backend: AttestationBackend,
+  request: RequestParentGateCancellationRequest,
+  deps: AttestationBackendDeps,
+): Promise<RequestParentGateCancellationOutcome> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    requestParentGateCancellation(request, { store, now: deps.now }),
   );
 }
 

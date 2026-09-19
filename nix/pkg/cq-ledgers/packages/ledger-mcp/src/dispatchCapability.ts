@@ -40,6 +40,7 @@ import {
   prepareDispatchOn,
   prepareDispatchRequestDigest,
   qualifyDispatchStagedCompletionOn,
+  requestParentGateCancellationOn,
   releaseImplementationCompletionLease,
   reserveImplementationCompletionLease,
   resolveDispatchGitEffectBindingOn,
@@ -92,6 +93,7 @@ import {
   SupervisedWorkerGateRejectedError,
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
+  settleWorktreeGateCommands,
   resolveSingleProjectAttestationNamespace,
   dispatchLineageFenceAuthorizes,
   dispatchLineageFenceFromRecoveryJournal,
@@ -310,36 +312,7 @@ export class ImplementationExecutorUnavailableError extends Error {
   }
 }
 
-type ParentGateFinalization = ReturnType<
-  NonNullable<DispatchCapability["finalizeParentGate"]>
->;
-
-interface ActiveParentGateFinalization {
-  readonly cancellation: AbortController;
-  readonly promise: ParentGateFinalization;
-  gateEpoch: number | null;
-  cancelledResult: Awaited<ReturnType<typeof abortDispatchOn>> | null;
-}
-
-const ACTIVE_PARENT_GATE_FINALIZATIONS = new Map<
-  string,
-  ActiveParentGateFinalization
->();
-
-function parentGateFinalizationKey(
-  namespace: AttestationBackend["namespace"],
-  binding: ManagedWorktreeDispatchBinding,
-  handle: { readonly attestationId: string; readonly generation: number },
-): string {
-  return [
-    namespace.backend,
-    namespace.projectKey,
-    binding.repositoryId,
-    binding.handleFingerprint,
-    handle.attestationId,
-    String(handle.generation),
-  ].join("\u0000");
-}
+const PARENT_GATE_CANCELLATION_POLL_MS = 5;
 
 function brokerResultEvidence(
   output: DispatchJSONValue,
@@ -1039,6 +1012,140 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     );
   }
 
+  async function parentGateCancellationForEpoch(
+    handle: { readonly attestationId: string; readonly generation: number },
+    gateEpoch: number,
+  ): Promise<NonNullable<AttestationEnvelope["parentGateCancellationRequest"]> | undefined> {
+    return await options.backend.transact({ kind: "handle", handle }, (store) => {
+      const row = store.read(handle);
+      if (row === undefined || isAttestationTombstone(row)) return undefined;
+      const cancellation = row.parentGateCancellationRequest;
+      return cancellation?.gateEpoch === gateEpoch ? cancellation : undefined;
+    });
+  }
+
+  async function superviseClaimedParentGate(
+    handle: { readonly attestationId: string; readonly generation: number },
+    binding: ManagedWorktreeDispatchBinding,
+    claimed: {
+      readonly gateEpoch: number;
+      readonly output: DispatchJSONValue;
+      readonly context: Parameters<typeof superviseImplementWorkerGate>[0]["context"];
+    },
+    complete: (
+      output: DispatchJSONValue,
+    ) => Promise<Awaited<ReturnType<typeof completeParentGateOn>>>,
+  ) {
+    const cancellation = new AbortController();
+    let stopCancellationObserver = false;
+    let cancellationObserverError: unknown;
+    const cancellationObserver = (async () => {
+      while (!stopCancellationObserver) {
+        try {
+          if ((await parentGateCancellationForEpoch(handle, claimed.gateEpoch)) !== undefined) {
+            cancellation.abort();
+            return;
+          }
+        } catch (error) {
+          cancellationObserverError = error;
+          cancellation.abort();
+          return;
+        }
+        await Bun.sleep(PARENT_GATE_CANCELLATION_POLL_MS);
+      }
+    })();
+    let output: DispatchJSONValue | undefined;
+    let gateError: unknown;
+    try {
+      output = await superviseImplementWorkerGate(
+        { context: claimed.context, output: claimed.output },
+        {
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+          ...(options.supervisedWorkerGateRunner === undefined
+            ? {}
+            : { runner: options.supervisedWorkerGateRunner }),
+          cancellationSignal: cancellation.signal,
+        },
+      );
+    } catch (error) {
+      gateError = error;
+    } finally {
+      stopCancellationObserver = true;
+      await cancellationObserver;
+    }
+
+    const requestedCancellation = await parentGateCancellationForEpoch(handle, claimed.gateEpoch);
+    if (requestedCancellation !== undefined) {
+      const result = await abortWithRecovery(
+        {
+          ...handle,
+          reason: requestedCancellation.reason,
+          ...(requestedCancellation.details === undefined
+            ? {}
+            : { details: requestedCancellation.details }),
+        },
+        binding,
+        true,
+      );
+      return Object.freeze({ state: "aborted" as const, result });
+    }
+    if (cancellationObserverError !== undefined) throw cancellationObserverError;
+    if (gateError !== undefined) {
+      if (gateError instanceof SupervisedWorkerGateRejectedError) {
+        const rejected = await abortWithRecovery(
+          {
+            ...handle,
+            reason: "gate-rejected",
+            details: gateError.details as unknown as DispatchJSONValue,
+          },
+          binding,
+          true,
+        );
+        return Object.freeze({ state: "aborted" as const, result: rejected });
+      }
+      const message = gateError instanceof Error ? gateError.message : String(gateError);
+      try {
+        await abortWithRecovery(
+          {
+            ...handle,
+            reason: "parent-lost",
+            details: { phase: "supervised-gate", message: message.slice(0, 1024) },
+          },
+          binding,
+          true,
+        );
+      } catch (abortError) {
+        const abortMessage = abortError instanceof Error ? abortError.message : String(abortError);
+        throw new Error(`${message}; parent-lost terminalization failed: ${abortMessage}`, {
+          cause: abortError,
+        });
+      }
+      throw gateError;
+    }
+    if (output === undefined) {
+      throw new Error("supervised parent gate produced no output and no failure");
+    }
+    try {
+      const result = await complete(output);
+      return Object.freeze({ state: "result-stored" as const, result });
+    } catch (error) {
+      const racedCancellation = await parentGateCancellationForEpoch(handle, claimed.gateEpoch);
+      if (racedCancellation === undefined) throw error;
+      const result = await abortWithRecovery(
+        {
+          ...handle,
+          reason: racedCancellation.reason,
+          ...(racedCancellation.details === undefined
+            ? {}
+            : { details: racedCancellation.details }),
+        },
+        binding,
+        true,
+      );
+      return Object.freeze({ state: "aborted" as const, result });
+    }
+  }
+
   const implementationCandidateQueue = new ImplementationCandidateQueueAdapter({
     backend: options.backend,
     actor: "trusted-extension",
@@ -1095,68 +1202,39 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (binding === undefined) {
       throw new Error("qualified implementation front requires a managed worktree binding");
     }
-    const claimed = await withManagedWorktreeEffectLock(
-      binding,
-      {
-        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
-        effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
-      },
-      async () =>
-        await claimQualifiedParentGateOn(
-          options.backend,
-          { ...input.lease, queueLease: input.lease },
-          { now },
-        ),
-    );
-    if (claimed.state === "result-stored") return;
-    if (claimed.state === "aborted") {
-      throw new Error(`qualified implementation front gate is ${claimed.result.reason}`);
-    }
-    let output: DispatchJSONValue;
-    try {
-      output = await superviseImplementWorkerGate(
-        { context: claimed.context, output: claimed.output },
-        {
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
-          ...(options.supervisedWorkerGateRunner === undefined
-            ? {}
-            : { runner: options.supervisedWorkerGateRunner }),
-          cancellationSignal: new AbortController().signal,
-        },
-      );
-    } catch (error) {
-      if (error instanceof SupervisedWorkerGateRejectedError) {
-        await abortWithRecovery(
-          {
-            attestationId: input.lease.attestationId,
-            generation: input.lease.generation,
-            reason: "gate-rejected",
-            details: error.details as unknown as DispatchJSONValue,
-          },
-          binding,
-        );
-      }
-      throw error;
-    }
     await withManagedWorktreeEffectLock(
       binding,
       {
         ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
         effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
       },
-      async () =>
-        await completeQualifiedParentGateOn(
+      async () => {
+        const claimed = await claimQualifiedParentGateOn(
           options.backend,
-          {
-            ...input.lease,
-            queueLease: input.lease,
-            gateEpoch: claimed.gateEpoch,
-            output,
-          },
+          { ...input.lease, queueLease: input.lease },
           { now },
-        ),
+        );
+        if (claimed.state === "result-stored") return;
+        if (claimed.state === "aborted") {
+          throw new Error(`qualified implementation front gate is ${claimed.result.reason}`);
+        }
+        await superviseClaimedParentGate(
+          input.lease,
+          binding,
+          claimed,
+          async (output) =>
+            await completeQualifiedParentGateOn(
+              options.backend,
+              {
+                ...input.lease,
+                queueLease: input.lease,
+                gateEpoch: claimed.gateEpoch,
+                output,
+              },
+              { now },
+            ),
+        );
+      },
     );
   }
 
@@ -1595,76 +1673,73 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (!/^T[0-9]+$/u.test(taskId) || !FULL_GIT_SHA.test(input.resultCommit)) {
       throw new Error("implementation candidate authority target is malformed");
     }
-    const resolved = await options.backend.transact(
-      { kind: "namespace" },
-      (store) => {
-        const row = store.read(input.workerDispatch);
-        if (row === undefined || isAttestationTombstone(row)) {
-          throw new Error("implementation candidate authority requires a live durable dispatch");
-        }
-        const control = row.implementationQueue;
-        const output = row.output;
-        const gate = dispatchObject(output) ? output["supervisedGateEvidence"] : undefined;
-        if (
-          row.state !== "consumed" ||
-          control === undefined ||
-          control.state !== "leased" ||
-          control.qualification === undefined ||
-          control.lease === undefined ||
-          !dispatchObject(output) ||
-          output["status"] !== "pass" ||
-          output["taskId"] !== taskId ||
-          output["resultCommit"] !== input.resultCommit ||
-          !dispatchObject(gate) ||
-          !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
-          gate["taskId"] !== taskId ||
-          gate["resultCommit"] !== input.resultCommit ||
-          gate["worktreePath"] !== control.attempt.worktreePath ||
-          gate["command"] !== control.attempt.gateCommand ||
-          control.attempt.resultCommit !== input.resultCommit ||
-          control.attempt.taskId !== taskId ||
-          control.enrollment.taskId !== taskId
-        ) {
-          throw new Error("implementation candidate lacks an exact consumed green-gate identity");
-        }
-        const activeEnrollmentRows = store.rows().filter((candidate) => {
-          if (isAttestationTombstone(candidate)) return false;
-          const queue = candidate.implementationQueue;
-          return (
-            queue !== undefined &&
-            queue.enrollment.enrollmentId === control.enrollment.enrollmentId &&
-            !["released", "terminal", "staged-rebase-retired"].includes(queue.state)
-          );
-        });
-        const liveLeaseRows = store.rows().filter((candidate) => {
-          if (isAttestationTombstone(candidate)) return false;
-          const queue = candidate.implementationQueue;
-          return (
-            queue?.partition.partitionKey === control.partition.partitionKey &&
-            queue.state === "leased"
-          );
-        });
-        if (
-          activeEnrollmentRows.length !== 1 ||
-          activeEnrollmentRows[0]?.attestationId !== row.attestationId ||
-          activeEnrollmentRows[0]?.generation !== row.generation ||
-          liveLeaseRows.length !== 1 ||
-          liveLeaseRows[0]?.attestationId !== row.attestationId ||
-          liveLeaseRows[0]?.generation !== row.generation
-        ) {
-          throw new Error("implementation candidate is not the unique active leased successor");
-        }
-        if (row.gitEffectBinding === undefined) {
-          throw new Error("implementation candidate lost its managed worktree binding");
-        }
-        return {
-          row,
-          control,
-          gate: gate as DispatchJSONValue,
-          binding: row.gitEffectBinding,
-        };
-      },
-    );
+    const resolved = await options.backend.transact({ kind: "namespace" }, (store) => {
+      const row = store.read(input.workerDispatch);
+      if (row === undefined || isAttestationTombstone(row)) {
+        throw new Error("implementation candidate authority requires a live durable dispatch");
+      }
+      const control = row.implementationQueue;
+      const output = row.output;
+      const gate = dispatchObject(output) ? output["supervisedGateEvidence"] : undefined;
+      if (
+        row.state !== "consumed" ||
+        control === undefined ||
+        control.state !== "leased" ||
+        control.qualification === undefined ||
+        control.lease === undefined ||
+        !dispatchObject(output) ||
+        output["status"] !== "pass" ||
+        output["taskId"] !== taskId ||
+        output["resultCommit"] !== input.resultCommit ||
+        !dispatchObject(gate) ||
+        !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+        gate["taskId"] !== taskId ||
+        gate["resultCommit"] !== input.resultCommit ||
+        gate["worktreePath"] !== control.attempt.worktreePath ||
+        gate["command"] !== control.attempt.gateCommand ||
+        control.attempt.resultCommit !== input.resultCommit ||
+        control.attempt.taskId !== taskId ||
+        control.enrollment.taskId !== taskId
+      ) {
+        throw new Error("implementation candidate lacks an exact consumed green-gate identity");
+      }
+      const activeEnrollmentRows = store.rows().filter((candidate) => {
+        if (isAttestationTombstone(candidate)) return false;
+        const queue = candidate.implementationQueue;
+        return (
+          queue !== undefined &&
+          queue.enrollment.enrollmentId === control.enrollment.enrollmentId &&
+          !["released", "terminal", "staged-rebase-retired"].includes(queue.state)
+        );
+      });
+      const liveLeaseRows = store.rows().filter((candidate) => {
+        if (isAttestationTombstone(candidate)) return false;
+        const queue = candidate.implementationQueue;
+        return (
+          queue?.partition.partitionKey === control.partition.partitionKey &&
+          queue.state === "leased"
+        );
+      });
+      if (
+        activeEnrollmentRows.length !== 1 ||
+        activeEnrollmentRows[0]?.attestationId !== row.attestationId ||
+        activeEnrollmentRows[0]?.generation !== row.generation ||
+        liveLeaseRows.length !== 1 ||
+        liveLeaseRows[0]?.attestationId !== row.attestationId ||
+        liveLeaseRows[0]?.generation !== row.generation
+      ) {
+        throw new Error("implementation candidate is not the unique active leased successor");
+      }
+      if (row.gitEffectBinding === undefined) {
+        throw new Error("implementation candidate lost its managed worktree binding");
+      }
+      return {
+        row,
+        control,
+        gate: gate as DispatchJSONValue,
+        binding: row.gitEffectBinding,
+      };
+    });
     const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, taskId);
     if (
       currentRecoveryTaskSpecificationDigest(resolved.row.input) !==
@@ -1750,7 +1825,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     }
     await options.backend.transact({ kind: "namespace" }, (store) => {
       const row = store.read(receipt.workerDispatch);
-      if (row === undefined || isAttestationTombstone(row) || row.implementationQueue === undefined) {
+      if (
+        row === undefined ||
+        isAttestationTombstone(row) ||
+        row.implementationQueue === undefined
+      ) {
         throw new Error("implementation candidate completion reservation row is not live");
       }
       reserveImplementationCompletionLease(
@@ -1778,76 +1857,73 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     receipt: ImplementationCandidateAuthorityReceipt,
     binding: ImplementationCandidateCompletionReservationBinding,
   ): Promise<void> {
-    await options.backend.transact(
-      { kind: "namespace" },
-      (store) => {
-        const row = store.read(receipt.workerDispatch);
-        if (row === undefined) throw new Error("implementation candidate release row is missing");
-        if (row.implementationQueue === undefined) {
-          throw new Error("implementation candidate release row has no queue authority");
-        }
-        if (isAttestationTombstone(row)) {
-          const control = row.implementationQueue;
-          if (
-            control.state === "released" &&
-            control.partitionKey === receipt.partitionKey &&
-            control.enrollmentId === receipt.enrollmentId &&
-            control.attemptId === receipt.attemptId &&
-            control.leaseGeneration === receipt.leaseGeneration &&
-            control.terminal?.detailsDigest ===
-              dispatchPayloadDigest({
-                operation: "protected-implementation-completion",
-                ...binding,
-              })
-          )
-            return;
-          throw new Error("implementation candidate release tombstone does not match the receipt");
-        }
+    await options.backend.transact({ kind: "namespace" }, (store) => {
+      const row = store.read(receipt.workerDispatch);
+      if (row === undefined) throw new Error("implementation candidate release row is missing");
+      if (row.implementationQueue === undefined) {
+        throw new Error("implementation candidate release row has no queue authority");
+      }
+      if (isAttestationTombstone(row)) {
         const control = row.implementationQueue;
         if (
-          control.partition.partitionKey !== receipt.partitionKey ||
-          control.enrollment.enrollmentId !== receipt.enrollmentId ||
-          control.attempt.attemptId !== receipt.attemptId ||
-          control.leaseGeneration !== receipt.leaseGeneration
-        ) {
-          throw new Error("implementation candidate release coordinates changed");
-        }
-        const detail = {
-          operation: "protected-implementation-completion",
-          ...binding,
-        } as const;
-        if (
           control.state === "released" &&
-          control.terminal?.detailsDigest === dispatchPayloadDigest(detail)
-        ) {
+          control.partitionKey === receipt.partitionKey &&
+          control.enrollmentId === receipt.enrollmentId &&
+          control.attemptId === receipt.attemptId &&
+          control.leaseGeneration === receipt.leaseGeneration &&
+          control.terminal?.detailsDigest ===
+            dispatchPayloadDigest({
+              operation: "protected-implementation-completion",
+              ...binding,
+            })
+        )
           return;
-        }
-        if (
-          control.state !== "leased" ||
-          control.lease?.holderId !== receipt.leaseHolderId ||
-          control.lease.generation !== receipt.leaseGeneration
-        ) {
-          throw new Error("implementation candidate release requires the exact live lease");
-        }
-        releaseImplementationCompletionLease(
-          {
-            namespace,
-            actor: "trusted-parent",
-            attestationId: row.attestationId,
-            generation: row.generation,
-            partitionKey: receipt.partitionKey,
-            enrollmentId: receipt.enrollmentId,
-            attemptId: receipt.attemptId,
-            holderId: receipt.leaseHolderId,
-            leaseGeneration: receipt.leaseGeneration,
-            expectedPartitionRevision: control.partitionRevision,
-            ...binding,
-            detail,
-          },
-          { store, now },
-        );
-      },
-    );
+        throw new Error("implementation candidate release tombstone does not match the receipt");
+      }
+      const control = row.implementationQueue;
+      if (
+        control.partition.partitionKey !== receipt.partitionKey ||
+        control.enrollment.enrollmentId !== receipt.enrollmentId ||
+        control.attempt.attemptId !== receipt.attemptId ||
+        control.leaseGeneration !== receipt.leaseGeneration
+      ) {
+        throw new Error("implementation candidate release coordinates changed");
+      }
+      const detail = {
+        operation: "protected-implementation-completion",
+        ...binding,
+      } as const;
+      if (
+        control.state === "released" &&
+        control.terminal?.detailsDigest === dispatchPayloadDigest(detail)
+      ) {
+        return;
+      }
+      if (
+        control.state !== "leased" ||
+        control.lease?.holderId !== receipt.leaseHolderId ||
+        control.lease.generation !== receipt.leaseGeneration
+      ) {
+        throw new Error("implementation candidate release requires the exact live lease");
+      }
+      releaseImplementationCompletionLease(
+        {
+          namespace,
+          actor: "trusted-parent",
+          attestationId: row.attestationId,
+          generation: row.generation,
+          partitionKey: receipt.partitionKey,
+          enrollmentId: receipt.enrollmentId,
+          attemptId: receipt.attemptId,
+          holderId: receipt.leaseHolderId,
+          leaseGeneration: receipt.leaseGeneration,
+          expectedPartitionRevision: control.partitionRevision,
+          ...binding,
+          detail,
+        },
+        { store, now },
+      );
+    });
   }
 
   const capability: DispatchCapability = {
@@ -3255,129 +3331,33 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (binding === undefined) {
         throw new Error("parent gate finalization requires a managed worktree binding");
       }
-      const finalizationKey = parentGateFinalizationKey(namespace, binding, input);
-      const activeFinalization = ACTIVE_PARENT_GATE_FINALIZATIONS.get(finalizationKey);
-      if (activeFinalization !== undefined) return await activeFinalization.promise;
-      const cancellation = new AbortController();
-      let finalizationEntry!: ActiveParentGateFinalization;
-      const finalization: ParentGateFinalization = (async () => {
-        const claimed = await withManagedWorktreeEffectLock(
-          binding,
-          {
-            ...(options.worktreeStateDir === undefined
-              ? {}
-              : { stateDir: options.worktreeStateDir }),
-            effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
-          },
-          async () => await claimParentGateOn(options.backend, input, { now }),
-        );
-        if (claimed.state === "result-stored") {
-          return Object.freeze({ state: "result-stored" as const, result: claimed.result });
-        }
-        if (claimed.state === "aborted") {
-          return Object.freeze({ state: "aborted" as const, result: claimed.result });
-        }
-        finalizationEntry.gateEpoch = claimed.gateEpoch;
-        let output: DispatchJSONValue;
-        try {
-          output = await superviseImplementWorkerGate(
-            { context: claimed.context, output: claimed.output },
-            {
-              ...(options.worktreeStateDir === undefined
-                ? {}
-                : { stateDir: options.worktreeStateDir }),
-              ...(options.supervisedWorkerGateRunner === undefined
-                ? {}
-                : { runner: options.supervisedWorkerGateRunner }),
-              cancellationSignal: cancellation.signal,
-            },
-          );
-        } catch (error) {
-          if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
-            return Object.freeze({
-              state: "aborted" as const,
-              result: finalizationEntry.cancelledResult,
-            });
+      return await withManagedWorktreeEffectLock(
+        binding,
+        {
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+          effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+        },
+        async () => {
+          const claimed = await claimParentGateOn(options.backend, input, { now });
+          if (claimed.state === "result-stored") {
+            return Object.freeze({ state: "result-stored" as const, result: claimed.result });
           }
-          if (error instanceof SupervisedWorkerGateRejectedError) {
-            const rejected = await abortWithRecovery(
-              {
-                attestationId: input.attestationId,
-                generation: input.generation,
-                reason: "gate-rejected",
-                details: error.details as unknown as DispatchJSONValue,
-              },
-              binding,
-            );
-            return Object.freeze({ state: "aborted" as const, result: rejected });
+          if (claimed.state === "aborted") {
+            return Object.freeze({ state: "aborted" as const, result: claimed.result });
           }
-          const message = error instanceof Error ? error.message : String(error);
-          try {
-            await abortWithRecovery(
-              {
-                attestationId: input.attestationId,
-                generation: input.generation,
-                reason: "parent-lost",
-                details: { phase: "supervised-gate", message: message.slice(0, 1024) },
-              },
-              binding,
-            );
-          } catch (abortError) {
-            const abortMessage =
-              abortError instanceof Error ? abortError.message : String(abortError);
-            throw new Error(`${message}; parent-lost terminalization failed: ${abortMessage}`, {
-              cause: abortError,
-            });
-          }
-          throw error;
-        }
-        if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
-          return Object.freeze({
-            state: "aborted" as const,
-            result: finalizationEntry.cancelledResult,
-          });
-        }
-        try {
-          const result = await withManagedWorktreeEffectLock(
+          return await superviseClaimedParentGate(
+            input,
             binding,
-            {
-              ...(options.worktreeStateDir === undefined
-                ? {}
-                : { stateDir: options.worktreeStateDir }),
-              effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
-            },
-            async () =>
+            claimed,
+            async (output) =>
               await completeParentGateOn(
                 options.backend,
                 { ...input, gateEpoch: claimed.gateEpoch, output },
                 { now },
               ),
           );
-          return Object.freeze({ state: "result-stored" as const, result });
-        } catch (error) {
-          if (cancellation.signal.aborted && finalizationEntry.cancelledResult !== null) {
-            return Object.freeze({
-              state: "aborted" as const,
-              result: finalizationEntry.cancelledResult,
-            });
-          }
-          throw error;
-        }
-      })();
-      finalizationEntry = {
-        cancellation,
-        promise: finalization,
-        gateEpoch: null,
-        cancelledResult: null,
-      };
-      ACTIVE_PARENT_GATE_FINALIZATIONS.set(finalizationKey, finalizationEntry);
-      try {
-        return await finalization;
-      } finally {
-        if (ACTIVE_PARENT_GATE_FINALIZATIONS.get(finalizationKey) === finalizationEntry) {
-          ACTIVE_PARENT_GATE_FINALIZATIONS.delete(finalizationKey);
-        }
-      }
+        },
+      );
     },
     confirmCompletion: async (input) => {
       const replay = await replayConfirmedDispatchCompletionOn(
@@ -3434,30 +3414,26 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     abort: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
-      const result = await abortWithRecovery(input, binding);
       if (binding !== undefined) {
-        const finalization = ACTIVE_PARENT_GATE_FINALIZATIONS.get(
-          parentGateFinalizationKey(namespace, binding, input),
+        const cancellation = await requestParentGateCancellationOn(
+          options.backend,
+          { namespace, actor: "trusted-parent", ...input },
+          { now },
         );
-        const persistedGateEpoch = await options.backend.transact(
-          { kind: "handle", handle: input },
-          (store): number | null => {
-            const row = store.read(input);
-            return row === undefined || isAttestationTombstone(row) || row.gateEpoch === undefined
-              ? null
-              : row.gateEpoch;
-          },
-        );
-        if (
-          finalization !== undefined &&
-          finalization.gateEpoch !== null &&
-          finalization.gateEpoch === persistedGateEpoch
-        ) {
-          finalization.cancelledResult = result;
-          finalization.cancellation.abort();
-          await finalization.promise;
+        if (cancellation.state === "aborted") {
+          rememberTerminal(cancellation.result, cancellation.result.abortedAt);
+          return cancellation.result;
+        }
+        if (cancellation.state === "cancellation-requested") {
+          await settleWorktreeGateCommands({
+            worktree: binding.worktreePath,
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+          });
         }
       }
+      const result = await abortWithRecovery(input, binding);
       rememberTerminal(result, result.abortedAt);
       return result;
     },
