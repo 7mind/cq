@@ -83,6 +83,10 @@ import {
   type DispatchPreLaunchRejection,
 } from "./dispatchInputValidation.js";
 import type { DispatchJSONValue, DispatchOverlayApplication } from "./compactDispatchProtocol.js";
+import {
+  IMPLEMENT_WORKER_VALIDATION_INTENTS,
+  type ImplementWorkerValidationIntent,
+} from "./schemas/implement-worker.js";
 
 const DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 
@@ -277,6 +281,8 @@ export interface DispatchInputRefs {
   readonly round: number;
   /** The authoritative worktree tip immediately before this round launches. */
   readonly startingCommit: string;
+  /** Parent-owned validation scope; prepare must not infer or broaden it. */
+  readonly validationIntent: ImplementWorkerValidationIntent;
   /** Prior-round worker resultCommit for round>0 resume evidence (full SHA or null). */
   readonly priorResultCommit?: string | null;
   /** The prior round's review, whose `criticism[]` prepare reads server-side. */
@@ -296,6 +302,7 @@ export const DISPATCH_INPUT_REFS_FIELDS = [
   "coordinates",
   "round",
   "startingCommit",
+  "validationIntent",
   "priorResultCommit",
   "priorReviewId",
   "guidance",
@@ -369,6 +376,10 @@ function refsSchemaProperties(roleIds: readonly string[]): Readonly<Record<strin
     },
     round: { type: "integer", minimum: 0 },
     startingCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+    validationIntent: {
+      type: "string",
+      enum: [...IMPLEMENT_WORKER_VALIDATION_INTENTS],
+    },
     priorResultCommit: {
       type: ["string", "null"],
       pattern: "^[0-9a-f]{40}$",
@@ -387,6 +398,7 @@ const REFS_REQUIRED = [
   "coordinates",
   "round",
   "startingCommit",
+  "validationIntent",
 ] as const;
 
 /**
@@ -586,6 +598,7 @@ interface NormalizedRefs {
   readonly coordinates: DispatchWorktreeCoordinates;
   readonly round: number;
   readonly startingCommit: string;
+  readonly validationIntent: ImplementWorkerValidationIntent;
   readonly priorResultCommit?: string | null;
   readonly priorReviewId?: string;
   readonly guidance: readonly ParentGuidance[];
@@ -776,6 +789,17 @@ function normalizeRefs(
       `expected a full lowercase commit id, got "${String(startingCommit)}"`,
     );
   }
+  const validationIntent: unknown = raw.validationIntent;
+  if (
+    typeof validationIntent !== "string" ||
+    !(IMPLEMENT_WORKER_VALIDATION_INTENTS as readonly string[]).includes(validationIntent)
+  ) {
+    return dispatchPreLaunchRejection(
+      "invalid-refs-form",
+      "refs.validationIntent",
+      `expected focused-only or final validation intent, got "${String(validationIntent)}"`,
+    );
+  }
   const priorResultCommit: unknown = raw.priorResultCommit;
   if (
     priorResultCommit !== undefined &&
@@ -826,6 +850,7 @@ function normalizeRefs(
     },
     round: round as number,
     startingCommit,
+    validationIntent: validationIntent as ImplementWorkerValidationIntent,
     ...(priorResultCommit === undefined
       ? {}
       : { priorResultCommit: priorResultCommit as string | null }),
@@ -947,7 +972,7 @@ function assembleImplementWorkerInput(
     baseCommit: refs.coordinates.baseCommit,
     round: refs.round,
     startingCommit: refs.startingCommit,
-    validationIntent: "final",
+    validationIntent: refs.validationIntent,
     ...(refs.priorResultCommit === undefined
       ? {}
       : { priorResultCommit: refs.priorResultCommit }),

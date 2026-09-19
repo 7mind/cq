@@ -310,6 +310,7 @@ async function fixtureWithDispatchBase(
   promptArtifactStore: PromptArtifactStore = artifactStore(),
   attestationBackend: "memory" | "sqlite" = "memory",
   validationIntent: "final" | "focused-only" = "final",
+  prepareForm: "inline" | "refs" = "inline",
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -395,6 +396,21 @@ async function fixtureWithDispatchBase(
   const capabilityOptions = {
     backend,
     promptArtifactStore,
+    narrativeSource: {
+      projectKey: namespace.projectKey,
+      readItem: (ledgerId: string, itemId: string) =>
+        ledgerId === "tasks" && itemId === "T2081"
+          ? {
+              id: "T2081",
+              status: "wip",
+              fields: {
+                headline: "supervise exact tip",
+                description: "run the full gate outside the workspace-write sandbox",
+                acceptance: "only a green exact tip becomes consumable",
+              },
+            }
+          : undefined,
+    },
     ...(ledgerStore === undefined ? {} : { ledgerStore }),
     implementationEvidenceStore,
     ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
@@ -409,24 +425,46 @@ async function fixtureWithDispatchBase(
     childId: `implement-worker#candidate-correlation-${sequence}`,
     runId: `run-${sequence}`,
   };
-  const prepared = await capability.prepare({
-    roleId: "implement-worker",
-    input: {
-      taskId: "T2081",
-      headline: "supervise exact tip",
-      description: "run the full gate outside the workspace-write sandbox",
-      acceptance: "only a green exact tip becomes consumable",
-      worktreePath: managed.handle.absolutePath,
-      branch: managed.handle.branch,
-      baseCommit: dispatchBaseCommit,
-      round: 0,
-      startingCommit: dispatchBaseCommit,
-      validationIntent,
-    },
+  const prepareEnvelope = {
     idempotencyKey: `T2081-${sequence}`,
     timeoutMs: 600_000,
     expectedChild,
-  });
+  } as const;
+  const prepared =
+    prepareForm === "refs"
+      ? await capability.prepare({
+          ...prepareEnvelope,
+          refs: {
+            roleId: "implement-worker",
+            surface: "codex",
+            projectKey: namespace.projectKey,
+            taskId: "T2081",
+            coordinates: {
+              worktreePath: managed.handle.absolutePath,
+              branch: managed.handle.branch,
+              baseCommit: dispatchBaseCommit,
+            },
+            round: 0,
+            startingCommit: dispatchBaseCommit,
+            validationIntent,
+          },
+        })
+      : await capability.prepare({
+          ...prepareEnvelope,
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2081",
+            headline: "supervise exact tip",
+            description: "run the full gate outside the workspace-write sandbox",
+            acceptance: "only a green exact tip becomes consumable",
+            worktreePath: managed.handle.absolutePath,
+            branch: managed.handle.branch,
+            baseCommit: dispatchBaseCommit,
+            round: 0,
+            startingCommit: dispatchBaseCommit,
+            validationIntent,
+          },
+        });
   if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
     throw new Error("worker dispatch did not receive Git authority");
   }
@@ -1039,7 +1077,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
   });
 
   // regression: D497 — a child PASS is not parent authority to broaden focused validation.
-  test("focused-only validation stages and coordinates without invoking the full gate [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("refs-only focused validation continues into one explicit final gate without stranded ownership [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const runner = new GateDummy();
     const subject = await fixtureWithDispatchBase(
       runner,
@@ -1051,6 +1089,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       artifactStore(),
       "memory",
       "focused-only",
+      "refs",
     );
     expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
     if (
@@ -1102,6 +1141,128 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       }),
     ).toMatchObject({ state: "empty", partitionKey: qualified.partitionKey });
     expect(runner.requests).toHaveLength(0);
+
+    const malformedRows = subject.store.rows().length;
+    for (const validationIntent of [undefined, "child-selected"] as const) {
+      const refs: Record<string, unknown> = {
+        roleId: "implement-worker",
+        surface: "codex",
+        projectKey: subject.store.namespace.projectKey,
+        taskId: "T2081",
+        coordinates: {
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+        },
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        priorResultCommit: subject.receipt.newHead,
+        ...(validationIntent === undefined ? {} : { validationIntent }),
+      };
+      const rejected = await subject.capability.prepare({
+        refs: refs as never,
+        idempotencyKey: `T2081-${String(sequence)}-invalid-${String(validationIntent)}`,
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: `implement-worker#invalid-${String(validationIntent)}`,
+          runId: `invalid-${String(validationIntent)}`,
+        },
+      });
+      expect(rejected).toMatchObject({
+        accepted: false,
+        allocated: false,
+        reason: "invalid-refs-form",
+        path: "refs.validationIntent",
+      });
+    }
+    expect(subject.store.rows()).toHaveLength(malformedRows);
+
+    if (subject.capability.resolveContinuation === undefined) {
+      throw new Error("focused completion omitted continuation authority");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("focused completion lost its managed binding");
+    const continuation = await subject.capability.resolveContinuation(
+      binding,
+      subject.receipt.newHead,
+    );
+    const finalChild = {
+      childId: `implement-worker#final-validation-${String(sequence)}`,
+      runId: `final-validation-${String(sequence)}`,
+    };
+    const finalPrepared = await subject.capability.prepare({
+      refs: {
+        roleId: "implement-worker",
+        surface: "codex",
+        projectKey: subject.store.namespace.projectKey,
+        taskId: "T2081",
+        coordinates: {
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+        },
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-final-validation`,
+      timeoutMs: 600_000,
+      expectedChild: finalChild,
+      continuation: continuation.continuationReference,
+    });
+    if (!finalPrepared.accepted) throw new Error(finalPrepared.detail);
+    await subject.capability.fetchInput({
+      ...finalPrepared.handle,
+      inputCapability: finalPrepared.prepared.inputCapability,
+    });
+    const { focusedChecks: _focusedChecks, ...finalOutput } = subject.output as
+      typeof subject.output & { readonly focusedChecks: DispatchJSONValue };
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: finalPrepared.prepared.resultCapability,
+        output: {
+          ...finalOutput,
+          gitReceipts: [],
+          checkSummary: "explicit final validation after focused checks",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const finalQualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: finalPrepared.handle.attestationId,
+      generation: finalPrepared.handle.generation,
+      roleId: "implement-worker",
+      correlationId: finalChild.childId.slice("implement-worker#".length),
+      childThreadId: "final-validation-child-thread",
+      expectedRunId: finalChild.runId,
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:03.000Z",
+      promptDigest: finalPrepared.prepared.promptProvenance.promptDigest,
+    });
+    if (finalQualified.state !== "queued") throw new Error("final candidate did not qualify");
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: finalQualified.partitionKey,
+        holderId: "final-validation-coordinator",
+      }),
+    ).toMatchObject({ state: "completed", handle: finalPrepared.handle });
+    expect(runner.requests).toHaveLength(1);
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: finalQualified.partitionKey,
+        holderId: "final-validation-coordinator",
+      }),
+    ).toMatchObject({ state: "empty", partitionKey: finalQualified.partitionKey });
+    expect(runner.requests).toHaveLength(1);
   });
 
   test("parent validation intent rejects focused/final evidence substitution before the gate [Behavioral-Active Effectual-GoodCommunication]", async () => {
@@ -1138,6 +1299,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         artifactStore(),
         "memory",
         scenario.intent,
+        "refs",
       );
       expect(
         await subject.capability.storeResult({

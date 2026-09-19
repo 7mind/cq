@@ -177,6 +177,7 @@ function refsFor(overrides: Partial<DispatchInputRefs> = {}): DispatchInputRefs 
     coordinates: { ...COORDINATES, branch: `implement/${fixture.task.id}` },
     round: 0,
     startingCommit: STARTING_COMMIT,
+    validationIntent: "final",
     ...overrides,
   };
 }
@@ -215,6 +216,7 @@ function renderParentDispatchInput(
     readonly coordinates: DispatchInputRefs["coordinates"];
     readonly round: number;
     readonly startingCommit: string;
+    readonly validationIntent: DispatchInputRefs["validationIntent"];
   },
   priorReview?: Item,
   foldedGuidanceLines: readonly string[] = [],
@@ -237,6 +239,7 @@ function renderParentDispatchInput(
     baseCommit: refs.coordinates.baseCommit,
     round: refs.round,
     startingCommit: refs.startingCommit,
+    validationIntent: refs.validationIntent,
   };
   if (criticism.length > 0) {
     rendered.priorCriticism = criticism;
