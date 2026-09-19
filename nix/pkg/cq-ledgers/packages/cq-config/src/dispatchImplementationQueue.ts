@@ -148,6 +148,19 @@ export interface ImplementationQueueLease {
   readonly acquiredAt: string;
 }
 
+export interface ImplementationCompletionLeaseReservation {
+  readonly kind: "cq-implementation-completion-lease-reservation";
+  readonly version: 1;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly taskRef: string;
+  readonly completionRef: string;
+  readonly mergeOperationId: string;
+  readonly resultCommit: string;
+  readonly qualificationDigest: string;
+  readonly reservedAt: string;
+}
+
 export interface DispatchStagedRebaseSourceBinding {
   readonly kind: "cq-staged-rebase-source-binding";
   readonly version: 1;
@@ -197,6 +210,7 @@ export interface ImplementationQueueControl {
   readonly qualificationDeadline: string;
   readonly qualification?: ImplementationStagedCompletionQualification;
   readonly lease?: ImplementationQueueLease;
+  readonly completionReservation?: ImplementationCompletionLeaseReservation;
   readonly terminal?: ImplementationQueueTerminal;
   readonly stagedRebaseSource?: DispatchStagedRebaseSourceBinding;
   readonly stagedRebaseDisposition?: DispatchStagedRebaseDisposition;
@@ -229,6 +243,7 @@ export class ImplementationQueueConflictError extends DispatchAttestationExtensi
     | "stale-lease"
     | "already-terminal"
     | "enrollment-active"
+    | "completion-reserved"
     | "partition-revision";
 
   constructor(reason: ImplementationQueueConflictError["reason"], detail: string) {
@@ -347,6 +362,25 @@ export interface ImplementationQueueLeaseTransitionRequest extends Implementatio
   readonly detail?: DispatchJSONValue;
 }
 
+export interface ReserveImplementationCompletionLeaseRequest
+  extends ImplementationQueueLeaseTransitionRequest {
+  readonly operationId: string;
+  readonly taskRef: string;
+  readonly completionRef: string;
+  readonly mergeOperationId: string;
+  readonly resultCommit: string;
+  readonly qualificationDigest: string;
+}
+
+export interface ReleaseImplementationCompletionLeaseRequest
+  extends ImplementationQueueLeaseTransitionRequest {
+  readonly operationId: string;
+  readonly taskRef: string;
+  readonly completionRef: string;
+  readonly mergeOperationId: string;
+  readonly resultCommit: string;
+}
+
 export interface RecoverImplementationCandidateRequest extends DispatchHandle {
   readonly namespace: AttestationNamespace;
   readonly actor: "trusted-parent" | "trusted-extension";
@@ -391,6 +425,54 @@ export interface ParkDispatchStagedRebaseConflictRequest extends DispatchHandle 
 
 function digest(value: unknown): string {
   return dispatchPayloadDigest(value as DispatchJSONValue);
+}
+
+const IMPLEMENTATION_COMPLETION_REF = /^cq-implementation-completion:v1:[0-9a-f]{64}$/u;
+const IMPLEMENTATION_TASK_REF = /^tasks:T[0-9]+$/u;
+const IMPLEMENTATION_OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
+const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
+const SHA256_HEX = /^[0-9a-f]{64}$/u;
+
+function assertCompletionLeaseCoordinates(
+  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+): void {
+  if (
+    !IMPLEMENTATION_OPERATION_ID.test(request.operationId) ||
+    !IMPLEMENTATION_TASK_REF.test(request.taskRef) ||
+    !IMPLEMENTATION_COMPLETION_REF.test(request.completionRef) ||
+    !IMPLEMENTATION_OPERATION_ID.test(request.mergeOperationId) ||
+    !FULL_GIT_SHA.test(request.resultCommit)
+  ) {
+    throw new AttestationContractError(
+      "implementationCompletionReservation",
+      "expected exact task, completion, merge-operation, operation, and result coordinates",
+    );
+  }
+}
+
+function completionLeaseRequestDigest(
+  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+): string {
+  return digest({
+    attestationId: request.attestationId,
+    generation: request.generation,
+    partitionKey: request.partitionKey,
+    enrollmentId: request.enrollmentId,
+    attemptId: request.attemptId,
+    holderId: request.holderId,
+    leaseGeneration: request.leaseGeneration,
+    operationId: request.operationId,
+    taskRef: request.taskRef,
+    completionRef: request.completionRef,
+    mergeOperationId: request.mergeOperationId,
+    resultCommit: request.resultCommit,
+    ...(Object.hasOwn(request, "qualificationDigest")
+      ? {
+          qualificationDigest: (request as ReserveImplementationCompletionLeaseRequest)
+            .qualificationDigest,
+        }
+      : {}),
+  });
 }
 
 function assertTrustedActor(actor: string): void {
@@ -1402,12 +1484,109 @@ function leasedControl(
   return { row, control };
 }
 
+export function reserveImplementationCompletionLease(
+  request: ReserveImplementationCompletionLeaseRequest,
+  deps: DispatchServiceDeps,
+): ImplementationCompletionLeaseReservation {
+  assertCompletionLeaseCoordinates(request);
+  if (!SHA256_HEX.test(request.qualificationDigest)) {
+    throw new AttestationContractError(
+      "implementationCompletionReservation.qualificationDigest",
+      "expected a SHA-256 digest",
+    );
+  }
+  const { row, control } = leasedControl(request, deps);
+  if (
+    control.qualification === undefined ||
+    control.qualification.qualificationDigest !== request.qualificationDigest ||
+    control.attempt.taskId !== request.taskRef.slice("tasks:".length) ||
+    control.attempt.resultCommit !== request.resultCommit
+  ) {
+    throw new ImplementationQueueConflictError(
+      "binding-mismatch",
+      "completion reservation does not match the qualified candidate",
+    );
+  }
+  const requestDigest = completionLeaseRequestDigest(request);
+  const existing = control.completionReservation;
+  if (existing !== undefined) {
+    if (existing.operationId === request.operationId && existing.requestDigest === requestDigest) {
+      return existing;
+    }
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "implementation candidate lease already has a different completion reservation",
+    );
+  }
+  const reservation: ImplementationCompletionLeaseReservation = Object.freeze({
+    kind: "cq-implementation-completion-lease-reservation" as const,
+    version: 1 as const,
+    operationId: request.operationId,
+    requestDigest,
+    taskRef: request.taskRef,
+    completionRef: request.completionRef,
+    mergeOperationId: request.mergeOperationId,
+    resultCommit: request.resultCommit,
+    qualificationDigest: request.qualificationDigest,
+    reservedAt: deps.now(),
+  });
+  const next: ImplementationQueueControl = Object.freeze({
+    ...control,
+    partitionRevision: nextPartitionRevision(deps.store, request.partitionKey),
+    completionReservation: reservation,
+  });
+  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: next }));
+  return reservation;
+}
+
+export function releaseImplementationCompletionLease(
+  request: ReleaseImplementationCompletionLeaseRequest,
+  deps: DispatchServiceDeps,
+): ImplementationQueueControl {
+  assertCompletionLeaseCoordinates(request);
+  const { row, control } = leasedControl(request, deps);
+  const reservation = control.completionReservation;
+  if (
+    reservation === undefined ||
+    reservation.operationId !== request.operationId ||
+    reservation.taskRef !== request.taskRef ||
+    reservation.completionRef !== request.completionRef ||
+    reservation.mergeOperationId !== request.mergeOperationId ||
+    reservation.resultCommit !== request.resultCommit
+  ) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "completion release does not match the durable lease reservation",
+    );
+  }
+  const { lease: _lease, completionReservation: _reservation, ...retained } = control;
+  const terminal = Object.freeze({
+    reason: "gate-complete" as const,
+    terminalAt: deps.now(),
+    detailsDigest: digest(request.detail ?? null),
+  });
+  const next: ImplementationQueueControl = Object.freeze({
+    ...retained,
+    state: "released" as const,
+    partitionRevision: nextPartitionRevision(deps.store, request.partitionKey),
+    terminal,
+  });
+  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: next }));
+  return next;
+}
+
 function moveLeased(
   request: ImplementationQueueLeaseTransitionRequest,
   deps: DispatchServiceDeps,
   state: "parked" | "yielded" | "released",
 ): ImplementationQueueControl {
   const { row, control } = leasedControl(request, deps);
+  if (control.completionReservation !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "generic queue transition cannot move a completion-reserved lease",
+    );
+  }
   const terminal =
     state === "released"
       ? Object.freeze({
@@ -1489,6 +1668,12 @@ export function recoverImplementationCandidate(
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
+  if (control.completionReservation !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "restart recovery cannot transfer a completion-reserved lease",
+    );
+  }
   if (control.state !== "leased" || control.leaseGeneration !== request.staleLeaseGeneration) {
     throw new ImplementationQueueConflictError(
       "stale-lease",
@@ -1517,6 +1702,12 @@ export function terminalizeImplementationCandidate(
   assertDirectTerminalReason(terminalReason);
   const row = requireEnvelope(request, deps);
   const control = assertQueueIdentity(row, request);
+  if (control.completionReservation !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "terminalization cannot retire a completion-reserved lease",
+    );
+  }
   const reason = DIRECT_TERMINAL_ABORT_REASON[terminalReason];
   const details = request.detail ?? { reason: terminalReason };
   const detailsDigest = digest(details);
@@ -1592,6 +1783,12 @@ export function retireDispatchStagedRebaseSource(
     );
   }
   const { row, control } = leasedControl(request, deps);
+  if (control.completionReservation !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "staged rebase cannot retire a completion-reserved lease",
+    );
+  }
   const front = frontRow(deps.store, request.partitionKey);
   if (
     row.state !== "gate-pending" ||
@@ -1878,6 +2075,26 @@ export function releaseImplementationCandidateOn(
   deps: { readonly now: () => string },
 ): Promise<ImplementationQueueControl> {
   return leaseTransitionOn(backend, request, deps, releaseImplementationCandidate);
+}
+
+export async function reserveImplementationCompletionLeaseOn(
+  backend: AttestationBackend,
+  request: ReserveImplementationCompletionLeaseRequest,
+  deps: { readonly now: () => string },
+): Promise<ImplementationCompletionLeaseReservation> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    reserveImplementationCompletionLease(request, { store, now: deps.now }),
+  );
+}
+
+export async function releaseImplementationCompletionLeaseOn(
+  backend: AttestationBackend,
+  request: ReleaseImplementationCompletionLeaseRequest,
+  deps: { readonly now: () => string },
+): Promise<ImplementationQueueControl> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    releaseImplementationCompletionLease(request, { store, now: deps.now }),
+  );
 }
 
 export async function recoverImplementationCandidateOn(

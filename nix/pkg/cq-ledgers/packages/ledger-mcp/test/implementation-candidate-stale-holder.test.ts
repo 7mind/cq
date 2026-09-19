@@ -898,6 +898,12 @@ describe("implementation candidate stale-holder fencing [Behavioral-Active, Blac
               resultCommit: receipt.resultCommit,
             });
           },
+          reserveCandidate: async (receipt, binding) => {
+            if (capability.reserveImplementationCandidateAuthority === undefined) {
+              throw new Error("public implementation candidate reservation is unavailable");
+            }
+            await capability.reserveImplementationCandidateAuthority(receipt, binding);
+          },
         });
         const admission = await mergeProvider.acquire({
           kind: "merge",

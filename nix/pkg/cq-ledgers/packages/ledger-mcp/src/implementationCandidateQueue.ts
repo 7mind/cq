@@ -8,6 +8,8 @@ import {
   qualifyDispatchStagedCompletionOn,
   recoverImplementationCandidateOn,
   releaseImplementationCandidateOn,
+  releaseImplementationCompletionLeaseOn,
+  reserveImplementationCompletionLeaseOn,
   resumeImplementationCandidateOn,
   retireDispatchStagedRebaseSourceOn,
   terminalizeImplementationCandidateOn,
@@ -22,6 +24,8 @@ import {
   type NativeChildIdentity,
   type NativeCompletionProof,
   type QualifyDispatchStagedCompletionOutcome,
+  type ReleaseImplementationCompletionLeaseRequest,
+  type ReserveImplementationCompletionLeaseRequest,
 } from "@cq/config";
 
 type TrustedQueueActor = EnqueueImplementationCandidateRequest["actor"];
@@ -271,6 +275,26 @@ export class ImplementationCandidateQueueAdapter {
 
   release(request: LeaseTransitionRequest): Promise<ImplementationQueueControl> {
     return releaseImplementationCandidateOn(
+      this.backend,
+      { namespace: this.backend.namespace, actor: this.actor, ...request },
+      { now: this.now },
+    );
+  }
+
+  reserveCompletion(
+    request: Omit<ReserveImplementationCompletionLeaseRequest, "namespace" | "actor">,
+  ) {
+    return reserveImplementationCompletionLeaseOn(
+      this.backend,
+      { namespace: this.backend.namespace, actor: this.actor, ...request },
+      { now: this.now },
+    );
+  }
+
+  releaseCompletion(
+    request: Omit<ReleaseImplementationCompletionLeaseRequest, "namespace" | "actor">,
+  ): Promise<ImplementationQueueControl> {
+    return releaseImplementationCompletionLeaseOn(
       this.backend,
       { namespace: this.backend.namespace, actor: this.actor, ...request },
       { now: this.now },

@@ -125,6 +125,14 @@ export interface ImplementationCandidateAuthorityReceipt {
   readonly gateEvidenceDigest: string;
 }
 
+export interface ImplementationCandidateCompletionReservationBinding {
+  readonly operationId: string;
+  readonly completionRef: string;
+  readonly mergeOperationId: string;
+  readonly taskRef: string;
+  readonly resultCommit: string;
+}
+
 export interface ImplementationReviewPanelRecord {
   readonly version: 1;
   readonly panelRef: string;
@@ -225,6 +233,18 @@ export interface ImplementationCompletionRecord {
   readonly mergedAt: string | null;
   readonly recordedAt: string | null;
   readonly recordOperationId: string | null;
+}
+
+function candidateCompletionReservationBinding(
+  completion: ImplementationCompletionRecord,
+): ImplementationCandidateCompletionReservationBinding {
+  return Object.freeze({
+    operationId: completion.operationId,
+    completionRef: completion.completionRef,
+    mergeOperationId: completion.mergeOperationId,
+    taskRef: completion.taskRef,
+    resultCommit: completion.resultCommit,
+  });
 }
 
 export interface ImplementationOperatorValidation {
@@ -1591,8 +1611,13 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly taskRef: string;
     readonly resultCommit: string;
   }) => Promise<ImplementationCandidateAuthorityReceipt>;
+  readonly reserveCandidateAuthority?: (
+    receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
+  ) => Promise<void>;
   readonly releaseCandidateAuthority?: (
     receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
   ) => Promise<void>;
   readonly readTaskAuthority: (taskRef: string) => Promise<ImplementationTaskAuthority>;
   readonly repositoryHead: () => Promise<string>;
@@ -5254,7 +5279,10 @@ export class ImplementationEvidenceService {
         completion.candidateAuthority !== undefined &&
         this.deps.releaseCandidateAuthority !== undefined
       ) {
-        await this.deps.releaseCandidateAuthority(completion.candidateAuthority);
+        await this.deps.releaseCandidateAuthority(
+          completion.candidateAuthority,
+          candidateCompletionReservationBinding(completion),
+        );
       }
       return {
         status: "existing" as const,
@@ -5383,7 +5411,10 @@ export class ImplementationEvidenceService {
         completion.candidateAuthority !== undefined &&
         this.deps.releaseCandidateAuthority !== undefined
       ) {
-        await this.deps.releaseCandidateAuthority(completion.candidateAuthority);
+        await this.deps.releaseCandidateAuthority(
+          completion.candidateAuthority,
+          candidateCompletionReservationBinding(completion),
+        );
       }
       return result;
     });
@@ -5735,6 +5766,10 @@ export interface ImplementationCompletionMergeAdmissionProviderOptions {
   readonly authorizeCandidate?: (
     receipt: ImplementationCandidateAuthorityReceipt,
   ) => Promise<void>;
+  readonly reserveCandidate?: (
+    receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
+  ) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -5764,7 +5799,19 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
     if (validatedCompletion.candidateAuthority === undefined) return;
     await options.authorizeCandidate(validatedCompletion.candidateAuthority);
   };
+  const reserveCandidate = async (): Promise<void> => {
+    if (validatedHead !== validatedCompletion.repositoryHead) return;
+    if (validatedCompletion.candidateAuthority === undefined) return;
+    if (options.reserveCandidate === undefined) {
+      throw new Error("candidate-layer completion reservation is unavailable");
+    }
+    await options.reserveCandidate(
+      validatedCompletion.candidateAuthority,
+      candidateCompletionReservationBinding(validatedCompletion),
+    );
+  };
   await authorizeCandidate();
+  await reserveCandidate();
   const preparationAlreadyDurable =
     (validatedCompletion.state === "merge-started" &&
       validatedHead === validatedCompletion.repositoryHead) ||
@@ -5801,6 +5848,11 @@ export async function implementationCompletionMergeAdmissionProviderFromStore(
         if (observedHead !== validatedHead)
           throw new Error("repository HEAD changed after durable merge-started preparation");
         await awaitBeforeLaunchDeadline(authorizeCandidate(), deadline, "candidate merge authorization");
+        await awaitBeforeLaunchDeadline(
+          reserveCandidate(),
+          deadline,
+          "candidate completion reservation",
+        );
         await Promise.resolve(underlying.prepareGuardianShare?.(guardian, deadline));
         mergePrepared = true;
       };

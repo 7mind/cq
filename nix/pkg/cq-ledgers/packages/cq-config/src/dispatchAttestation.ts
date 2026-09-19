@@ -2583,6 +2583,12 @@ function claimStagedRebaseSuccessor(
         "a retained implementation queue requires its consumed envelope",
       );
     }
+    if (retainedQueue.completionReservation !== undefined) {
+      throw new AttestationBindingError(
+        "continuationClaim",
+        "dispatch continuation is fenced by a durable completion reservation",
+      );
+    }
     const supersededAt = deps.now();
     const sourceClaim = Object.freeze({
       continuationReference,
@@ -4768,6 +4774,12 @@ function continuationBindingOfRow(
 ): DispatchContinuationBinding | undefined {
   const binding = row.dispatchContinuationBinding;
   if (binding === undefined) return undefined;
+  if (!isAttestationTombstone(row) && row.implementationQueue?.completionReservation !== undefined) {
+    throw new DispatchContinuationError(
+      "already-claimed",
+      "dispatch continuation is fenced by a durable completion reservation",
+    );
+  }
   if (isAttestationTombstone(row)) {
     if (atMs >= attestationInstantMs(row.reuseAfter, "reuseAfter")) {
       if (expired === "omit") return undefined;

@@ -276,6 +276,8 @@ export async function runGateGitEffect(
                   throw new Error("cq gate git-effect: implementation candidate authority changed");
                 }
               },
+              reserveCandidate: async (receipt, binding) =>
+                await candidateAuthority!.reserve(receipt, binding),
             });
           })()
         : ordinaryProvider;

@@ -40,6 +40,8 @@ import {
   prepareDispatchOn,
   prepareDispatchRequestDigest,
   qualifyDispatchStagedCompletionOn,
+  releaseImplementationCompletionLease,
+  reserveImplementationCompletionLease,
   resolveDispatchGitEffectBindingOn,
   resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
@@ -105,6 +107,7 @@ import {
   type LedgerStore,
   type ImplementationEvidenceStore,
   type ImplementationCandidateAuthorityReceipt,
+  type ImplementationCandidateCompletionReservationBinding,
   type LedgerServerConstruction,
   type ManagedWorktreeDispatchBinding,
   type ResolvedLedgerStore,
@@ -1656,11 +1659,53 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     });
   }
 
+  async function reserveImplementationCandidateAuthority(
+    receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
+  ): Promise<void> {
+    const current = await resolveImplementationCandidateAuthority({
+      workerDispatch: receipt.workerDispatch,
+      taskRef: receipt.taskRef,
+      resultCommit: receipt.resultCommit,
+    });
+    if (
+      dispatchPayloadDigest(current as unknown as DispatchJSONValue) !==
+      dispatchPayloadDigest(receipt as unknown as DispatchJSONValue)
+    ) {
+      throw new Error("implementation candidate authority changed before completion reservation");
+    }
+    await options.backend.transact({ kind: "namespace" }, (store) => {
+      const row = store.read(receipt.workerDispatch);
+      if (row === undefined || isAttestationTombstone(row) || row.implementationQueue === undefined) {
+        throw new Error("implementation candidate completion reservation row is not live");
+      }
+      reserveImplementationCompletionLease(
+        {
+          namespace,
+          actor: "trusted-parent",
+          attestationId: receipt.workerDispatch.attestationId,
+          generation: receipt.workerDispatch.generation,
+          partitionKey: receipt.partitionKey,
+          enrollmentId: receipt.enrollmentId,
+          attemptId: receipt.attemptId,
+          holderId: receipt.leaseHolderId,
+          leaseGeneration: receipt.leaseGeneration,
+          expectedPartitionRevision: row.implementationQueue.partitionRevision,
+          qualificationDigest: receipt.qualificationDigest,
+          ...binding,
+          detail: { operation: "protected-implementation-completion-reservation" },
+        },
+        { store, now },
+      );
+    });
+  }
+
   async function releaseImplementationCandidateAuthority(
     receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
   ): Promise<void> {
-    const release = await options.backend.transact(
-      { kind: "handle", handle: receipt.workerDispatch },
+    await options.backend.transact(
+      { kind: "namespace" },
       (store) => {
         const row = store.read(receipt.workerDispatch);
         if (row === undefined) throw new Error("implementation candidate release row is missing");
@@ -1674,9 +1719,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             control.partitionKey === receipt.partitionKey &&
             control.enrollmentId === receipt.enrollmentId &&
             control.attemptId === receipt.attemptId &&
-            control.leaseGeneration === receipt.leaseGeneration
+            control.leaseGeneration === receipt.leaseGeneration &&
+            control.terminal?.detailsDigest ===
+              dispatchPayloadDigest({
+                operation: "protected-implementation-completion",
+                ...binding,
+              })
           )
-            return null;
+            return;
           throw new Error("implementation candidate release tombstone does not match the receipt");
         }
         const control = row.implementationQueue;
@@ -1688,7 +1738,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ) {
           throw new Error("implementation candidate release coordinates changed");
         }
-        if (control.state === "released") return null;
+        const detail = {
+          operation: "protected-implementation-completion",
+          ...binding,
+        } as const;
+        if (
+          control.state === "released" &&
+          control.terminal?.detailsDigest === dispatchPayloadDigest(detail)
+        ) {
+          return;
+        }
         if (
           control.state !== "leased" ||
           control.lease?.holderId !== receipt.leaseHolderId ||
@@ -1696,20 +1755,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ) {
           throw new Error("implementation candidate release requires the exact live lease");
         }
-        return {
-          attestationId: row.attestationId,
-          generation: row.generation,
-          partitionKey: receipt.partitionKey,
-          enrollmentId: receipt.enrollmentId,
-          attemptId: receipt.attemptId,
-          holderId: receipt.leaseHolderId,
-          leaseGeneration: receipt.leaseGeneration,
-          expectedPartitionRevision: control.partitionRevision,
-          detail: { operation: "protected-implementation-completion", taskRef: receipt.taskRef },
-        };
+        releaseImplementationCompletionLease(
+          {
+            namespace,
+            actor: "trusted-parent",
+            attestationId: row.attestationId,
+            generation: row.generation,
+            partitionKey: receipt.partitionKey,
+            enrollmentId: receipt.enrollmentId,
+            attemptId: receipt.attemptId,
+            holderId: receipt.leaseHolderId,
+            leaseGeneration: receipt.leaseGeneration,
+            expectedPartitionRevision: control.partitionRevision,
+            ...binding,
+            detail,
+          },
+          { store, now },
+        );
       },
     );
-    if (release !== null) await implementationCandidateQueue.release(release);
   }
 
   const capability: DispatchCapability = {
@@ -3263,6 +3327,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       ? {}
       : {
           resolveImplementationCandidateAuthority,
+          reserveImplementationCandidateAuthority,
           releaseImplementationCandidateAuthority,
         }),
     gitCommit: async (input) => {
@@ -3561,6 +3626,10 @@ export interface SingleProjectImplementationCandidateAuthority {
     readonly taskRef: string;
     readonly resultCommit: string;
   }): Promise<ImplementationCandidateAuthorityReceipt>;
+  reserve(
+    receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -3603,12 +3672,20 @@ export async function createSingleProjectImplementationCandidateAuthority(input:
     await attestationBackend.close();
     throw new Error("direct implementation candidate authority is unavailable");
   }
+  if (capability.reserveImplementationCandidateAuthority === undefined) {
+    await attestationBackend.close();
+    throw new Error("direct implementation candidate reservation is unavailable");
+  }
   return Object.freeze({
     resolve: async (request: {
       readonly workerDispatch: { readonly attestationId: string; readonly generation: number };
       readonly taskRef: string;
       readonly resultCommit: string;
     }) => await capability.resolveImplementationCandidateAuthority!(request),
+    reserve: async (
+      receipt: ImplementationCandidateAuthorityReceipt,
+      binding: ImplementationCandidateCompletionReservationBinding,
+    ) => await capability.reserveImplementationCandidateAuthority!(receipt, binding),
     close: async () => await attestationBackend.close(),
   });
 }

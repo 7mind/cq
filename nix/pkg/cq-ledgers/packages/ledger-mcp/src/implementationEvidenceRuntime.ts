@@ -837,11 +837,23 @@ export function createProductionImplementationEvidenceService(
           resolveCandidateAuthority: async (input) =>
             await options.dispatchCapability.resolveImplementationCandidateAuthority!(input),
         }),
+    ...(options.dispatchCapability.reserveImplementationCandidateAuthority === undefined
+      ? {}
+      : {
+          reserveCandidateAuthority: async (receipt, binding) =>
+            await options.dispatchCapability.reserveImplementationCandidateAuthority!(
+              receipt,
+              binding,
+            ),
+        }),
     ...(options.dispatchCapability.releaseImplementationCandidateAuthority === undefined
       ? {}
       : {
-          releaseCandidateAuthority: async (receipt) =>
-            await options.dispatchCapability.releaseImplementationCandidateAuthority!(receipt),
+          releaseCandidateAuthority: async (receipt, binding) =>
+            await options.dispatchCapability.releaseImplementationCandidateAuthority!(
+              receipt,
+              binding,
+            ),
         }),
     readTaskAuthority: async (taskRef) => {
       const taskId = taskRef.slice("tasks:".length);

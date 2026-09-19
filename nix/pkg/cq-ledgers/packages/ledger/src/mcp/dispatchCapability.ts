@@ -26,7 +26,10 @@ import type {
   GitConflictResolution,
   GitRebaseConflictState,
 } from "../gitConflictContinuation.js";
-import type { ImplementationCandidateAuthorityReceipt } from "../implementationEvidence.js";
+import type {
+  ImplementationCandidateAuthorityReceipt,
+  ImplementationCandidateCompletionReservationBinding,
+} from "../implementationEvidence.js";
 
 export interface PrepareDispatchToolInput {
   readonly roleId?: string;
@@ -214,8 +217,13 @@ export interface DispatchCapability {
     readonly taskRef: string;
     readonly resultCommit: string;
   }): Promise<ImplementationCandidateAuthorityReceipt>;
+  reserveImplementationCandidateAuthority?(
+    receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
+  ): Promise<void>;
   releaseImplementationCandidateAuthority?(
     receipt: ImplementationCandidateAuthorityReceipt,
+    binding: ImplementationCandidateCompletionReservationBinding,
   ): Promise<void>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
   gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;

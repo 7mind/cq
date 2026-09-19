@@ -2298,6 +2298,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         };
         if (
           capability.resolveImplementationCandidateAuthority === undefined ||
+          capability.reserveImplementationCandidateAuthority === undefined ||
           capability.releaseImplementationCandidateAuthority === undefined
         ) {
           throw new Error("installed guarded-rebase fixture lacks candidate authority controls");
@@ -2333,8 +2334,10 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
           resolveCandidateAuthority: async (input) =>
             await capability.resolveImplementationCandidateAuthority!(input),
-          releaseCandidateAuthority: async (receipt) =>
-            await capability.releaseImplementationCandidateAuthority!(receipt),
+          reserveCandidateAuthority: async (receipt, binding) =>
+            await capability.reserveImplementationCandidateAuthority!(receipt, binding),
+          releaseCandidateAuthority: async (receipt, binding) =>
+            await capability.releaseImplementationCandidateAuthority!(receipt, binding),
           readTaskAuthority: async (taskRef) => {
             const task = seededStore.store.fetchItem(
               TASKS_LEDGER,
