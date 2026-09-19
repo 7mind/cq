@@ -1,17 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ATTESTATION_TABLE,
   DISPATCH_OVERLAY_REGISTRY,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  PostgresAttestationBackend,
   dispatchPayloadDigest,
   fetchDispatchInputOn,
+  openAttestationPgPool,
   prepareDispatchOn,
   provenanceBindingOf,
   sequentialDispatchRandomBytes,
   storeDispatchResultOn,
   upgradeLiveImplementationQueueRows,
   type AttestationEnvelope,
+  type AttestationBackend,
   type AttestationNamespace,
   type DispatchGitEffectBinding,
   type DispatchJSONValue,
@@ -25,6 +29,11 @@ const store = new InMemoryAttestationStore(namespace);
 const backend = new InMemoryAttestationBackend(store);
 let instant = Date.parse("2026-09-19T08:00:00.000Z");
 const now = () => new Date(instant).toISOString();
+const PG_URL = process.env["CQ_TEST_PG_URL"];
+
+if ((PG_URL === undefined || PG_URL.length === 0) && process.env["CQ_TEST_REQUIRE_PG"] === "1") {
+  throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+}
 
 interface StagedRow {
   readonly prepared: DispatchPrepared;
@@ -32,7 +41,17 @@ interface StagedRow {
   readonly binding: DispatchGitEffectBinding;
 }
 
-async function stage(taskId: string, seed: number): Promise<StagedRow> {
+interface StageTarget {
+  readonly backend: AttestationBackend;
+  readonly namespace: AttestationNamespace;
+  readonly now: () => string;
+}
+
+async function stage(
+  taskId: string,
+  seed: number,
+  target: StageTarget = { backend, namespace, now },
+): Promise<StagedRow> {
   const baseCommit = seed.toString(16).padStart(40, "0");
   const resultCommit = (seed + 1).toString(16).padStart(40, "0");
   const binding: DispatchGitEffectBinding = {
@@ -59,9 +78,9 @@ async function stage(taskId: string, seed: number): Promise<StagedRow> {
     startingCommit: baseCommit,
   };
   const prepared = await prepareDispatchOn(
-    backend,
+    target.backend,
     {
-      namespace,
+      namespace: target.namespace,
       roleId: "implement-worker",
       surface: "codex",
       input,
@@ -75,7 +94,7 @@ async function stage(taskId: string, seed: number): Promise<StagedRow> {
     },
     {
       mode: "manager-bound",
-      now,
+      now: target.now,
       randomBytes: sequentialDispatchRandomBytes(seed),
       lineageFenceGuard: async () => null,
       withLineageLock: async (operation) => await operation(),
@@ -83,16 +102,16 @@ async function stage(taskId: string, seed: number): Promise<StagedRow> {
   );
   if (!prepared.accepted) throw new Error(prepared.detail);
   await fetchDispatchInputOn(
-    backend,
+    target.backend,
     {
-      namespace,
+      namespace: target.namespace,
       ...prepared.prepared,
       inputCapability: prepared.prepared.inputCapability,
     },
-    { now },
+    { now: target.now },
   );
   const stored = await storeDispatchResultOn(
-    backend,
+    target.backend,
     {
       resultCapability: prepared.prepared.resultCapability,
       output: {
@@ -113,7 +132,7 @@ async function stage(taskId: string, seed: number): Promise<StagedRow> {
         summary: "legacy staged candidate",
       },
     },
-    { now },
+    { now: target.now },
   );
   if (stored.state !== "gate-pending") throw new Error(`expected gate-pending, got ${stored.state}`);
   return { prepared: prepared.prepared, pending: stored.result, binding };
@@ -238,6 +257,11 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     expect(byTask.get("T65214")?.implementationQueueRollout?.disposition).toBe(
       "parked-incompatible",
     );
+    expect(byTask.get("T65214")?.implementationQueueRollout?.diagnosticArtifact).toEqual({
+      kind: "cq-implementation-queue-rollout-diagnostic",
+      version: 1,
+      detail: { reason: "legacy-output-shape" },
+    });
   });
 
   test("accepts completed green evidence only when every durable binding is exact", async () => {
@@ -292,5 +316,174 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
     const migrated = store.read(completed)! as AttestationEnvelope;
     expect(migrated.implementationQueue).toBeUndefined();
     expect(migrated.implementationQueueRollout?.disposition).toBe("adopted-completed-green");
+
+    instant += 1_000;
+    await stage("T65217", 107);
+    replaceRow("T65217", (row) => {
+      const output = {
+        ...(row.output as Readonly<Record<string, DispatchJSONValue>>),
+        supervisedGateEvidence,
+      } as DispatchJSONValue;
+      return {
+        ...row,
+        state: "result-stored",
+        output,
+        outputDigest: dispatchPayloadDigest(output),
+        storedAt: now(),
+      };
+    });
+    const mismatched = store.rows().find(
+      (row): row is AttestationEnvelope =>
+        row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65217",
+    )!;
+    const mismatchSummary = await upgradeLiveImplementationQueueRows({
+      backend,
+      now,
+      protectManagedWorktree: async () => undefined,
+      resolve: async (row) => ({
+        state: "completed-green",
+        evidence: {
+          outputDigest: row.outputDigest!,
+          resultCommit: "0".repeat(40),
+          managedWorktreeBindingDigest: dispatchPayloadDigest(
+            row.gitEffectBinding as unknown as DispatchJSONValue,
+          ),
+          supervisedGateEvidenceDigest: dispatchPayloadDigest(
+            supervisedGateEvidence as unknown as DispatchJSONValue,
+          ),
+        },
+      }),
+    });
+    expect(mismatchSummary).toMatchObject({
+      adoptedCompletedGreen: 0,
+      parkedIncompatible: 1,
+    });
+    expect((store.read(mismatched) as AttestationEnvelope).implementationQueueRollout).toMatchObject({
+      disposition: "parked-incompatible",
+      diagnosticArtifact: {
+        detail: { reason: "completed-green-evidence-binding-mismatch" },
+      },
+    });
   });
+
+  test("keeps an inexact recovered completion unqualified", async () => {
+    instant += 1_000;
+    const staged = await stage("T65218", 108);
+    const summary = await upgradeLiveImplementationQueueRows({
+      backend,
+      now,
+      protectManagedWorktree: async () => undefined,
+      resolve: async (row) => ({
+        state: "compatible" as const,
+        candidate: {
+          repositoryId: row.gitEffectBinding!.repositoryId,
+          integrationRef: "refs/heads/main",
+          authority: {
+            taskId: "T65218",
+            goalRef: "goals:G213",
+            finalizedManifestDigest: "d".repeat(64),
+          },
+          observedBaseCommit: row.gitEffectBinding!.baseCommit,
+          resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
+            "resultCommit"
+          ] as string,
+          resultTree: "e".repeat(40),
+          gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          packagedEnvironmentDigest: "f".repeat(64),
+          gitReceipts: [],
+          gitEffectBinding: row.gitEffectBinding!,
+          stagedOutputDigest: row.gateSubmittedOutputDigest!,
+        },
+        completion: {
+          stagedOutputDigest: "0".repeat(64),
+          expectedChild: row.expectedChild,
+          expectedProvenance: provenanceBindingOf(staged.prepared),
+          nativeCompletion: {
+            kind: "native-completion" as const,
+            actor: "trusted-parent" as const,
+            childId: row.expectedChild.childId,
+            runId: row.expectedChild.runId,
+            completedAt: now(),
+          },
+        },
+      }),
+    });
+
+    expect(summary).toMatchObject({ adoptedUnqualified: 1, adoptedQualified: 0 });
+    const migrated = store.read(staged.prepared) as AttestationEnvelope;
+    expect(migrated.implementationQueue?.state).toBe("enqueued");
+    expect(migrated.stagedCompletionQualification).toBeUndefined();
+  });
+
+  test.skipIf(PG_URL === undefined)(
+    "persists the same pre-queue adoption through the production PostgreSQL backend",
+    async () => {
+      const pgNamespace: AttestationNamespace = {
+        backend: "postgres",
+        projectKey: `queue-upgrade-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
+      };
+      const pool = openAttestationPgPool(PG_URL!);
+      const pgBackend = await PostgresAttestationBackend.open({
+        namespace: pgNamespace,
+        pool,
+      });
+      let pgInstant = Date.parse("2026-09-19T08:30:00.000Z");
+      const pgNow = () => new Date(pgInstant++).toISOString();
+      const target = { backend: pgBackend, namespace: pgNamespace, now: pgNow };
+      try {
+        const staged = await stage("T65216", 106, target);
+        let protectedWorktrees = 0;
+        const summary = await upgradeLiveImplementationQueueRows({
+          backend: pgBackend,
+          now: pgNow,
+          protectManagedWorktree: async (binding) => {
+            expect(binding).toEqual(staged.binding);
+            protectedWorktrees += 1;
+          },
+          resolve: async (row) => ({
+            state: "compatible" as const,
+            candidate: {
+              repositoryId: row.gitEffectBinding!.repositoryId,
+              integrationRef: "refs/heads/main",
+              authority: {
+                taskId: "T65216",
+                goalRef: "goals:G213",
+                finalizedManifestDigest: "d".repeat(64),
+              },
+              observedBaseCommit: row.gitEffectBinding!.baseCommit,
+              resultCommit: (row.output as Readonly<Record<string, DispatchJSONValue>>)[
+                "resultCommit"
+              ] as string,
+              resultTree: "e".repeat(40),
+              gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+              packagedEnvironmentDigest: "f".repeat(64),
+              gitReceipts: [],
+              gitEffectBinding: row.gitEffectBinding!,
+              stagedOutputDigest: row.gateSubmittedOutputDigest!,
+            },
+          }),
+        });
+
+        expect(summary).toMatchObject({
+          contract: "g213-t4",
+          considered: 1,
+          adoptedUnqualified: 1,
+        });
+        expect(protectedWorktrees).toBe(1);
+        const persisted = (await pgBackend.storedRows()).find(
+          (row): row is AttestationEnvelope =>
+            row.kind === "envelope" && row.gitEffectBinding?.taskId === "T65216",
+        );
+        expect(persisted?.implementationQueue?.state).toBe("enqueued");
+        expect(persisted?.implementationQueueRollout?.contract).toBe("g213-t4");
+      } finally {
+        await pool`
+          DELETE FROM ${pool(ATTESTATION_TABLE)}
+           WHERE backend = ${pgNamespace.backend} AND project_key = ${pgNamespace.projectKey}
+        `.catch(() => undefined);
+        await pgBackend.close().catch(() => undefined);
+        await pool.close().catch(() => undefined);
+      }
+    },
+  );
 });

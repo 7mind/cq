@@ -466,14 +466,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   const implementationExecutorMode =
     options.implementationExecutorMode ??
     (namespace.backend === "postgres" ? "metadata-only" : "local-xdg");
-  const implementationExecutorAvailable =
-    implementationExecutorMode === "local-xdg" &&
-    options.repositoryRoot !== undefined &&
-    options.ledgerStore !== undefined &&
-    options.implementationEvidenceStore !== undefined;
+  const localImplementationExecutorAvailable =
+    implementationExecutorMode === "local-xdg" && options.repositoryRoot !== undefined;
+  const implementationEvidenceAuthorityAvailable =
+    options.ledgerStore !== undefined && options.implementationEvidenceStore !== undefined;
 
   function assertImplementationExecutor(operation: ImplementationExecutorOperation): void {
-    if (!implementationExecutorAvailable) {
+    if (
+      !localImplementationExecutorAvailable ||
+      ((operation === "qualify" || operation === "acquire") &&
+        !implementationEvidenceAuthorityAvailable)
+    ) {
       throw new ImplementationExecutorUnavailableError(operation);
     }
   }
@@ -486,6 +489,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   }
   const prepares = new Map<string, CachedPrepare>();
   const preparesByHandle = new Map<string, CachedPrepare>();
+  const parentGateFinalizations = new Map<
+    string,
+    ReturnType<NonNullable<DispatchCapability["finalizeParentGate"]>>
+  >();
   const recoveryJournal =
     options.recoveryJournal ??
     (options.repositoryRoot === undefined
@@ -1057,50 +1064,57 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (binding === undefined) {
       throw new Error("qualified implementation front requires a managed worktree binding");
     }
+    const claimed = await withManagedWorktreeEffectLock(
+      binding,
+      {
+        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+        effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+      },
+      async () =>
+        await claimQualifiedParentGateOn(
+          options.backend,
+          { ...input.lease, queueLease: input.lease },
+          { now },
+        ),
+    );
+    if (claimed.state === "result-stored") return;
+    if (claimed.state === "aborted") {
+      throw new Error(`qualified implementation front gate is ${claimed.result.reason}`);
+    }
+    let output: DispatchJSONValue;
+    try {
+      output = await superviseImplementWorkerGate(
+        { context: claimed.context, output: claimed.output },
+        {
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+          ...(options.supervisedWorkerGateRunner === undefined
+            ? {}
+            : { runner: options.supervisedWorkerGateRunner }),
+        },
+      );
+    } catch (error) {
+      if (error instanceof SupervisedWorkerGateRejectedError) {
+        await abortWithRecovery(
+          {
+            attestationId: input.lease.attestationId,
+            generation: input.lease.generation,
+            reason: "gate-rejected",
+            details: error.details as unknown as DispatchJSONValue,
+          },
+          binding,
+        );
+      }
+      throw error;
+    }
     await withManagedWorktreeEffectLock(
       binding,
       {
         ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
         effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
       },
-      async () => {
-        const claimed = await claimQualifiedParentGateOn(
-          options.backend,
-          { ...input.lease, queueLease: input.lease },
-          { now },
-        );
-        if (claimed.state === "result-stored") return;
-        if (claimed.state === "aborted") {
-          throw new Error(`qualified implementation front gate is ${claimed.result.reason}`);
-        }
-        let output: DispatchJSONValue;
-        try {
-          output = await superviseImplementWorkerGate(
-            { context: claimed.context, output: claimed.output },
-            {
-              ...(options.worktreeStateDir === undefined
-                ? {}
-                : { stateDir: options.worktreeStateDir }),
-              ...(options.supervisedWorkerGateRunner === undefined
-                ? {}
-                : { runner: options.supervisedWorkerGateRunner }),
-            },
-          );
-        } catch (error) {
-          if (error instanceof SupervisedWorkerGateRejectedError) {
-            await abortWithRecovery(
-              {
-                attestationId: input.lease.attestationId,
-                generation: input.lease.generation,
-                reason: "gate-rejected",
-                details: error.details as unknown as DispatchJSONValue,
-              },
-              binding,
-              true,
-            );
-          }
-          throw error;
-        }
+      async () =>
         await completeQualifiedParentGateOn(
           options.backend,
           {
@@ -1110,8 +1124,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             output,
           },
           { now },
-        );
-      },
+        ),
     );
   }
 
@@ -3210,76 +3223,97 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (binding === undefined) {
         throw new Error("parent gate finalization requires a managed worktree binding");
       }
-      return await withManagedWorktreeEffectLock(
+      const finalizationKey = `${input.attestationId}#${String(input.generation)}`;
+      const activeFinalization = parentGateFinalizations.get(finalizationKey);
+      if (activeFinalization !== undefined) return await activeFinalization;
+      const claimed = await withManagedWorktreeEffectLock(
         binding,
         {
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
         },
-        async () => {
-          const claimed = await claimParentGateOn(options.backend, input, { now });
-          if (claimed.state === "result-stored") {
-            return Object.freeze({ state: "result-stored" as const, result: claimed.result });
-          }
-          if (claimed.state === "aborted") {
-            return Object.freeze({ state: "aborted" as const, result: claimed.result });
-          }
-          let output: DispatchJSONValue;
-          try {
-            output = await superviseImplementWorkerGate(
-              { context: claimed.context, output: claimed.output },
-              {
-                ...(options.worktreeStateDir === undefined
-                  ? {}
-                  : { stateDir: options.worktreeStateDir }),
-                ...(options.supervisedWorkerGateRunner === undefined
-                  ? {}
-                  : { runner: options.supervisedWorkerGateRunner }),
-              },
-            );
-          } catch (error) {
-            if (error instanceof SupervisedWorkerGateRejectedError) {
-              const rejected = await abortWithRecovery(
-                {
-                  attestationId: input.attestationId,
-                  generation: input.generation,
-                  reason: "gate-rejected",
-                  details: error.details as unknown as DispatchJSONValue,
-                },
-                binding,
-                true,
-              );
-              return Object.freeze({ state: "aborted" as const, result: rejected });
-            }
-            const message = error instanceof Error ? error.message : String(error);
-            try {
-              await abortWithRecovery(
-                {
-                  attestationId: input.attestationId,
-                  generation: input.generation,
-                  reason: "parent-lost",
-                  details: { phase: "supervised-gate", message: message.slice(0, 1024) },
-                },
-                binding,
-                true,
-              );
-            } catch (abortError) {
-              const abortMessage =
-                abortError instanceof Error ? abortError.message : String(abortError);
-              throw new Error(`${message}; parent-lost terminalization failed: ${abortMessage}`, {
-                cause: abortError,
-              });
-            }
-            throw error;
-          }
-          const result = await completeParentGateOn(
-            options.backend,
-            { ...input, gateEpoch: claimed.gateEpoch, output },
-            { now },
-          );
-          return Object.freeze({ state: "result-stored" as const, result });
-        },
+        async () => await claimParentGateOn(options.backend, input, { now }),
       );
+      if (claimed.state === "result-stored") {
+        return Object.freeze({ state: "result-stored" as const, result: claimed.result });
+      }
+      if (claimed.state === "aborted") {
+        return Object.freeze({ state: "aborted" as const, result: claimed.result });
+      }
+      const existingFinalization = parentGateFinalizations.get(finalizationKey);
+      if (existingFinalization !== undefined) return await existingFinalization;
+      const finalization = (async () => {
+        let output: DispatchJSONValue;
+        try {
+          output = await superviseImplementWorkerGate(
+            { context: claimed.context, output: claimed.output },
+            {
+              ...(options.worktreeStateDir === undefined
+                ? {}
+                : { stateDir: options.worktreeStateDir }),
+              ...(options.supervisedWorkerGateRunner === undefined
+                ? {}
+                : { runner: options.supervisedWorkerGateRunner }),
+            },
+          );
+        } catch (error) {
+          if (error instanceof SupervisedWorkerGateRejectedError) {
+            const rejected = await abortWithRecovery(
+              {
+                attestationId: input.attestationId,
+                generation: input.generation,
+                reason: "gate-rejected",
+                details: error.details as unknown as DispatchJSONValue,
+              },
+              binding,
+            );
+            return Object.freeze({ state: "aborted" as const, result: rejected });
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            await abortWithRecovery(
+              {
+                attestationId: input.attestationId,
+                generation: input.generation,
+                reason: "parent-lost",
+                details: { phase: "supervised-gate", message: message.slice(0, 1024) },
+              },
+              binding,
+            );
+          } catch (abortError) {
+            const abortMessage =
+              abortError instanceof Error ? abortError.message : String(abortError);
+            throw new Error(`${message}; parent-lost terminalization failed: ${abortMessage}`, {
+              cause: abortError,
+            });
+          }
+          throw error;
+        }
+        const result = await withManagedWorktreeEffectLock(
+          binding,
+          {
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+            effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+          },
+          async () =>
+            await completeParentGateOn(
+              options.backend,
+              { ...input, gateEpoch: claimed.gateEpoch, output },
+              { now },
+            ),
+        );
+        return Object.freeze({ state: "result-stored" as const, result });
+      })();
+      parentGateFinalizations.set(finalizationKey, finalization);
+      try {
+        return await finalization;
+      } finally {
+        if (parentGateFinalizations.get(finalizationKey) === finalization) {
+          parentGateFinalizations.delete(finalizationKey);
+        }
+      }
     },
     confirmCompletion: async (input) => {
       const replay = await replayConfirmedDispatchCompletionOn(

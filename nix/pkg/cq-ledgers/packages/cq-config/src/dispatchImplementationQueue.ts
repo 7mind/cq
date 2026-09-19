@@ -205,6 +205,13 @@ export type ImplementationQueueRolloutDisposition =
   | "parked-incompatible"
   | "execution-uncertain";
 
+/** Human-inspectable counterpart to the stable rollout detail digest. */
+export interface ImplementationQueueRolloutDiagnosticArtifact {
+  readonly kind: "cq-implementation-queue-rollout-diagnostic";
+  readonly version: 1;
+  readonly detail: DispatchJSONValue;
+}
+
 /** Durable decision made while upgrading a pre-queue live attestation. */
 export interface ImplementationQueueRollout {
   readonly kind: "cq-implementation-queue-rollout";
@@ -213,6 +220,7 @@ export interface ImplementationQueueRollout {
   readonly disposition: ImplementationQueueRolloutDisposition;
   readonly decidedAt: string;
   readonly detailDigest: string;
+  readonly diagnosticArtifact: ImplementationQueueRolloutDiagnosticArtifact;
   readonly worktreeProtected: boolean;
 }
 

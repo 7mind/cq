@@ -95,13 +95,19 @@ function rollout(
   detail: DispatchJSONValue,
   worktreeProtected: boolean,
 ): ImplementationQueueRollout {
+  const retainedDetail = structuredClone(detail);
   return Object.freeze({
     kind: "cq-implementation-queue-rollout" as const,
     version: 1 as const,
     contract: IMPLEMENTATION_QUEUE_ROLLOUT_CONTRACT.id,
     disposition,
     decidedAt,
-    detailDigest: dispatchPayloadDigest(detail),
+    detailDigest: dispatchPayloadDigest(retainedDetail),
+    diagnosticArtifact: Object.freeze({
+      kind: "cq-implementation-queue-rollout-diagnostic" as const,
+      version: 1 as const,
+      detail: retainedDetail,
+    }),
     worktreeProtected,
   });
 }

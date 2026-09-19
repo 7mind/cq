@@ -24,6 +24,7 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   assertManagedWorktreeWipClosure,
   continueManagedWorktreeRebase,
+  createInMemoryImplementationEvidenceStore,
   createNodeSupervisedWorkerGateRunner,
   createInMemoryWorksetStore,
   gitRebaseConflictStateDigest,
@@ -364,10 +365,12 @@ async function fixtureWithDispatchBase(
         })
       : new InMemoryAttestationBackend(store);
   const ledgerStore = withLedgerStore ? finalizedTaskStore() : undefined;
+  const implementationEvidenceStore = createInMemoryImplementationEvidenceStore();
   const capabilityOptions = {
     backend,
     promptArtifactStore,
     ...(ledgerStore === undefined ? {} : { ledgerStore }),
+    implementationEvidenceStore,
     ...(implementationSuccessorLauncher === undefined
       ? {}
       : { implementationSuccessorLauncher }),
@@ -493,6 +496,7 @@ async function fixtureWithDispatchBase(
     store,
     backend,
     ledgerStore,
+    implementationEvidenceStore,
     runner,
     dispatchBaseCommit,
     expectedChild,
@@ -1498,6 +1502,7 @@ throw new Error("unexpected controlled cq invocation");
       backend: subject.backend,
       promptArtifactStore,
       ledgerStore: subject.ledgerStore,
+      implementationEvidenceStore: subject.implementationEvidenceStore,
       repositoryRoot: subject.repositoryRoot,
       worktreeStateDir: subject.stateDir,
       supervisedWorkerGateRunner: runner,
@@ -1668,6 +1673,7 @@ throw new Error("unexpected controlled cq invocation");
       backend: new InMemoryAttestationBackend(subject.store),
       promptArtifactStore: artifactStore(),
       ledgerStore: subject.ledgerStore,
+      implementationEvidenceStore: subject.implementationEvidenceStore,
       repositoryRoot: subject.repositoryRoot,
       worktreeStateDir: subject.stateDir,
       supervisedWorkerGateRunner: runner,
@@ -1736,6 +1742,7 @@ throw new Error("unexpected controlled cq invocation");
       backend: new InMemoryAttestationBackend(subject.store),
       promptArtifactStore: artifactStore(),
       ledgerStore: subject.ledgerStore,
+      implementationEvidenceStore: subject.implementationEvidenceStore,
       repositoryRoot: subject.repositoryRoot,
       worktreeStateDir: subject.stateDir,
       supervisedWorkerGateRunner: runner,
@@ -1950,13 +1957,16 @@ throw new Error("unexpected controlled cq invocation");
 
   // Regression: T2823 — task ownership is authoritative even when the integration diff is empty.
   test("pre-merge WIP closure inspects unchanged task-owned artifacts [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const runner = new GateDummy();
     const subject = await fixtureWithDispatchBase(
-      new GateDummy(),
+      runner,
       "managed",
       () => "2026-08-12T20:00:00.000Z",
       "inherited-current-open",
     );
-    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    await expect(finalize(subject)).rejects.toThrow("implementation");
+    expect(runner.requests).toEqual([]);
     const binding = await resolveManagedWorktreeDispatchBinding(
       {
         repositoryRoot: subject.managed.handle.repositoryRoot,
@@ -1998,13 +2008,16 @@ throw new Error("unexpected controlled cq invocation");
 
   // Regression: T2823 — release must preserve the current task's open recovery artifact.
   test("terminal release inspects unchanged task-owned artifacts [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const runner = new GateDummy();
     const subject = await fixtureWithDispatchBase(
-      new GateDummy(),
+      runner,
       "managed",
       () => "2026-08-12T20:00:00.000Z",
       "inherited-current-open",
     );
-    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    await expect(finalize(subject)).rejects.toThrow("implementation");
+    expect(runner.requests).toEqual([]);
 
     const released = await releaseManagedWorktree(
       {
@@ -2081,13 +2094,16 @@ throw new Error("unexpected controlled cq invocation");
       }),
     ).rejects.toThrow("trusted full gate");
 
+    const malformedRunner = new GateDummy();
     const malformed = await fixtureWithDispatchBase(
-      new GateDummy(),
+      malformedRunner,
       "managed",
       () => "2026-08-12T20:00:00.000Z",
       "malformed",
     );
-    expect(await stageAndFinalize(malformed)).toMatchObject({ state: "result-stored" });
+    expect(await stage(malformed)).toMatchObject({ state: "gate-pending" });
+    await expect(finalize(malformed)).rejects.toThrow("malformed WIP artifact");
+    expect(malformedRunner.requests).toEqual([]);
     const malformedBinding = await resolveManagedWorktreeDispatchBinding(
       {
         repositoryRoot: malformed.managed.handle.repositoryRoot,
@@ -2257,6 +2273,36 @@ throw new Error("unexpected controlled cq invocation");
       ]);
       expect(await resolveRecovery(subject)).toMatchObject({ preparation: { kind: "legacy" } });
     }
+  });
+
+  test("authenticated cancellation settles while the parent gate runner is still active", async () => {
+    const runner = new BlockingGateDummy();
+    const subject = await fixture(runner);
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const finalizing = finalize(subject);
+    await runner.started;
+    const aborting = subject.capability.abort({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      reason: "cancelled",
+    });
+    try {
+      const disposition = await Promise.race([
+        aborting.then((result) => ({ state: "settled" as const, result })),
+        Bun.sleep(100).then(() => ({ state: "blocked" as const })),
+      ]);
+      expect(disposition).toMatchObject({
+        state: "settled",
+        result: { state: "aborted", reason: "cancelled" },
+      });
+    } finally {
+      runner.release();
+      await finalizing.catch(() => undefined);
+      await aborting.catch(() => undefined);
+    }
+    expect(subject.store.rows()).toMatchObject([
+      { state: "aborted", abortReason: "cancelled" },
+    ]);
   });
 
   // Regression: an unbound process worker could store fabricated supervised evidence.

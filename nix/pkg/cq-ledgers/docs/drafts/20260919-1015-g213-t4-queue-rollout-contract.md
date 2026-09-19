@@ -9,6 +9,10 @@ qualify the same immutable attempt. Incompatible rows are parked, while legacy
 evidence is adopted only when its output, result commit, managed-worktree
 binding, and supervised-gate evidence digests match.
 
+Every disposition retains both a stable detail digest and its structured
+diagnostic artifact. Operators can therefore inspect why an incompatible or
+execution-uncertain row was parked without relying on an irreversible digest.
+
 The contract forbids synthesized completion or gate evidence, resurrection of
 an old generation, credential or mount forwarding, and PostgreSQL-to-XDG state
 handoff. Stale qualified attempts use the existing terminal staged-rebase

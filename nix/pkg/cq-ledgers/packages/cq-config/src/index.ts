@@ -848,6 +848,7 @@ export type {
   ImplementationCompletionLeaseReservation,
   ImplementationQueueTerminal,
   ImplementationQueueRolloutDisposition,
+  ImplementationQueueRolloutDiagnosticArtifact,
   ImplementationQueueRollout,
   ImplementationQueueControl,
   ImplementationQueueTombstoneBinding,
