@@ -321,6 +321,7 @@ describe("production dispatch runtime construction", () => {
       }),
     ).toMatchObject({ state: "gate-pending" });
 
+    // Regression: D509 — a released legacy binding must not abort local runtime startup.
     const staleTaskId = "T6522";
     const staleManaged = await prepareManagedWorktree(
       { repositoryRoot, taskId: staleTaskId, baseCommit },

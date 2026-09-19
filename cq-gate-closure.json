@@ -33,7 +33,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "3070ce6999a9c8228760de7d4bf8792188b6311ff4a3bae54855f54b297746f2",
+      "sha256": "295e7b4362d8231afd0b1ed1781c68b63e83b17c7e6960dacd381e1e1b7972bd",
       "targets": []
     },
     {
@@ -601,7 +601,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/productionDispatchRuntime.test.ts",
-      "sha256": "fee744d6275b583fe26061c64306467aee9ce54e5bafc062769667298f2778d5",
+      "sha256": "320620b52e8335ebf705f423702ccceffa2a269a381eda00365ed4569acad761",
       "targets": []
     },
     {
@@ -637,7 +637,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "773a56e82b36e2801e5de0c8bc2ed9834ac3417fdffb2123056596a298c509c7",
+      "sha256": "334c7298507ab149249189de699a8ec281118d5486205beae9943ac667b49162",
       "targets": []
     },
     {
@@ -1489,7 +1489,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "773a56e82b36e2801e5de0c8bc2ed9834ac3417fdffb2123056596a298c509c7",
+      "sha256": "334c7298507ab149249189de699a8ec281118d5486205beae9943ac667b49162",
       "targets": []
     },
     {
@@ -2323,19 +2323,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/implementationCandidateCoordinatorProcessWorker.ts",
-      "sha256": "ffdfbaa234a5ed1ad3c5f121de831e4a3ecbaf61a5a1435a434962e9de649eec",
+      "sha256": "f277d4a1fce04c3eacadb71d14d81aeb118d418d41c5929e0da55eb9f6b5dfae",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementationCandidateCoordinatorProcessContract.ts",
-      "sha256": "c52e88fdedee5b540bc7156c79e780e361ecd6cfa8ea7709f6d246652b1ecbc2",
+      "sha256": "523a10da891b93ec2f4059d5f8819596488b1685576a8cf1e17271fcfd92206c",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementationCandidateCoordinatorProcessContract.ts",
-      "sha256": "c52e88fdedee5b540bc7156c79e780e361ecd6cfa8ea7709f6d246652b1ecbc2",
+      "sha256": "523a10da891b93ec2f4059d5f8819596488b1685576a8cf1e17271fcfd92206c",
       "targets": []
     }
   ]
