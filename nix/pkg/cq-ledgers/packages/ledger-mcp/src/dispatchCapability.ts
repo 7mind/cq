@@ -282,6 +282,8 @@ export interface DispatchCapabilityOptions {
   /** Test seam for an unexpected bridge-materialization failure; production uses the ledger implementation. */
   readonly materializeGuardedRebaseBridge?: typeof materializeGuardedRebaseBridge;
   readonly implementationEvidenceStore?: ImplementationEvidenceStore;
+  /** Construction-owned execution boundary; PostgreSQL hubs are metadata-only. */
+  readonly implementationExecutorMode?: "local-xdg" | "metadata-only";
   /** Trusted local owner for the exact guarded-rebase successor prepared by this runtime. */
   readonly implementationSuccessorLauncher?: (input: {
     readonly prepared: DispatchPrepared;
@@ -289,6 +291,19 @@ export interface DispatchCapabilityOptions {
     readonly expectedChild: { readonly childId: string; readonly runId: string };
     readonly timeoutMs: number;
   }) => Promise<void>;
+}
+
+export type ImplementationExecutorOperation = "prepare" | "qualify" | "acquire" | "gate" | "git";
+
+export class ImplementationExecutorUnavailableError extends Error {
+  readonly code = "executor-unavailable" as const;
+
+  constructor(readonly operation: ImplementationExecutorOperation) {
+    super(
+      `implementation executor unavailable for ${operation}: local XDG repository and evidence authority are required`,
+    );
+    this.name = "ImplementationExecutorUnavailableError";
+  }
 }
 
 function brokerResultEvidence(
@@ -448,6 +463,20 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   const materializeGuardedRebase =
     options.materializeGuardedRebaseBridge ?? materializeGuardedRebaseBridge;
   const namespace = options.backend.namespace;
+  const implementationExecutorMode =
+    options.implementationExecutorMode ??
+    (namespace.backend === "postgres" ? "metadata-only" : "local-xdg");
+  const implementationExecutorAvailable =
+    implementationExecutorMode === "local-xdg" &&
+    options.repositoryRoot !== undefined &&
+    options.ledgerStore !== undefined &&
+    options.implementationEvidenceStore !== undefined;
+
+  function assertImplementationExecutor(operation: ImplementationExecutorOperation): void {
+    if (!implementationExecutorAvailable) {
+      throw new ImplementationExecutorUnavailableError(operation);
+    }
+  }
   interface CachedPrepare {
     readonly callerFingerprint: string | undefined;
     readonly fingerprint: string;
@@ -1961,6 +1990,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
 
       if (
+        implementationExecutorMode === "metadata-only" &&
+        (roleId === "implement-worker" ||
+          roleId === "implement-conflict-resolver" ||
+          roleId === "implement-reviewer")
+      ) {
+        return dispatchPreLaunchRejection(
+          "executor-unavailable",
+          "roleId",
+          "implementation execution requires a local XDG runtime with repository and evidence authority",
+        );
+      }
+
+      if (
         roleId === "implement-worker" &&
         typeof dispatchInput === "object" &&
         dispatchInput !== null &&
@@ -2932,6 +2974,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return outcome;
     },
     qualifyImplementationCandidate: async (input) => {
+      assertImplementationExecutor("qualify");
       assertProcessQualificationObservation(input);
       if (options.ledgerStore === undefined) {
         throw new Error("implementation candidate qualification requires the task ledger");
@@ -3126,6 +3169,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     coordinateImplementationCandidate: async (
       input,
     ): Promise<CoordinateImplementationCandidateOutcome> => {
+      assertImplementationExecutor("acquire");
       if ("partitionKey" in input) {
         return await implementationCandidateCoordinator.run(input);
       }
@@ -3161,6 +3205,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       });
     },
     finalizeParentGate: async (input) => {
+      assertImplementationExecutor("gate");
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
       if (binding === undefined) {
         throw new Error("parent gate finalization requires a managed worktree binding");
@@ -3323,7 +3368,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (row.state === "aborted") return { state: "aborted" as const, ...base };
         return { state: "nonterminal" as const, ...base };
       }),
-    ...(options.repositoryRoot === undefined || options.ledgerStore === undefined
+    ...(options.repositoryRoot === undefined ||
+    options.ledgerStore === undefined ||
+    options.implementationEvidenceStore === undefined
       ? {}
       : {
           resolveImplementationCandidateAuthority,
@@ -3331,6 +3378,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           releaseImplementationCandidateAuthority,
         }),
     gitCommit: async (input) => {
+      assertImplementationExecutor("git");
       if (options.repositoryRoot === undefined) {
         throw new Error("git_commit is unavailable without a local repository root");
       }
@@ -3383,6 +3431,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       );
     },
     gitResolveContinue: async (input) => {
+      assertImplementationExecutor("git");
       if (options.repositoryRoot === undefined) {
         throw new Error("git_resolve_continue is unavailable without a local repository root");
       }
@@ -3591,6 +3640,7 @@ function unavailable(reason: string): DispatchRuntime {
 function available(
   backend: AttestationBackend,
   promptArtifactStore: PromptArtifactStore,
+  implementationExecutorMode: "local-xdg" | "metadata-only",
   narrativeSource?: DispatchNarrativeSource,
   repositoryRoot?: string,
   ledgerStore?: LedgerStore,
@@ -3602,6 +3652,7 @@ function available(
     capability: createDispatchCapability({
       backend,
       promptArtifactStore,
+      implementationExecutorMode,
       ...(narrativeSource === undefined ? {} : { narrativeSource }),
       ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
@@ -3667,6 +3718,9 @@ export async function createSingleProjectImplementationCandidateAuthority(input:
     promptArtifactStore,
     repositoryRoot: input.resolved.configRoot,
     ledgerStore: input.resolved.store,
+    ...(input.resolved.implementationEvidenceStore === undefined
+      ? { implementationExecutorMode: "metadata-only" as const }
+      : { implementationEvidenceStore: input.resolved.implementationEvidenceStore }),
   });
   if (capability.resolveImplementationCandidateAuthority === undefined) {
     await attestationBackend.close();
@@ -3734,6 +3788,7 @@ export async function createSingleProjectDispatchRuntime(
   return available(
     attestationBackend,
     options.promptArtifactStore,
+    options.resolved.implementationEvidenceStore === undefined ? "metadata-only" : "local-xdg",
     createDispatchNarrativeSource(options.resolved.store, namespace.projectKey),
     options.resolved.configRoot,
     options.resolved.store,
@@ -3766,6 +3821,7 @@ export async function createPostgresHubDispatchRuntime(
   return available(
     backend,
     options.promptArtifactStore,
+    "metadata-only",
     options.store === undefined
       ? undefined
       : createDispatchNarrativeSource(options.store, namespace.projectKey),

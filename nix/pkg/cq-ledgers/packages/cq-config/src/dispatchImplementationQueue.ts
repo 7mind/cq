@@ -198,6 +198,24 @@ export interface ImplementationQueueTerminal {
   readonly detailsDigest: string;
 }
 
+export type ImplementationQueueRolloutDisposition =
+  | "adopted-unqualified"
+  | "adopted-qualified"
+  | "adopted-completed-green"
+  | "parked-incompatible"
+  | "execution-uncertain";
+
+/** Durable decision made while upgrading a pre-queue live attestation. */
+export interface ImplementationQueueRollout {
+  readonly kind: "cq-implementation-queue-rollout";
+  readonly version: 1;
+  readonly contract: "g213-t4";
+  readonly disposition: ImplementationQueueRolloutDisposition;
+  readonly decidedAt: string;
+  readonly detailDigest: string;
+  readonly worktreeProtected: boolean;
+}
+
 export interface ImplementationQueueControl {
   readonly kind: "cq-implementation-queue-control";
   readonly version: 1;
@@ -297,6 +315,8 @@ export interface EnqueueImplementationCandidateRequest extends DispatchHandle {
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly stagedOutputDigest: string;
+  /** Migration-only durable decision, persisted atomically with queue enrollment. */
+  readonly rollout?: ImplementationQueueRollout;
   /** Required when this attempt succeeds one staged-rebase-retired enrollment. */
   readonly stagedRebaseSource?: {
     readonly sourceReference: string;
@@ -318,6 +338,8 @@ export interface QualifyDispatchStagedCompletionRequest extends DispatchHandle {
   readonly expectedChild: NativeChildIdentity;
   readonly expectedProvenance: DispatchProvenanceBinding;
   readonly nativeCompletion: NativeCompletionProof;
+  /** Migration-only promotion after an exact recovered completion binding. */
+  readonly rollout?: ImplementationQueueRollout;
   /** Digest of additional trusted transport evidence not represented by NativeCompletionProof. */
   readonly completionObservationDigest?: string;
 }
@@ -1071,7 +1093,14 @@ export function enqueueImplementationCandidate(
       "only a gate-pending staged result can enter the implementation queue",
     );
   }
-  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: candidate }));
+  deps.store.replace(
+    row,
+    Object.freeze({
+      ...row,
+      implementationQueue: candidate,
+      ...(request.rollout === undefined ? {} : { implementationQueueRollout: request.rollout }),
+    }),
+  );
   return candidate;
 }
 
@@ -1173,6 +1202,9 @@ function queuedAbort<Reason extends DispatchTerminalAbortReason>(
       ? {}
       : { stagedCompletionQualification: control.qualification }),
     implementationQueue: queue,
+    ...(row.implementationQueueRollout === undefined
+      ? {}
+      : { implementationQueueRollout: row.implementationQueueRollout }),
     ...(stagedRebaseSource === undefined ? {} : { stagedRebaseSourceBinding: stagedRebaseSource }),
     abortedAt: at,
     abortReason: reason,
@@ -1317,6 +1349,7 @@ export function qualifyDispatchStagedCompletion(
       ...row,
       stagedCompletionQualification: qualification,
       implementationQueue: queue,
+      ...(request.rollout === undefined ? {} : { implementationQueueRollout: request.rollout }),
     }),
   );
   return Object.freeze({ state: "qualified" as const, qualification, replayed: false });

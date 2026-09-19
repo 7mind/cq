@@ -847,6 +847,8 @@ export type {
   ImplementationQueueLeaseBinding,
   ImplementationCompletionLeaseReservation,
   ImplementationQueueTerminal,
+  ImplementationQueueRolloutDisposition,
+  ImplementationQueueRollout,
   ImplementationQueueControl,
   ImplementationQueueTombstoneBinding,
   DispatchStagedRebaseSourceBinding,
@@ -863,6 +865,17 @@ export type {
   RetireDispatchStagedRebaseSourceRequest,
   ParkDispatchStagedRebaseConflictRequest,
 } from "./dispatchImplementationQueue.js";
+export type {
+  RecoveredImplementationCompletion,
+  RecoveredCompletedGreenEvidence,
+  LegacyImplementationResolution,
+  UpgradeLiveImplementationQueueOptions,
+  UpgradeLiveImplementationQueueSummary,
+} from "./dispatchImplementationQueueUpgrade.js";
+export {
+  IMPLEMENTATION_QUEUE_ROLLOUT_CONTRACT,
+  upgradeLiveImplementationQueueRows,
+} from "./dispatchImplementationQueueUpgrade.js";
 export {
   ImplementationQueueConflictError,
   DispatchStagedRebaseSourceError,

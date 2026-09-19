@@ -322,6 +322,7 @@ describe("the inside-prepare validation entry point", () => {
       "invalid-parent-guidance",
       "invalid-launch-envelope",
       "journal-recovery-required",
+      "executor-unavailable",
     ]);
     const observed = new Set(
       [

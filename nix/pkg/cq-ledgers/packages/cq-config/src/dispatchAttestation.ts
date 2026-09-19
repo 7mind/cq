@@ -115,6 +115,7 @@ import type {
   DispatchStagedRebaseSourceBinding,
   ImplementationQueueControl,
   ImplementationQueueLeaseBinding,
+  ImplementationQueueRollout,
   ImplementationQueueTombstoneBinding,
   ImplementationStagedCompletionQualification,
 } from "./dispatchImplementationQueue.js";
@@ -1201,6 +1202,8 @@ export interface AttestationEnvelope {
   readonly gateEpoch?: number;
   /** Durable queue identity and lease state for a supervised implementation candidate. */
   readonly implementationQueue?: ImplementationQueueControl;
+  /** Versioned rollout decision for a live row that predates the canonical queue. */
+  readonly implementationQueueRollout?: ImplementationQueueRollout;
   /** Trusted native completion bound to exact staged bytes before any gate starts. */
   readonly stagedCompletionQualification?: ImplementationStagedCompletionQualification;
   /** Server-authenticated authority retained after staged-rebase retirement. */
@@ -1257,6 +1260,7 @@ export interface AttestationTombstone {
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
   /** Minimal terminal queue identity/provenance retained through collapse. */
   readonly implementationQueue?: ImplementationQueueTombstoneBinding;
+  readonly implementationQueueRollout?: ImplementationQueueRollout;
   readonly stagedRebaseSourceBinding?: DispatchStagedRebaseSourceBinding;
 }
 
@@ -5031,6 +5035,9 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.stagedRebaseSourceBinding === undefined
       ? {}
       : { stagedRebaseSourceBinding: row.stagedRebaseSourceBinding }),
+    ...(row.implementationQueueRollout === undefined
+      ? {}
+      : { implementationQueueRollout: row.implementationQueueRollout }),
   });
 }
 

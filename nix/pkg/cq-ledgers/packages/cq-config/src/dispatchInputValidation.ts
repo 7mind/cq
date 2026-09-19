@@ -122,6 +122,7 @@ export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "invalid-parent-guidance",
   "invalid-launch-envelope",
   "journal-recovery-required",
+  "executor-unavailable",
 ] as const;
 
 export type DispatchPreLaunchRejectionReason =
