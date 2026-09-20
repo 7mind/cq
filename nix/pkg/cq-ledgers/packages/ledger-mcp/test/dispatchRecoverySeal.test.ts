@@ -305,6 +305,36 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 }
 
 describe("protected current dispatch-recovery capture", () => {
+  // expected-failure: tasks:T6573
+  test.failing("sealed recovery selects its exact authenticated source bridge", async () => {
+    const olderBridge = guardedBridge("b");
+    const selectedBridge = guardedBridge("c");
+    const rows = [guardedRecoveryRow(1, olderBridge), guardedRecoveryRow(2, selectedBridge)];
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+
+    await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+
+    const committed = await journal.read(RECOVERY_TASK);
+    if (committed?.state !== "committed") {
+      throw new Error("sealed bridge fixture did not commit its recovery journal");
+    }
+    expect(
+      "guardedRebaseBridge" in committed.seal.seed.gitBinding
+        ? committed.seal.seed.gitBinding.guardedRebaseBridge
+        : undefined,
+    ).toEqual(selectedBridge);
+    expect(currentRecoveryGuardedRebaseBridge(committed, rows, RECOVERY_BINDING)).toEqual(
+      selectedBridge,
+    );
+  });
+
   test("bridge-less committed epochs recover only one authenticated same-attestation guarded ancestor", async () => {
     const bridge = guardedBridge("a");
     const row = guardedRecoveryRow(2, bridge);
