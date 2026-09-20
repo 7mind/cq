@@ -3461,6 +3461,52 @@ throw new Error("unexpected controlled cq invocation");
           },
           continuation: firstAuthority.continuationReference,
         };
+        const rowsBeforeContinuationDiagnostics = await activeBackend.transact(
+          { kind: "namespace" },
+          (store) => store.rows().length,
+        );
+        const changedSpecificationRefusal = await continuationRuntime.prepare({
+          ...firstContinuationRequest,
+          input: {
+            ...firstContinuationRequest.input,
+            headline: "changed task specification",
+          },
+          idempotencyKey: `${firstContinuationRequest.idempotencyKey}-changed-specification`,
+        });
+        expect(changedSpecificationRefusal).toMatchObject({
+          accepted: false,
+          reason: "journal-recovery-required",
+          detail:
+            "the managed task lineage is sealed for journal recovery; stage=continuation-specification; reason=task-specification-mismatch",
+          allocated: false,
+        });
+        const unresolvedReferenceRefusal = await continuationRuntime.prepare({
+          ...firstContinuationRequest,
+          idempotencyKey: `${firstContinuationRequest.idempotencyKey}-unresolved-reference`,
+          continuation: `cq-dispatch-continuation:v1:${"f".repeat(64)}`,
+        });
+        expect(unresolvedReferenceRefusal).toMatchObject({
+          accepted: false,
+          reason: "journal-recovery-required",
+          detail:
+            "the managed task lineage is sealed for journal recovery; stage=continuation-reference; reason=unresolved",
+          allocated: false,
+        });
+        expect(
+          await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+        ).toBe(rowsBeforeContinuationDiagnostics);
+        const encodedContinuationRefusals = JSON.stringify([
+          changedSpecificationRefusal,
+          unresolvedReferenceRefusal,
+        ]);
+        for (const secret of [
+          firstAuthority.continuationReference,
+          subject.managed.handle.token,
+          subject.managed.handle.absolutePath,
+          protectedHead,
+        ]) {
+          expect(encodedContinuationRefusals).not.toContain(secret);
+        }
         const firstContinuation = await continuationRuntime.prepare(firstContinuationRequest);
         if (!firstContinuation.accepted) {
           throw new Error(
@@ -3833,6 +3879,54 @@ throw new Error("unexpected controlled cq invocation");
             runId: `pending-manual-resolver-run-${String(sequence)}`,
           },
         };
+        const rowsBeforePendingConflictDiagnostics = await activeBackend.transact(
+          { kind: "namespace" },
+          (store) => store.rows().length,
+        );
+        const changedSnapshotRefusal = await restarted.prepare({
+          ...resolverRequest,
+          idempotencyKey: `${resolverRequest.idempotencyKey}-diagnostic-changed-conflict`,
+          input: JSON.parse(
+            JSON.stringify({
+              ...resolverInput,
+              conflictState: { ...observed.conflictState, currentHead: "f".repeat(40) },
+            }),
+          ) as DispatchJSONValue,
+        });
+        expect(changedSnapshotRefusal).toMatchObject({
+          accepted: false,
+          reason: "journal-recovery-required",
+          detail:
+            "the managed task lineage is sealed for journal recovery; stage=pending-conflict-journal; reason=caught-exception",
+          allocated: false,
+        });
+        const substitutedAuthorityRefusal = await restarted.prepare({
+          ...resolverRequest,
+          idempotencyKey: `${resolverRequest.idempotencyKey}-diagnostic-substituted-authority`,
+          reprepareOf: cancelled.handle,
+        });
+        expect(substitutedAuthorityRefusal).toMatchObject({
+          accepted: false,
+          reason: "journal-recovery-required",
+          detail:
+            "the managed task lineage is sealed for journal recovery; stage=pending-conflict-request; reason=authority-combination-invalid",
+          allocated: false,
+        });
+        expect(
+          await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+        ).toBe(rowsBeforePendingConflictDiagnostics);
+        const encodedPendingConflictRefusals = JSON.stringify([
+          changedSnapshotRefusal,
+          substitutedAuthorityRefusal,
+        ]);
+        for (const secret of [
+          subject.managed.handle.token,
+          subject.managed.handle.absolutePath,
+          protectedHead,
+          subject.receipt.newHead,
+        ]) {
+          expect(encodedPendingConflictRefusals).not.toContain(secret);
+        }
         const resolver = await restarted.prepare(resolverRequest);
         if (!resolver.accepted || resolver.prepared.gitConflictCapability === undefined) {
           throw new Error(
