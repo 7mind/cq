@@ -659,6 +659,50 @@ throw new Error("unexpected cq invocation");
     }
   });
 
+  // regression: T6573 — the installed coordinator discarded its own durable
+  // completion while polling unrelated queue-front work.
+  test("candidate coordinator returns its own completed handle before polling foreign work [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-candidate-own-completion-"));
+    const runner = join(root, "coordinator");
+    const attempts = join(root, "attempts");
+    const foreign = {
+      attestationId: "att_foreign_0123456789abcdefghijklmnopqrstuvwxyz",
+      generation: 1,
+    } as const;
+    writeFileSync(
+      runner,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from "node:fs";
+const request = JSON.parse(await Bun.stdin.text());
+const attemptsPath = ${JSON.stringify(attempts)};
+const attempt = Number(readFileSync(attemptsPath, "utf8")) + 1;
+writeFileSync(attemptsPath, String(attempt));
+if (attempt === 1) {
+  process.stdout.write(JSON.stringify({ state: "completed", handle: { attestationId: request.attestationId, generation: request.generation } }));
+} else {
+  process.stdout.write(JSON.stringify({ state: "blocked", partitionKey: "cq-implementation-queue:v1:partition", partitionRevision: 2, front: ${JSON.stringify(foreign)}, frontState: "qualified" }));
+}
+`,
+    );
+    chmodSync(runner, 0o755);
+    writeFileSync(attempts, "0");
+    try {
+      const outcome = await executeCodexImplementationCandidateCoordinator({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        handle: HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+        holderId: "installed-own-completion",
+        timeoutMs: 200,
+      });
+      expect(outcome).toEqual({ state: "completed", handle: HANDLE });
+      expect(readFileSync(attempts, "utf8")).toBe("1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("candidate coordinator waits through a competing lease before draining [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-candidate-coordinate-competing-"));
     const runner = join(root, "coordinator");
