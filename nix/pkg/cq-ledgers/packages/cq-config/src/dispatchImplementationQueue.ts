@@ -881,6 +881,120 @@ function isJournalRecoveryAncestor(
   });
 }
 
+function isQualifiedJournalRecoveryIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationEnvelope,
+  store: AttestationStore,
+): boolean {
+  const control = intermediate.implementationQueue;
+  const binding = intermediate.gitEffectBinding;
+  const output =
+    intermediate.output !== null &&
+    typeof intermediate.output === "object" &&
+    !Array.isArray(intermediate.output)
+      ? (intermediate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (
+    control === undefined ||
+    binding === undefined ||
+    output === undefined ||
+    control.qualification === undefined ||
+    intermediate.stagedCompletionQualification?.qualificationDigest !==
+      control.qualification.qualificationDigest ||
+    output["status"] !== "pass" ||
+    output["taskId"] !== control.attempt.taskId ||
+    output["resultCommit"] !== control.attempt.resultCommit ||
+    digest(output["gitReceipts"] ?? []) !== control.attempt.gitReceiptLineageDigest ||
+    digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
+    control.enrollment.taskId !== control.attempt.taskId ||
+    control.enrollment.goalRef !== control.attempt.goalRef ||
+    control.enrollment.finalizedManifestDigest !== control.attempt.finalizedManifestDigest
+  ) {
+    return false;
+  }
+  return isJournalRecoveryAncestor(
+    candidate,
+    intermediate,
+    binding,
+    control.attempt.gitReceipts,
+    control.attempt.resultCommit,
+    {
+      taskId: control.enrollment.taskId,
+      goalRef: control.enrollment.goalRef,
+      finalizedManifestDigest: control.enrollment.finalizedManifestDigest,
+    },
+    store,
+  );
+}
+
+function isRetiredGuardedRebaseAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+): boolean {
+  if (isAttestationTombstone(candidate)) return false;
+  const control = candidate.implementationQueue;
+  const binding = candidate.gitEffectBinding;
+  const source = control?.stagedRebaseSource;
+  const bridge = successorBinding.guardedRebaseBridge;
+  const output =
+    candidate.output !== null &&
+    typeof candidate.output === "object" &&
+    !Array.isArray(candidate.output)
+      ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const sameManagerBinding =
+    binding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).every((field) => binding[field] === successorBinding[field]);
+  return (
+    control !== undefined &&
+    binding !== undefined &&
+    source !== undefined &&
+    bridge !== undefined &&
+    output !== undefined &&
+    candidate.state === "consumed" &&
+    candidate.attestationId === successor.attestationId &&
+    candidate.generation + 1 === successor.generation &&
+    control.state === "staged-rebase-retired" &&
+    control.terminal?.reason === "staged-rebase" &&
+    control.qualification !== undefined &&
+    candidate.stagedCompletionQualification?.qualificationDigest ===
+      control.qualification.qualificationDigest &&
+    output["status"] === "pass" &&
+    output["taskId"] === control.attempt.taskId &&
+    output["resultCommit"] === control.attempt.resultCommit &&
+    digest(output["gitReceipts"] ?? []) === control.attempt.gitReceiptLineageDigest &&
+    digest(control.attempt.gitReceipts) === control.attempt.gitReceiptLineageDigest &&
+    control.enrollment.taskId === control.attempt.taskId &&
+    control.enrollment.goalRef === control.attempt.goalRef &&
+    control.enrollment.finalizedManifestDigest === control.attempt.finalizedManifestDigest &&
+    source.source.attestationId === candidate.attestationId &&
+    source.source.generation === candidate.generation &&
+    source.successor?.attestationId === successor.attestationId &&
+    source.successor.generation === successor.generation &&
+    source.sourceResultCommit === control.attempt.resultCommit &&
+    source.sourceResultCommit === bridge.oldResultCommit &&
+    source.gitReceiptLineageDigest === control.attempt.gitReceiptLineageDigest &&
+    source.repositoryId === control.attempt.repositoryId &&
+    source.worktreePath === control.attempt.worktreePath &&
+    source.guardedRebase === bridge.guardedRebase &&
+    source.guardedRebaseJournalDigest === bridge.requestDigest &&
+    source.ontoCommit === bridge.ontoCommit &&
+    sameManagerBinding
+  );
+}
+
 function isComposedTerminalAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -898,6 +1012,7 @@ function isComposedTerminalAncestor(
   if (
     isConsumedGuardedContinuationAncestor(candidate, successor, successorBinding) ||
     isConsumedOrdinaryContinuationAncestor(candidate, successor, successorBinding) ||
+    isRetiredGuardedRebaseAncestor(candidate, successor, successorBinding) ||
     isGateRejectedCorrectionAncestor(
       candidate,
       successor,
@@ -924,12 +1039,18 @@ function isComposedTerminalAncestor(
       intermediate.generation <= candidate.generation ||
       intermediate.generation >= successor.generation ||
       intermediate.gitEffectBinding === undefined ||
-      (!isConsumedGuardedContinuationAncestor(
+      (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
+        !isConsumedGuardedContinuationAncestor(
         candidate,
         intermediate,
         intermediate.gitEffectBinding,
       ) &&
         !isConsumedOrdinaryContinuationAncestor(
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+        ) &&
+        !isRetiredGuardedRebaseAncestor(
           candidate,
           intermediate,
           intermediate.gitEffectBinding,

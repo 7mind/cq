@@ -3608,8 +3608,34 @@ throw new Error("unexpected controlled cq invocation");
       if (materialized.state !== "input-materialized") {
         throw new Error("guarded sealed successor input did not materialize");
       }
-      const lineage = materialized.input.guardedRebaseLineage;
-      if (lineage === undefined) {
+      const guardedInput = materialized.input;
+      if (
+        guardedInput === null ||
+        typeof guardedInput !== "object" ||
+        Array.isArray(guardedInput)
+      ) {
+        throw new Error("guarded sealed successor input is malformed");
+      }
+      const guardedRecord = guardedInput as Readonly<Record<string, DispatchJSONValue>>;
+      const lineage = guardedRecord["guardedRebaseLineage"];
+      if (
+        lineage === null ||
+        typeof lineage !== "object" ||
+        Array.isArray(lineage)
+      ) {
+        throw new Error("guarded sealed successor omitted server lineage");
+      }
+      const lineageRecord = lineage as Readonly<Record<string, DispatchJSONValue>>;
+      const guardedRebase = lineageRecord["guardedRebase"];
+      const lineageOntoCommit = lineageRecord["ontoCommit"];
+      const rebasedStartCommit = lineageRecord["rebasedStartCommit"];
+      const exactTip = lineageRecord["exactTip"];
+      if (
+        typeof guardedRebase !== "string" ||
+        typeof lineageOntoCommit !== "string" ||
+        typeof rebasedStartCommit !== "string" ||
+        typeof exactTip !== "boolean"
+      ) {
         throw new Error("guarded sealed successor omitted server lineage");
       }
       nextOutput = {
@@ -3622,10 +3648,10 @@ throw new Error("unexpected controlled cq invocation");
         gitReceipts: [],
         gitLineage: {
           kind: "guarded-rebase",
-          guardedRebase: lineage.guardedRebase,
-          ontoCommit: lineage.ontoCommit,
-          rebasedStartCommit: lineage.rebasedStartCommit,
-          exactTip: lineage.exactTip,
+          guardedRebase,
+          ontoCommit: lineageOntoCommit,
+          rebasedStartCommit,
+          exactTip,
         },
         checkSummary: "guarded continuation after sealed recovery checks passed",
         baseVerification: {
@@ -3650,22 +3676,133 @@ throw new Error("unexpected controlled cq invocation");
         output: nextOutput,
       }),
     ).toMatchObject({ state: "gate-pending" });
+    const retainedIntermediate = await reopenedBackend.transact(
+      { kind: "handle", handle: successor.handle },
+      (store) => store.read(successor.handle),
+    );
+    if (
+      retainedIntermediate === undefined ||
+      isAttestationTombstone(retainedIntermediate) ||
+      retainedIntermediate.implementationQueue === undefined
+    ) {
+      throw new Error("sealed recovery intermediate lost its queue evidence");
+    }
+    const rejectIntermediateMutation = async (
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+      observedAt: string,
+    ) => {
+      const corrupted = mutate(retainedIntermediate);
+      await reopenedBackend.transact({ kind: "handle", handle: successor.handle }, (store) => {
+        const current = store.read(successor.handle);
+        if (current === undefined) throw new Error("sealed recovery intermediate disappeared");
+        store.replace(current, corrupted);
+      });
+      await expect(qualify(next.prepared, nextChild, observedAt)).rejects.toThrow(
+        "cannot be resurrected",
+      );
+      await reopenedBackend.transact({ kind: "handle", handle: successor.handle }, (store) => {
+        const current = store.read(successor.handle);
+        if (current === undefined) throw new Error("sealed recovery intermediate disappeared");
+        store.replace(current, retainedIntermediate);
+      });
+    };
+    await rejectIntermediateMutation(
+      (row) => {
+        const { dispatchJournalRecoveryClaim: _claim, ...withoutClaim } = row;
+        return withoutClaim;
+      },
+      "2026-08-12T20:00:10.100Z",
+    );
+    await rejectIntermediateMutation(
+      (row) => ({
+        ...row,
+        implementationQueue: {
+          ...row.implementationQueue!,
+          enrollment: {
+            ...row.implementationQueue!.enrollment,
+            finalizedManifestDigest: "0".repeat(64),
+          },
+        },
+      }),
+      "2026-08-12T20:00:10.200Z",
+    );
+    await rejectIntermediateMutation(
+      (row) => ({
+        ...row,
+        implementationQueue: {
+          ...row.implementationQueue!,
+          attempt: {
+            ...row.implementationQueue!.attempt,
+            gitReceipts: [],
+          },
+        },
+      }),
+      "2026-08-12T20:00:10.300Z",
+    );
+    if (continuationKind === "guarded-rebase") {
+      await rejectIntermediateMutation(
+        (row) => ({
+          ...row,
+          implementationQueue: {
+            ...row.implementationQueue!,
+            stagedRebaseSource: {
+              ...row.implementationQueue!.stagedRebaseSource!,
+              guardedRebaseJournalDigest: "0".repeat(64),
+            },
+          },
+        }),
+        "2026-08-12T20:00:10.400Z",
+      );
+    } else {
+      const retainedNext = await reopenedBackend.transact(
+        { kind: "handle", handle: next.handle },
+        (store) => store.read(next.handle),
+      );
+      if (
+        retainedNext === undefined ||
+        isAttestationTombstone(retainedNext) ||
+        retainedNext.dispatchContinuationClaim === undefined
+      ) {
+        throw new Error("ordinary sealed continuation lost its persisted claim");
+      }
+      const changedClaim = {
+        ...retainedNext,
+        dispatchContinuationClaim: {
+          ...retainedNext.dispatchContinuationClaim,
+          source: {
+            ...retainedNext.dispatchContinuationClaim.source,
+            generation: retainedNext.dispatchContinuationClaim.source.generation + 1,
+          },
+        },
+      };
+      await reopenedBackend.transact({ kind: "handle", handle: next.handle }, (store) => {
+        const current = store.read(next.handle);
+        if (current === undefined) throw new Error("ordinary sealed continuation disappeared");
+        store.replace(current, changedClaim);
+      });
+      await expect(
+        qualify(next.prepared, nextChild, "2026-08-12T20:00:10.400Z"),
+      ).rejects.toThrow("cannot be resurrected");
+      await reopenedBackend.transact({ kind: "handle", handle: next.handle }, (store) => {
+        const current = store.read(next.handle);
+        if (current === undefined) throw new Error("ordinary sealed continuation disappeared");
+        store.replace(current, retainedNext);
+      });
+    }
     expect(
       await qualify(next.prepared, nextChild, "2026-08-12T20:00:11.000Z"),
     ).toMatchObject({ state: "queued" });
     await reopenedBackend.close();
   }
 
-  // expected-failure: tasks:T6575
-  test.failing(
+  test(
     "a cancelled sealed recovery successor composes into an ordinary consumed continuation",
     async () => {
       await exerciseCancelledRecoveryContinuation("ordinary");
     },
   );
 
-  // expected-failure: tasks:T6575
-  test.failing(
+  test(
     "a cancelled sealed recovery successor composes into an authenticated guarded rebase",
     async () => {
       await exerciseCancelledRecoveryContinuation("guarded-rebase");
