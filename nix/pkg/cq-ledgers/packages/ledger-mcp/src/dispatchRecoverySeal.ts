@@ -994,9 +994,9 @@ async function journalGuardedRecoverySuccessorEdge(
       ? {
           kind: "aborted" as const,
           version: 1 as const,
-          abortReason: seed.sourceAbortReason,
+          abortReason: journal.seal.seed.sourceAbortReason,
         }
-      : seed.source;
+      : journal.seal.seed.source;
   if (
     journal.fence === undefined ||
     sourceBinding === undefined ||

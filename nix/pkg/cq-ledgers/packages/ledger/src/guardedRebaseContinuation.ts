@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DispatchGuardedRebaseBridge } from "@cq/config";
+import type { DispatchGitEffectBinding, DispatchGuardedRebaseBridge } from "@cq/config";
 import {
   resolveInheritedGitChangeReceipts,
   type GitChangeReceiptLineageBinding,
@@ -802,7 +802,8 @@ function composeGuardedRebaseBridge(
 export interface MaterializeGuardedRebaseBridgeOptions {
   readonly reference: string;
   /** The exact terminal prior worker generation's persisted binding. */
-  readonly prior: GitChangeReceiptLineageBinding;
+  readonly prior: GitChangeReceiptLineageBinding &
+    Pick<DispatchGitEffectBinding, "receiptChainTransition" | "receiptChainTransitions">;
   /** The live binding resolved for THIS prepare. */
   readonly current: ManagedWorktreeDispatchBinding;
   readonly baseCommitInput: string;
