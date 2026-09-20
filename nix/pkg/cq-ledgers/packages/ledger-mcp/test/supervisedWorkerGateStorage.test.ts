@@ -51,6 +51,7 @@ import {
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
   type LedgerStore,
+  type DispatchRecoveryResolution,
   type DispatchStagedRebaseResolution,
   type GitRebaseConflictState,
 } from "@cq/ledger";
@@ -2944,8 +2945,8 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // expected-failure: tasks:T6573
-  test.failing(
+  // regression: tasks:T6573 — a sealed lineage still needs its exact conflict resolver.
+  test(
     "an authenticated sealed staged-rebase conflict admits one resolver and guarded successor",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3116,19 +3117,20 @@ throw new Error("unexpected controlled cq invocation");
         const conflictingFiles = [
           ...new Set(observed.conflictState.conflicts.map((entry) => entry.path)),
         ].sort();
+        const resolverInput = {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "resolve the authenticated staged-rebase conflict",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          validationIntent: "focused-only" as const,
+          conflictingFiles,
+          conflictState: observed.conflictState,
+        };
         const resolverRequest = {
           roleId: "implement-conflict-resolver" as const,
-          input: {
-            taskId: "T2081",
-            headline: "supervise exact tip",
-            description: "resolve the authenticated staged-rebase conflict",
-            worktreePath: subject.managed.handle.absolutePath,
-            branch: subject.managed.handle.branch,
-            baseCommit: subject.dispatchBaseCommit,
-            validationIntent: "focused-only" as const,
-            conflictingFiles,
-            conflictState: observed.conflictState,
-          },
+          input: JSON.parse(JSON.stringify(resolverInput)) as DispatchJSONValue,
           idempotencyKey: `T2081-${String(sequence)}-sealed-conflict-resolver`,
           timeoutMs: 600_000,
           expectedChild: {
@@ -3143,15 +3145,17 @@ throw new Error("unexpected controlled cq invocation");
           {
             ...resolverRequest,
             idempotencyKey: `${resolverRequest.idempotencyKey}-foreign-task`,
-            input: { ...resolverRequest.input, taskId: "T9999" },
+            input: JSON.parse(JSON.stringify({ ...resolverInput, taskId: "T9999" })) as DispatchJSONValue,
           },
           {
             ...resolverRequest,
             idempotencyKey: `${resolverRequest.idempotencyKey}-changed-conflict`,
-            input: {
-              ...resolverRequest.input,
-              conflictState: { ...observed.conflictState, currentHead: "f".repeat(40) },
-            },
+            input: JSON.parse(
+              JSON.stringify({
+                ...resolverInput,
+                conflictState: { ...observed.conflictState, currentHead: "f".repeat(40) },
+              }),
+            ) as DispatchJSONValue,
           },
           {
             ...resolverRequest,
@@ -3219,7 +3223,7 @@ throw new Error("unexpected controlled cq invocation");
               actualWorktreePath: subject.managed.handle.absolutePath,
               branch: subject.managed.handle.branch,
               conflictReceipts: [conflictReceipt],
-            },
+            } as unknown as DispatchJSONValue,
           }),
         ).toMatchObject({ state: "result-stored" });
 

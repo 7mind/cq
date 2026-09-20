@@ -81,6 +81,7 @@ import {
   commitManagedWorktreeChanges,
   continueManagedWorktreeRebase,
   gitRebaseConflictStateDigest,
+  guardedRebaseReference,
   GuardedRebaseRejection,
   materializeGuardedRebaseBridge,
   reverifyGuardedRebaseBridge,
@@ -90,6 +91,7 @@ import {
   resolveManagedWorktreeDispatchBinding,
   resolveManagedWorktreeLineageBinding,
   observeManagedWorktreeLiveTip,
+  observeManagedWorktreeConflictState,
   observeManagedWorktreeRebaseTip,
   resolveInheritedGitChangeReceipts,
   runGuardedRebase,
@@ -757,10 +759,142 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     binding: ManagedWorktreeDispatchBinding,
     input: Parameters<DispatchCapability["prepare"]>[0],
   ): Promise<boolean | GuardedRebaseRejection> {
+    if (await pendingGuardedConflictResolverExitsRecoveryFence(fence, binding, input)) {
+      return true;
+    }
     if (dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) return true;
     if (await continuationExitsRecoveryFence(fence, binding, input.continuation)) return true;
     if (await gateRejectedSuccessorExitsRecoveryFence(fence, binding, input)) return true;
     return await guardedRebaseExitsRecoveryFence(fence, binding, input);
+  }
+
+  async function pendingGuardedConflictResolverExitsRecoveryFence(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): Promise<boolean> {
+    if (
+      input.roleId !== "implement-conflict-resolver" ||
+      input.reprepareOf !== undefined ||
+      input.guardedRebase !== undefined ||
+      input.recovery !== undefined ||
+      input.continuation !== undefined ||
+      input.recoveryPreparation !== undefined ||
+      input.implementationEvidenceBootstrap !== undefined ||
+      input.input === null ||
+      typeof input.input !== "object" ||
+      Array.isArray(input.input)
+    ) {
+      return false;
+    }
+    const record = input.input as Readonly<Record<string, DispatchJSONValue>>;
+    const conflictState = record["conflictState"];
+    if (
+      record["taskId"] !== binding.taskId ||
+      record["worktreePath"] !== binding.worktreePath ||
+      record["branch"] !== binding.branch ||
+      record["baseCommit"] !== binding.baseCommit ||
+      conflictState === null ||
+      typeof conflictState !== "object" ||
+      Array.isArray(conflictState)
+    ) {
+      return false;
+    }
+    const requestedState = conflictState as unknown as GitRebaseConflictState;
+    const requestedDigest = gitRebaseConflictStateDigest(requestedState);
+    try {
+      const rows = await options.backend.transact({ kind: "namespace" }, (store) =>
+        store.rows().filter((row): row is AttestationEnvelope => !isAttestationTombstone(row)),
+      );
+      const replay = rows.find((row) => row.idempotencyKey === input.idempotencyKey);
+      if (
+        replay?.promptProvenance.roleId === "implement-conflict-resolver" &&
+        replay.gitEffectBinding !== undefined &&
+        replay.gitEffectBinding.conflictStateDigest === requestedDigest &&
+        dispatchPayloadDigest(replay.input) === dispatchPayloadDigest(input.input) &&
+        (
+          [
+            "taskId",
+            "handleToken",
+            "handleFingerprint",
+            "repositoryRoot",
+            "repositoryId",
+            "commonDir",
+            "worktreePath",
+            "branch",
+            "ref",
+            "baseCommit",
+          ] as const
+        ).every((field) => replay.gitEffectBinding![field] === binding[field])
+      ) {
+        return true;
+      }
+      const sources = rows.flatMap((row) => {
+        const control = row.implementationQueue;
+        const source = row.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
+        if (
+          control?.state !== "staged-rebase-retired" ||
+          control.stagedRebaseDisposition?.state !== "conflict-pending" ||
+          source === undefined ||
+          row.gitEffectBinding === undefined ||
+          source.source.attestationId !== fence.sourceAttestationId ||
+          source.source.generation !== fence.lineageMaximumGeneration + 1 ||
+          source.partitionKey !== control.partition.partitionKey ||
+          source.enrollmentId !== control.enrollment.enrollmentId ||
+          source.attemptId !== control.attempt.attemptId ||
+          source.leaseGeneration !== control.leaseGeneration ||
+          source.repositoryId !== binding.repositoryId ||
+          source.worktreePath !== binding.worktreePath ||
+          source.sourceResultCommit !== control.attempt.resultCommit ||
+          source.ontoCommit !== requestedState.sequencer.onto ||
+          source.sourceResultCommit !== requestedState.sequencer.originalTip ||
+          guardedRebaseReference(source.guardedRebaseJournalDigest) !== source.guardedRebase ||
+          !(
+            [
+              "taskId",
+              "handleToken",
+              "handleFingerprint",
+              "repositoryRoot",
+              "repositoryId",
+              "commonDir",
+              "worktreePath",
+              "branch",
+              "ref",
+              "baseCommit",
+            ] as const
+          ).every((field) => row.gitEffectBinding![field] === binding[field])
+        ) {
+          return [];
+        }
+        return [source];
+      });
+      if (sources.length !== 1) return false;
+      const source = sources[0]!;
+      const context = await loadRetiredStagedRebaseContext(source.sourceReference);
+      if (
+        context.source.guardedRebase !== source.guardedRebase ||
+        context.source.guardedRebaseJournalDigest !== source.guardedRebaseJournalDigest ||
+        context.source.ontoCommit !== source.ontoCommit ||
+        (await readProtectedIntegrationHead(
+          binding.repositoryRoot,
+          context.control.partition.integrationRef,
+        )) !== source.ontoCommit
+      ) {
+        return false;
+      }
+      const reconciled = await reconcileRetiredStagedRebase(
+        context,
+        runGuardedRebaseUnderManagedLock,
+      );
+      if (reconciled.kind !== "conflict-pending") return false;
+      const observed = await observeManagedWorktreeConflictState(
+        binding,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      return gitRebaseConflictStateDigest(observed) === requestedDigest;
+    } catch {
+      return false;
+    }
   }
 
   async function gateRejectedSuccessorExitsRecoveryFence(
@@ -2706,7 +2840,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         prepareLockBinding = resolvedGitEffectBinding;
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
-        if (fence !== null) {
+        if (fence !== null && roleId !== "implement-conflict-resolver") {
           const authorization = await recoveryFenceAuthorizesPrepare(
             fence,
             resolvedGitEffectBinding,
