@@ -36,6 +36,7 @@ import {
   prepareManagedWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
+  runGuardedRebase,
   SqliteLedgerStore,
   settleProcessGroups,
   settleWorktreeGateCommands,
@@ -197,6 +198,25 @@ class ThrowingGateDummy implements SupervisedWorkerGateRunner {
   async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
     this.requests.push(request);
     throw new Error(this.message);
+  }
+}
+
+class ParentLossThenGreenGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    if (this.requests.length === 1) {
+      throw new Error("controlled parent loss after qualification");
+    }
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 123,
+      capturedAt: "2026-08-12T20:00:09.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
   }
 }
 
@@ -3199,8 +3219,10 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  test("a cancelled sealed recovery successor retains prior terminal queue ancestry", async () => {
-    const runner = new ThrowingGateDummy("controlled parent loss after qualification");
+  async function exerciseCancelledRecoveryContinuation(
+    continuationKind: "ordinary" | "guarded-rebase",
+  ): Promise<void> {
+    const runner = new ParentLossThenGreenGateDummy();
     const subject = await fixtureWithDispatchBase(
       runner,
       "managed",
@@ -3481,8 +3503,174 @@ throw new Error("unexpected controlled cq invocation");
     );
     expect(successorQualified.state).toBe("queued");
     expect(runner.requests).toHaveLength(1);
+    if (successorQualified.state !== "queued") {
+      throw new Error("sealed successor did not qualify");
+    }
+    expect(
+      await activeCapability.coordinateImplementationCandidate!({
+        partitionKey: successorQualified.partitionKey,
+        holderId: `sealed-successor-${continuationKind}`,
+      }),
+    ).toMatchObject({ state: "completed" });
+    expect(runner.requests).toHaveLength(2);
+
+    const nextChild = {
+      childId: `implement-worker#sealed-next-${continuationKind}-${String(sequence)}`,
+      runId: `sealed-next-${continuationKind}-run-${String(sequence)}`,
+    };
+    let next;
+    let nextOutput: DispatchJSONValue;
+    if (continuationKind === "ordinary") {
+      if (activeCapability.resolveContinuation === undefined) {
+        throw new Error("consumed sealed successor omitted continuation authority");
+      }
+      const continuation = await activeCapability.resolveContinuation(
+        binding,
+        successorReceipt.newHead,
+      );
+      next = await activeCapability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          round: 3,
+          startingCommit: successorReceipt.newHead,
+          validationIntent: "final",
+          priorResultCommit: successorReceipt.newHead,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-sealed-next-ordinary`,
+        timeoutMs: 600_000,
+        expectedChild: nextChild,
+        continuation: continuation.continuationReference,
+      });
+      nextOutput = {
+        ...subject.output,
+        resultCommit: successorReceipt.newHead,
+        filesTouched: [...successorReceipt.paths],
+        gitReceipts: [],
+        checkSummary: "ordinary continuation after sealed recovery checks passed",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit: subject.dispatchBaseCommit,
+          headCommit: successorReceipt.newHead,
+        },
+      };
+    } else {
+      await fs.writeFile(path.join(subject.repositoryRoot, "integration.txt"), "advanced\n");
+      await git(subject.repositoryRoot, ["add", "integration.txt"]);
+      await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance integration"]);
+      const ontoCommit = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+      const rebase = await runGuardedRebase({
+        binding,
+        operationId: `t2081-sealed-next-${String(sequence)}`,
+        ontoCommit,
+        stateDir: subject.stateDir,
+        runEffect: async () => {
+          await git(subject.managed.handle.absolutePath, ["rebase", ontoCommit]);
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      });
+      if (rebase.kind !== "finalized") {
+        throw new Error("sealed recovery guarded rebase did not finalize");
+      }
+      next = await activeCapability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: ontoCommit,
+          round: 3,
+          startingCommit: rebase.bridge.rebasedStartCommit,
+          validationIntent: "final",
+          priorResultCommit: successorReceipt.newHead,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-sealed-next-guarded`,
+        timeoutMs: 600_000,
+        expectedChild: nextChild,
+        reprepareOf: successor.handle,
+        guardedRebase: rebase.reference,
+      });
+      if (!next.accepted) throw new Error(next.detail);
+      const materialized = await activeCapability.fetchInput({
+        ...next.handle,
+        inputCapability: next.prepared.inputCapability,
+      });
+      if (materialized.state !== "input-materialized") {
+        throw new Error("guarded sealed successor input did not materialize");
+      }
+      const lineage = materialized.input.guardedRebaseLineage;
+      if (lineage === undefined) {
+        throw new Error("guarded sealed successor omitted server lineage");
+      }
+      nextOutput = {
+        taskId: "T2081",
+        status: "pass",
+        resultCommit: rebase.bridge.rebasedStartCommit,
+        branch: subject.managed.handle.branch,
+        actualWorktreePath: subject.managed.handle.absolutePath,
+        filesTouched: ["file.txt"],
+        gitReceipts: [],
+        gitLineage: {
+          kind: "guarded-rebase",
+          guardedRebase: lineage.guardedRebase,
+          ontoCommit: lineage.ontoCommit,
+          rebasedStartCommit: lineage.rebasedStartCommit,
+          exactTip: lineage.exactTip,
+        },
+        checkSummary: "guarded continuation after sealed recovery checks passed",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit: ontoCommit,
+          headCommit: rebase.bridge.rebasedStartCommit,
+        },
+        summary: "guarded continuation retains sealed recovery ancestry",
+      };
+    }
+    if (!next.accepted) throw new Error(next.detail);
+    if (continuationKind === "ordinary") {
+      await activeCapability.fetchInput({
+        ...next.handle,
+        inputCapability: next.prepared.inputCapability,
+      });
+    }
+    expect(
+      await activeCapability.storeResult({
+        resultCapability: next.prepared.resultCapability,
+        output: nextOutput,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    expect(
+      await qualify(next.prepared, nextChild, "2026-08-12T20:00:11.000Z"),
+    ).toMatchObject({ state: "queued" });
     await reopenedBackend.close();
-  });
+  }
+
+  // expected-failure: tasks:T6575
+  test.failing(
+    "a cancelled sealed recovery successor composes into an ordinary consumed continuation",
+    async () => {
+      await exerciseCancelledRecoveryContinuation("ordinary");
+    },
+  );
+
+  // expected-failure: tasks:T6575
+  test.failing(
+    "a cancelled sealed recovery successor composes into an authenticated guarded rebase",
+    async () => {
+      await exerciseCancelledRecoveryContinuation("guarded-rebase");
+    },
+  );
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
     const subject = await fixtureWithDispatchBase(
