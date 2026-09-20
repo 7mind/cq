@@ -60,8 +60,26 @@ const CODEX_ROLE_DISPATCH_SCRIPT = fileURLToPath(
 const PARENT_GATE_PROCESS_WORKER = fileURLToPath(
   new URL("./fixtures/parentGateFinalizationProcessWorker.ts", import.meta.url),
 );
+const T6576_LEGACY_DISPATCH_CAPABILITY_MODULE =
+  "/nix/store/04rs3iqgs02d5jb5awzrww84jphpgdr7-cq-0.0.1/share/cq/packages/ledger-mcp/src/dispatchCapability.ts";
 const roots: string[] = [];
 let sequence = 0;
+
+async function createT6576LegacyDispatchCapability(
+  options: Parameters<typeof createDispatchCapability>[0],
+): Promise<ReturnType<typeof createDispatchCapability>> {
+  const loaded: unknown = await import(T6576_LEGACY_DISPATCH_CAPABILITY_MODULE);
+  if (
+    typeof loaded !== "object" ||
+    loaded === null ||
+    !("createDispatchCapability" in loaded) ||
+    typeof loaded.createDispatchCapability !== "function"
+  ) {
+    throw new Error("T6576 legacy dispatch capability factory is unavailable");
+  }
+  const factory = loaded.createDispatchCapability as typeof createDispatchCapability;
+  return factory(options);
+}
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -3248,7 +3266,8 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  test(
+  // expected-failure: tasks:T6576
+  test.failing(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3270,7 +3289,7 @@ throw new Error("unexpected controlled cq invocation");
           >
         >[0];
         let launchedSuccessor: LaunchedSuccessor | undefined;
-        const capability = createDispatchCapability({
+        let capability = await createT6576LegacyDispatchCapability({
           ...subject.capabilityOptions,
           recoveryJournal,
           implementationSuccessorLauncher: async (input) => {
@@ -3527,8 +3546,37 @@ throw new Error("unexpected controlled cq invocation");
             terminal: { reason: "staged-rebase" },
           },
         });
+        if (retiredSource === undefined || isAttestationTombstone(retiredSource)) {
+          throw new Error("legacy staged retirement disappeared");
+        }
+        expect(Object.hasOwn(retiredSource, "dispatchContinuationClaim")).toBe(false);
+        expect(Object.hasOwn(retiredSource, "dispatchJournalRecoveryClaim")).toBe(false);
         const guarded = launchedSuccessor;
         if (guarded === undefined) throw new Error("staged retirement did not launch its successor");
+        await subject.backend.close();
+        const reopenedBackend =
+          attestationBackend === "sqlite"
+            ? new SqliteAttestationBackend({
+                namespace: subject.backend.namespace,
+                dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+              })
+            : new InMemoryAttestationBackend(subject.store);
+        capability = createDispatchCapability({
+          ...subject.capabilityOptions,
+          backend: reopenedBackend,
+          recoveryJournal,
+          implementationSuccessorLauncher: async (input) => {
+            launchedSuccessor = input;
+          },
+        });
+        if (
+          capability.qualifyImplementationCandidate === undefined ||
+          capability.coordinateImplementationCandidate === undefined ||
+          capability.resolveRecovery === undefined ||
+          capability.gitCommit === undefined
+        ) {
+          throw new Error("reopened current recovery runtime is unavailable");
+        }
         const guardedInput = await capability.fetchInput({
           attestationId: guarded.prepared.attestationId,
           generation: guarded.prepared.generation,
@@ -3735,7 +3783,7 @@ throw new Error("unexpected controlled cq invocation");
             holderId: `t6576-second-guarded-${attestationBackend}`,
           }),
         ).toMatchObject({ state: "completed" });
-        await subject.backend.close();
+        await reopenedBackend.close();
       }
     },
   );
