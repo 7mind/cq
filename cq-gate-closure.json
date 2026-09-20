@@ -33,7 +33,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "6a9f008f8353d493091dd57799fc54a2cde28c0cfb59d213a1fd32c5151b8f01",
+      "sha256": "2070f75f582ad039b65d5428d8616d105b6cd8ac03fc685c0eb6c74d72a0e1b2",
       "targets": []
     },
     {
@@ -622,7 +622,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoveryEpochPromotion.test.ts",
-      "sha256": "be69bab94a41048f586762df4e61f4d6c4acc677617a138de5e9cd4459d02efd",
+      "sha256": "b81b1c63ce126f5d71c961db23034aa63a2171201ea28392a212f2d6383d88b8",
       "targets": []
     },
     {
@@ -1656,7 +1656,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/currentRecoverySeal.ts",
-      "sha256": "d983a31f869897e34fa2896de2f8c0c37934cf9796a848180405f3f980b82c2c",
+      "sha256": "0b499322e33dbac39e350222bbc996699d58a04dc4362fa1c9404d2fe51b2560",
       "targets": []
     },
     {
