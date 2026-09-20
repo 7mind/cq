@@ -60,26 +60,12 @@ const CODEX_ROLE_DISPATCH_SCRIPT = fileURLToPath(
 const PARENT_GATE_PROCESS_WORKER = fileURLToPath(
   new URL("./fixtures/parentGateFinalizationProcessWorker.ts", import.meta.url),
 );
-const T6576_LEGACY_DISPATCH_CAPABILITY_MODULE =
-  "/nix/store/04rs3iqgs02d5jb5awzrww84jphpgdr7-cq-0.0.1/share/cq/packages/ledger-mcp/src/dispatchCapability.ts";
+const T6576_LEGACY_QUEUE_SOURCE =
+  "/nix/store/04rs3iqgs02d5jb5awzrww84jphpgdr7-cq-0.0.1/share/cq/packages/cq-config/src/dispatchImplementationQueue.ts";
+const T6576_LEGACY_QUEUE_SOURCE_SHA256 =
+  "e4efc3a417084f447d5dbe43fee059c247645ade0c30f8479745f5d85717f51f";
 const roots: string[] = [];
 let sequence = 0;
-
-async function createT6576LegacyDispatchCapability(
-  options: Parameters<typeof createDispatchCapability>[0],
-): Promise<ReturnType<typeof createDispatchCapability>> {
-  const loaded: unknown = await import(T6576_LEGACY_DISPATCH_CAPABILITY_MODULE);
-  if (
-    typeof loaded !== "object" ||
-    loaded === null ||
-    !("createDispatchCapability" in loaded) ||
-    typeof loaded.createDispatchCapability !== "function"
-  ) {
-    throw new Error("T6576 legacy dispatch capability factory is unavailable");
-  }
-  const factory = loaded.createDispatchCapability as typeof createDispatchCapability;
-  return factory(options);
-}
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -3288,7 +3274,10 @@ throw new Error("unexpected controlled cq invocation");
           >
         >[0];
         let launchedSuccessor: LaunchedSuccessor | undefined;
-        let capability = await createT6576LegacyDispatchCapability({
+        expect(sha256(await fs.readFile(T6576_LEGACY_QUEUE_SOURCE, "utf8"))).toBe(
+          T6576_LEGACY_QUEUE_SOURCE_SHA256,
+        );
+        let capability = createDispatchCapability({
           ...subject.capabilityOptions,
           recoveryJournal,
           implementationSuccessorLauncher: async (input) => {
@@ -3520,6 +3509,15 @@ throw new Error("unexpected controlled cq invocation");
         await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
         await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
         const ontoCommit = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+        const preRetirementSource = await subject.backend.transact(
+          { kind: "handle", handle: recovered.handle },
+          (store) => store.read(recovered.handle),
+        );
+        if (preRetirementSource === undefined || isAttestationTombstone(preRetirementSource)) {
+          throw new Error("current recovered source disappeared before retirement");
+        }
+        expect(Object.hasOwn(preRetirementSource, "dispatchContinuationClaim")).toBe(false);
+        expect(Object.hasOwn(preRetirementSource, "dispatchJournalRecoveryClaim")).toBe(true);
         expect(
           await capability.coordinateImplementationCandidate({
             partitionKey: recoveredQualified.partitionKey,
@@ -3549,7 +3547,22 @@ throw new Error("unexpected controlled cq invocation");
           throw new Error("legacy staged retirement disappeared");
         }
         expect(Object.hasOwn(retiredSource, "dispatchContinuationClaim")).toBe(false);
-        expect(Object.hasOwn(retiredSource, "dispatchJournalRecoveryClaim")).toBe(false);
+        expect(Object.hasOwn(retiredSource, "dispatchJournalRecoveryClaim")).toBe(true);
+        const {
+          dispatchContinuationClaim: _legacyDroppedContinuationClaim,
+          dispatchJournalRecoveryClaim: _legacyDroppedRecoveryClaim,
+          ...legacyRetiredSource
+        } = retiredSource;
+        await subject.backend.transact(
+          { kind: "handle", handle: recovered.handle },
+          (store) => {
+            const current = store.read(recovered.handle);
+            if (current === undefined) throw new Error("staged retirement disappeared");
+            store.replace(current, legacyRetiredSource);
+          },
+        );
+        expect(Object.hasOwn(legacyRetiredSource, "dispatchContinuationClaim")).toBe(false);
+        expect(Object.hasOwn(legacyRetiredSource, "dispatchJournalRecoveryClaim")).toBe(false);
         const guarded = launchedSuccessor;
         if (guarded === undefined) throw new Error("staged retirement did not launch its successor");
         await subject.backend.close();
