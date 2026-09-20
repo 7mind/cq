@@ -905,23 +905,20 @@ function assembleGuardedJournalSuccessorReceiptClosure(
   ) {
     return resolvedReceipts;
   }
-  if (
-    transition === undefined ||
-    transition.successor.attestationId !== row.attestationId ||
-    transition.successor.generation !== row.generation
-  ) {
+  if (transition === undefined) {
     return resolvedReceipts;
   }
-  const bridge = row.gitEffectBinding?.guardedRebaseBridge;
+  const componentPrefix = inheritedReceipts.slice(transition.receiptPrefixLength);
+  const componentSuffix = resolvedReceipts.slice(componentPrefix.length);
   if (
-    bridge === undefined ||
-    transition.guardedRebase !== bridge.guardedRebase ||
-    transition.requestDigest !== bridge.requestDigest ||
-    transition.oldResultCommit !== bridge.oldResultCommit ||
-    transition.ontoCommit !== bridge.ontoCommit ||
-    transition.rebasedStartCommit !== bridge.rebasedStartCommit ||
-    transition.rebasedStartCommit !== inheritedTip ||
-    transition.receiptPrefixLength !== inheritedReceipts.length
+    transition.receiptPrefixLength > inheritedReceipts.length ||
+    !bindingMatchesGuardedTransition(row.gitEffectBinding, transition) ||
+    resolvedReceipts.length < componentPrefix.length ||
+    (resolvedReceipts.length === componentPrefix.length && liveTip !== inheritedTip) ||
+    !receiptClosuresEqual(
+      resolvedReceipts.slice(0, componentPrefix.length),
+      componentPrefix,
+    )
   ) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
@@ -929,7 +926,7 @@ function assembleGuardedJournalSuccessorReceiptClosure(
     );
   }
   let componentTip = inheritedTip;
-  for (const [index, receipt] of resolvedReceipts.entries()) {
+  for (const [index, receipt] of componentSuffix.entries()) {
     if (
       receipt.taskId !== taskId ||
       receipt.attestationId !== row.attestationId ||
@@ -949,7 +946,7 @@ function assembleGuardedJournalSuccessorReceiptClosure(
       "guarded journal recovery successor receipt component does not end at the live tip",
     );
   }
-  return Object.freeze([...inheritedReceipts, ...resolvedReceipts]);
+  return Object.freeze([...inheritedReceipts, ...componentSuffix]);
 }
 
 async function journalSuccessorSource(
@@ -1117,13 +1114,20 @@ async function journalSuccessorSource(
     }
 
     const transition = guardedTipTransitions.at(-1);
+    const componentPrefix =
+      transition === undefined
+        ? undefined
+        : inheritedReceipts.slice(transition.receiptPrefixLength);
+    const componentSuffix =
+      componentPrefix === undefined ? [] : closure.slice(componentPrefix.length);
     if (
       transition === undefined ||
-      transition.successor.attestationId !== successor.attestationId ||
-      transition.successor.generation !== successor.generation ||
+      transition.receiptPrefixLength > inheritedReceipts.length ||
       !bindingMatchesGuardedTransition(continuation.gitEffectBinding, transition) ||
-      transition.rebasedStartCommit !== inheritedTip ||
-      transition.receiptPrefixLength !== inheritedReceipts.length
+      componentPrefix === undefined ||
+      closure.length < componentPrefix.length ||
+      (closure.length === componentPrefix.length && continuation.liveTip !== inheritedTip) ||
+      !receiptClosuresEqual(closure.slice(0, componentPrefix.length), componentPrefix)
     ) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
@@ -1131,7 +1135,7 @@ async function journalSuccessorSource(
       );
     }
     let componentTip = inheritedTip;
-    for (const receipt of closure) {
+    for (const receipt of componentSuffix) {
       if (
         receipt.taskId !== coordinates.taskId ||
         receipt.attestationId !== successor.attestationId ||
@@ -1151,7 +1155,7 @@ async function journalSuccessorSource(
         "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
       );
     }
-    inheritedReceipts = Object.freeze([...inheritedReceipts, ...closure]);
+    inheritedReceipts = Object.freeze([...inheritedReceipts, ...componentSuffix]);
     inheritedTip = continuation.liveTip;
   }
   const row = successorEnvelopes.at(-1)!;
