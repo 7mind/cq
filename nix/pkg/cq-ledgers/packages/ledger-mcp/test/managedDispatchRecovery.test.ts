@@ -16,6 +16,7 @@ import {
   prepareManagedWorktree,
   resolveInheritedGitChangeReceipts,
   resolveManagedWorktreeDispatchBinding,
+  runGuardedRebase,
   type Item,
   type DispatchRecoveryResolution,
 } from "@cq/ledger";
@@ -319,7 +320,140 @@ async function missingResultRecovery(journalKind: "memory" | "filesystem", dirty
   }
 }
 
+async function guardedOriginRecovery(): Promise<void> {
+  const f = await fixture("filesystem", true);
+  try {
+    await f.capability.abort({ ...f.prepared.handle, reason: "parent-lost" });
+    await fs.writeFile(join(f.root, "protected.txt"), "protected head\n");
+    await git(f.root, ["add", "protected.txt"]);
+    await git(f.root, ["commit", "-q", "-m", "advance protected head"]);
+    const ontoCommit = await git(f.root, ["rev-parse", "HEAD"]);
+    const rebase = await runGuardedRebase({
+      binding: f.binding,
+      operationId: "t6573-guarded-origin-rebase",
+      ontoCommit,
+      stateDir: f.stateDir,
+      runEffect: async () => {
+        const child = Bun.spawn(["git", "rebase", ontoCommit], {
+          cwd: f.binding.worktreePath,
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "CQ recovery test",
+            GIT_AUTHOR_EMAIL: "cq@example.invalid",
+            GIT_COMMITTER_NAME: "CQ recovery test",
+            GIT_COMMITTER_EMAIL: "cq@example.invalid",
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_TERMINAL_PROMPT: "0",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [code, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        return { code, stdout, stderr };
+      },
+    });
+    if (rebase.kind !== "finalized") throw new Error("guarded-origin rebase did not finalize");
+    const rebasedStartCommit = rebase.bridge.rebasedStartCommit;
+    const guarded = await f.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...f.input,
+        baseCommit: ontoCommit,
+        round: 1,
+        startingCommit: rebasedStartCommit,
+        priorResultCommit: f.liveTip,
+      },
+      idempotencyKey: "guarded-origin-worker",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "guarded-origin-worker", runId: "guarded-origin-worker" },
+      reprepareOf: f.prepared.handle,
+      guardedRebase: rebase.reference,
+    });
+    if (!guarded.accepted || guarded.prepared.gitChangeCapability === undefined) {
+      throw new Error("guarded-origin worker was not prepared");
+    }
+    await f.capability.fetchInput({
+      ...guarded.handle,
+      inputCapability: guarded.prepared.inputCapability,
+    });
+    await fs.writeFile(join(f.binding.worktreePath, "state.txt"), "guarded recovery\n");
+    if (f.capability.gitCommit === undefined) throw new Error("guarded-origin broker unavailable");
+    const receipt = await f.capability.gitCommit({
+      ...guarded.handle,
+      gitChangeCapability: guarded.prepared.gitChangeCapability,
+      operationId: "guarded-origin-change",
+      expectedHead: rebasedStartCommit,
+      message: "guarded-origin receipt",
+      changes: [
+        {
+          kind: "modify",
+          path: "state.txt",
+          oldState: {
+            mode: "100644",
+            digest: createHash("sha256").update("after\n").digest("hex"),
+          },
+          newState: {
+            mode: "100644",
+            digest: createHash("sha256").update("guarded recovery\n").digest("hex"),
+          },
+        },
+      ],
+    });
+    await f.capability.abort({ ...guarded.handle, reason: "missing-result" });
+    const resolved = (await f.resolveRecovery()) as unknown as DispatchRecoveryResolution;
+    if (resolved.preparation.kind !== "current") throw new Error("expected current authority");
+    const recovered = await f.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...f.input,
+        baseCommit: ontoCommit,
+        round: 2,
+        startingCommit: receipt.newHead,
+        priorResultCommit: receipt.newHead,
+      },
+      idempotencyKey: "guarded-origin-recovery",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "guarded-origin-recovery", runId: "guarded-origin-recovery" },
+      recoveryPreparation: resolved.preparation.recoveryPreparation,
+    });
+    if (!recovered.accepted) {
+      throw new Error(
+        `guarded-origin recovery rejected at ${recovered.path}: ${recovered.detail}`,
+      );
+    }
+    expect(
+      await f.capability.fetchInput({
+        ...recovered.handle,
+        inputCapability: recovered.prepared.inputCapability,
+      }),
+    ).toMatchObject({
+      input: {
+        baseCommit: ontoCommit,
+        guardedRebaseLineage: {
+          guardedRebase: rebase.reference,
+          ontoCommit,
+          rebasedStartCommit,
+        },
+      },
+    });
+  } finally {
+    await f.dispose();
+  }
+}
+
 describe("manager-bound dispatch recovery", () => {
+  // expected-failure: tasks:T6573
+  test.failing(
+    "guarded-origin current recovery preserves its authenticated bridge and logical onto",
+    guardedOriginRecovery,
+    TEST_TIMEOUT_MS,
+  );
+
   test(
     "clean receipt-backed missing-result returns current recovery authority [Behavioral-Progression Effectual-GoodCommunication]",
     async () => {
