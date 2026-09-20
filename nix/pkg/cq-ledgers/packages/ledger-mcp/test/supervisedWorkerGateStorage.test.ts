@@ -2945,12 +2945,31 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // regression: tasks:T6573 — case A preserves the automatic staged-rebase lineage.
-  test(
-    "case A: an automatic staged-rebase successor retains repeated authenticated continuations",
-    async () => {
+  async function exerciseAutomaticStagedRebaseLineage(
+    mode: "refs-only-continuation" | "gate-rejected-correction",
+  ): Promise<void> {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
-        const runner = new GateDummy();
+        const runner =
+          mode === "refs-only-continuation"
+            ? new GateDummy()
+            : new GateSequenceDummy([
+                {
+                  gateExitCode: 0,
+                  passCount: 17,
+                  failCount: 0,
+                  gateDurationMs: 1,
+                  capturedAt: "2026-08-12T20:00:03.000Z",
+                  outputTail: "17 pass\n0 fail",
+                },
+                {
+                  gateExitCode: 1,
+                  passCount: 16,
+                  failCount: 1,
+                  gateDurationMs: 1,
+                  capturedAt: "2026-08-12T20:00:06.000Z",
+                  outputTail: "(fail) automatic continuation rejection\n16 pass\n1 fail",
+                },
+              ]);
         const subject = await fixtureWithDispatchBase(
           runner,
           "managed",
@@ -3410,13 +3429,8 @@ throw new Error("unexpected controlled cq invocation");
 
         await reopenBackend();
         const continuationRuntime = createDispatchCapability({
+          ...subject.capabilityOptions,
           backend: activeBackend,
-          promptArtifactStore: artifactStore(),
-          ledgerStore: subject.ledgerStore,
-          implementationEvidenceStore: subject.implementationEvidenceStore,
-          repositoryRoot: subject.repositoryRoot,
-          worktreeStateDir: subject.stateDir,
-          supervisedWorkerGateRunner: runner,
           now: () => "2026-08-12T20:00:00.000Z",
           randomBytes: sequentialDispatchRandomBytes(sequence * 192),
         });
@@ -3444,15 +3458,14 @@ throw new Error("unexpected controlled cq invocation");
           status: "dispatch-continuation-resolved",
           liveTip: successorReceipt.newHead,
         });
-        const firstContinuationRequest = {
-          roleId: "implement-worker" as const,
-          input: {
-            ...sealedWorkerInput,
-            baseCommit: protectedHead,
-            round: 3,
-            startingCommit: successorReceipt.newHead,
-            priorResultCommit: successorReceipt.newHead,
-          },
+        const firstContinuationSpec = {
+          ...sealedWorkerInput,
+          baseCommit: protectedHead,
+          round: 3,
+          startingCommit: successorReceipt.newHead,
+          priorResultCommit: successorReceipt.newHead,
+        };
+        const firstContinuationEnvelope = {
           idempotencyKey: `T2081-${String(sequence)}-automatic-continuation-one`,
           timeoutMs: 600_000,
           expectedChild: {
@@ -3461,56 +3474,86 @@ throw new Error("unexpected controlled cq invocation");
           },
           continuation: firstAuthority.continuationReference,
         };
-        const rowsBeforeContinuationDiagnostics = await activeBackend.transact(
-          { kind: "namespace" },
-          (store) => store.rows().length,
-        );
-        const changedSpecificationRefusal = await continuationRuntime.prepare({
-          ...firstContinuationRequest,
-          input: {
-            ...firstContinuationRequest.input,
-            headline: "changed task specification",
-          },
-          idempotencyKey: `${firstContinuationRequest.idempotencyKey}-changed-specification`,
-        });
-        expect(changedSpecificationRefusal).toMatchObject({
-          accepted: false,
-          reason: "journal-recovery-required",
-          detail:
-            "the managed task lineage is sealed for journal recovery; stage=continuation-specification; reason=task-specification-mismatch",
-          allocated: false,
-        });
-        const unresolvedReferenceRefusal = await continuationRuntime.prepare({
-          ...firstContinuationRequest,
-          idempotencyKey: `${firstContinuationRequest.idempotencyKey}-unresolved-reference`,
-          continuation: `cq-dispatch-continuation:v1:${"f".repeat(64)}`,
-        });
-        expect(unresolvedReferenceRefusal).toMatchObject({
-          accepted: false,
-          reason: "journal-recovery-required",
-          detail:
-            "the managed task lineage is sealed for journal recovery; stage=continuation-reference; reason=unresolved",
-          allocated: false,
-        });
-        expect(
-          await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
-        ).toBe(rowsBeforeContinuationDiagnostics);
-        const encodedContinuationRefusals = JSON.stringify([
-          changedSpecificationRefusal,
-          unresolvedReferenceRefusal,
-        ]);
-        for (const secret of [
-          firstAuthority.continuationReference,
-          subject.managed.handle.token,
-          subject.managed.handle.absolutePath,
-          protectedHead,
-        ]) {
-          expect(encodedContinuationRefusals).not.toContain(secret);
+        const firstContinuationRequest =
+          mode === "refs-only-continuation"
+            ? {
+                ...firstContinuationEnvelope,
+                refs: {
+                  roleId: "implement-worker" as const,
+                  surface: "codex" as const,
+                  projectKey: subject.backend.namespace.projectKey,
+                  taskId: "T2081",
+                  coordinates: {
+                    worktreePath: subject.managed.handle.absolutePath,
+                    branch: subject.managed.handle.branch,
+                    baseCommit: protectedHead,
+                  },
+                  round: 3,
+                  startingCommit: successorReceipt.newHead,
+                  validationIntent: "final" as const,
+                  priorResultCommit: successorReceipt.newHead,
+                },
+              }
+            : {
+                ...firstContinuationEnvelope,
+                roleId: "implement-worker" as const,
+                input: firstContinuationSpec,
+              };
+        if (mode === "refs-only-continuation") {
+          const rowsBeforeContinuationDiagnostics = await activeBackend.transact(
+            { kind: "namespace" },
+            (store) => store.rows().length,
+          );
+          const changedSpecificationRefusal = await continuationRuntime.prepare({
+            roleId: "implement-worker",
+            input: {
+              ...firstContinuationSpec,
+              headline: "changed task specification",
+            },
+            idempotencyKey: `${firstContinuationEnvelope.idempotencyKey}-changed-specification`,
+            timeoutMs: firstContinuationEnvelope.timeoutMs,
+            expectedChild: firstContinuationEnvelope.expectedChild,
+            continuation: firstContinuationEnvelope.continuation,
+          });
+          expect(changedSpecificationRefusal).toMatchObject({
+            accepted: false,
+            reason: "journal-recovery-required",
+            detail:
+              "the managed task lineage is sealed for journal recovery; stage=continuation-specification; reason=task-specification-mismatch",
+            allocated: false,
+          });
+          const unresolvedReferenceRefusal = await continuationRuntime.prepare({
+            ...firstContinuationRequest,
+            idempotencyKey: `${firstContinuationEnvelope.idempotencyKey}-unresolved-reference`,
+            continuation: `cq-dispatch-continuation:v1:${"f".repeat(64)}`,
+          });
+          expect(unresolvedReferenceRefusal).toMatchObject({
+            accepted: false,
+            reason: "journal-recovery-required",
+            detail:
+              "the managed task lineage is sealed for journal recovery; stage=continuation-reference; reason=unresolved",
+            allocated: false,
+          });
+          expect(
+            await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+          ).toBe(rowsBeforeContinuationDiagnostics);
+          const encodedContinuationRefusals = JSON.stringify([
+            changedSpecificationRefusal,
+            unresolvedReferenceRefusal,
+          ]);
+          for (const secret of [
+            firstAuthority.continuationReference,
+            subject.managed.handle.token,
+            subject.managed.handle.absolutePath,
+            protectedHead,
+          ]) {
+            expect(encodedContinuationRefusals).not.toContain(secret);
+          }
         }
         const firstContinuation = await continuationRuntime.prepare(firstContinuationRequest);
         if (!firstContinuation.accepted) {
           throw new Error(
-            `automatic continuation one refused: ${firstContinuation.reason}: ${firstContinuation.detail}`,
+            `automatic ${mode} refused: ${firstContinuation.reason}: ${firstContinuation.detail}`,
           );
         }
         expect(await continuationRuntime.prepare(firstContinuationRequest)).toEqual(
@@ -3596,11 +3639,11 @@ throw new Error("unexpected controlled cq invocation");
           await continuationRuntime.qualifyImplementationCandidate({
             ...firstContinuation.handle,
             roleId: "implement-worker",
-            correlationId: firstContinuationRequest.expectedChild.childId.slice(
+            correlationId: firstContinuationEnvelope.expectedChild.childId.slice(
               "implement-worker#".length,
             ),
             childThreadId: `automatic-continuation-one-thread-${String(sequence)}`,
-            expectedRunId: firstContinuationRequest.expectedChild.runId,
+            expectedRunId: firstContinuationEnvelope.expectedChild.runId,
             outcome: "completed",
             exitStatus: 0,
             observedAt: "2026-08-12T20:00:04.000Z",
@@ -3609,12 +3652,134 @@ throw new Error("unexpected controlled cq invocation");
         if (firstContinuationQualification.state !== "queued") {
           throw new Error("first automatic continuation did not qualify");
         }
-        expect(
-          await continuationRuntime.coordinateImplementationCandidate({
+        const firstContinuationCoordination = continuationRuntime.coordinateImplementationCandidate({
             partitionKey: firstContinuationQualification.partitionKey,
             holderId: `automatic-continuation-one-coordinator-${attestationBackend}`,
-          }),
-        ).toEqual({ state: "completed", handle: firstContinuation.handle });
+          });
+        if (mode === "gate-rejected-correction") {
+          await expect(firstContinuationCoordination).rejects.toThrow();
+          expect(runner.requests).toHaveLength(2);
+          expect(
+            await activeBackend.transact({ kind: "handle", handle: firstContinuation.handle }, (store) =>
+              store.read(firstContinuation.handle),
+            ),
+          ).toMatchObject({
+            state: "aborted",
+            abortReason: "gate-rejected",
+            implementationQueue: {
+              state: "terminal",
+              terminal: { reason: "gate-rejected" },
+            },
+          });
+          const correctionInput = {
+            ...firstContinuationSpec,
+            round: 4,
+            startingCommit: firstContinuationReceipt.newHead,
+            priorResultCommit: firstContinuationReceipt.newHead,
+            validationIntent: "focused-only" as const,
+          };
+          const correctionRequest = {
+            roleId: "implement-worker" as const,
+            input: correctionInput,
+            idempotencyKey: `T2081-${String(sequence)}-automatic-gate-correction`,
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: `implement-worker#automatic-gate-correction-${String(sequence)}`,
+              runId: `automatic-gate-correction-run-${String(sequence)}`,
+            },
+            reprepareOf: firstContinuation.handle,
+          };
+          const correction = await continuationRuntime.prepare(correctionRequest);
+          if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
+            throw new Error(
+              `case C changed focused correction refused: ${
+                correction.accepted ? "missing Git authority" : correction.detail
+              }`,
+            );
+          }
+          expect(await continuationRuntime.prepare(correctionRequest)).toEqual(correction);
+          expect(
+            await continuationRuntime.prepare({
+              ...correctionRequest,
+              input: { ...correctionInput, headline: "changed task specification" },
+            }),
+          ).toMatchObject({ accepted: false, reason: "journal-recovery-required" });
+          await continuationRuntime.fetchInput({
+            ...correction.handle,
+            inputCapability: correction.prepared.inputCapability,
+          });
+          if (continuationRuntime.gitCommit === undefined) {
+            throw new Error("automatic gate correction omitted Git authority");
+          }
+          const correctionBody = "changed focused correction\n";
+          await fs.writeFile(
+            path.join(subject.managed.handle.absolutePath, "automatic-gate-correction.txt"),
+            correctionBody,
+          );
+          const correctionReceipt = await continuationRuntime.gitCommit({
+            ...correction.handle,
+            gitChangeCapability: correction.prepared.gitChangeCapability,
+            operationId: `T2081-${String(sequence)}-automatic-gate-correction-change`,
+            expectedHead: firstContinuationReceipt.newHead,
+            message: "correct automatic rejected continuation",
+            changes: [
+              {
+                kind: "add",
+                path: "automatic-gate-correction.txt",
+                newState: { mode: "100644", digest: sha256(correctionBody) },
+              },
+            ],
+          });
+          const correctionFiles = (
+            await git(subject.managed.handle.absolutePath, [
+              "diff",
+              "--name-only",
+              protectedHead,
+              correctionReceipt.newHead,
+              "--",
+            ])
+          )
+            .split("\n")
+            .filter((entry) => entry !== "")
+            .sort();
+          expect(
+            await continuationRuntime.storeResult({
+              resultCapability: correction.prepared.resultCapability,
+              output: {
+                taskId: "T2081",
+                status: "pass",
+                resultCommit: correctionReceipt.newHead,
+                branch: subject.managed.handle.branch,
+                actualWorktreePath: subject.managed.handle.absolutePath,
+                filesTouched: correctionFiles,
+                gitReceipts: [correctionReceipt],
+                checkSummary: "changed focused correction checks passed",
+                focusedChecks: [
+                  {
+                    command: "bun test automatic-gate-correction.test.ts",
+                    exitCode: 0,
+                    passCount: 1,
+                    failCount: 0,
+                  },
+                ],
+                baseVerification: {
+                  status: "verified",
+                  relation: "descendant",
+                  baseCommit: protectedHead,
+                  headCommit: correctionReceipt.newHead,
+                },
+                summary: "changed correction retains the rejected automatic continuation",
+              } as unknown as DispatchJSONValue,
+            }),
+          ).toMatchObject({ state: "result-stored" });
+          expect(runner.requests).toHaveLength(2);
+          await activeBackend.close();
+          continue;
+        }
+        expect(await firstContinuationCoordination).toEqual({
+          state: "completed",
+          handle: firstContinuation.handle,
+        });
 
         const secondAuthority = (await WORKTREE_MANAGE_TOOL_SPEC.run(
           subject.ledgerStore,
@@ -3634,14 +3799,15 @@ throw new Error("unexpected controlled cq invocation");
           liveTip: firstContinuationReceipt.newHead,
         });
         const secondContinuationRequest = {
-          ...firstContinuationRequest,
+          roleId: "implement-worker" as const,
           input: {
-            ...firstContinuationRequest.input,
+            ...firstContinuationSpec,
             round: 4,
             startingCommit: firstContinuationReceipt.newHead,
             priorResultCommit: firstContinuationReceipt.newHead,
           },
           idempotencyKey: `T2081-${String(sequence)}-automatic-continuation-two`,
+          timeoutMs: firstContinuationEnvelope.timeoutMs,
           expectedChild: {
             childId: `implement-worker#automatic-continuation-two-${String(sequence)}`,
             runId: `automatic-continuation-two-run-${String(sequence)}`,
@@ -3682,6 +3848,22 @@ throw new Error("unexpected controlled cq invocation");
         expect(runner.requests).toHaveLength(2);
         await activeBackend.close();
       }
+  }
+
+  // regression: tasks:T6573 — case A preserves the canonical refs-only lineage.
+  test(
+    "case A: an automatic staged-rebase successor retains repeated authenticated continuations",
+    async () => {
+      await exerciseAutomaticStagedRebaseLineage("refs-only-continuation");
+    },
+    90_000,
+  );
+
+  // regression: tasks:T6573 — case C corrects the rejected continuation, not the fence anchor.
+  test(
+    "case C: an automatic staged-rebase continuation admits one changed focused correction",
+    async () => {
+      await exerciseAutomaticStagedRebaseLineage("gate-rejected-correction");
     },
     90_000,
   );
@@ -3747,7 +3929,36 @@ throw new Error("unexpected controlled cq invocation");
           },
           recoveryPreparation: currentRecovery.preparation.recoveryPreparation,
         });
-        if (!cancelled.accepted) throw new Error(`sealed source refused: ${cancelled.detail}`);
+        if (!cancelled.accepted || cancelled.prepared.gitChangeCapability === undefined) {
+          throw new Error(`sealed source refused: ${cancelled.accepted ? "missing Git authority" : cancelled.detail}`);
+        }
+        await subject.capability.fetchInput({
+          ...cancelled.handle,
+          inputCapability: cancelled.prepared.inputCapability,
+        });
+        if (subject.capability.gitCommit === undefined) {
+          throw new Error("pending manual conflict source omitted Git authority");
+        }
+        const cancelledBody = "cancelled recovered worker\n";
+        await fs.writeFile(
+          path.join(subject.managed.handle.absolutePath, "file.txt"),
+          cancelledBody,
+        );
+        const cancelledReceipt = await subject.capability.gitCommit({
+          ...cancelled.handle,
+          gitChangeCapability: cancelled.prepared.gitChangeCapability,
+          operationId: `T2081-${String(sequence)}-pending-manual-conflict-source-change`,
+          expectedHead: subject.receipt.newHead,
+          message: "persist cancelled recovered worker change",
+          changes: [
+            {
+              kind: "modify",
+              path: "file.txt",
+              oldState: { mode: "100644", digest: sha256("after\n") },
+              newState: { mode: "100644", digest: sha256(cancelledBody) },
+            },
+          ],
+        });
         expect(
           await subject.capability.abort({ ...cancelled.handle, reason: "cancelled" }),
         ).toMatchObject({ state: "aborted", reason: "cancelled" });
@@ -3851,7 +4062,7 @@ throw new Error("unexpected controlled cq invocation");
           conflictState: {
             sequencer: {
               onto: protectedHead,
-              originalTip: subject.receipt.newHead,
+              originalTip: cancelledReceipt.newHead,
             },
           },
         });
@@ -3923,7 +4134,7 @@ throw new Error("unexpected controlled cq invocation");
           subject.managed.handle.token,
           subject.managed.handle.absolutePath,
           protectedHead,
-          subject.receipt.newHead,
+          cancelledReceipt.newHead,
         ]) {
           expect(encodedPendingConflictRefusals).not.toContain(secret);
         }
