@@ -799,18 +799,20 @@ function isJournalRecoveryAncestor(
   const candidateBinding = candidate.gitEffectBinding;
   const sameManagerBinding =
     candidateBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => candidateBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => candidateBinding[field] === successorBinding[field]);
   const sameLineageBridge =
     candidateBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
@@ -833,8 +835,7 @@ function isJournalRecoveryAncestor(
     claim.liveTip !== inheritedReceipts.at(-1)?.newHead ||
     claim.gitReceiptsDigest !== digest(inheritedReceipts) ||
     inheritedReceipts.length > successorReceipts.length ||
-    digest(inheritedReceipts) !==
-      digest(successorReceipts.slice(0, inheritedReceipts.length)) ||
+    digest(inheritedReceipts) !== digest(successorReceipts.slice(0, inheritedReceipts.length)) ||
     !sameManagerBinding ||
     !sameLineageBridge ||
     control.state !== "terminal" ||
@@ -871,8 +872,7 @@ function isJournalRecoveryAncestor(
     return false;
   }
   return successorReceipts.slice(sourceClosure.length).every((receipt, index, suffix) => {
-    const previousHead =
-      index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
+    const previousHead = index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
     return (
       receipt.attestationId === successor.attestationId &&
       receipt.taskId === successorBinding.taskId &&
@@ -947,18 +947,20 @@ function isRetiredGuardedRebaseAncestor(
       : undefined;
   const sameManagerBinding =
     binding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => binding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => binding[field] === successorBinding[field]);
   return (
     control !== undefined &&
     binding !== undefined &&
@@ -1042,21 +1044,24 @@ function isComposedTerminalAncestor(
       intermediate.generation >= successor.generation ||
       intermediate.gitEffectBinding === undefined ||
       (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
+        !isGateRejectedCorrectionAncestor(
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+          intermediate.implementationQueue?.attempt.gitReceipts ?? [],
+          intermediate.implementationQueue?.attempt.resultCommit ?? "",
+        ) &&
         !isConsumedGuardedContinuationAncestor(
-        candidate,
-        intermediate,
-        intermediate.gitEffectBinding,
-      ) &&
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+        ) &&
         !isConsumedOrdinaryContinuationAncestor(
           candidate,
           intermediate,
           intermediate.gitEffectBinding,
         ) &&
-        !isRetiredGuardedRebaseAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ))
+        !isRetiredGuardedRebaseAncestor(candidate, intermediate, intermediate.gitEffectBinding))
     ) {
       return false;
     }
