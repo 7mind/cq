@@ -671,6 +671,7 @@ describe("journal recovery epoch promotion", () => {
       const capability = createDispatchCapability({
         backend,
         promptArtifactStore: artifactStore("codex"),
+        ledgerStore,
         repositoryRoot,
         worktreeStateDir: stateDir,
         recoveryJournal: ledgerState,

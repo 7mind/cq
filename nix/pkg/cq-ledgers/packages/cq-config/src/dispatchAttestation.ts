@@ -1094,6 +1094,26 @@ export interface DispatchContinuationSourceClaim {
   readonly source: DispatchHandle;
 }
 
+/** Server-authenticated current-recovery journal authority claimed by one successor. */
+export interface DispatchJournalRecoveryClaim {
+  readonly kind: "cq-dispatch-journal-recovery-claim";
+  readonly version: 1;
+  readonly fenceRef: string;
+  readonly sealReference: string;
+  readonly sealDigest: string;
+  readonly selectedSource: DispatchHandle;
+  readonly lineageMaximumGeneration: number;
+  readonly sourceTerminalDigest: string;
+  readonly source: DispatchCurrentRecoverySource;
+  readonly taskId: string;
+  readonly goalRef: string;
+  readonly taskDigest: string;
+  readonly finalizedManifestDigest: string;
+  readonly liveTip: string;
+  readonly managedFingerprint: string;
+  readonly gitReceiptsDigest: string;
+}
+
 /** Trusted resolution used internally by prepare; public callers receive an opaque projection. */
 export interface ResolvedDispatchContinuation {
   readonly continuationReference: string;
@@ -1234,6 +1254,8 @@ export interface AttestationEnvelope {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Present only on the generation whose allocation claimed a consumed predecessor. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Present only on a successor allocated from an exact committed recovery journal. */
+  readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
 }
 
 /**
@@ -1264,6 +1286,8 @@ export interface AttestationTombstone {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Retained so collapse cannot resurrect a predecessor's single-use authority. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Retained so a collapsed successor preserves its committed recovery ancestry. */
+  readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Minimal terminal queue identity/provenance retained through collapse. */
   readonly implementationQueue?: ImplementationQueueTombstoneBinding;
   readonly implementationQueueRollout?: ImplementationQueueRollout;
@@ -1465,6 +1489,8 @@ export interface PrepareDispatchRequest {
   readonly continuationClaim?: DispatchContinuationClaim;
   /** Trusted fence-authorized generation reservation; never contains the capability token. */
   readonly journalRecoveryReservation?: DispatchJournalRecoveryReservation;
+  /** Complete authenticated journal ancestry retained on the allocated successor. */
+  readonly journalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Protected historical-evidence bootstrap authority consumed by this prepare. */
   readonly implementationEvidenceBootstrapRef?: string;
 }
@@ -1527,6 +1553,10 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
+    journalRecoveryClaim:
+      request.journalRecoveryClaim === undefined
+        ? null
+        : (request.journalRecoveryClaim as unknown as DispatchJSONValue),
     implementationEvidenceBootstrapRef: request.implementationEvidenceBootstrapRef ?? null,
   });
 }
@@ -2394,6 +2424,9 @@ export function prepareDispatch(
               }),
             }),
         }),
+    ...(request.journalRecoveryClaim === undefined
+      ? {}
+      : { dispatchJournalRecoveryClaim: request.journalRecoveryClaim }),
     createdAt: at,
   });
   deps.store.insert(next);
@@ -3370,6 +3403,12 @@ function writeAbort(
       ? {}
       : { gitConflictCapabilityHash: row.gitConflictCapabilityHash }),
     ...(row.gitEffectBinding === undefined ? {} : { gitEffectBinding: row.gitEffectBinding }),
+    ...(row.dispatchContinuationClaim === undefined
+      ? {}
+      : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.dispatchJournalRecoveryClaim === undefined
+      ? {}
+      : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),
     createdAt: row.createdAt,
     // A pre-abort stored result stays visible for the 24h envelope, but it is
     // NOT consumable: only `consumed` carries output on a fetch.
@@ -5295,6 +5334,9 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.dispatchJournalRecoveryClaim === undefined
+      ? {}
+      : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),
     ...(row.implementationQueue === undefined
       ? {}
       : row.implementationQueue.state !== "released" &&

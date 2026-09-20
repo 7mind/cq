@@ -1723,6 +1723,98 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       );
     }
   }
+  if (Object.hasOwn(record, "dispatchJournalRecoveryClaim")) {
+    const claim = record["dispatchJournalRecoveryClaim"];
+    if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "dispatchJournalRecoveryClaim"',
+      );
+    }
+    const claimRecord = claim as Readonly<Record<string, unknown>>;
+    const expectedKeys = [
+      "fenceRef",
+      "finalizedManifestDigest",
+      "gitReceiptsDigest",
+      "goalRef",
+      "kind",
+      "lineageMaximumGeneration",
+      "liveTip",
+      "managedFingerprint",
+      "sealDigest",
+      "sealReference",
+      "selectedSource",
+      "source",
+      "sourceTerminalDigest",
+      "taskDigest",
+      "taskId",
+      "version",
+    ].sort().join(",");
+    const source = claimRecord["source"];
+    const sourceRecord =
+      typeof source === "object" && source !== null && !Array.isArray(source)
+        ? (source as Readonly<Record<string, unknown>>)
+        : undefined;
+    const sourceIsValid =
+      sourceRecord !== undefined &&
+      ((sourceRecord["kind"] === "aborted" &&
+        sourceRecord["version"] === 1 &&
+        typeof sourceRecord["abortReason"] === "string" &&
+        Object.keys(sourceRecord).sort().join(",") === "abortReason,kind,version") ||
+        (sourceRecord["kind"] === "consumed-fail" &&
+          sourceRecord["version"] === 1 &&
+          sourceRecord["status"] === "fail" &&
+          Object.keys(sourceRecord).sort().join(",") === "kind,status,version"));
+    if (
+      Object.keys(claimRecord).sort().join(",") !== expectedKeys ||
+      claimRecord["kind"] !== "cq-dispatch-journal-recovery-claim" ||
+      claimRecord["version"] !== 1 ||
+      typeof claimRecord["fenceRef"] !== "string" ||
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(claimRecord["fenceRef"]) ||
+      typeof claimRecord["sealReference"] !== "string" ||
+      !/^cq-current-recovery-seal:v[12]:[0-9a-f]{64}$/u.test(claimRecord["sealReference"]) ||
+      typeof claimRecord["lineageMaximumGeneration"] !== "number" ||
+      !Number.isInteger(claimRecord["lineageMaximumGeneration"]) ||
+      claimRecord["lineageMaximumGeneration"] < 1 ||
+      typeof claimRecord["taskId"] !== "string" ||
+      !/^T[0-9]+$/u.test(claimRecord["taskId"]) ||
+      typeof claimRecord["goalRef"] !== "string" ||
+      !/^goals:[A-Za-z0-9-]+$/u.test(claimRecord["goalRef"]) ||
+      typeof claimRecord["liveTip"] !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(claimRecord["liveTip"]) ||
+      !sourceIsValid ||
+      [
+        "sealDigest",
+        "sourceTerminalDigest",
+        "taskDigest",
+        "finalizedManifestDigest",
+        "managedFingerprint",
+        "gitReceiptsDigest",
+      ].some(
+        (field) =>
+          typeof claimRecord[field] !== "string" ||
+          !STORED_SHA256_HEX.test(claimRecord[field] as string),
+      )
+    ) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "dispatchJournalRecoveryClaim"',
+      );
+    }
+    try {
+      const selectedSource = assertDispatchHandle(
+        claimRecord["selectedSource"] as never,
+        "storedRow.dispatchJournalRecoveryClaim.selectedSource",
+      );
+      if (selectedSource.generation > claimRecord["lineageMaximumGeneration"]) {
+        throw new Error("selected source exceeds the sealed lineage maximum");
+      }
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "dispatchJournalRecoveryClaim": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   return Object.freeze(record) as unknown as AttestationRow;
 }
 

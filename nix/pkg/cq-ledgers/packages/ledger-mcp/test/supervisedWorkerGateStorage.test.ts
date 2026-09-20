@@ -15,6 +15,7 @@ import {
   isAttestationTombstone,
   serializeWipArtifact,
   sequentialDispatchRandomBytes,
+  type AttestationEnvelope,
   type AttestationNamespace,
   type DispatchJSONValue,
 } from "@cq/config";
@@ -2924,8 +2925,7 @@ throw new Error("unexpected controlled cq invocation");
     });
   });
 
-  // expected-failure: tasks:T6575
-  test.failing("a consumed pass followed by a rejected continuation admits its changed correction", async () => {
+  test("a consumed pass followed by a rejected continuation admits its changed correction", async () => {
     const runner = new GateSequenceDummy([
       {
         gateExitCode: 0,
@@ -3116,7 +3116,13 @@ throw new Error("unexpected controlled cq invocation");
           ...subject.output,
           resultCommit: correctionReceipt.newHead,
           filesTouched: [...correctionReceipt.paths],
-          gitReceipts: [correctionReceipt],
+          gitReceipts: [
+            {
+              ...correctionReceipt,
+              objectOids: [...correctionReceipt.objectOids],
+              paths: [...correctionReceipt.paths],
+            },
+          ],
           checkSummary: "composed correction checks passed",
           baseVerification: {
             status: "verified",
@@ -3127,6 +3133,55 @@ throw new Error("unexpected controlled cq invocation");
         },
       }),
     ).toMatchObject({ state: "gate-pending" });
+    const retainedRejected = subject.store.read(rejected.handle);
+    if (
+      retainedRejected === undefined ||
+      isAttestationTombstone(retainedRejected) ||
+      retainedRejected.dispatchContinuationClaim === undefined
+    ) {
+      throw new Error("rejected continuation lost its persisted source claim");
+    }
+    const rejectContinuationMutation = async (
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+      observedAt: string,
+    ) => {
+      const corrupted = mutate(retainedRejected);
+      subject.store.replace(retainedRejected, corrupted);
+      await expect(qualify(correction.prepared, correctionChild, observedAt)).rejects.toThrow(
+        "cannot be resurrected",
+      );
+      subject.store.replace(corrupted, retainedRejected);
+    };
+    await rejectContinuationMutation(
+      (row) => {
+        const { dispatchContinuationClaim: _claim, ...withoutClaim } = row;
+        return withoutClaim;
+      },
+      "2026-08-12T20:00:07.100Z",
+    );
+    await rejectContinuationMutation(
+      (row) => ({
+        ...row,
+        dispatchContinuationClaim: {
+          ...row.dispatchContinuationClaim!,
+          continuationReference: `cq-dispatch-continuation:v1:${"0".repeat(64)}`,
+        },
+      }),
+      "2026-08-12T20:00:07.200Z",
+    );
+    await rejectContinuationMutation(
+      (row) => ({
+        ...row,
+        dispatchContinuationClaim: {
+          ...row.dispatchContinuationClaim!,
+          source: {
+            ...row.dispatchContinuationClaim!.source,
+            generation: row.dispatchContinuationClaim!.source.generation + 1,
+          },
+        },
+      }),
+      "2026-08-12T20:00:07.300Z",
+    );
     const correctionQualified = await qualify(
       correction.prepared,
       correctionChild,
@@ -3144,15 +3199,24 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  // expected-failure: tasks:T6575
-  test.failing("a cancelled sealed recovery successor retains prior terminal queue ancestry", async () => {
+  test("a cancelled sealed recovery successor retains prior terminal queue ancestry", async () => {
     const runner = new ThrowingGateDummy("controlled parent loss after qualification");
-    const subject = await fixture(runner, true);
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      "sqlite",
+    );
     const recoveryJournal = new InMemoryCurrentRecoverySealJournalStore();
     const capability = createDispatchCapability({
       ...subject.capabilityOptions,
       recoveryJournal,
     });
+    let activeCapability = capability;
     if (
       capability.qualifyImplementationCandidate === undefined ||
       capability.coordinateImplementationCandidate === undefined ||
@@ -3176,7 +3240,7 @@ throw new Error("unexpected controlled cq invocation");
       child: typeof subject.expectedChild,
       observedAt: string,
     ) =>
-      await capability.qualifyImplementationCandidate!({
+      await activeCapability.qualifyImplementationCandidate!({
         attestationId: prepared.attestationId,
         generation: prepared.generation,
         roleId: "implement-worker",
@@ -3207,7 +3271,11 @@ throw new Error("unexpected controlled cq invocation");
         holderId: "sealed-recovery-parent-lost-source",
       }),
     ).rejects.toThrow("controlled parent loss after qualification");
-    expect(subject.store.rows()[0]).toMatchObject({
+    expect(
+      await subject.backend.transact({ kind: "handle", handle: subject.prepared }, (store) =>
+        store.read(subject.prepared),
+      ),
+    ).toMatchObject({
       state: "aborted",
       abortReason: "parent-lost",
       implementationQueue: { state: "terminal", terminal: { reason: "parent-lost" } },
@@ -3314,7 +3382,13 @@ throw new Error("unexpected controlled cq invocation");
           ...subject.output,
           resultCommit: successorReceipt.newHead,
           filesTouched: [...successorReceipt.paths],
-          gitReceipts: [successorReceipt],
+          gitReceipts: [
+            {
+              ...successorReceipt,
+              objectOids: [...successorReceipt.objectOids],
+              paths: [...successorReceipt.paths],
+            },
+          ],
           checkSummary: "sealed recovery successor checks passed",
           baseVerification: {
             status: "verified",
@@ -3325,12 +3399,89 @@ throw new Error("unexpected controlled cq invocation");
         },
       }),
     ).toMatchObject({ state: "gate-pending" });
+    await subject.backend.close();
+    const reopenedBackend = new SqliteAttestationBackend({
+      namespace: subject.backend.namespace,
+      dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+    });
+    activeCapability = createDispatchCapability({
+      ...subject.capabilityOptions,
+      backend: reopenedBackend,
+      recoveryJournal,
+    });
+    const exactSuccessor = await reopenedBackend.transact(
+      { kind: "handle", handle: successor.handle },
+      (store) => store.read(successor.handle),
+    );
+    if (
+      exactSuccessor === undefined ||
+      isAttestationTombstone(exactSuccessor) ||
+      exactSuccessor.dispatchJournalRecoveryClaim === undefined
+    ) {
+      throw new Error("sealed successor lost its persisted journal claim");
+    }
+    const rejectJournalMutation = async (
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+      observedAt: string,
+    ) => {
+      const corrupted = mutate(exactSuccessor);
+      await reopenedBackend.transact({ kind: "handle", handle: successor.handle }, (store) => {
+        const current = store.read(successor.handle);
+        if (current === undefined) throw new Error("sealed successor disappeared before mutation");
+        store.replace(current, corrupted);
+      });
+      await expect(qualify(successor.prepared, successorChild, observedAt)).rejects.toThrow(
+        "cannot be resurrected",
+      );
+      await reopenedBackend.transact({ kind: "handle", handle: successor.handle }, (store) => {
+        const current = store.read(successor.handle);
+        if (current === undefined) throw new Error("sealed successor disappeared after mutation");
+        store.replace(current, exactSuccessor);
+      });
+    };
+    await rejectJournalMutation(
+      (row) => {
+        const { dispatchJournalRecoveryClaim: _claim, ...withoutClaim } = row;
+        return withoutClaim;
+      },
+      "2026-08-12T20:00:07.100Z",
+    );
+    for (const [field, value, observedAt] of [
+      ["goalRef", "goals:G9999", "2026-08-12T20:00:07.200Z"],
+      ["finalizedManifestDigest", "0".repeat(64), "2026-08-12T20:00:07.300Z"],
+      ["managedFingerprint", "0".repeat(64), "2026-08-12T20:00:07.400Z"],
+      ["gitReceiptsDigest", "0".repeat(64), "2026-08-12T20:00:07.500Z"],
+      ["sourceTerminalDigest", "0".repeat(64), "2026-08-12T20:00:07.600Z"],
+    ] as const) {
+      await rejectJournalMutation(
+        (row) => ({
+          ...row,
+          dispatchJournalRecoveryClaim: {
+            ...row.dispatchJournalRecoveryClaim!,
+            [field]: value,
+          },
+        }),
+        observedAt,
+      );
+    }
+    await rejectJournalMutation(
+      (row) => ({
+        ...row,
+        dispatchJournalRecoveryClaim: {
+          ...row.dispatchJournalRecoveryClaim!,
+          source: { kind: "aborted", version: 1, abortReason: "parent-lost" },
+        },
+      }),
+      "2026-08-12T20:00:07.700Z",
+    );
     const successorQualified = await qualify(
       successor.prepared,
       successorChild,
       "2026-08-12T20:00:08.000Z",
     );
     expect(successorQualified.state).toBe("queued");
+    expect(runner.requests).toHaveLength(1);
+    await reopenedBackend.close();
   });
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {

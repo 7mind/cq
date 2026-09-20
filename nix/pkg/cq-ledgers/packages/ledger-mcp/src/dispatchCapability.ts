@@ -2395,6 +2395,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       let resolvedImplementationEvidenceBootstrapRef = input.implementationEvidenceBootstrap;
       let continuationClaim;
       let journalRecoveryReservation;
+      let journalRecoveryClaim;
       let prepareLockBinding: ManagedWorktreeDispatchBinding | undefined;
       if (
         (roleId === "implement-worker" || roleId === "implement-conflict-resolver") &&
@@ -2569,11 +2570,40 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             attestationId: fence.sourceAttestationId,
             generation: fence.selectedSourceGeneration,
           };
+          const recoverySource =
+            journal.seal.version === 1
+              ? {
+                  kind: "aborted" as const,
+                  version: 1 as const,
+                  abortReason: journal.seal.seed.sourceAbortReason,
+                }
+              : journal.seal.seed.source;
           journalRecoveryReservation = {
             fenceRef: fence.fenceRef,
             sourceAttestationId: fence.sourceAttestationId,
             selectedSourceGeneration: fence.selectedSourceGeneration,
             lineageMaximumGeneration: fence.lineageMaximumGeneration,
+          };
+          journalRecoveryClaim = {
+            kind: "cq-dispatch-journal-recovery-claim" as const,
+            version: 1 as const,
+            fenceRef: fence.fenceRef,
+            sealReference: journal.seal.sealReference,
+            sealDigest: journal.seal.sealDigest,
+            selectedSource: {
+              attestationId: fence.sourceAttestationId,
+              generation: fence.selectedSourceGeneration,
+            },
+            lineageMaximumGeneration: fence.lineageMaximumGeneration,
+            sourceTerminalDigest: journal.seal.seed.sourceTerminalDigest,
+            source: recoverySource,
+            taskId: journal.seal.seed.taskId,
+            goalRef: exactGoalRef(options.ledgerStore!, journal.seal.seed.taskId),
+            taskDigest: journal.seal.seed.taskDigest,
+            finalizedManifestDigest: journal.seal.seed.finalizedManifestDigest,
+            liveTip: journal.seal.seed.liveTip,
+            managedFingerprint: journal.seal.seed.managedFingerprint,
+            gitReceiptsDigest: journal.seal.seed.gitReceiptsDigest,
           };
           gitEffectBinding = {
             ...resolvedGitEffectBinding,
@@ -2984,6 +3014,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
         ...(journalRecoveryReservation === undefined ? {} : { journalRecoveryReservation }),
+        ...(journalRecoveryClaim === undefined ? {} : { journalRecoveryClaim }),
         ...(resolvedImplementationEvidenceBootstrapRef === undefined
           ? {}
           : {

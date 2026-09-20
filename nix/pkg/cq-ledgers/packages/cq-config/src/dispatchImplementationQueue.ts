@@ -623,11 +623,6 @@ function isConsumedOrdinaryContinuationAncestor(
   const claim = successor.dispatchContinuationClaim;
   const retained = candidate.dispatchContinuationBinding;
   const retainedBinding = retained?.gitEffectBinding;
-  const claimsImmediatePredecessor =
-    claim !== undefined &&
-    claim.source.attestationId === successor.attestationId &&
-    claim.source.generation + 1 === successor.generation;
-  const candidateIsImmediatePredecessor = candidate.generation + 1 === successor.generation;
   const sameManagerBinding =
     retainedBinding !== undefined &&
     ([
@@ -659,12 +654,10 @@ function isConsumedOrdinaryContinuationAncestor(
     claim === undefined ||
     retained === undefined ||
     candidate.attestationId !== successor.attestationId ||
-    candidate.generation >= successor.generation ||
-    !claimsImmediatePredecessor ||
-    (candidateIsImmediatePredecessor &&
-      (claim.source.attestationId !== candidate.attestationId ||
-        claim.source.generation !== candidate.generation ||
-        claim.continuationReference !== retained.continuationReference)) ||
+    candidate.generation + 1 !== successor.generation ||
+    claim.source.attestationId !== candidate.attestationId ||
+    claim.source.generation !== candidate.generation ||
+    claim.continuationReference !== retained.continuationReference ||
     (isAttestationTombstone(candidate) ? candidate.terminalKind : candidate.state) !== "consumed" ||
     control.state !== "terminal" ||
     control.terminal?.reason !== "superseded" ||
@@ -784,6 +777,176 @@ function isGateRejectedCorrectionAncestor(
       receipt.generation <= successor.generation &&
       receipt.oldHead === previousHead &&
       (index !== changedSuffix.length - 1 || receipt.newHead === successorResultCommit)
+    );
+  });
+}
+
+function isJournalRecoveryAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  successorReceipts: readonly DispatchGitChangeReceipt[],
+  successorResultCommit: string,
+  authority: ImplementationQueueAuthority,
+  store: AttestationStore,
+): boolean {
+  if (isAttestationTombstone(candidate)) return false;
+  const claim = successor.dispatchJournalRecoveryClaim;
+  const control = candidate.implementationQueue;
+  const inheritedReceipts = successorBinding.inheritedGitReceipts ?? [];
+  const candidateBinding = candidate.gitEffectBinding;
+  const sameManagerBinding =
+    candidateBinding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).every((field) => candidateBinding[field] === successorBinding[field]);
+  const sameLineageBridge =
+    candidateBinding?.guardedRebaseBridge === undefined
+      ? successorBinding.guardedRebaseBridge === undefined
+      : successorBinding.guardedRebaseBridge !== undefined &&
+        digest(candidateBinding.guardedRebaseBridge) ===
+          digest(successorBinding.guardedRebaseBridge);
+  if (
+    claim === undefined ||
+    control === undefined ||
+    candidate.attestationId !== successor.attestationId ||
+    claim.selectedSource.attestationId !== successor.attestationId ||
+    candidate.generation > claim.selectedSource.generation ||
+    claim.lineageMaximumGeneration < claim.selectedSource.generation ||
+    successor.generation !== claim.lineageMaximumGeneration + 1 ||
+    claim.taskId !== successorBinding.taskId ||
+    claim.taskId !== authority.taskId ||
+    claim.goalRef !== authority.goalRef ||
+    claim.finalizedManifestDigest !== authority.finalizedManifestDigest ||
+    claim.managedFingerprint !== successorBinding.handleFingerprint ||
+    claim.liveTip !== inheritedReceipts.at(-1)?.newHead ||
+    claim.gitReceiptsDigest !== digest(inheritedReceipts) ||
+    inheritedReceipts.length > successorReceipts.length ||
+    digest(inheritedReceipts) !==
+      digest(successorReceipts.slice(0, inheritedReceipts.length)) ||
+    !sameManagerBinding ||
+    !sameLineageBridge ||
+    control.state !== "terminal" ||
+    control.qualification === undefined ||
+    control.terminal?.reason === "gate-rejected" ||
+    control.attempt.taskId !== authority.taskId ||
+    control.attempt.repositoryId !== successorBinding.repositoryId ||
+    control.attempt.worktreePath !== successorBinding.worktreePath ||
+    digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
+    successorResultCommit === control.attempt.resultCommit
+  ) {
+    return false;
+  }
+  const selected = store.read(claim.selectedSource);
+  if (
+    selected === undefined ||
+    selected.terminalDigest !== claim.sourceTerminalDigest ||
+    (isAttestationTombstone(selected)
+      ? selected.terminalKind !== (claim.source.kind === "consumed-fail" ? "consumed" : "aborted")
+      : claim.source.kind === "consumed-fail"
+        ? selected.state !== "consumed" ||
+          selected.dispatchContinuationBinding?.currentRecoverySource?.kind !== "consumed-fail"
+        : selected.state !== "aborted" || selected.abortReason !== claim.source.abortReason)
+  ) {
+    return false;
+  }
+  const sourceClosure = control.attempt.gitReceipts;
+  if (
+    sourceClosure.length >= successorReceipts.length ||
+    digest(sourceClosure) !== digest(successorReceipts.slice(0, sourceClosure.length)) ||
+    sourceClosure.at(-1)?.newHead !== control.attempt.resultCommit ||
+    successorReceipts.at(-1)?.newHead !== successorResultCommit
+  ) {
+    return false;
+  }
+  return successorReceipts.slice(sourceClosure.length).every((receipt, index, suffix) => {
+    const previousHead =
+      index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
+    return (
+      receipt.attestationId === successor.attestationId &&
+      receipt.taskId === successorBinding.taskId &&
+      receipt.generation > candidate.generation &&
+      receipt.generation <= successor.generation &&
+      receipt.oldHead === previousHead
+    );
+  });
+}
+
+function isComposedTerminalAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  successorReceipts: readonly DispatchGitChangeReceipt[],
+  successorResultCommit: string,
+  authority: ImplementationQueueAuthority,
+  priorEnrollment: readonly AttestationRow[],
+  store: AttestationStore,
+  visited: ReadonlySet<string> = new Set(),
+): boolean {
+  const candidateKey = `${candidate.attestationId}#${String(candidate.generation)}`;
+  if (visited.has(candidateKey)) return false;
+  const nextVisited = new Set(visited).add(candidateKey);
+  if (
+    isConsumedGuardedContinuationAncestor(candidate, successor, successorBinding) ||
+    isConsumedOrdinaryContinuationAncestor(candidate, successor, successorBinding) ||
+    isGateRejectedCorrectionAncestor(
+      candidate,
+      successor,
+      successorBinding,
+      successorReceipts,
+      successorResultCommit,
+    ) ||
+    isJournalRecoveryAncestor(
+      candidate,
+      successor,
+      successorBinding,
+      successorReceipts,
+      successorResultCommit,
+      authority,
+      store,
+    )
+  ) {
+    return true;
+  }
+  return priorEnrollment.some((intermediate) => {
+    if (
+      isAttestationTombstone(intermediate) ||
+      intermediate.attestationId !== candidate.attestationId ||
+      intermediate.generation <= candidate.generation ||
+      intermediate.generation >= successor.generation ||
+      intermediate.gitEffectBinding === undefined ||
+      (!isConsumedGuardedContinuationAncestor(
+        candidate,
+        intermediate,
+        intermediate.gitEffectBinding,
+      ) &&
+        !isConsumedOrdinaryContinuationAncestor(
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+        ))
+    ) {
+      return false;
+    }
+    return isComposedTerminalAncestor(
+      intermediate,
+      successor,
+      successorBinding,
+      successorReceipts,
+      successorResultCommit,
+      authority,
+      priorEnrollment,
+      store,
+      nextVisited,
     );
   });
 }
@@ -1078,14 +1241,15 @@ export function enqueueImplementationCandidate(
       (candidate.attestationId !== row.attestationId ||
         candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired" &&
-      !isConsumedGuardedContinuationAncestor(candidate, row, binding) &&
-      !isConsumedOrdinaryContinuationAncestor(candidate, row, binding) &&
-      !isGateRejectedCorrectionAncestor(
+      !isComposedTerminalAncestor(
         candidate,
         row,
         binding,
         request.gitReceipts,
         request.resultCommit,
+        authority,
+        priorEnrollment,
+        deps.store,
       ),
   );
   if (terminalPrior !== undefined) {
