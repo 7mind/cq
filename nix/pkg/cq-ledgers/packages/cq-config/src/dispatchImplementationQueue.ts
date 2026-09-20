@@ -1023,17 +1023,52 @@ function isRetiredGuardedRebaseAncestor(
       "ref",
       "baseCommit",
     ] as const).every((field) => binding[field] === successorBinding[field]);
+  const retainedSource = candidate.stagedRebaseSourceBinding;
+  const candidateContinuation = candidate.dispatchContinuationBinding;
+  const sourceBindingAuthentic =
+    source !== undefined &&
+    retainedSource !== undefined &&
+    digest(source) === digest(retainedSource) &&
+    (() => {
+      const {
+        serverBindingDigest,
+        successor: _successor,
+        ...unsignedSource
+      } = retainedSource;
+      return digest(unsignedSource) === serverBindingDigest;
+    })();
+  const consumedRetirementAuthentic =
+    candidate.state === "consumed" &&
+    candidateContinuation !== undefined &&
+    control !== undefined &&
+    candidateContinuation.liveTip === control.attempt.resultCommit &&
+    digest(candidateContinuation.gitReceipts) ===
+      control.attempt.gitReceiptLineageDigest;
+  const abortedRetirementAuthentic =
+    candidate.state === "aborted" &&
+    candidate.abortReason === "staged-rebase" &&
+    candidate.abortedAt === candidate.terminalAt &&
+    candidate.abortedAt === control?.terminal?.terminalAt &&
+    candidate.abortDetailsDigest === control?.terminal?.detailsDigest &&
+    candidate.abortDetailsDigest === digest(candidate.abortDetails ?? null) &&
+    candidate.terminalDigest ===
+      digest({
+        terminalKind: "aborted",
+        reason: "staged-rebase",
+        detailsDigest: candidate.abortDetailsDigest,
+      });
   return (
     control !== undefined &&
     binding !== undefined &&
     source !== undefined &&
     bridge !== undefined &&
     output !== undefined &&
-    candidate.state === "consumed" &&
+    (consumedRetirementAuthentic || abortedRetirementAuthentic) &&
     candidate.attestationId === successor.attestationId &&
     candidate.generation + 1 === successor.generation &&
     control.state === "staged-rebase-retired" &&
     control.terminal?.reason === "staged-rebase" &&
+    sourceBindingAuthentic &&
     control.qualification !== undefined &&
     candidate.stagedCompletionQualification?.qualificationDigest ===
       control.qualification.qualificationDigest &&
@@ -1695,6 +1730,12 @@ function queuedAbort<Reason extends DispatchTerminalAbortReason>(
       ? {}
       : { gitChangeCapabilityHash: row.gitChangeCapabilityHash }),
     ...(row.gitEffectBinding === undefined ? {} : { gitEffectBinding: row.gitEffectBinding }),
+    ...(row.dispatchContinuationClaim === undefined
+      ? {}
+      : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.dispatchJournalRecoveryClaim === undefined
+      ? {}
+      : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),
     createdAt: row.createdAt,
     ...(row.gateSubmittedAt === undefined ? {} : { gateSubmittedAt: row.gateSubmittedAt }),
     ...(row.gateSubmittedOutputDigest === undefined

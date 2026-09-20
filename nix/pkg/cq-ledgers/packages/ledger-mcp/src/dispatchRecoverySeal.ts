@@ -683,25 +683,67 @@ function stagedRecoverySuccessorEdge(
   const bridge = successorBinding?.guardedRebaseBridge;
   if (control?.state !== "staged-rebase-retired" && bridge === undefined) return null;
   const continuation = sourceRow.dispatchContinuationBinding;
+  const retainedSource = sourceRow.stagedRebaseSourceBinding;
   const output =
     sourceRow.output !== null &&
     typeof sourceRow.output === "object" &&
     !Array.isArray(sourceRow.output)
       ? (sourceRow.output as Readonly<Record<string, DispatchJSONValue>>)
       : undefined;
+  const consumedRetirementAuthentic =
+    sourceRow.state === "consumed" &&
+    continuation !== undefined &&
+    continuation.liveTip === control?.attempt.resultCommit &&
+    receiptClosuresEqual(continuation.gitReceipts, control.attempt.gitReceipts);
+  const abortedRetirementAuthentic =
+    sourceRow.state === "aborted" &&
+    sourceRow.abortReason === "staged-rebase" &&
+    sourceRow.abortedAt === sourceRow.terminalAt &&
+    sourceRow.abortedAt === control?.terminal?.terminalAt &&
+    sourceRow.abortDetailsDigest === control?.terminal?.detailsDigest &&
+    sourceRow.abortDetailsDigest ===
+      dispatchPayloadDigest((sourceRow.abortDetails ?? null) as DispatchJSONValue) &&
+    sourceRow.terminalDigest ===
+      dispatchPayloadDigest({
+        terminalKind: "aborted",
+        reason: "staged-rebase",
+        detailsDigest: sourceRow.abortDetailsDigest,
+      });
+  const sourceReceipts = consumedRetirementAuthentic
+    ? continuation.gitReceipts
+    : abortedRetirementAuthentic
+      ? control!.attempt.gitReceipts
+      : undefined;
+  const sourceBindingAuthentic =
+    staged !== undefined &&
+    retainedSource !== undefined &&
+    dispatchPayloadDigest(staged as unknown as DispatchJSONValue) ===
+      dispatchPayloadDigest(retainedSource as unknown as DispatchJSONValue) &&
+    (() => {
+      const {
+        serverBindingDigest,
+        successor: _successor,
+        ...unsignedSource
+      } = retainedSource;
+      return (
+        dispatchPayloadDigest(unsignedSource as unknown as DispatchJSONValue) ===
+        serverBindingDigest
+      );
+    })();
   if (
     control === undefined ||
     staged === undefined ||
     sourceBinding === undefined ||
     successorBinding === undefined ||
     bridge === undefined ||
-    continuation === undefined ||
+    sourceReceipts === undefined ||
     output === undefined ||
-    sourceRow.state !== "consumed" ||
+    (!consumedRetirementAuthentic && !abortedRetirementAuthentic) ||
     sourceRow.attestationId !== successor.attestationId ||
     sourceRow.generation + 1 !== successor.generation ||
     control.state !== "staged-rebase-retired" ||
     control.terminal?.reason !== "staged-rebase" ||
+    !sourceBindingAuthentic ||
     control.qualification === undefined ||
     sourceRow.stagedCompletionQualification?.qualificationDigest !==
       control.qualification.qualificationDigest ||
@@ -712,8 +754,6 @@ function stagedRecoverySuccessorEdge(
       control.attempt.gitReceiptLineageDigest ||
     dispatchPayloadDigest(control.attempt.gitReceipts as unknown as DispatchJSONValue) !==
       control.attempt.gitReceiptLineageDigest ||
-    continuation.liveTip !== control.attempt.resultCommit ||
-    !receiptClosuresEqual(continuation.gitReceipts, control.attempt.gitReceipts) ||
     staged.source.attestationId !== sourceRow.attestationId ||
     staged.source.generation !== sourceRow.generation ||
     staged.successor?.attestationId !== successor.attestationId ||
@@ -748,7 +788,7 @@ function stagedRecoverySuccessorEdge(
     ontoCommit: bridge.ontoCommit,
     rebasedStartCommit: bridge.rebasedStartCommit,
     oldResultCommit: bridge.oldResultCommit,
-    receipts: continuation.gitReceipts,
+    receipts: sourceReceipts,
   });
 }
 
