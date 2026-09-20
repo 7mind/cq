@@ -3297,6 +3297,312 @@ throw new Error("unexpected controlled cq invocation");
     90_000,
   );
 
+  // expected-failure: tasks:T6573
+  test.failing(
+    "a cancelled sealed successor composes one authenticated manual guarded rebase into continuation",
+    async () => {
+      for (const attestationBackend of ["memory", "sqlite"] as const) {
+        const runner = new GateDummy();
+        const subject = await fixtureWithDispatchBase(
+          runner,
+          "managed",
+          () => "2026-08-12T20:00:00.000Z",
+          false,
+          true,
+          undefined,
+          artifactStore(),
+          attestationBackend,
+        );
+        expect(
+          await subject.capability.abort({
+            ...subject.prepared,
+            reason: "parent-lost",
+          }),
+        ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+        if (subject.capability.resolveRecovery === undefined || subject.ledgerStore === undefined) {
+          throw new Error("manual guarded-rebase recovery fixture is unavailable");
+        }
+        const currentRecovery = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveDispatchRecovery: subject.capability.resolveRecovery,
+          },
+          { operation: "resolve-dispatch-recovery", handle: subject.managed.handle },
+        )) as unknown as DispatchRecoveryResolution;
+        if (currentRecovery.preparation.kind !== "current") {
+          throw new Error("source did not produce a current recovery seal");
+        }
+        const cancelledInput = {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          round: 1,
+          startingCommit: subject.receipt.newHead,
+          validationIntent: "final" as const,
+          priorResultCommit: subject.receipt.newHead,
+        };
+        const cancelled = await subject.capability.prepare({
+          roleId: "implement-worker",
+          input: cancelledInput,
+          idempotencyKey: `T2081-${String(sequence)}-cancelled-sealed-successor`,
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: `implement-worker#cancelled-sealed-${String(sequence)}`,
+            runId: `cancelled-sealed-run-${String(sequence)}`,
+          },
+          recoveryPreparation: currentRecovery.preparation.recoveryPreparation,
+        });
+        if (!cancelled.accepted) throw new Error(`sealed successor refused: ${cancelled.detail}`);
+        expect(
+          await subject.capability.abort({ ...cancelled.handle, reason: "cancelled" }),
+        ).toMatchObject({ state: "aborted", reason: "cancelled" });
+
+        await fs.writeFile(path.join(subject.repositoryRoot, "protected.txt"), "protected\n");
+        await git(subject.repositoryRoot, ["add", "protected.txt"]);
+        await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
+        const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+        const binding = await resolveManagedWorktreeDispatchBinding(
+          {
+            repositoryRoot: subject.repositoryRoot,
+            taskId: subject.managed.handle.taskId,
+            worktreePath: subject.managed.handle.absolutePath,
+            branch: subject.managed.handle.branch,
+          },
+          { stateDir: subject.stateDir },
+        );
+        if (binding === null) throw new Error("manual guarded-rebase binding disappeared");
+        const rebase = await runGuardedRebase({
+          binding,
+          operationId: `t6573-manual-guarded-rebase-${attestationBackend}`,
+          ontoCommit: protectedHead,
+          stateDir: subject.stateDir,
+          runEffect: async () => {
+            const child = Bun.spawn(["git", "rebase", protectedHead], {
+              cwd: binding.worktreePath,
+              env: {
+                ...process.env,
+                GIT_AUTHOR_NAME: "T2081",
+                GIT_AUTHOR_EMAIL: "t2081@example.invalid",
+                GIT_COMMITTER_NAME: "T2081",
+                GIT_COMMITTER_EMAIL: "t2081@example.invalid",
+                GIT_TERMINAL_PROMPT: "0",
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_GLOBAL: "/dev/null",
+              },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [code, stdout, stderr] = await Promise.all([
+              child.exited,
+              new Response(child.stdout).text(),
+              new Response(child.stderr).text(),
+            ]);
+            return { code, stdout, stderr };
+          },
+        });
+        if (rebase.kind !== "finalized") throw new Error("manual guarded rebase did not finalize");
+        expect(rebase.bridge.exactTip).toBe(true);
+        expect(
+          await subject.backend.transact({ kind: "namespace" }, (store) =>
+            store
+              .rows()
+              .filter(
+                (row) =>
+                  !isAttestationTombstone(row) &&
+                  (row.implementationQueue?.state === "staged-rebase-retired" ||
+                    row.stagedRebaseSourceBinding !== undefined),
+              ),
+          ),
+        ).toEqual([]);
+
+        const guardedChild = {
+          childId: `implement-worker#manual-guarded-${String(sequence)}`,
+          runId: `manual-guarded-run-${String(sequence)}`,
+        };
+        const guarded = await subject.capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            ...cancelledInput,
+            baseCommit: protectedHead,
+            round: 2,
+            startingCommit: rebase.bridge.rebasedStartCommit,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-manual-guarded-successor`,
+          timeoutMs: 600_000,
+          expectedChild: guardedChild,
+          reprepareOf: cancelled.handle,
+          guardedRebase: rebase.reference,
+        });
+        if (!guarded.accepted) throw new Error(`manual guarded successor refused: ${guarded.detail}`);
+        const guardedInput = await subject.capability.fetchInput({
+          ...guarded.handle,
+          inputCapability: guarded.prepared.inputCapability,
+        });
+        const guardedInputRecord = guardedInput.input as Readonly<
+          Record<string, DispatchJSONValue>
+        >;
+        const guardedLineage = guardedInputRecord["guardedRebaseLineage"];
+        if (
+          guardedLineage === null ||
+          typeof guardedLineage !== "object" ||
+          Array.isArray(guardedLineage)
+        ) {
+          throw new Error("manual guarded successor omitted its authenticated lineage");
+        }
+        const guardedLineageRecord = guardedLineage as Readonly<
+          Record<string, DispatchJSONValue>
+        >;
+        const changedPaths = (
+          await git(subject.managed.handle.absolutePath, [
+            "diff",
+            "--name-only",
+            protectedHead,
+            rebase.bridge.rebasedStartCommit,
+            "--",
+          ])
+        )
+          .split("\n")
+          .filter((entry) => entry !== "")
+          .sort();
+        expect(
+          await subject.capability.storeResult({
+            resultCapability: guarded.prepared.resultCapability,
+            output: {
+              taskId: "T2081",
+              status: "pass",
+              resultCommit: rebase.bridge.rebasedStartCommit,
+              branch: subject.managed.handle.branch,
+              actualWorktreePath: subject.managed.handle.absolutePath,
+              filesTouched: changedPaths,
+              gitReceipts: [],
+              gitLineage: {
+                kind: "guarded-rebase",
+                guardedRebase: guardedLineageRecord["guardedRebase"],
+                ontoCommit: guardedLineageRecord["ontoCommit"],
+                rebasedStartCommit: guardedLineageRecord["rebasedStartCommit"],
+                exactTip: guardedLineageRecord["exactTip"],
+              },
+              checkSummary: "manual guarded successor requests one ordinary gate",
+              baseVerification: {
+                status: "verified",
+                relation: "descendant",
+                baseCommit: protectedHead,
+                headCommit: rebase.bridge.rebasedStartCommit,
+              },
+              summary: "completed the authenticated manual guarded successor",
+            } as unknown as DispatchJSONValue,
+          }),
+        ).toMatchObject({ state: "gate-pending" });
+        if (
+          subject.capability.qualifyImplementationCandidate === undefined ||
+          subject.capability.coordinateImplementationCandidate === undefined
+        ) {
+          throw new Error("manual guarded successor coordinator is unavailable");
+        }
+        const qualified = await subject.capability.qualifyImplementationCandidate({
+          ...guarded.handle,
+          roleId: "implement-worker",
+          correlationId: guardedChild.childId.slice("implement-worker#".length),
+          childThreadId: `manual-guarded-thread-${String(sequence)}`,
+          expectedRunId: guardedChild.runId,
+          outcome: "completed",
+          exitStatus: 0,
+          observedAt: "2026-08-12T20:00:02.000Z",
+          promptDigest: guarded.prepared.promptProvenance.promptDigest,
+        });
+        if (qualified.state !== "queued") throw new Error("manual guarded successor did not qualify");
+        expect(
+          await subject.capability.coordinateImplementationCandidate({
+            partitionKey: qualified.partitionKey,
+            holderId: `manual-guarded-coordinator-${attestationBackend}`,
+          }),
+        ).toMatchObject({ state: "completed", handle: guarded.handle });
+        expect(runner.requests).toHaveLength(1);
+        expect(await subject.capability.fetch(cancelled.handle)).toMatchObject({
+          state: "aborted",
+          reason: "cancelled",
+        });
+
+        let activeBackend = subject.backend;
+        if (attestationBackend === "sqlite") {
+          await activeBackend.close();
+          activeBackend = new SqliteAttestationBackend({
+            namespace: subject.backend.namespace,
+            dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+          });
+        }
+        const restarted = createDispatchCapability({
+          backend: activeBackend,
+          promptArtifactStore: artifactStore(),
+          ledgerStore: subject.ledgerStore,
+          implementationEvidenceStore: subject.implementationEvidenceStore,
+          repositoryRoot: subject.repositoryRoot,
+          worktreeStateDir: subject.stateDir,
+          supervisedWorkerGateRunner: runner,
+          now: () => "2026-08-12T20:00:00.000Z",
+          randomBytes: sequentialDispatchRandomBytes(sequence * 192),
+        });
+        if (restarted.resolveContinuation === undefined) {
+          throw new Error("manual guarded continuation resolver is unavailable");
+        }
+        const continuation = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveDispatchContinuation: restarted.resolveContinuation,
+          },
+          { operation: "resolve-dispatch-continuation", handle: subject.managed.handle },
+        )) as unknown as {
+          readonly status: "dispatch-continuation-resolved";
+          readonly continuationReference: string;
+          readonly liveTip: string;
+        };
+        expect(continuation).toMatchObject({
+          status: "dispatch-continuation-resolved",
+          liveTip: rebase.bridge.rebasedStartCommit,
+        });
+        const continuedRequest = {
+          roleId: "implement-worker" as const,
+          input: {
+            ...cancelledInput,
+            baseCommit: protectedHead,
+            round: 3,
+            startingCommit: rebase.bridge.rebasedStartCommit,
+            priorResultCommit: rebase.bridge.rebasedStartCommit,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-post-manual-guarded-continuation`,
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: `implement-worker#post-manual-guarded-${String(sequence)}`,
+            runId: `post-manual-guarded-run-${String(sequence)}`,
+          },
+          continuation: continuation.continuationReference,
+        };
+        const continued = await restarted.prepare(continuedRequest);
+        if (!continued.accepted) {
+          throw new Error(
+            `manual guarded continuation refused: ${continued.reason}: ${continued.detail}`,
+          );
+        }
+        expect(await restarted.prepare(continuedRequest)).toEqual(continued);
+        expect(continued.handle).toEqual({
+          attestationId: guarded.handle.attestationId,
+          generation: guarded.handle.generation + 1,
+        });
+        expect(runner.requests).toHaveLength(1);
+        await activeBackend.close();
+      }
+    },
+    90_000,
+  );
+
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner);
