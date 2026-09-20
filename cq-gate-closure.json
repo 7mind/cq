@@ -38,8 +38,14 @@
     },
     {
       "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/probeImplementationEvidenceBuildProvenance.ts",
+      "sha256": "8d50343fb290a04563ae37a07202a1f73b2813b3ee65efcce6155c2d5d284d79",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-      "sha256": "db5dad0f9a74b53c7c6bfc212113f7c4f4fb2e9b6047cbe42005b33cbbb148fc",
+      "sha256": "1df052ec19a7ecf9b7045cedb572c2bbf387c99222368a912ba168c9b13f34e4",
       "targets": []
     },
     {
@@ -198,6 +204,17 @@
       "sha256": "cabe640b88489a0152cf2c1fecae69e75f816137135f92e11c66663ec46f4f6f",
       "targets": [
         "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"
+      ]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-build-provenance.test.ts",
+      "sha256": "86c0940eeb12c48c3ee20c1504123115cf28af8c5c94078bb07061c941fd12d8",
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/cq-cli/src/implementationEvidenceStatus.ts",
+        "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
+        "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
+        "nix/pkg/cq-ledgers/packages/ledger-web/src/serve.ts"
       ]
     },
     {
@@ -530,7 +547,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/implementationEvidenceRuntime.ts",
-      "sha256": "722ac6fda4f9a695249054c112952c59a16a53a9e6f0e49877787975b6577180",
+      "sha256": "b1217b4fee267754cd1383279dcec2890316e8eb27a1b024c3a0b7dc23df81eb",
       "targets": []
     },
     {
@@ -560,13 +577,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
-      "sha256": "f80f800c736c9daa0464bec7b92a4400c084cbaf5a075a89f94eb4ddd86ff38c",
+      "sha256": "59e5ce0626d428978b72cdc88330f189262416110c2b8acb7f3bfab5b314ea8c",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
-      "sha256": "f80f800c736c9daa0464bec7b92a4400c084cbaf5a075a89f94eb4ddd86ff38c",
+      "sha256": "59e5ce0626d428978b72cdc88330f189262416110c2b8acb7f3bfab5b314ea8c",
       "targets": [
         "nix/pkg/cq-ledgers/packages/cq-cli/src/main.ts",
         "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/production-bootstrap-v1.json"
@@ -625,7 +642,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "17042133365b60d7248c47fecc322c475075546e3c7fdfd451bf7cbc1b128d8d",
+      "sha256": "96fb132437baee672e29e36486b15f015ea3753c90aab3964e062c863c48c9be",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-build-provenance.test.ts",
+      "sha256": "86c0940eeb12c48c3ee20c1504123115cf28af8c5c94078bb07061c941fd12d8",
       "targets": []
     },
     {
@@ -667,7 +690,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/src/serve.ts",
-      "sha256": "49d3b0e62dc01ab73f7cb5dad69cac3d700c20b1fca3d11be7f8714e5e785c3f",
+      "sha256": "1935b6f2a7a7d4e63327163e122a3b6d6cfe09f6b01b3b0c07b3dc2110cfd20c",
       "targets": []
     },
     {
@@ -1477,8 +1500,14 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "17042133365b60d7248c47fecc322c475075546e3c7fdfd451bf7cbc1b128d8d",
+      "sha256": "96fb132437baee672e29e36486b15f015ea3753c90aab3964e062c863c48c9be",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-build-provenance.test.ts",
+      "sha256": "86c0940eeb12c48c3ee20c1504123115cf28af8c5c94078bb07061c941fd12d8",
+      "targets": []
     },
     {
       "kind": "path",
