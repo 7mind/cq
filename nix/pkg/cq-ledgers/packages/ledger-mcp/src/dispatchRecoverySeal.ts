@@ -957,12 +957,13 @@ function recoveredSourceRequest(
   };
 }
 
-function journalGuardedRecoverySuccessorEdge(
+async function journalGuardedRecoverySuccessorEdge(
   sourceRow: AttestationEnvelope,
   successor: AttestationEnvelope,
   binding: ManagedWorktreeDispatchBinding,
   journal: CurrentRecoveryCommittedJournal,
-): AuthenticatedStagedRecoveryEdge | null {
+  deps: CurrentRecoveryCaptureDeps,
+): Promise<AuthenticatedStagedRecoveryEdge | null> {
   const sourceBinding = sourceRow.gitEffectBinding;
   const successorBinding = successor.gitEffectBinding;
   const bridge = successorBinding?.guardedRebaseBridge;
@@ -1025,7 +1026,7 @@ function journalGuardedRecoverySuccessorEdge(
     claim.taskDigest !== seed.taskDigest ||
     claim.finalizedManifestDigest !== seed.finalizedManifestDigest ||
     claim.managedFingerprint !== seed.managedFingerprint ||
-    claim.liveTip !== bridge.oldResultCommit ||
+    claim.liveTip !== seed.liveTip ||
     claim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited) ||
     prepareDispatchRequestDigest(sourceRequest) !== sourceRow.prepareRequestDigest ||
     prepareDispatchRequestDigest(successorRequest) !== successor.prepareRequestDigest ||
@@ -1035,6 +1036,45 @@ function journalGuardedRecoverySuccessorEdge(
     throw new CurrentRecoverySealError(
       "journal-conflict",
       "journal recovery cancellation does not authenticate its exact guarded successor",
+    );
+  }
+  let receipts: readonly GitChangeBrokerReceipt[];
+  try {
+    receipts = await deps.resolveReceipts(sourceRow, bridge.oldResultCommit);
+  } catch (error) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      `journal recovery cancellation receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (
+    receipts.length < inherited.length ||
+    !receiptClosuresEqual(receipts.slice(0, inherited.length), inherited)
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "journal recovery cancellation does not retain its claimed receipt closure",
+    );
+  }
+  let sourceTip = claim.liveTip;
+  for (const [index, receipt] of receipts.slice(inherited.length).entries()) {
+    if (
+      receipt.taskId !== binding.taskId ||
+      receipt.attestationId !== sourceRow.attestationId ||
+      receipt.generation !== sourceRow.generation ||
+      receipt.oldHead !== sourceTip
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        `journal recovery cancellation receipt suffix ${String(index)} is foreign or unordered`,
+      );
+    }
+    sourceTip = receipt.newHead;
+  }
+  if (sourceTip !== bridge.oldResultCommit) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "journal recovery cancellation receipt closure does not end at its guarded source tip",
     );
   }
   return Object.freeze({
@@ -1051,7 +1091,7 @@ function journalGuardedRecoverySuccessorEdge(
     ontoCommit: bridge.ontoCommit,
     rebasedStartCommit: bridge.rebasedStartCommit,
     oldResultCommit: bridge.oldResultCommit,
-    receipts: inherited,
+    receipts,
     receiptsArePostGuardedComponent: false,
   });
 }
@@ -1172,12 +1212,13 @@ async function journalSuccessorSource(
             successor,
             coordinates.binding,
           ) ??
-          journalGuardedRecoverySuccessorEdge(
+          (await journalGuardedRecoverySuccessorEdge(
             successorEnvelopes[index - 1]!,
             successor,
             coordinates.binding,
             journal,
-          ));
+            deps,
+          )));
     const inherited = successor.gitEffectBinding?.inheritedGitReceipts;
     const latestTransition = guardedTipTransitions.at(-1);
     const inheritedMatches =
@@ -1243,12 +1284,13 @@ async function journalSuccessorSource(
     const continuation = successor.dispatchContinuationBinding;
     const guardedEdge =
       stagedRecoverySuccessorEdge(successor, successorEnvelopes[index + 1]!, coordinates.binding) ??
-      journalGuardedRecoverySuccessorEdge(
+      (await journalGuardedRecoverySuccessorEdge(
         successor,
         successorEnvelopes[index + 1]!,
         coordinates.binding,
         journal,
-      );
+        deps,
+      ));
     if (guardedEdge !== null) {
       const appended = appendStagedRecoveryEdge(
         coordinates.taskId,

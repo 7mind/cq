@@ -53,7 +53,8 @@ export const GUARDED_REBASE_REFERENCE_PATTERN = /^cq-guarded-rebase:v1:[0-9a-f]{
 /** A prepare-facing rejection: the carry field is the exact launch-envelope path. */
 export class GuardedRebaseRejection extends Error {
   constructor(
-    readonly path: "guardedRebase" | "input.baseCommit" | "input.startingCommit" | "input.priorResultCommit",
+    readonly path:
+      "guardedRebase" | "input.baseCommit" | "input.startingCommit" | "input.priorResultCommit",
     message: string,
   ) {
     super(message);
@@ -165,11 +166,7 @@ function trustedGitEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function runGit(
-  cwd: string,
-  args: readonly string[],
-  input?: Uint8Array,
-): Promise<GitResult> {
+function runGit(cwd: string, args: readonly string[], input?: Uint8Array): Promise<GitResult> {
   const child = Bun.spawn(
     ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
     {
@@ -189,18 +186,21 @@ function runGit(
   });
 }
 
-async function checkedGit(cwd: string, args: readonly string[], input?: Uint8Array): Promise<Buffer> {
+async function checkedGit(
+  cwd: string,
+  args: readonly string[],
+  input?: Uint8Array,
+): Promise<Buffer> {
   const result = await runGit(cwd, args, input);
   if (result.code !== 0) {
-    throw new Error(`git ${args[0] ?? ""} failed (${result.code}): ${result.stderr.toString().trim()}`);
+    throw new Error(
+      `git ${args[0] ?? ""} failed (${result.code}): ${result.stderr.toString().trim()}`,
+    );
   }
   return result.stdout;
 }
 
-function guardedRebaseRoot(
-  binding: ManagedWorktreeDispatchBinding,
-  stateDir?: string,
-): string {
+function guardedRebaseRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
   return join(
     stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry"),
     "guarded-rebase",
@@ -330,16 +330,12 @@ async function readJournal(file: string): Promise<GuardedRebaseJournal | null> {
   }
 }
 
-async function liveTip(
-  binding: ManagedWorktreeDispatchBinding,
-): Promise<string> {
+async function liveTip(binding: ManagedWorktreeDispatchBinding): Promise<string> {
   const symbolic = await runGit(binding.worktreePath, ["symbolic-ref", "--quiet", "HEAD"]);
   if (symbolic.code !== 0 || symbolic.stdout.toString().trim() !== binding.ref) {
     throw new Error("guarded rebase requires the bound task ref checked out");
   }
-  const tip = (
-    await checkedGit(binding.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"])
-  )
+  const tip = (await checkedGit(binding.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"]))
     .toString()
     .trim();
   if (!FULL_COMMIT.test(tip)) throw new Error("guarded rebase observed a malformed live tip");
@@ -402,10 +398,7 @@ async function rangePatchId(
   return patchId;
 }
 
-function bridgeOf(
-  journal: GuardedRebaseJournal,
-  reference: string,
-): DispatchGuardedRebaseBridge {
+function bridgeOf(journal: GuardedRebaseJournal, reference: string): DispatchGuardedRebaseBridge {
   if (
     journal.state !== "finalized" ||
     journal.rebasedStartCommit === undefined ||
@@ -454,7 +447,9 @@ async function finalizeConflicted(
   now: () => Date,
 ): Promise<GuardedRebaseJournal> {
   if (await sequencerActive(binding)) {
-    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError(
+      "guarded rebase has not reached a verified terminal tip",
+    );
   }
   const tip = await liveTip(binding);
   const receipts = await durableHandleConflictContinuationReceipts(binding, deps, {
@@ -474,7 +469,9 @@ async function finalizeConflicted(
     terminal.outcome.kind !== "terminal" ||
     terminal.newHead !== tip
   ) {
-    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError(
+      "guarded rebase has not reached a verified terminal tip",
+    );
   }
   const first = receipts[0]!;
   if (journal.conflictHead !== undefined && first.oldHead !== journal.conflictHead) {
@@ -526,7 +523,11 @@ export async function runGuardedRebase(
   }
   const binding = options.binding;
   const now = options.now ?? (() => new Date());
-  const requestDigest = guardedRebaseRequestDigest(binding, options.operationId, options.ontoCommit);
+  const requestDigest = guardedRebaseRequestDigest(
+    binding,
+    options.operationId,
+    options.ontoCommit,
+  );
   const reference = guardedRebaseReference(requestDigest);
   const root = operationRoot(binding, options.operationId, options.stateDir);
   const journalFile = join(root, "journal.json");
@@ -618,14 +619,18 @@ export async function runGuardedRebase(
         const tip = await liveTip(binding);
         if (tip !== journal.oldResultCommit) {
           // The effect ran to completion but the outcome was never recorded.
-          const receipts = await durableHandleConflictContinuationReceipts(binding, {
-            ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-          }, {
-            headName: binding.ref,
-            originalTip: journal.oldResultCommit,
-            onto: journal.ontoCommit,
-            liveTip: tip,
-          });
+          const receipts = await durableHandleConflictContinuationReceipts(
+            binding,
+            {
+              ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+            },
+            {
+              headName: binding.ref,
+              originalTip: journal.oldResultCommit,
+              onto: journal.ontoCommit,
+              liveTip: tip,
+            },
+          );
           const finalized =
             receipts.length === 0
               ? await finalizeClean(binding, journal, tip, now)
@@ -683,9 +688,7 @@ export async function runGuardedRebase(
           await writeJournal(journalFile, journal);
           return Object.freeze({ kind: "conflict-pending" as const, effect });
         }
-        throw new Error(
-          `guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`,
-        );
+        throw new Error(`guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`);
       }
       const tip = await liveTip(binding);
       const finalized = await finalizeClean(binding, journal, tip, now);
@@ -791,9 +794,7 @@ function composeGuardedRebaseBridge(
   return Object.freeze({
     ...latest,
     oldResultCommit,
-    outcome: chain.some((journal) => journal.outcome === "conflicted")
-      ? "conflicted"
-      : "clean",
+    outcome: chain.some((journal) => journal.outcome === "conflicted") ? "conflicted" : "clean",
     exactTip: chain.every((journal) => journal.exactTip === true),
   });
 }
@@ -896,6 +897,12 @@ export async function materializeGuardedRebaseBridge(
   try {
     await resolveInheritedGitChangeReceipts(options.prior, bridge.oldResultCommit, {
       ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+      ...(options.prior.receiptChainTransition === undefined
+        ? {}
+        : { receiptChainTransition: options.prior.receiptChainTransition }),
+      ...(options.prior.receiptChainTransitions === undefined
+        ? {}
+        : { receiptChainTransitions: options.prior.receiptChainTransitions }),
     });
   } catch (error) {
     throw new GuardedRebaseRejection(
