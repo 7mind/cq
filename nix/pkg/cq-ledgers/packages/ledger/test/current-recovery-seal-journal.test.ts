@@ -49,6 +49,57 @@ function cancelledRecoverySeal() {
   );
 }
 
+function retainedRecoveryJournal(
+  version: 1 | 2,
+  guardedTipTransition: "absent" | "explicit-null",
+) {
+  const template = recoverySeal().seed;
+  const {
+    kind: _kind,
+    version: _version,
+    sourceAbortReason: _sourceAbortReason,
+    promptProvenance: _promptProvenance,
+    prepareRequestDigest: _prepareRequestDigest,
+    inputRecipe: _inputRecipe,
+    overlays: _overlays,
+    gitReceiptsDigest: _gitReceiptsDigest,
+    managedFingerprint,
+    ...input
+  } = template;
+  const seal =
+    version === 1
+      ? recoverySeal()
+      : createCurrentRecoverySeal(
+          createCurrentRecoverySeed({
+            ...input,
+            source: { kind: "consumed-fail", version: 1, status: "fail" },
+            gitBinding: { ...input.gitBinding, handleFingerprint: managedFingerprint },
+          }),
+        );
+  const journal = structuredClone({
+    ...committedJournal(),
+    version,
+    seal,
+  }) as unknown as {
+    version: 1 | 2;
+    seal: {
+      version: 1 | 2;
+      sealDigest: string;
+      sealReference: string;
+      seed: Record<string, unknown>;
+    };
+  };
+  if (guardedTipTransition === "absent") {
+    delete journal.seal.seed["guardedTipTransition"];
+  } else {
+    journal.seal.seed["guardedTipTransition"] = null;
+  }
+  journal.seal.sealDigest = dispatchPayloadDigest(journal.seal.seed);
+  journal.seal.sealReference =
+    `cq-current-recovery-seal:v${String(version)}:${journal.seal.sealDigest}`;
+  return journal;
+}
+
 for (const backend of ["fs", "git-object"]) {
   test(`T6419 refuses recovery seal namespace ${backend} [Blackbox-Atomic]`, () => {
     const seed = recoverySeal().seed;
@@ -181,6 +232,22 @@ for (const factory of factories) {
         state: "committed",
         seal: { seed: { sourceAbortReason: "cancelled" } },
       });
+    });
+
+    // expected-failure: tasks:T6576
+    test.failing("retained v1 and v2 recovery journals preserve absent and explicit-null guarded transitions", async () => {
+      const store = await factory.make();
+      for (const version of [1, 2] as const) {
+        const absent = retainedRecoveryJournal(version, "absent");
+        const explicitNull = retainedRecoveryJournal(version, "explicit-null");
+        expect(absent.seal.sealDigest).not.toBe(explicitNull.seal.sealDigest);
+
+        for (const journal of [absent, explicitNull]) {
+          const original = JSON.stringify(journal);
+          await store.put(journal as never);
+          expect(JSON.stringify(await store.read(RECOVERY_TASK))).toBe(original);
+        }
+      }
     });
 
     test("strict parsing rejects unknown journal members", async () => {
