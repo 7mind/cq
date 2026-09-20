@@ -999,6 +999,40 @@ function isRetiredGuardedRebaseAncestor(
   );
 }
 
+function isComposedTerminalIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  successorGeneration: number,
+  store: AttestationStore,
+): intermediate is AttestationEnvelope {
+  if (
+    isAttestationTombstone(intermediate) ||
+    intermediate.attestationId !== candidate.attestationId ||
+    intermediate.generation <= candidate.generation ||
+    intermediate.generation >= successorGeneration ||
+    intermediate.gitEffectBinding === undefined
+  ) {
+    return false;
+  }
+  return (
+    isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) ||
+    isGateRejectedCorrectionAncestor(
+      candidate,
+      intermediate,
+      intermediate.gitEffectBinding,
+      intermediate.implementationQueue?.attempt.gitReceipts ?? [],
+      intermediate.implementationQueue?.attempt.resultCommit ?? "",
+    ) ||
+    isConsumedGuardedContinuationAncestor(candidate, intermediate, intermediate.gitEffectBinding) ||
+    isConsumedOrdinaryContinuationAncestor(
+      candidate,
+      intermediate,
+      intermediate.gitEffectBinding,
+    ) ||
+    isRetiredGuardedRebaseAncestor(candidate, intermediate, intermediate.gitEffectBinding)
+  );
+}
+
 function isComposedTerminalAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -1037,32 +1071,7 @@ function isComposedTerminalAncestor(
     return true;
   }
   return priorEnrollment.some((intermediate) => {
-    if (
-      isAttestationTombstone(intermediate) ||
-      intermediate.attestationId !== candidate.attestationId ||
-      intermediate.generation <= candidate.generation ||
-      intermediate.generation >= successor.generation ||
-      intermediate.gitEffectBinding === undefined ||
-      (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
-        !isGateRejectedCorrectionAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-          intermediate.implementationQueue?.attempt.gitReceipts ?? [],
-          intermediate.implementationQueue?.attempt.resultCommit ?? "",
-        ) &&
-        !isConsumedGuardedContinuationAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ) &&
-        !isConsumedOrdinaryContinuationAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ) &&
-        !isRetiredGuardedRebaseAncestor(candidate, intermediate, intermediate.gitEffectBinding))
-    ) {
+    if (!isComposedTerminalIntermediate(candidate, intermediate, successor.generation, store)) {
       return false;
     }
     return isComposedTerminalAncestor(
@@ -1077,6 +1086,54 @@ function isComposedTerminalAncestor(
       nextVisited,
     );
   });
+}
+
+function qualificationRefusalDiagnostic(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  priorEnrollment: readonly AttestationRow[],
+  store: AttestationStore,
+): string {
+  const intermediates = priorEnrollment
+    .filter(
+      (intermediate) =>
+        intermediate.attestationId === candidate.attestationId &&
+        intermediate.generation > candidate.generation &&
+        intermediate.generation < successor.generation,
+    )
+    .sort((left, right) => left.generation - right.generation);
+  const boundIntermediates = intermediates.filter(
+    (intermediate) =>
+      !isAttestationTombstone(intermediate) && intermediate.gitEffectBinding !== undefined,
+  );
+  const admittedFirstHops = boundIntermediates.filter((intermediate) =>
+    isComposedTerminalIntermediate(candidate, intermediate, successor.generation, store),
+  );
+  const reason =
+    intermediates.length === 0
+      ? "no-intermediate"
+      : boundIntermediates.length === 0
+        ? "no-bound-intermediate"
+        : admittedFirstHops.length === 0
+          ? "first-hop-rejected"
+          : "downstream-rejected";
+  const firstIntermediate = intermediates[0];
+  const firstAdmitted = admittedFirstHops[0];
+  return (
+    `[qualification-refusal:v1 reason=${reason} ` +
+    `scope=${candidate.attestationId === successor.attestationId ? "same-attestation" : "different-attestation"} ` +
+    `source-generation=${String(candidate.generation)} ` +
+    `source-state=${candidate.implementationQueue?.state ?? "missing"} ` +
+    `source-terminal=${candidate.implementationQueue?.terminal?.reason ?? "none"} ` +
+    `target-generation=${String(successor.generation)} ` +
+    `intermediate-count=${String(intermediates.length)} ` +
+    `bound-intermediate-count=${String(boundIntermediates.length)} ` +
+    `admitted-first-hop-count=${String(admittedFirstHops.length)} ` +
+    `first-intermediate-generation=${firstIntermediate === undefined ? "none" : String(firstIntermediate.generation)} ` +
+    `first-intermediate-state=${firstIntermediate?.implementationQueue?.state ?? "none"} ` +
+    `first-intermediate-terminal=${firstIntermediate?.implementationQueue?.terminal?.reason ?? "none"} ` +
+    `first-admitted-generation=${firstAdmitted === undefined ? "none" : String(firstAdmitted.generation)}]`
+  );
 }
 
 function runnable(control: ImplementationQueueControl): boolean {
@@ -1382,7 +1439,7 @@ export function enqueueImplementationCandidate(
   if (terminalPrior !== undefined) {
     throw new ImplementationQueueConflictError(
       "already-terminal",
-      `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected`,
+      `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected ${qualificationRefusalDiagnostic(terminalPrior, row, priorEnrollment, deps.store)}`,
     );
   }
   const retiredSourceRows = priorEnrollment.filter((candidate) => {
