@@ -1829,25 +1829,25 @@ export function acquireImplementationCandidate(
       partitionRevision: revision,
     });
   }
-  if (
-    request.expectedCandidate !== undefined &&
-    (front.attestationId !== request.expectedCandidate.attestationId ||
-      front.generation !== request.expectedCandidate.generation)
-  ) {
-    return Object.freeze({
-      state: "blocked" as const,
-      partitionKey: request.partitionKey,
-      partitionRevision: revision,
-      front: Object.freeze({
-        attestationId: front.attestationId,
-        generation: front.generation,
-      }),
-      frontState: front.implementationQueue!.state,
-    });
-  }
   const leased = livePartitionLease(deps.store, request.partitionKey);
   if (leased !== undefined) {
     const leasedControl = leased.implementationQueue!;
+    if (
+      request.expectedCandidate !== undefined &&
+      (leased.attestationId !== request.expectedCandidate.attestationId ||
+        leased.generation !== request.expectedCandidate.generation)
+    ) {
+      return Object.freeze({
+        state: "blocked" as const,
+        partitionKey: request.partitionKey,
+        partitionRevision: revision,
+        front: Object.freeze({
+          attestationId: leased.attestationId,
+          generation: leased.generation,
+        }),
+        frontState: "leased" as const,
+      });
+    }
     if (leasedControl.lease?.holderId === request.holderId) {
       return Object.freeze({
         state: "leased" as const,
@@ -1865,6 +1865,22 @@ export function acquireImplementationCandidate(
         generation: leased.generation,
       }),
       frontState: "leased" as const,
+    });
+  }
+  if (
+    request.expectedCandidate !== undefined &&
+    (front.attestationId !== request.expectedCandidate.attestationId ||
+      front.generation !== request.expectedCandidate.generation)
+  ) {
+    return Object.freeze({
+      state: "blocked" as const,
+      partitionKey: request.partitionKey,
+      partitionRevision: revision,
+      front: Object.freeze({
+        attestationId: front.attestationId,
+        generation: front.generation,
+      }),
+      frontState: front.implementationQueue!.state,
     });
   }
   const control = front.implementationQueue!;

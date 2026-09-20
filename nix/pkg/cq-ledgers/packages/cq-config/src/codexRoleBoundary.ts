@@ -610,6 +610,12 @@ export async function executeCodexImplementationCandidateCoordinator(
   for (;;) {
     const outcome = await executeCodexImplementationCandidateCoordinatorAttempt(input);
     if (outcome.state === "completed") {
+      if (
+        outcome.handle.attestationId === input.handle.attestationId &&
+        outcome.handle.generation === input.handle.generation
+      ) {
+        return outcome;
+      }
       completed = outcome;
       blockedDeadlineMs = Date.now() + input.timeoutMs;
       continue;
