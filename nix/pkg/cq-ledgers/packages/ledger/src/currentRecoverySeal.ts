@@ -709,7 +709,7 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
     guardedTipTransition !== null &&
     (guardedTipTransition.successor.attestationId ===
       seed.selectedSourceHandle.attestationId &&
-    guardedTipTransition.successor.generation === seed.selectedSourceHandle.generation
+    guardedTipTransition.successor.generation <= seed.selectedSourceHandle.generation
       ? true
       : seed.gitReceipts.at(-1)?.attestationId ===
           seed.selectedSourceHandle.attestationId &&

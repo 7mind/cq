@@ -757,7 +757,7 @@ function stagedRecoverySuccessorEdge(
   const sourceBinding = sourceRow.gitEffectBinding;
   const successorBinding = successor.gitEffectBinding;
   const bridge = successorBinding?.guardedRebaseBridge;
-  if (control?.state !== "staged-rebase-retired" && bridge === undefined) return null;
+  if (control?.state !== "staged-rebase-retired" || bridge === undefined) return null;
   const continuation = sourceRow.dispatchContinuationBinding;
   const retainedSource = sourceRow.stagedRebaseSourceBinding;
   const output =

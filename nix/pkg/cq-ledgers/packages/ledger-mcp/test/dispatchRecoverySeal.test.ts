@@ -959,8 +959,7 @@ describe("protected current dispatch-recovery capture", () => {
     ).rejects.toMatchObject({ reason: "lineage-active" });
   });
 
-  // expected-failure: tasks:T6576
-  test.failing("a staged-retired consumed recovery intermediate admits its ordinary cancelled successor", async () => {
+  test("a staged-retired consumed recovery intermediate admits its ordinary cancelled successor", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
     const rows: AttestationRow[] = [abortedEnvelope({ generation: 2 })];
     const promotionCoordinates = {

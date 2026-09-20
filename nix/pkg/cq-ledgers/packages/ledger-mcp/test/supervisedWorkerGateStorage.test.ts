@@ -3958,6 +3958,7 @@ throw new Error("unexpected controlled cq invocation");
 
   async function exerciseCancelledRecoveryContinuation(
     continuationKind: "ordinary" | "guarded-rebase",
+    stageCurrentSourceBeforeContinuation: boolean,
     cancelGuardedSuccessor: boolean,
     attestationBackend: "memory" | "sqlite",
     guardedFreshReceiptCount: 0 | 1 | 2,
@@ -4261,7 +4262,7 @@ throw new Error("unexpected controlled cq invocation");
     if (successorQualified.state !== "queued") {
       throw new Error("sealed successor did not qualify");
     }
-    if (cancelGuardedSuccessor) {
+    if (stageCurrentSourceBeforeContinuation) {
       await fs.writeFile(
         path.join(subject.repositoryRoot, "staged-advance.txt"),
         "advance before staged retirement\n",
@@ -4704,19 +4705,38 @@ throw new Error("unexpected controlled cq invocation");
           },
         ],
       });
+      const resumedFiles = (
+        await git(subject.managed.handle.absolutePath, [
+          "diff",
+          "--name-only",
+          guardedRecoveryBase,
+          resumedReceipt.newHead,
+          "--",
+        ])
+      )
+        .split("\n")
+        .filter((entry) => entry !== "")
+        .sort();
       expect(
         await activeCapability.storeResult({
           resultCapability: resumed.prepared.resultCapability,
           output: {
             ...subject.output,
             resultCommit: resumedReceipt.newHead,
-            filesTouched: ["file.txt", "resumed.txt"],
+            filesTouched: resumedFiles,
             gitReceipts: [{
               ...resumedReceipt,
               objectOids: [...resumedReceipt.objectOids],
               paths: [...resumedReceipt.paths],
             }],
             checkSummary: "resumed guarded recovery checks passed",
+            mutationTable: [
+              {
+                mutation: "remove the authenticated guarded receipt component",
+                observed: "current-seal recapture rejects the incomplete receipt closure",
+                restored: "the resumed worker validates the complete recovery closure",
+              },
+            ],
             baseVerification: {
               status: "verified",
               relation: "descendant",
@@ -4873,25 +4893,32 @@ throw new Error("unexpected controlled cq invocation");
   test(
     "a cancelled sealed recovery successor composes into an ordinary consumed continuation",
     async () => {
-      await exerciseCancelledRecoveryContinuation("ordinary", false, "sqlite", 0, false);
+      await exerciseCancelledRecoveryContinuation("ordinary", false, false, "sqlite", 0, false);
     },
   );
 
   test(
     "a cancelled sealed recovery successor composes into an authenticated guarded rebase",
     async () => {
-      await exerciseCancelledRecoveryContinuation("guarded-rebase", false, "sqlite", 0, false);
+      await exerciseCancelledRecoveryContinuation(
+        "guarded-rebase",
+        false,
+        false,
+        "sqlite",
+        0,
+        false,
+      );
     },
   );
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "a staged-retired recovery source and its cancelled guarded successor advance the current seal",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
         await exerciseCancelledRecoveryContinuation(
           "guarded-rebase",
           true,
+          false,
           attestationBackend,
           0,
           false,
@@ -4907,6 +4934,7 @@ throw new Error("unexpected controlled cq invocation");
         for (const receiptCount of [0, 1, 2] as const) {
           await exerciseCancelledRecoveryContinuation(
             "guarded-rebase",
+            false,
             true,
             attestationBackend,
             receiptCount,
