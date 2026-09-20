@@ -3317,12 +3317,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   rebasedStartCommit: transition.rebasedStartCommit,
                   receiptPrefixLength: transition.receiptPrefixLength,
                 };
-                receiptChainTransitions = transitions.map((entry) => ({
-                  oldResultCommit: entry.oldResultCommit,
-                  ontoCommit: entry.ontoCommit,
-                  rebasedStartCommit: entry.rebasedStartCommit,
-                  receiptPrefixLength: entry.receiptPrefixLength,
-                }));
+                if (transitions.length >= 2) {
+                  receiptChainTransitions = transitions.map((entry) => ({
+                    oldResultCommit: entry.oldResultCommit,
+                    ontoCommit: entry.ontoCommit,
+                    rebasedStartCommit: entry.rebasedStartCommit,
+                    receiptPrefixLength: entry.receiptPrefixLength,
+                  }));
+                }
               }
             }
             const normalized = await withinStagingDeadline(
