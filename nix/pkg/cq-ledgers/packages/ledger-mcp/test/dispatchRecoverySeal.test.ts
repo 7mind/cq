@@ -1025,7 +1025,9 @@ describe("protected current dispatch-recovery capture", () => {
       attestationId: RECOVERY_ATTESTATION,
       generation: 4,
     });
-    expect(promoted.seed.gitReceipts).toEqual(RECOVERY_RECEIPTS);
+    expect(
+      dispatchPayloadDigest(promoted.seed.gitReceipts as unknown as DispatchJSONValue),
+    ).toBe(dispatchPayloadDigest(RECOVERY_RECEIPTS as unknown as DispatchJSONValue));
   });
 
   test("invalid broker journals and excluded terminal reasons never become sources", async () => {
