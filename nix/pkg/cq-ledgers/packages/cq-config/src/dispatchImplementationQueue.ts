@@ -815,6 +815,78 @@ function isJournalRecoveryAncestor(
       : successorBinding.guardedRebaseBridge !== undefined &&
         digest(candidateBinding.guardedRebaseBridge) ===
           digest(successorBinding.guardedRebaseBridge);
+  const selected = claim === undefined ? undefined : store.read(claim.selectedSource);
+  const stagedRecoverySources =
+    selected === undefined || isAttestationTombstone(selected) || selected.gitEffectBinding === undefined
+      ? []
+      : store.rows().filter(
+          (row) =>
+            row.implementationQueue?.stagedRebaseSource?.successor?.attestationId ===
+              selected.attestationId &&
+            row.implementationQueue.stagedRebaseSource.successor.generation ===
+              selected.generation &&
+            isRetiredGuardedRebaseAncestor(row, selected, selected.gitEffectBinding!),
+        );
+  const stagedRecoveryBridge =
+    stagedRecoverySources.length === 1 &&
+    selected !== undefined &&
+    !isAttestationTombstone(selected)
+      ? selected.gitEffectBinding?.guardedRebaseBridge
+      : undefined;
+  const guardedRecoveryTipMatches =
+    stagedRecoveryBridge !== undefined &&
+    claim?.liveTip === stagedRecoveryBridge.rebasedStartCommit &&
+    inheritedReceipts.at(-1)?.newHead === stagedRecoveryBridge.oldResultCommit;
+  const selectedTerminalMatches =
+    selected !== undefined &&
+    selected.terminalDigest === claim?.sourceTerminalDigest &&
+    (isAttestationTombstone(selected)
+      ? selected.terminalKind === (claim?.source.kind === "consumed-fail" ? "consumed" : "aborted")
+      : claim?.source.kind === "consumed-fail"
+        ? selected.state === "consumed" &&
+          selected.dispatchContinuationBinding?.currentRecoverySource?.kind === "consumed-fail"
+        : selected.state === "aborted" && selected.abortReason === claim?.source.abortReason);
+  if (
+    claim !== undefined &&
+    candidateBinding !== undefined &&
+    ((candidate.attestationId === claim.selectedSource.attestationId &&
+      candidate.generation === claim.selectedSource.generation) ||
+      stagedRecoverySources.some(
+        (source) =>
+          source.attestationId === candidate.attestationId &&
+          source.generation === candidate.generation,
+      )) &&
+    candidate.attestationId === successor.attestationId &&
+    successor.generation === claim.lineageMaximumGeneration + 1 &&
+    claim.taskId === successorBinding.taskId &&
+    claim.taskId === authority.taskId &&
+    claim.goalRef === authority.goalRef &&
+    claim.finalizedManifestDigest === authority.finalizedManifestDigest &&
+    claim.managedFingerprint === successorBinding.handleFingerprint &&
+    claim.gitReceiptsDigest === digest(inheritedReceipts) &&
+    inheritedReceipts.length <= successorReceipts.length &&
+    digest(inheritedReceipts) ===
+      digest(successorReceipts.slice(0, inheritedReceipts.length)) &&
+    sameManagerBinding &&
+    selectedTerminalMatches &&
+    (claim.liveTip === inheritedReceipts.at(-1)?.newHead || guardedRecoveryTipMatches) &&
+    successorResultCommit !== claim.liveTip
+  ) {
+    const suffix = successorReceipts.slice(inheritedReceipts.length);
+    return (
+      suffix.length > 0 &&
+      suffix.every((receipt, index) => {
+        const previousHead = index === 0 ? claim.liveTip : suffix[index - 1]?.newHead;
+        return (
+          receipt.attestationId === successor.attestationId &&
+          receipt.taskId === successorBinding.taskId &&
+          receipt.generation === successor.generation &&
+          receipt.oldHead === previousHead &&
+          (index !== suffix.length - 1 || receipt.newHead === successorResultCommit)
+        );
+      })
+    );
+  }
   if (
     claim === undefined ||
     control === undefined ||
@@ -828,7 +900,7 @@ function isJournalRecoveryAncestor(
     claim.goalRef !== authority.goalRef ||
     claim.finalizedManifestDigest !== authority.finalizedManifestDigest ||
     claim.managedFingerprint !== successorBinding.handleFingerprint ||
-    claim.liveTip !== inheritedReceipts.at(-1)?.newHead ||
+    (claim.liveTip !== inheritedReceipts.at(-1)?.newHead && !guardedRecoveryTipMatches) ||
     claim.gitReceiptsDigest !== digest(inheritedReceipts) ||
     inheritedReceipts.length > successorReceipts.length ||
     digest(inheritedReceipts) !==
@@ -846,17 +918,7 @@ function isJournalRecoveryAncestor(
   ) {
     return false;
   }
-  const selected = store.read(claim.selectedSource);
-  if (
-    selected === undefined ||
-    selected.terminalDigest !== claim.sourceTerminalDigest ||
-    (isAttestationTombstone(selected)
-      ? selected.terminalKind !== (claim.source.kind === "consumed-fail" ? "consumed" : "aborted")
-      : claim.source.kind === "consumed-fail"
-        ? selected.state !== "consumed" ||
-          selected.dispatchContinuationBinding?.currentRecoverySource?.kind !== "consumed-fail"
-        : selected.state !== "aborted" || selected.abortReason !== claim.source.abortReason)
-  ) {
+  if (!selectedTerminalMatches) {
     return false;
   }
   const sourceClosure = control.attempt.gitReceipts;
@@ -871,12 +933,16 @@ function isJournalRecoveryAncestor(
   return successorReceipts.slice(sourceClosure.length).every((receipt, index, suffix) => {
     const previousHead =
       index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
+    const crossesGuardedRecovery =
+      stagedRecoveryBridge !== undefined &&
+      previousHead === stagedRecoveryBridge.oldResultCommit &&
+      receipt.oldHead === stagedRecoveryBridge.rebasedStartCommit;
     return (
       receipt.attestationId === successor.attestationId &&
       receipt.taskId === successorBinding.taskId &&
       receipt.generation > candidate.generation &&
       receipt.generation <= successor.generation &&
-      receipt.oldHead === previousHead
+      (receipt.oldHead === previousHead || crossesGuardedRecovery)
     );
   });
 }
@@ -1040,11 +1106,18 @@ function isComposedTerminalAncestor(
       intermediate.generation >= successor.generation ||
       intermediate.gitEffectBinding === undefined ||
       (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
+        !isGateRejectedCorrectionAncestor(
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+          intermediate.implementationQueue?.attempt.gitReceipts ?? [],
+          intermediate.implementationQueue?.attempt.resultCommit ?? "",
+        ) &&
         !isConsumedGuardedContinuationAncestor(
-        candidate,
-        intermediate,
-        intermediate.gitEffectBinding,
-      ) &&
+          candidate,
+          intermediate,
+          intermediate.gitEffectBinding,
+        ) &&
         !isConsumedOrdinaryContinuationAncestor(
           candidate,
           intermediate,
@@ -1361,7 +1434,6 @@ export function enqueueImplementationCandidate(
     (candidate) =>
       (candidate.attestationId !== row.attestationId ||
         candidate.generation !== row.generation) &&
-      candidate.implementationQueue!.state !== "staged-rebase-retired" &&
       !isComposedTerminalAncestor(
         candidate,
         row,

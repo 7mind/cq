@@ -506,8 +506,7 @@ describe("runGuardedRebase", () => {
     }
   });
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "independent guarded-rebase transactions select only their journal-bound receipt component",
     async () => {
       const fixture = await seedGuarded({ conflict: true });

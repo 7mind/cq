@@ -115,6 +115,13 @@ export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir"> 
   readonly diffBaseCommit?: string;
   /** Absolute staging deadline propagated to each checked Git subprocess. */
   readonly deadlineMs?: number;
+  /** Authenticated recovery-journal bridge between two durable receipt components. */
+  readonly receiptChainTransition?: {
+    readonly oldResultCommit: string;
+    readonly ontoCommit: string;
+    readonly rebasedStartCommit: string;
+    readonly receiptPrefixLength: number;
+  };
 };
 
 function assertEvidenceDeadline(deadlineMs: number | undefined): void {
@@ -399,12 +406,34 @@ export async function resolveInheritedGitChangeReceipts(
   const current = await committedDispatchReceipts(authorization, resultCommit, deps);
   const combined = [...inherited, ...current];
   if (combined.length === 0) return Object.freeze([]);
+  const transition = deps.receiptChainTransition;
+  if (
+    transition !== undefined &&
+    (!Number.isSafeInteger(transition.receiptPrefixLength) ||
+      transition.receiptPrefixLength < 1 ||
+      transition.receiptPrefixLength > inherited.length ||
+      combined[transition.receiptPrefixLength - 1]?.newHead !==
+        transition.oldResultCommit ||
+      combined[transition.receiptPrefixLength]?.oldHead !==
+        transition.rebasedStartCommit)
+  ) {
+    throw new Error("inherited receipt-chain transition does not bridge its authenticated tips");
+  }
   for (const [index, receipt] of combined.entries()) {
     if (receipt.taskId !== authorization.taskId) {
       throw new Error(`inherited receipt chain entry ${index} has a foreign task identity`);
     }
     const preceding = combined[index - 1];
-    if (preceding !== undefined && receipt.oldHead !== preceding.newHead) {
+    const crossesRecoveryTransition =
+      transition !== undefined &&
+      index === transition.receiptPrefixLength &&
+      preceding?.newHead === transition.oldResultCommit &&
+      receipt.oldHead === transition.rebasedStartCommit;
+    if (
+      preceding !== undefined &&
+      receipt.oldHead !== preceding.newHead &&
+      !crossesRecoveryTransition
+    ) {
       throw new Error(`inherited receipt chain diverges at entry ${index}`);
     }
   }
@@ -1180,6 +1209,21 @@ export async function validateGitChangeBrokerResultEvidence(
     }
   }
   const durableReceipts = [...inheritedReceipts, ...currentReceipts];
+  const receiptChainTransition = deps.receiptChainTransition;
+  if (
+    receiptChainTransition !== undefined &&
+    (!Number.isSafeInteger(receiptChainTransition.receiptPrefixLength) ||
+      receiptChainTransition.receiptPrefixLength < 1 ||
+      receiptChainTransition.receiptPrefixLength > inheritedReceipts.length ||
+      durableReceipts[receiptChainTransition.receiptPrefixLength - 1]?.newHead !==
+        receiptChainTransition.oldResultCommit ||
+      (receiptChainTransition.receiptPrefixLength < durableReceipts.length
+        ? durableReceipts[receiptChainTransition.receiptPrefixLength]?.oldHead !==
+          receiptChainTransition.rebasedStartCommit
+        : evidence.resultCommit !== receiptChainTransition.rebasedStartCommit))
+  ) {
+    throw new Error("recovery receipt-chain transition does not bridge its authenticated tips");
+  }
   const bridge = authorization.guardedRebaseBridge;
   if (bridge === undefined) {
     if (evidence.gitLineage !== undefined) {
@@ -1243,7 +1287,16 @@ export async function validateGitChangeBrokerResultEvidence(
     ) {
       throw new Error(`broker receipt chain entry ${index} contains a malformed Git oid`);
     }
-    if (previousHead !== undefined && receipt.oldHead !== previousHead) {
+    const crossesRecoveryTransition =
+      receiptChainTransition !== undefined &&
+      index === receiptChainTransition.receiptPrefixLength &&
+      previousHead === receiptChainTransition.oldResultCommit &&
+      receipt.oldHead === receiptChainTransition.rebasedStartCommit;
+    if (
+      previousHead !== undefined &&
+      receipt.oldHead !== previousHead &&
+      !crossesRecoveryTransition
+    ) {
       throw new Error(`broker receipt chain entry ${index} does not continue the preceding head`);
     }
     const paths = receipt.paths.map((entryPath, pathIndex) =>
@@ -1306,7 +1359,15 @@ export async function validateGitChangeBrokerResultEvidence(
   if (!FULL_OID.test(diffBaseCommit)) {
     throw new Error("broker result diff base is not a full Git oid");
   }
-  const trustedOrigin = bridge?.rebasedStartCommit ?? diffBaseCommit;
+  if (
+    receiptChainTransition !== undefined &&
+    receiptChainTransition.ontoCommit !== diffBaseCommit
+  ) {
+    throw new Error("recovery receipt-chain transition changed its guarded onto commit");
+  }
+  const trustedOrigin =
+    bridge?.rebasedStartCommit ??
+    (receiptChainTransition === undefined ? diffBaseCommit : authorization.baseCommit);
   if (first !== undefined && first.oldHead !== trustedOrigin) {
     throw new Error("broker receipt chain does not begin at the exact trusted origin");
   }

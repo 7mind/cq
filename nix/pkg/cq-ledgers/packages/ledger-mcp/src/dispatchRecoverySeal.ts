@@ -318,7 +318,9 @@ function sourcesEqual(
     dispatchPayloadDigest(left.source as unknown as DispatchJSONValue) ===
       dispatchPayloadDigest(right.source as unknown as DispatchJSONValue) &&
     left.sourceTerminalDigest === right.sourceTerminalDigest &&
-    left.gitReceiptsDigest === right.gitReceiptsDigest
+    left.gitReceiptsDigest === right.gitReceiptsDigest &&
+    dispatchPayloadDigest((left.guardedTipTransition ?? null) as DispatchJSONValue) ===
+      dispatchPayloadDigest((right.guardedTipTransition ?? null) as DispatchJSONValue)
   );
 }
 
@@ -341,6 +343,9 @@ function sealForSource(
     gitBinding: coordinates.binding,
     gitReceipts: source.gitReceipts,
     liveTip: coordinates.liveTip,
+    ...(source.guardedTipTransition === undefined
+      ? {}
+      : { guardedTipTransition: source.guardedTipTransition }),
     capturedAt,
   } as const;
   if (source.source.kind === "consumed-fail") {
@@ -655,6 +660,98 @@ function journalSuccessorRows(
   });
 }
 
+interface AuthenticatedStagedRecoveryEdge {
+  readonly source: { readonly attestationId: string; readonly generation: number };
+  readonly successor: { readonly attestationId: string; readonly generation: number };
+  readonly guardedRebase: string;
+  readonly requestDigest: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+  readonly oldResultCommit: string;
+  readonly receipts: readonly GitChangeBrokerReceipt[];
+}
+
+function stagedRecoverySuccessorEdge(
+  sourceRow: AttestationEnvelope,
+  successor: AttestationEnvelope,
+  binding: ManagedWorktreeDispatchBinding,
+): AuthenticatedStagedRecoveryEdge | null {
+  const control = sourceRow.implementationQueue;
+  const staged = control?.stagedRebaseSource;
+  const sourceBinding = sourceRow.gitEffectBinding;
+  const successorBinding = successor.gitEffectBinding;
+  const bridge = successorBinding?.guardedRebaseBridge;
+  if (control?.state !== "staged-rebase-retired" && bridge === undefined) return null;
+  const continuation = sourceRow.dispatchContinuationBinding;
+  const output =
+    sourceRow.output !== null &&
+    typeof sourceRow.output === "object" &&
+    !Array.isArray(sourceRow.output)
+      ? (sourceRow.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (
+    control === undefined ||
+    staged === undefined ||
+    sourceBinding === undefined ||
+    successorBinding === undefined ||
+    bridge === undefined ||
+    continuation === undefined ||
+    output === undefined ||
+    sourceRow.state !== "consumed" ||
+    sourceRow.attestationId !== successor.attestationId ||
+    sourceRow.generation + 1 !== successor.generation ||
+    control.state !== "staged-rebase-retired" ||
+    control.terminal?.reason !== "staged-rebase" ||
+    control.qualification === undefined ||
+    sourceRow.stagedCompletionQualification?.qualificationDigest !==
+      control.qualification.qualificationDigest ||
+    output["status"] !== "pass" ||
+    output["taskId"] !== control.attempt.taskId ||
+    output["resultCommit"] !== control.attempt.resultCommit ||
+    dispatchPayloadDigest(output["gitReceipts"] ?? []) !==
+      control.attempt.gitReceiptLineageDigest ||
+    dispatchPayloadDigest(control.attempt.gitReceipts as unknown as DispatchJSONValue) !==
+      control.attempt.gitReceiptLineageDigest ||
+    continuation.liveTip !== control.attempt.resultCommit ||
+    !receiptClosuresEqual(continuation.gitReceipts, control.attempt.gitReceipts) ||
+    staged.source.attestationId !== sourceRow.attestationId ||
+    staged.source.generation !== sourceRow.generation ||
+    staged.successor?.attestationId !== successor.attestationId ||
+    staged.successor.generation !== successor.generation ||
+    staged.sourceResultCommit !== control.attempt.resultCommit ||
+    staged.sourceResultCommit !== bridge.oldResultCommit ||
+    staged.gitReceiptLineageDigest !== control.attempt.gitReceiptLineageDigest ||
+    staged.repositoryId !== binding.repositoryId ||
+    resolve(staged.worktreePath) !== binding.worktreePath ||
+    staged.guardedRebase !== bridge.guardedRebase ||
+    staged.guardedRebaseJournalDigest !== bridge.requestDigest ||
+    staged.ontoCommit !== bridge.ontoCommit ||
+    !bindingMatches(sourceBinding, binding) ||
+    !bindingMatches(successorBinding, binding)
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "staged recovery retirement does not authenticate its exact guarded successor",
+    );
+  }
+  return Object.freeze({
+    source: Object.freeze({
+      attestationId: sourceRow.attestationId,
+      generation: sourceRow.generation,
+    }),
+    successor: Object.freeze({
+      attestationId: successor.attestationId,
+      generation: successor.generation,
+    }),
+    guardedRebase: bridge.guardedRebase,
+    requestDigest: bridge.requestDigest,
+    ontoCommit: bridge.ontoCommit,
+    rebasedStartCommit: bridge.rebasedStartCommit,
+    oldResultCommit: bridge.oldResultCommit,
+    receipts: continuation.gitReceipts,
+  });
+}
+
 async function journalSuccessorSource(
   rows: readonly AttestationRow[],
   journal: CurrentRecoveryCommittedJournal,
@@ -696,6 +793,7 @@ async function journalSuccessorSource(
   }
   let inheritedReceipts: readonly GitChangeBrokerReceipt[] = seed.gitReceipts;
   let inheritedTip = seed.liveTip;
+  let guardedTipTransition = seed.guardedTipTransition;
   for (const [index, successor] of successorEnvelopes.entries()) {
     if (!bindingMatches(successor.gitEffectBinding, coordinates.binding)) {
       throw new CurrentRecoverySealError(
@@ -703,8 +801,25 @@ async function journalSuccessorSource(
         "journal recovery successor carries a foreign or stale managed binding",
       );
     }
+    const incomingStagedEdge =
+      index === 0
+        ? null
+        : stagedRecoverySuccessorEdge(
+            successorEnvelopes[index - 1]!,
+            successor,
+            coordinates.binding,
+          );
     const inherited = successor.gitEffectBinding?.inheritedGitReceipts;
-    if (inherited === undefined || !receiptClosuresEqual(inherited, inheritedReceipts)) {
+    const inheritedMatches =
+      incomingStagedEdge === null
+        ? inherited !== undefined && receiptClosuresEqual(inherited, inheritedReceipts)
+        : inherited === undefined ||
+          (inherited.length <= inheritedReceipts.length &&
+            receiptClosuresEqual(
+              inherited,
+              inheritedReceipts.slice(0, inherited.length),
+            ));
+    if (!inheritedMatches) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
         "journal recovery successor does not inherit the preceding receipt closure",
@@ -722,11 +837,29 @@ async function journalSuccessorSource(
       );
     }
     const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
+    const expectedBaseCommit = incomingStagedEdge?.ontoCommit ?? coordinates.binding.baseCommit;
+    const expectedStartingCommit = incomingStagedEdge?.rebasedStartCommit ?? inheritedTip;
+    if (incomingStagedEdge !== null) {
+      guardedTipTransition = Object.freeze({
+        kind: "cq-current-recovery-guarded-tip-transition" as const,
+        version: 1 as const,
+        source: incomingStagedEdge.source,
+        successor: incomingStagedEdge.successor,
+        guardedRebase: incomingStagedEdge.guardedRebase,
+        requestDigest: incomingStagedEdge.requestDigest,
+        oldResultCommit: incomingStagedEdge.oldResultCommit,
+        ontoCommit: incomingStagedEdge.ontoCommit,
+        rebasedStartCommit: incomingStagedEdge.rebasedStartCommit,
+        receiptPrefixLength: inheritedReceipts.length,
+      });
+    }
     if (
       input["taskId"] !== coordinates.taskId ||
       input["branch"] !== coordinates.binding.branch ||
-      input["baseCommit"] !== coordinates.binding.baseCommit ||
-      input["startingCommit"] !== inheritedTip
+      input["baseCommit"] !== expectedBaseCommit ||
+      input["startingCommit"] !== expectedStartingCommit ||
+      (incomingStagedEdge !== null &&
+        input["priorResultCommit"] !== incomingStagedEdge.oldResultCommit)
     ) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
@@ -744,6 +877,16 @@ async function journalSuccessorSource(
     }
     if (index === successorEnvelopes.length - 1) continue;
     const continuation = successor.dispatchContinuationBinding;
+    const guardedEdge = stagedRecoverySuccessorEdge(
+      successor,
+      successorEnvelopes[index + 1]!,
+      coordinates.binding,
+    );
+    if (guardedEdge !== null) {
+      inheritedReceipts = guardedEdge.receipts;
+      inheritedTip = guardedEdge.rebasedStartCommit;
+      continue;
+    }
     if (successor.state !== "consumed" || continuation === undefined) {
       throw new CurrentRecoverySealError(
         "source-ambiguous",
@@ -812,6 +955,9 @@ async function journalSuccessorSource(
       `journal recovery successor receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  if (receipts.length === 0 && guardedTipTransition !== null) {
+    receipts = inheritedReceipts;
+  }
   const candidate = selectStrictMaximalRecoverySource(coordinates.taskId, coordinates.liveTip, [
     {
       selectedSourceHandle: {
@@ -827,13 +973,15 @@ async function journalSuccessorSource(
       sourceTerminalDigest: terminalDigest,
       gitReceipts: receipts,
       gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
+      ...(guardedTipTransition === null ? {} : { guardedTipTransition }),
     },
   ]);
   const suffix = candidate.gitReceipts.slice(inheritedReceipts.length);
   if (
     candidate.gitReceipts.length < inheritedReceipts.length ||
     (candidate.gitReceipts.length === inheritedReceipts.length &&
-      coordinates.liveTip !== inheritedTip) ||
+      coordinates.liveTip !== inheritedTip &&
+      guardedTipTransition?.rebasedStartCommit !== coordinates.liveTip) ||
     !receiptClosuresEqual(
       candidate.gitReceipts.slice(0, inheritedReceipts.length),
       inheritedReceipts,

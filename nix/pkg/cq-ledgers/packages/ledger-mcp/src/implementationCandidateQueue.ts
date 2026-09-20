@@ -216,7 +216,14 @@ export class ImplementationCandidateQueueAdapter {
             if (successor === undefined) {
               throw new Error("staged-rebase source claimed a missing successor");
             }
-            if (successor.implementationQueue !== undefined) return [];
+            if (
+              successor.implementationQueue !== undefined ||
+              isAttestationTombstone(successor) ||
+              successor.state === "aborted" ||
+              successor.state === "consumed"
+            ) {
+              return [];
+            }
           }
           return [{ control, source }];
         })

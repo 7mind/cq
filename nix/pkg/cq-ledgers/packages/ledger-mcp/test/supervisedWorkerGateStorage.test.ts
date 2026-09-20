@@ -3248,8 +3248,7 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3890,6 +3889,7 @@ throw new Error("unexpected controlled cq invocation");
     let next;
     let nextOutput: DispatchJSONValue;
     let guardedSuccessorTip: string | undefined;
+    let guardedRecoveryBase: string | undefined;
     if (continuationKind === "ordinary") {
       if (activeCapability.resolveContinuation === undefined) {
         throw new Error("consumed sealed successor omitted continuation authority");
@@ -3950,6 +3950,7 @@ throw new Error("unexpected controlled cq invocation");
         throw new Error("sealed recovery guarded rebase did not finalize");
       }
       guardedSuccessorTip = rebase.bridge.rebasedStartCommit;
+      guardedRecoveryBase = rebase.bridge.ontoCommit;
       next = await activeCapability.prepare({
         roleId: "implement-worker",
         input: {
@@ -4042,7 +4043,11 @@ throw new Error("unexpected controlled cq invocation");
       });
     }
     if (cancelGuardedSuccessor) {
-      if (continuationKind !== "guarded-rebase" || guardedSuccessorTip === undefined) {
+      if (
+        continuationKind !== "guarded-rebase" ||
+        guardedSuccessorTip === undefined ||
+        guardedRecoveryBase === undefined
+      ) {
         throw new Error("current-seal staged-successor fixture requires a guarded successor");
       }
       expect(await activeCapability.abort({ ...next.handle, reason: "cancelled" })).toMatchObject({
@@ -4051,6 +4056,99 @@ throw new Error("unexpected controlled cq invocation");
       });
       const recaptured = await activeCapability.resolveRecovery!(binding, guardedSuccessorTip);
       expect(recaptured.preparation.kind).toBe("current");
+      if (recaptured.preparation.kind !== "current") {
+        throw new Error("cancelled guarded successor did not become current recovery authority");
+      }
+      const resumedChild = {
+        childId: `implement-worker#sealed-resumed-${String(sequence)}`,
+        runId: `sealed-resumed-run-${String(sequence)}`,
+      };
+      const resumed = await activeCapability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: guardedRecoveryBase,
+          round: 4,
+          startingCommit: guardedSuccessorTip,
+          validationIntent: "final",
+          priorResultCommit: guardedSuccessorTip,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-sealed-resumed`,
+        timeoutMs: 600_000,
+        expectedChild: resumedChild,
+        recoveryPreparation: recaptured.preparation.recoveryPreparation,
+      });
+      if (!resumed.accepted || resumed.prepared.gitChangeCapability === undefined) {
+        throw new Error("resumed guarded recovery did not receive Git authority");
+      }
+      await activeCapability.fetchInput({
+        ...resumed.handle,
+        inputCapability: resumed.prepared.inputCapability,
+      });
+      await fs.writeFile(
+        path.join(subject.managed.handle.absolutePath, "resumed.txt"),
+        "resumed after guarded recovery\n",
+      );
+      const resumedReceipt = await activeCapability.gitCommit!({
+        ...resumed.handle,
+        gitChangeCapability: resumed.prepared.gitChangeCapability,
+        operationId: `T2081-${String(sequence)}-sealed-resumed-commit`,
+        expectedHead: guardedSuccessorTip,
+        message: "resume guarded recovery",
+        changes: [
+          {
+            kind: "add",
+            path: "resumed.txt",
+            newState: {
+              mode: "100644",
+              digest: sha256("resumed after guarded recovery\n"),
+            },
+          },
+        ],
+      });
+      expect(
+        await activeCapability.storeResult({
+          resultCapability: resumed.prepared.resultCapability,
+          output: {
+            ...subject.output,
+            resultCommit: resumedReceipt.newHead,
+            filesTouched: ["file.txt", "resumed.txt"],
+            gitReceipts: [{
+              ...resumedReceipt,
+              objectOids: [...resumedReceipt.objectOids],
+              paths: [...resumedReceipt.paths],
+            }],
+            checkSummary: "resumed guarded recovery checks passed",
+            baseVerification: {
+              status: "verified",
+              relation: "descendant",
+              baseCommit: guardedRecoveryBase,
+              headCommit: resumedReceipt.newHead,
+            },
+          },
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      const resumedQualified = await qualify(
+        resumed.prepared,
+        resumedChild,
+        "2026-08-12T20:00:13.000Z",
+      );
+      expect(resumedQualified.state).toBe("queued");
+      if (resumedQualified.state !== "queued") {
+        throw new Error("resumed guarded recovery did not qualify");
+      }
+      expect(
+        await activeCapability.coordinateImplementationCandidate!({
+          partitionKey: resumedQualified.partitionKey,
+          holderId: "sealed-resumed-guarded",
+        }),
+      ).toMatchObject({ state: "completed" });
+      expect(runner.requests).toHaveLength(3);
       await reopenedBackend.close();
       return;
     }
@@ -4193,8 +4291,7 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "a staged-retired recovery source and its cancelled guarded successor advance the current seal",
     async () => {
       await exerciseCancelledRecoveryContinuation("guarded-rebase", true);

@@ -135,6 +135,21 @@ const gitChangeReceiptSchema = z
   })
   .strict();
 
+const guardedTipTransitionSchema = z
+  .object({
+    kind: z.literal("cq-current-recovery-guarded-tip-transition"),
+    version: z.literal(1),
+    source: dispatchHandleSchema,
+    successor: dispatchHandleSchema,
+    guardedRebase: z.string().regex(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u),
+    requestDigest: z.string().regex(SHA256),
+    oldResultCommit: z.string().regex(FULL_COMMIT),
+    ontoCommit: z.string().regex(FULL_COMMIT),
+    rebasedStartCommit: z.string().regex(FULL_COMMIT),
+    receiptPrefixLength: z.number().int().positive(),
+  })
+  .strict();
+
 const recoverySeedCommonSchema = z.object({
   kind: z.literal("cq-current-recovery-seed"),
   selectedSourceHandle: dispatchHandleSchema,
@@ -150,6 +165,7 @@ const recoverySeedCommonSchema = z.object({
   gitReceipts: z.array(gitChangeReceiptSchema).min(1),
   gitReceiptsDigest: z.string().regex(SHA256),
   liveTip: z.string().regex(FULL_COMMIT),
+  guardedTipTransition: guardedTipTransitionSchema.nullable().default(null),
   managedFingerprint: z.string().regex(SHA256),
   capturedAt: z.string().regex(ISO_INSTANT),
 });
@@ -311,6 +327,9 @@ export const CurrentRecoveryStatusSchema = z.union([
 
 export type CurrentRecoverySeed = z.infer<typeof recoverySeedSchema>;
 export type CurrentRecoverySource = z.infer<typeof currentRecoverySourceSchema>;
+export type CurrentRecoveryGuardedTipTransition = z.infer<
+  typeof guardedTipTransitionSchema
+>;
 export type CurrentRecoverySeal = z.infer<typeof CurrentRecoverySealSchema>;
 export type CurrentRecoverySealJournal = z.infer<typeof CurrentRecoverySealJournalSchema>;
 export type CurrentRecoveryStatus = z.infer<typeof CurrentRecoveryStatusSchema>;
@@ -348,6 +367,7 @@ function assertReceiptChain(
   taskId: string,
   receipts: readonly GitChangeBrokerReceipt[],
   liveTip?: string,
+  transition?: CurrentRecoveryGuardedTipTransition,
 ): void {
   if (receipts.length === 0) {
     throw new CurrentRecoverySealError("invalid", "recovery receipt closure must be non-empty");
@@ -361,19 +381,58 @@ function assertReceiptChain(
       );
     }
     const preceding = receipts[index - 1];
-    if (preceding !== undefined && preceding.newHead !== receipt.oldHead) {
+    const crossesGuardedTransition =
+      transition !== undefined &&
+      index === transition.receiptPrefixLength &&
+      preceding?.newHead === transition.oldResultCommit &&
+      receipt.oldHead === transition.rebasedStartCommit;
+    if (
+      preceding !== undefined &&
+      preceding.newHead !== receipt.oldHead &&
+      !crossesGuardedTransition
+    ) {
       throw new CurrentRecoverySealError(
         "invalid",
         `recovery receipt closure diverges at entry ${String(index)}`,
       );
     }
   }
-  if (liveTip !== undefined && receipts.at(-1)?.newHead !== liveTip) {
+  if (transition !== undefined) {
+    if (
+      transition.source.attestationId !== transition.successor.attestationId ||
+      transition.source.generation + 1 !== transition.successor.generation ||
+      transition.guardedRebase !== `cq-guarded-rebase:v1:${transition.requestDigest}` ||
+      transition.receiptPrefixLength > receipts.length ||
+      receipts[transition.receiptPrefixLength - 1]?.newHead !== transition.oldResultCommit ||
+      (transition.receiptPrefixLength < receipts.length &&
+        receipts[transition.receiptPrefixLength]?.oldHead !== transition.rebasedStartCommit)
+    ) {
+      throw new CurrentRecoverySealError(
+        "invalid",
+        "recovery guarded-tip transition does not bridge its exact receipt components",
+      );
+    }
+  }
+  const receiptTip = receipts.at(-1)?.newHead;
+  const expectedLiveTip =
+    transition !== undefined && transition.receiptPrefixLength === receipts.length
+      ? transition.rebasedStartCommit
+      : receiptTip;
+  if (liveTip !== undefined && expectedLiveTip !== liveTip) {
     throw new CurrentRecoverySealError(
       "invalid",
       "recovery receipt closure does not end at the live tip",
     );
   }
+}
+
+function receiptChainTip(
+  receipts: readonly GitChangeBrokerReceipt[],
+  transition?: CurrentRecoveryGuardedTipTransition,
+): string | undefined {
+  return transition !== undefined && transition.receiptPrefixLength === receipts.length
+    ? transition.rebasedStartCommit
+    : receipts.at(-1)?.newHead;
 }
 
 export function currentRecoveryReceiptClosureDigest(
@@ -392,6 +451,7 @@ export interface CurrentRecoverySourceCandidate {
   readonly sourceTerminalDigest: string;
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly gitReceiptsDigest: string;
+  readonly guardedTipTransition?: CurrentRecoveryGuardedTipTransition;
 }
 
 function receiptIdentity(receipt: GitChangeBrokerReceipt): string {
@@ -423,7 +483,21 @@ function isCommittedRecoveryEpochPromotion(
   const receiptsAdvanceOrPreserveTip =
     currentSeed.gitReceipts.length < nextSeed.gitReceipts.length ||
     (currentSeed.gitReceipts.length === nextSeed.gitReceipts.length &&
-      currentSeed.liveTip === nextSeed.liveTip);
+      (currentSeed.liveTip === nextSeed.liveTip ||
+        (nextSeed.guardedTipTransition !== null &&
+          nextSeed.guardedTipTransition.oldResultCommit === currentSeed.liveTip &&
+          nextSeed.guardedTipTransition.rebasedStartCommit === nextSeed.liveTip)));
+  const guardedTransitionProgression =
+    payloadDigest(currentSeed.guardedTipTransition ?? null) ===
+      payloadDigest(nextSeed.guardedTipTransition ?? null) ||
+    (currentSeed.guardedTipTransition === null &&
+      nextSeed.guardedTipTransition !== null &&
+      nextSeed.guardedTipTransition.receiptPrefixLength >=
+        currentSeed.gitReceipts.length &&
+      nextSeed.gitReceipts[nextSeed.guardedTipTransition.receiptPrefixLength - 1]?.newHead ===
+        nextSeed.guardedTipTransition.oldResultCommit &&
+      nextSeed.guardedTipTransition.rebasedStartCommit === nextSeed.liveTip &&
+      nextSeed.guardedTipTransition.receiptPrefixLength <= nextSeed.gitReceipts.length);
   return (
     nextSeed.version === 1 &&
     currentSeed.taskId === nextSeed.taskId &&
@@ -441,6 +515,7 @@ function isCommittedRecoveryEpochPromotion(
     promotedGeneration > currentSeed.lineageMaximumGeneration &&
     nextSeed.lineageMaximumGeneration === promotedGeneration &&
     receiptsAdvanceOrPreserveTip &&
+    guardedTransitionProgression &&
     chainIsPrefix(currentSeed.gitReceipts, nextSeed.gitReceipts) &&
     suffix.every(
       (receipt, index) =>
@@ -512,7 +587,7 @@ export function selectStrictMaximalRecoverySource(
     if (!SHA256.test(candidate.sourceTerminalDigest)) {
       throw new CurrentRecoverySealError("invalid", "recovery source terminal digest is malformed");
     }
-    assertReceiptChain(taskId, candidate.gitReceipts);
+    assertReceiptChain(taskId, candidate.gitReceipts, undefined, candidate.guardedTipTransition);
     const digest = currentRecoveryReceiptClosureDigest(candidate.gitReceipts);
     if (candidate.gitReceiptsDigest !== digest) {
       throw new CurrentRecoverySealError("invalid", "recovery receipt closure digest is invalid");
@@ -549,7 +624,7 @@ export function selectStrictMaximalRecoverySource(
     const rightId = right.selectedSourceHandle.attestationId;
     return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
   })[0]!;
-  if (selected.gitReceipts.at(-1)?.newHead !== liveTip) {
+  if (receiptChainTip(selected.gitReceipts, selected.guardedTipTransition) !== liveTip) {
     throw new CurrentRecoverySealError(
       "source-not-found",
       "maximal recovery receipt closure does not end at the live tip",
@@ -564,13 +639,23 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
     seal.version !== seed.version ||
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
-    seed.liveTip !== seed.gitReceipts.at(-1)?.newHead ||
+    (seed.guardedTipTransition === null
+      ? seed.liveTip !== seed.gitReceipts.at(-1)?.newHead
+      : seed.guardedTipTransition.successor.attestationId !==
+          seed.selectedSourceHandle.attestationId ||
+        seed.guardedTipTransition.successor.generation !==
+          seed.selectedSourceHandle.generation) ||
     (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
     seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
   ) {
     throw new CurrentRecoverySealError("invalid", "recovery seal has inconsistent seed bindings");
   }
-  assertReceiptChain(seed.taskId, seed.gitReceipts, seed.liveTip);
+  assertReceiptChain(
+    seed.taskId,
+    seed.gitReceipts,
+    seed.liveTip,
+    seed.guardedTipTransition ?? undefined,
+  );
   const sealDigest = payloadDigest(seed);
   const referencePrefix =
     seed.version === 1
@@ -982,6 +1067,7 @@ interface CurrentRecoverySeedInputCommon {
   };
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly liveTip: string;
+  readonly guardedTipTransition?: CurrentRecoveryGuardedTipTransition | null;
   readonly capturedAt: string;
 }
 
@@ -1026,6 +1112,7 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
     managedFingerprint: gitBinding.handleFingerprint,
     gitReceipts: input.gitReceipts,
     liveTip: input.liveTip,
+    guardedTipTransition: input.guardedTipTransition ?? null,
     capturedAt: input.capturedAt,
   } as const;
   if (input.source.kind === "aborted") {

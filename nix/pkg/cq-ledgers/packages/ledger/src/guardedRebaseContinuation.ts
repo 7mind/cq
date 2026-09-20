@@ -456,8 +456,17 @@ async function finalizeConflicted(
   if (await sequencerActive(binding)) {
     throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
   }
-  const receipts = await durableHandleConflictContinuationReceipts(binding, deps);
   const tip = await liveTip(binding);
+  const receipts = await durableHandleConflictContinuationReceipts(binding, deps, {
+    headName: binding.ref,
+    originalTip: journal.oldResultCommit,
+    onto: journal.ontoCommit,
+    liveTip: tip,
+    ...(journal.conflictHead === undefined ? {} : { conflictHead: journal.conflictHead }),
+    ...(journal.conflictIdentity === undefined
+      ? {}
+      : { conflictIdentity: journal.conflictIdentity }),
+  });
   const terminal = receipts.at(-1);
   if (
     receipts.length === 0 ||
@@ -611,6 +620,11 @@ export async function runGuardedRebase(
           // The effect ran to completion but the outcome was never recorded.
           const receipts = await durableHandleConflictContinuationReceipts(binding, {
             ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+          }, {
+            headName: binding.ref,
+            originalTip: journal.oldResultCommit,
+            onto: journal.ontoCommit,
+            liveTip: tip,
           });
           const finalized =
             receipts.length === 0

@@ -1361,10 +1361,47 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           binding,
           options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
         );
+        const recoveryClaim = await options.backend.transact(
+          { kind: "handle", handle: input.lease },
+          (attestationStore) => {
+            const row = attestationStore.read(input.lease);
+            return row === undefined || isAttestationTombstone(row)
+              ? undefined
+              : row.dispatchJournalRecoveryClaim;
+          },
+        );
+        const recoveryJournalState =
+          recoveryClaim === undefined ? null : await recoveryJournal?.read(binding.taskId);
+        if (
+          recoveryClaim !== undefined &&
+          (recoveryJournalState?.state !== "committed" ||
+            recoveryJournalState.seal.sealReference !== recoveryClaim.sealReference ||
+            recoveryJournalState.seal.sealDigest !== recoveryClaim.sealDigest)
+        ) {
+          throw new Error("completion recovery claim no longer matches committed authority");
+        }
+        const transition =
+          recoveryJournalState?.state === "committed"
+            ? recoveryJournalState.seal.seed.guardedTipTransition
+            : null;
         const gitReceipts = await resolveInheritedGitChangeReceipts(
           { ...binding, ...input.lease },
           liveTip,
-          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          {
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+            ...(transition === null
+              ? {}
+              : {
+                  receiptChainTransition: {
+                    oldResultCommit: transition.oldResultCommit,
+                    ontoCommit: transition.ontoCommit,
+                    rebasedStartCommit: transition.rebasedStartCommit,
+                    receiptPrefixLength: transition.receiptPrefixLength,
+                  },
+                }),
+          },
         );
         continuationContext = { liveTip, gitReceipts };
       }
@@ -2554,13 +2591,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               "journal recovery startingCommit must equal the live managed-worktree tip",
             );
           }
-          if (baseCommitInput !== resolvedGitEffectBinding.baseCommit) {
+          const sealedBaseCommit =
+            journal.seal.seed.guardedTipTransition?.ontoCommit ??
+            resolvedGitEffectBinding.baseCommit;
+          if (baseCommitInput !== sealedBaseCommit) {
             return rejectLaunch(
               "input.baseCommit",
               "journal recovery baseCommit differs from the managed binding",
             );
           }
-          if (journal.seal.seed.gitReceipts.at(-1)?.newHead !== startingCommit) {
+          const sealedLiveTip =
+            journal.seal.seed.guardedTipTransition?.rebasedStartCommit ??
+            journal.seal.seed.gitReceipts.at(-1)?.newHead;
+          if (sealedLiveTip !== startingCommit) {
             return rejectLaunch(
               "input.startingCommit",
               "journal recovery seed receipt closure does not end at the live tip",
@@ -2611,6 +2654,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           gitEffectBinding = {
             ...resolvedGitEffectBinding,
             inheritedGitReceipts: journal.seal.seed.gitReceipts,
+            ...(journal.seal.seed.guardedTipTransition === null
+              ? {}
+              : {
+                  receiptChainTransition: {
+                    kind: "cq-dispatch-receipt-chain-transition" as const,
+                    version: 1 as const,
+                    source: journal.seal.seed.guardedTipTransition.source,
+                    successor: journal.seal.seed.guardedTipTransition.successor,
+                    guardedRebase: journal.seal.seed.guardedTipTransition.guardedRebase,
+                    requestDigest: journal.seal.seed.guardedTipTransition.requestDigest,
+                    oldResultCommit: journal.seal.seed.guardedTipTransition.oldResultCommit,
+                    ontoCommit: journal.seal.seed.guardedTipTransition.ontoCommit,
+                    rebasedStartCommit:
+                      journal.seal.seed.guardedTipTransition.rebasedStartCommit,
+                    receiptPrefixLength:
+                      journal.seal.seed.guardedTipTransition.receiptPrefixLength,
+                  },
+                }),
           };
         } else if (input.continuation !== undefined) {
           const startingCommit = dispatchRecord["startingCommit"];
@@ -3170,6 +3231,51 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (binding?.roleId === "implement-worker") {
           const evidence = brokerResultEvidence(output);
           if (evidence !== undefined) {
+            const recoveryClaim = await options.backend.transact(
+              {
+                kind: "handle",
+                handle: {
+                  attestationId: binding.attestationId,
+                  generation: binding.generation,
+                },
+              },
+              (attestationStore) => {
+                const row = attestationStore.read({
+                  attestationId: binding.attestationId,
+                  generation: binding.generation,
+                });
+                return row === undefined || isAttestationTombstone(row)
+                  ? undefined
+                  : row.dispatchJournalRecoveryClaim;
+              },
+            );
+            let receiptChainTransition:
+              | {
+                  readonly oldResultCommit: string;
+                  readonly ontoCommit: string;
+                  readonly rebasedStartCommit: string;
+                  readonly receiptPrefixLength: number;
+                }
+              | undefined;
+            if (recoveryClaim !== undefined) {
+              const journal = await recoveryJournal?.read(binding.taskId);
+              if (
+                journal?.state !== "committed" ||
+                journal.seal.sealReference !== recoveryClaim.sealReference ||
+                journal.seal.sealDigest !== recoveryClaim.sealDigest
+              ) {
+                throw new Error("dispatch recovery claim no longer matches committed authority");
+              }
+              const transition = journal.seal.seed.guardedTipTransition;
+              if (transition !== null) {
+                receiptChainTransition = {
+                  oldResultCommit: transition.oldResultCommit,
+                  ontoCommit: transition.ontoCommit,
+                  rebasedStartCommit: transition.rebasedStartCommit,
+                  receiptPrefixLength: transition.receiptPrefixLength,
+                };
+              }
+            }
             const normalized = await withinStagingDeadline(
               async () =>
                 await validateGitChangeBrokerResultEvidence(binding, evidence, {
@@ -3179,6 +3285,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   ...(gateContext === undefined
                     ? {}
                     : { diffBaseCommit: gateContext.dispatchBaseCommit }),
+                  ...(receiptChainTransition === undefined
+                    ? {}
+                    : { receiptChainTransition }),
                   deadlineMs: synchronousDeadlineMs,
                 }),
               synchronousDeadlineMs,
@@ -3419,6 +3528,23 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
       const goalRef = exactGoalRef(options.ledgerStore, binding.taskId);
+      const recoveryJournalState =
+        row.dispatchJournalRecoveryClaim === undefined
+          ? null
+          : await recoveryJournal?.read(binding.taskId);
+      if (
+        row.dispatchJournalRecoveryClaim !== undefined &&
+        (recoveryJournalState?.state !== "committed" ||
+          recoveryJournalState.seal.sealReference !==
+            row.dispatchJournalRecoveryClaim.sealReference ||
+          recoveryJournalState.seal.sealDigest !== row.dispatchJournalRecoveryClaim.sealDigest)
+      ) {
+        throw new Error("implementation recovery claim no longer matches committed authority");
+      }
+      const recoveryOntoCommit =
+        recoveryJournalState?.state === "committed"
+          ? recoveryJournalState.seal.seed.guardedTipTransition?.ontoCommit
+          : undefined;
       const stagedRebaseSource = await options.backend.transact({ kind: "namespace" }, (store) => {
         const matches = store
           .rows()
@@ -3457,7 +3583,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             goalRef,
             finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
           },
-          observedBaseCommit: binding.guardedRebaseBridge?.ontoCommit ?? binding.baseCommit,
+          observedBaseCommit:
+            binding.guardedRebaseBridge?.ontoCommit ?? recoveryOntoCommit ?? binding.baseCommit,
           resultCommit,
           resultTree,
           gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
