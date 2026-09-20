@@ -37,6 +37,7 @@ import {
   resolvePromptSurface,
   startLedgerCoherenceWatcher,
   type CreateProductionImplementationEvidenceServiceOptions,
+  type TrustedSourceWorkspaceImplementationEvidence,
 } from "@cq/ledger-mcp";
 import {
   backfillXdgProjectIdentities,
@@ -272,7 +273,10 @@ export async function serveStatic(url: URL, outdir: string, indexPath: string): 
 }
 
 /** Dispatcher: embedded MCP when `mcpUrl` is null, else reverse-proxy. */
-export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serve>> {
+export async function serve(
+  opts: ServeOpts,
+  trustedSourceWorkspace: TrustedSourceWorkspaceImplementationEvidence | undefined = undefined,
+): Promise<ReturnType<typeof Bun.serve>> {
   await prepare(opts.outdir);
   const indexPath = path.join(opts.outdir, "index.html");
   let mcpUrl = opts.mcpUrl;
@@ -298,7 +302,7 @@ export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serv
     );
   }
   // Embedded: async setup first, then synchronous bind scan.
-  return serveEmbedded(opts, indexPath);
+  return serveEmbedded(opts, indexPath, trustedSourceWorkspace);
 }
 
 /** Reverse-proxy `/mcp` + `/ws` to a separate `ledger-mcp --http` server. */
@@ -388,6 +392,7 @@ function serveProxy(
 async function serveEmbedded(
   opts: ServeOpts,
   indexPath: string,
+  trustedSourceWorkspace: TrustedSourceWorkspaceImplementationEvidence | undefined,
 ): Promise<ReturnType<typeof Bun.serve>> {
   const promptSurface = resolvePromptSurface({
     promptSurface: undefined,
@@ -408,6 +413,7 @@ async function serveEmbedded(
           resolved,
           dispatchCapability: dispatchRuntime.capability,
           repositoryRoot: opts.cwd,
+          ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
         })
       : undefined;
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
@@ -925,7 +931,10 @@ async function mainWholeStore(opts: XdgWholeStoreOpts): Promise<void> {
   );
 }
 
-export async function main(argv: readonly string[]): Promise<void> {
+export async function main(
+  argv: readonly string[],
+  trustedSourceWorkspace: TrustedSourceWorkspaceImplementationEvidence | undefined = undefined,
+): Promise<void> {
   const parsed = parseArgs(argv);
   // T838: strict mode resolution (T834) selects the composed whole-store host
   // for explicit/implicit XDG launches; proxy and repository-local embedded
@@ -943,7 +952,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const { host, port } = resolveWebOpts(parsed, config?.webui ?? null);
   const opts: ServeOpts = { ...parsed, host, port };
   await fs.mkdir(opts.outdir, { recursive: true });
-  const server = await serve(opts);
+  const server = await serve(opts, trustedSourceWorkspace);
   // Stop the server and exit on Ctrl+C / SIGTERM so the port is released and
   // the process does not linger (Bun keeps the process alive for the server).
   const shutdown = (): void => {

@@ -210,6 +210,27 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   const projectPiDir = path.join(directory, ".pi");
   mkdirSync(projectPiDir, { recursive: true });
   writeFileSync(path.join(directory, "cq.toml"), '[ledger]\nprojectId = "pi-role-profile-test"\n');
+  const ledgerMcpMain = path.join(
+    REPO_ROOT,
+    "nix",
+    "pkg",
+    "cq-ledgers",
+    "packages",
+    "ledger-mcp",
+    "src",
+    "main.ts",
+  );
+  const sourceWorkspaceBuildCommit = run(["git", "rev-parse", "HEAD"]);
+  const sourceWorkspaceEntrypoint = [
+    `import { main } from ${JSON.stringify(ledgerMcpMain)};`,
+    `void main(process.argv.slice(2), { trustedSourceWorkspaceBuildCommit: ${JSON.stringify(sourceWorkspaceBuildCommit)} }).catch((err) => {`,
+    "  const msg = err instanceof Error ? err.message : String(err);",
+    '  process.stderr.write(`ledger-mcp: fatal: ${msg}\\n`);',
+    "  process.exit(1);",
+    "});",
+  ].join("\n");
+  const sourceWorkspaceMain = path.join(directory, "sourceWorkspaceLedgerMcp.ts");
+  writeFileSync(sourceWorkspaceMain, sourceWorkspaceEntrypoint);
   writeFileSync(
     path.join(projectPiDir, "mcp.json"),
     JSON.stringify({
@@ -218,16 +239,7 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
           type: "stdio",
           command: "bun",
           args: [
-            path.join(
-              REPO_ROOT,
-              "nix",
-              "pkg",
-              "cq-ledgers",
-              "packages",
-              "ledger-mcp",
-              "src",
-              "main.ts",
-            ),
+            sourceWorkspaceMain,
             "--cwd",
             directory,
           ],

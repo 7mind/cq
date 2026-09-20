@@ -1535,7 +1535,14 @@ export function createStandaloneImplementationEvidenceService(
   return createProductionImplementationEvidenceService(options);
 }
 
-export async function main(argv: readonly string[]): Promise<void> {
+export interface TrustedSourceWorkspaceImplementationEvidence {
+  readonly trustedSourceWorkspaceBuildCommit: string;
+}
+
+export async function main(
+  argv: readonly string[],
+  trustedSourceWorkspace: TrustedSourceWorkspaceImplementationEvidence | undefined = undefined,
+): Promise<void> {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(TOP_LEVEL_USAGE + "\n");
     return;
@@ -1620,6 +1627,7 @@ export async function main(argv: readonly string[]): Promise<void> {
           resolved,
           dispatchCapability,
           repositoryRoot: cwd,
+          ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
         })
       : undefined;
 

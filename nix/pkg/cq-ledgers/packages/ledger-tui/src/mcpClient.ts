@@ -21,6 +21,7 @@ import {
   resolvePromptSurface,
   type DispatchRuntime,
   type CreateProductionImplementationEvidenceServiceOptions,
+  type TrustedSourceWorkspaceImplementationEvidence,
 } from "@cq/ledger-mcp";
 import type { LedgerStore, ResolvedLedgerStore } from "@cq/ledger";
 import type {
@@ -145,7 +146,10 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
    * pair. The returned client OWNS the store and disposes it on {@link close}.
    * Used when ledger-tui is launched with no `--mcp-url`.
    */
-  static async embedded(cwd: string): Promise<McpLedgerClient> {
+  static async embedded(
+    cwd: string,
+    trustedSourceWorkspace: TrustedSourceWorkspaceImplementationEvidence | undefined = undefined,
+  ): Promise<McpLedgerClient> {
     const promptSurface = resolvePromptSurface({
       promptSurface: undefined,
       promptRoot: undefined,
@@ -165,6 +169,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
             resolved,
             dispatchCapability: dispatchRuntime.capability,
             repositoryRoot: cwd,
+            ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
           })
         : undefined;
     const server = createManagementLedgerMcpServer({

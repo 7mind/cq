@@ -69,6 +69,7 @@ let outdir: string;
 let promptRoot: string;
 let web: Subprocess;
 let webPort: number;
+let sourceWorkspaceWebMain: string;
 const PROMPT_BYTES = "embedded web pi {{cq:literal}} and $ARGUMENTS\n";
 const WORKER_PROMPT_BYTES = "embedded web pi implement-worker direct input\n";
 
@@ -99,6 +100,21 @@ beforeAll(async () => {
 
   outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-out-"));
   promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-prompts-"));
+  const sourceWorkspaceBuildCommit = new TextDecoder()
+    .decode(Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: here }).stdout)
+    .trim();
+  sourceWorkspaceWebMain = path.join(promptRoot, "sourceWorkspaceWebMain.ts");
+  await fs.writeFile(
+    sourceWorkspaceWebMain,
+    [
+      `import { main } from ${JSON.stringify(webMain)};`,
+      `void main(process.argv.slice(2), { trustedSourceWorkspaceBuildCommit: ${JSON.stringify(sourceWorkspaceBuildCommit)} }).catch((err) => {`,
+      "  const msg = err instanceof Error ? err.message : String(err);",
+      '  process.stderr.write(`ledger-web: fatal: ${msg}\\n`);',
+      "  process.exit(1);",
+      "});",
+    ].join("\n"),
+  );
   await fs.mkdir(path.join(promptRoot, "roles"));
   const catalogJson = JSON.stringify([
     {
@@ -158,7 +174,7 @@ beforeAll(async () => {
     cmd: [
       process.execPath,
       "run",
-      webMain,
+      sourceWorkspaceWebMain,
       "--cwd",
       tmpRoot,
       "--host",

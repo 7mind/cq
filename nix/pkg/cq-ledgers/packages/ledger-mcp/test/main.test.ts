@@ -38,11 +38,11 @@ import { buildServer, projectInstructionLine } from "../src/main.js";
 const BOOTSTRAPPED = CANONICAL_LEDGERS.map((c) => c.name);
 const DISPATCH_PROCESS_CONTRACT_TIMEOUT_MS = 15_000;
 
-/** Resolve the binary path against this package's src/main.ts. */
+let sourceWorkspaceMain: string;
+
+/** Resolve the test-owned source-workspace entrypoint. */
 function resolveBinPath(): { command: string; args: string[] } {
-  const here = new URL(".", import.meta.url).pathname;
-  const main = path.resolve(here, "..", "src", "main.ts");
-  return { command: process.execPath, args: ["run", main] };
+  return { command: process.execPath, args: ["run", sourceWorkspaceMain] };
 }
 
 /** The `[ledger]` block pinning the xdg backend for a temp (non-git) root. */
@@ -93,6 +93,22 @@ beforeAll(async () => {
 
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-"));
   dispatchPromptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-dispatch-prompts-"));
+  const main = path.resolve(import.meta.dir, "..", "src", "main.ts");
+  const buildCommit = new TextDecoder()
+    .decode(Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: import.meta.dir }).stdout)
+    .trim();
+  sourceWorkspaceMain = path.join(dispatchPromptRoot, "sourceWorkspaceMain.ts");
+  await fs.writeFile(
+    sourceWorkspaceMain,
+    [
+      `import { main } from ${JSON.stringify(main)};`,
+      `void main(process.argv.slice(2), { trustedSourceWorkspaceBuildCommit: ${JSON.stringify(buildCommit)} }).catch((err) => {`,
+      "  const msg = err instanceof Error ? err.message : String(err);",
+      '  process.stderr.write(`ledger-mcp: fatal: ${msg}\\n`);',
+      "  process.exit(1);",
+      "});",
+    ].join("\n"),
+  );
   const roleId = "plan-advance";
   const roleBytes = "Perform the requested implementation task.\n";
   const catalogJson = JSON.stringify([

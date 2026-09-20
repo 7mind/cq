@@ -19,6 +19,11 @@ import { assertDispatchConstructionConformance } from "./dispatchConstructionCon
 
 const here = new URL(".", import.meta.url).pathname;
 const mainPath = path.resolve(here, "..", "src", "main.ts");
+let sourceWorkspaceMain: string;
+
+function sourceWorkspaceMainArgs(): readonly string[] {
+  return ["run", sourceWorkspaceMain];
+}
 const SURFACES = ["claude", "codex", "pi"] as const;
 const MULTI_PROCESS_CONTRACT_TIMEOUT_MS = 15_000;
 type PromptSurface = (typeof SURFACES)[number];
@@ -243,6 +248,21 @@ beforeAll(async () => {
     `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
   );
   surfacesRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-prompt-surfaces-"));
+  const sourceWorkspaceBuildCommit = new TextDecoder()
+    .decode(Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: here }).stdout)
+    .trim();
+  sourceWorkspaceMain = path.join(surfacesRoot, "sourceWorkspaceMain.ts");
+  await fs.writeFile(
+    sourceWorkspaceMain,
+    [
+      `import { main } from ${JSON.stringify(mainPath)};`,
+      `void main(process.argv.slice(2), { trustedSourceWorkspaceBuildCommit: ${JSON.stringify(sourceWorkspaceBuildCommit)} }).catch((err) => {`,
+      "  const msg = err instanceof Error ? err.message : String(err);",
+      '  process.stderr.write(`ledger-mcp: fatal: ${msg}\\n`);',
+      "  process.exit(1);",
+      "});",
+    ].join("\n"),
+  );
   surfaceRoots = Object.fromEntries(
     SURFACES.map((surface) => [surface, path.join(surfacesRoot, surface)]),
   ) as Readonly<Record<PromptSurface, string>>;
@@ -330,8 +350,7 @@ describe("standalone prompt-surface transports", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
-        "run",
-        mainPath,
+        ...sourceWorkspaceMainArgs(),
         "--cwd",
         tmpRoot,
         "--prompt-surface",
@@ -378,8 +397,7 @@ describe("standalone prompt-surface transports", () => {
     const processHandle: Subprocess = bunSpawn({
       cmd: [
         process.execPath,
-        "run",
-        mainPath,
+        ...sourceWorkspaceMainArgs(),
         "--cwd",
         tmpRoot,
         "--http",
@@ -436,8 +454,7 @@ describe("standalone prompt-surface transports", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
-        "run",
-        mainPath,
+        ...sourceWorkspaceMainArgs(),
         "--cwd",
         tmpRoot,
         "--prompt-surface",
@@ -464,8 +481,7 @@ describe("standalone prompt-surface transports", () => {
       const transport = new StdioClientTransport({
         command: process.execPath,
         args: [
-          "run",
-          mainPath,
+          ...sourceWorkspaceMainArgs(),
           "--cwd",
           tmpRoot,
           "--prompt-surface",
@@ -528,8 +544,7 @@ describe("standalone prompt-surface transports", () => {
       const processHandle: Subprocess = bunSpawn({
         cmd: [
           process.execPath,
-          "run",
-          mainPath,
+          ...sourceWorkspaceMainArgs(),
           "--cwd",
           tmpRoot,
           "--http",
@@ -594,8 +609,7 @@ describe("standalone prompt-surface transports", () => {
     const processHandle: Subprocess = bunSpawn({
       cmd: [
         process.execPath,
-        "run",
-        mainPath,
+        ...sourceWorkspaceMainArgs(),
         "--cwd",
         tmpRoot,
         "--http",

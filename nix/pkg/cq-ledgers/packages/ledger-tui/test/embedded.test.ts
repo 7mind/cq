@@ -24,6 +24,10 @@ import { buildServer } from "@cq/ledger-mcp";
 import { assertDispatchConstructionConformance } from "../../ledger-mcp/test/dispatchConstructionConformance.js";
 import { McpLedgerClient, LedgerToolError } from "../src/mcpClient.js";
 
+const SOURCE_WORKSPACE_BUILD_COMMIT = new TextDecoder()
+  .decode(Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: import.meta.dir }).stdout)
+  .trim();
+
 let tmpRoot: string;
 let xdgHome: string;
 let prevXdgStateHome: string | undefined;
@@ -141,7 +145,9 @@ beforeAll(async () => {
   });
   await seed.dispose();
 
-  client = await McpLedgerClient.embedded(tmpRoot);
+  client = await McpLedgerClient.embedded(tmpRoot, {
+    trustedSourceWorkspaceBuildCommit: SOURCE_WORKSPACE_BUILD_COMMIT,
+  });
   const embedded = client.embedded;
   if (embedded === null) {
     throw new Error("expected embedded ledger context");
