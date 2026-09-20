@@ -21,6 +21,7 @@ import {
 import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,
   assertManagedWorktreeWipClosure,
   continueManagedWorktreeRebase,
@@ -2921,6 +2922,415 @@ throw new Error("unexpected controlled cq invocation");
       state: "consumed",
       implementationQueue: { state: "leased" },
     });
+  });
+
+  // expected-failure: tasks:T6575
+  test.failing("a consumed pass followed by a rejected continuation admits its changed correction", async () => {
+    const runner = new GateSequenceDummy([
+      {
+        gateExitCode: 0,
+        passCount: 17,
+        failCount: 0,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:03.000Z",
+        outputTail: "17 pass\n0 fail",
+      },
+      {
+        gateExitCode: 1,
+        passCount: 16,
+        failCount: 1,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:06.000Z",
+        outputTail: "(fail) deterministic continuation rejection\n16 pass\n1 fail",
+      },
+      {
+        gateExitCode: 0,
+        passCount: 17,
+        failCount: 0,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:09.000Z",
+        outputTail: "17 pass\n0 fail",
+      },
+    ]);
+    const subject = await fixture(runner, true);
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined ||
+      subject.capability.resolveContinuation === undefined ||
+      subject.capability.gitCommit === undefined
+    ) {
+      throw new Error("composed correction runtime is unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("composed correction binding disappeared");
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      child: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await subject.capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: child.childId.slice("implement-worker#".length),
+        childThreadId: `composed-correction-${String(prepared.generation)}`,
+        expectedRunId: child.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const initialQualified = await qualify(
+      subject.prepared,
+      subject.expectedChild,
+      "2026-08-12T20:00:02.000Z",
+    );
+    if (initialQualified.state !== "queued") throw new Error("initial pass did not qualify");
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: initialQualified.partitionKey,
+        holderId: "composed-initial-pass",
+      }),
+    ).toMatchObject({ state: "completed" });
+
+    const continuation = await subject.capability.resolveContinuation(
+      binding,
+      subject.receipt.newHead,
+    );
+    const rejectedChild = {
+      childId: `implement-worker#composed-rejected-${String(sequence)}`,
+      runId: `composed-rejected-run-${String(sequence)}`,
+    };
+    const rejected = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-composed-rejected`,
+      timeoutMs: 600_000,
+      expectedChild: rejectedChild,
+      continuation: continuation.continuationReference,
+    });
+    if (!rejected.accepted) throw new Error(rejected.detail);
+    await subject.capability.fetchInput({
+      ...rejected.handle,
+      inputCapability: rejected.prepared.inputCapability,
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: rejected.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          gitReceipts: [],
+          checkSummary: "continuation candidate awaits its gate",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const rejectedQualified = await qualify(
+      rejected.prepared,
+      rejectedChild,
+      "2026-08-12T20:00:05.000Z",
+    );
+    if (rejectedQualified.state !== "queued") throw new Error("continuation did not qualify");
+    await expect(
+      subject.capability.coordinateImplementationCandidate({
+        partitionKey: rejectedQualified.partitionKey,
+        holderId: "composed-rejected-continuation",
+      }),
+    ).rejects.toThrow();
+
+    const correctionChild = {
+      childId: `implement-worker#composed-correction-${String(sequence)}`,
+      runId: `composed-correction-run-${String(sequence)}`,
+    };
+    const correction = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-composed-correction`,
+      timeoutMs: 600_000,
+      expectedChild: correctionChild,
+      reprepareOf: rejected.handle,
+    });
+    if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
+      throw new Error("changed composed correction did not receive Git authority");
+    }
+    await subject.capability.fetchInput({
+      ...correction.handle,
+      inputCapability: correction.prepared.inputCapability,
+    });
+    await fs.writeFile(
+      path.join(subject.managed.handle.absolutePath, "file.txt"),
+      "composed correction\n",
+    );
+    const correctionReceipt = await subject.capability.gitCommit({
+      ...correction.handle,
+      gitChangeCapability: correction.prepared.gitChangeCapability,
+      operationId: `T2081-${String(sequence)}-composed-correction-commit`,
+      expectedHead: subject.receipt.newHead,
+      message: "correct composed rejected continuation",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("after\n") },
+          newState: { mode: "100644", digest: sha256("composed correction\n") },
+        },
+      ],
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: correction.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: correctionReceipt.newHead,
+          filesTouched: [...correctionReceipt.paths],
+          gitReceipts: [correctionReceipt],
+          checkSummary: "composed correction checks passed",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: subject.dispatchBaseCommit,
+            headCommit: correctionReceipt.newHead,
+          },
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const correctionQualified = await qualify(
+      correction.prepared,
+      correctionChild,
+      "2026-08-12T20:00:08.000Z",
+    );
+    if (correctionQualified.state !== "queued") {
+      throw new Error("composed correction did not qualify");
+    }
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: correctionQualified.partitionKey,
+        holderId: "composed-correction-final",
+      }),
+    ).toMatchObject({ state: "completed" });
+    expect(runner.requests).toHaveLength(3);
+  });
+
+  // expected-failure: tasks:T6575
+  test.failing("a cancelled sealed recovery successor retains prior terminal queue ancestry", async () => {
+    const runner = new ThrowingGateDummy("controlled parent loss after qualification");
+    const subject = await fixture(runner, true);
+    const recoveryJournal = new InMemoryCurrentRecoverySealJournalStore();
+    const capability = createDispatchCapability({
+      ...subject.capabilityOptions,
+      recoveryJournal,
+    });
+    if (
+      capability.qualifyImplementationCandidate === undefined ||
+      capability.coordinateImplementationCandidate === undefined ||
+      capability.resolveRecovery === undefined ||
+      capability.gitCommit === undefined
+    ) {
+      throw new Error("sealed recovery runtime is unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("sealed recovery binding disappeared");
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      child: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: child.childId.slice("implement-worker#".length),
+        childThreadId: `sealed-recovery-${String(prepared.generation)}`,
+        expectedRunId: child.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+
+    expect(
+      await capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const sourceQualified = await qualify(
+      subject.prepared,
+      subject.expectedChild,
+      "2026-08-12T20:00:02.000Z",
+    );
+    if (sourceQualified.state !== "queued") throw new Error("parent-lost source did not qualify");
+    await expect(
+      capability.coordinateImplementationCandidate({
+        partitionKey: sourceQualified.partitionKey,
+        holderId: "sealed-recovery-parent-lost-source",
+      }),
+    ).rejects.toThrow("controlled parent loss after qualification");
+    expect(subject.store.rows()[0]).toMatchObject({
+      state: "aborted",
+      abortReason: "parent-lost",
+      implementationQueue: { state: "terminal", terminal: { reason: "parent-lost" } },
+    });
+
+    const firstRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    expect(firstRecovery.preparation.kind).toBe("current");
+    if (firstRecovery.preparation.kind !== "current") {
+      throw new Error("parent-lost source did not produce current recovery authority");
+    }
+    const cancelledChild = {
+      childId: `implement-worker#sealed-cancelled-${String(sequence)}`,
+      runId: `sealed-cancelled-run-${String(sequence)}`,
+    };
+    const cancelled = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-sealed-cancelled`,
+      timeoutMs: 600_000,
+      expectedChild: cancelledChild,
+      recoveryPreparation: firstRecovery.preparation.recoveryPreparation,
+    });
+    if (!cancelled.accepted) throw new Error(cancelled.detail);
+    await capability.fetchInput({
+      ...cancelled.handle,
+      inputCapability: cancelled.prepared.inputCapability,
+    });
+    expect(await capability.abort({ ...cancelled.handle, reason: "cancelled" })).toMatchObject({
+      state: "aborted",
+      reason: "cancelled",
+    });
+
+    const promotedRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    expect(promotedRecovery.preparation.kind).toBe("current");
+    if (promotedRecovery.preparation.kind !== "current") {
+      throw new Error("cancelled successor did not promote current recovery authority");
+    }
+    const successorChild = {
+      childId: `implement-worker#sealed-successor-${String(sequence)}`,
+      runId: `sealed-successor-run-${String(sequence)}`,
+    };
+    const successor = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-sealed-successor`,
+      timeoutMs: 600_000,
+      expectedChild: successorChild,
+      recoveryPreparation: promotedRecovery.preparation.recoveryPreparation,
+    });
+    if (!successor.accepted || successor.prepared.gitChangeCapability === undefined) {
+      throw new Error("sealed successor did not receive Git authority");
+    }
+    await capability.fetchInput({
+      ...successor.handle,
+      inputCapability: successor.prepared.inputCapability,
+    });
+    await fs.writeFile(
+      path.join(subject.managed.handle.absolutePath, "file.txt"),
+      "sealed recovery correction\n",
+    );
+    const successorReceipt = await capability.gitCommit({
+      ...successor.handle,
+      gitChangeCapability: successor.prepared.gitChangeCapability,
+      operationId: `T2081-${String(sequence)}-sealed-successor-commit`,
+      expectedHead: subject.receipt.newHead,
+      message: "correct sealed recovery successor",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("after\n") },
+          newState: { mode: "100644", digest: sha256("sealed recovery correction\n") },
+        },
+      ],
+    });
+    expect(
+      await capability.storeResult({
+        resultCapability: successor.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: successorReceipt.newHead,
+          filesTouched: [...successorReceipt.paths],
+          gitReceipts: [successorReceipt],
+          checkSummary: "sealed recovery successor checks passed",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: subject.dispatchBaseCommit,
+            headCommit: successorReceipt.newHead,
+          },
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const successorQualified = await qualify(
+      successor.prepared,
+      successorChild,
+      "2026-08-12T20:00:08.000Z",
+    );
+    expect(successorQualified.state).toBe("queued");
   });
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
