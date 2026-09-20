@@ -28,6 +28,7 @@ import {
   createCurrentRecoverySeed,
   createDispatchLineageCutoverFence,
   currentRecoveryJournalRoot,
+  currentRecoveryGuardedTipTransitions,
   currentRecoveryReceiptClosureDigest,
   currentRecoveryStatusFromJournal,
   listManagedLiveWorktrees,
@@ -40,6 +41,7 @@ import {
   withManagedWorktreeEffectLock,
   type CurrentRecoverySeal,
   type CurrentRecoveryCommittedJournal,
+  type CurrentRecoveryGuardedTipTransition,
   type CurrentRecoverySealJournalStore,
   type CurrentRecoverySource,
   type CurrentRecoverySourceAbortReason,
@@ -320,7 +322,9 @@ function sourcesEqual(
     left.sourceTerminalDigest === right.sourceTerminalDigest &&
     left.gitReceiptsDigest === right.gitReceiptsDigest &&
     dispatchPayloadDigest((left.guardedTipTransition ?? null) as DispatchJSONValue) ===
-      dispatchPayloadDigest((right.guardedTipTransition ?? null) as DispatchJSONValue)
+      dispatchPayloadDigest((right.guardedTipTransition ?? null) as DispatchJSONValue) &&
+    dispatchPayloadDigest((left.guardedTipTransitions ?? []) as unknown as DispatchJSONValue) ===
+      dispatchPayloadDigest((right.guardedTipTransitions ?? []) as unknown as DispatchJSONValue)
   );
 }
 
@@ -346,6 +350,9 @@ function sealForSource(
     ...(source.guardedTipTransition === undefined
       ? {}
       : { guardedTipTransition: source.guardedTipTransition }),
+    ...(source.guardedTipTransitions === undefined
+      ? {}
+      : { guardedTipTransitions: source.guardedTipTransitions }),
     capturedAt,
   } as const;
   if (source.source.kind === "consumed-fail") {
@@ -669,6 +676,75 @@ interface AuthenticatedStagedRecoveryEdge {
   readonly rebasedStartCommit: string;
   readonly oldResultCommit: string;
   readonly receipts: readonly GitChangeBrokerReceipt[];
+  readonly receiptsArePostGuardedComponent: boolean;
+}
+
+function appendStagedRecoveryEdge(
+  taskId: string,
+  inheritedReceipts: readonly GitChangeBrokerReceipt[],
+  inheritedTip: string,
+  transitions: readonly CurrentRecoveryGuardedTipTransition[],
+  edge: AuthenticatedStagedRecoveryEdge,
+): {
+  readonly receipts: readonly GitChangeBrokerReceipt[];
+  readonly liveTip: string;
+  readonly transitions: readonly CurrentRecoveryGuardedTipTransition[];
+} {
+  const sourceReceipts = edge.receiptsArePostGuardedComponent
+    ? edge.receipts
+    : edge.receipts.slice(inheritedReceipts.length);
+  if (
+    !edge.receiptsArePostGuardedComponent &&
+    (edge.receipts.length < inheritedReceipts.length ||
+      !receiptClosuresEqual(
+        edge.receipts.slice(0, inheritedReceipts.length),
+        inheritedReceipts,
+      ))
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "staged recovery receipt closure does not retain its authenticated prefix",
+    );
+  }
+  let sourceTip = inheritedTip;
+  for (const [index, receipt] of sourceReceipts.entries()) {
+    if (
+      receipt.taskId !== taskId ||
+      receipt.attestationId !== edge.source.attestationId ||
+      receipt.generation !== edge.source.generation ||
+      receipt.oldHead !== sourceTip
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        `staged recovery receipt suffix ${String(index)} is foreign or does not continue its authenticated source tip`,
+      );
+    }
+    sourceTip = receipt.newHead;
+  }
+  if (sourceTip !== edge.oldResultCommit) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "staged recovery receipt suffix does not end at the guarded source result",
+    );
+  }
+  const receipts = Object.freeze([...inheritedReceipts, ...sourceReceipts]);
+  const transition = Object.freeze({
+    kind: "cq-current-recovery-guarded-tip-transition" as const,
+    version: 1 as const,
+    source: edge.source,
+    successor: edge.successor,
+    guardedRebase: edge.guardedRebase,
+    requestDigest: edge.requestDigest,
+    oldResultCommit: edge.oldResultCommit,
+    ontoCommit: edge.ontoCommit,
+    rebasedStartCommit: edge.rebasedStartCommit,
+    receiptPrefixLength: receipts.length,
+  });
+  return Object.freeze({
+    receipts,
+    liveTip: edge.rebasedStartCommit,
+    transitions: Object.freeze([...transitions, transition]),
+  });
 }
 
 function stagedRecoverySuccessorEdge(
@@ -789,6 +865,7 @@ function stagedRecoverySuccessorEdge(
     rebasedStartCommit: bridge.rebasedStartCommit,
     oldResultCommit: bridge.oldResultCommit,
     receipts: sourceReceipts,
+    receiptsArePostGuardedComponent: sourceBinding.guardedRebaseBridge !== undefined,
   });
 }
 
@@ -833,7 +910,7 @@ async function journalSuccessorSource(
   }
   let inheritedReceipts: readonly GitChangeBrokerReceipt[] = seed.gitReceipts;
   let inheritedTip = seed.liveTip;
-  let guardedTipTransition = seed.guardedTipTransition ?? null;
+  let guardedTipTransitions = currentRecoveryGuardedTipTransitions(seed);
   for (const [index, successor] of successorEnvelopes.entries()) {
     if (!bindingMatches(successor.gitEffectBinding, coordinates.binding)) {
       throw new CurrentRecoverySealError(
@@ -879,20 +956,6 @@ async function journalSuccessorSource(
     const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
     const expectedBaseCommit = incomingStagedEdge?.ontoCommit ?? coordinates.binding.baseCommit;
     const expectedStartingCommit = incomingStagedEdge?.rebasedStartCommit ?? inheritedTip;
-    if (incomingStagedEdge !== null) {
-      guardedTipTransition = Object.freeze({
-        kind: "cq-current-recovery-guarded-tip-transition" as const,
-        version: 1 as const,
-        source: incomingStagedEdge.source,
-        successor: incomingStagedEdge.successor,
-        guardedRebase: incomingStagedEdge.guardedRebase,
-        requestDigest: incomingStagedEdge.requestDigest,
-        oldResultCommit: incomingStagedEdge.oldResultCommit,
-        ontoCommit: incomingStagedEdge.ontoCommit,
-        rebasedStartCommit: incomingStagedEdge.rebasedStartCommit,
-        receiptPrefixLength: inheritedReceipts.length,
-      });
-    }
     if (
       input["taskId"] !== coordinates.taskId ||
       input["branch"] !== coordinates.binding.branch ||
@@ -923,8 +986,16 @@ async function journalSuccessorSource(
       coordinates.binding,
     );
     if (guardedEdge !== null) {
-      inheritedReceipts = guardedEdge.receipts;
-      inheritedTip = guardedEdge.rebasedStartCommit;
+      const appended = appendStagedRecoveryEdge(
+        coordinates.taskId,
+        inheritedReceipts,
+        inheritedTip,
+        guardedTipTransitions,
+        guardedEdge,
+      );
+      inheritedReceipts = appended.receipts;
+      inheritedTip = appended.liveTip;
+      guardedTipTransitions = appended.transitions;
       continue;
     }
     if (successor.state !== "consumed" || continuation === undefined) {
@@ -995,9 +1066,10 @@ async function journalSuccessorSource(
       `journal recovery successor receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (receipts.length === 0 && guardedTipTransition !== null) {
+  if (receipts.length === 0 && guardedTipTransitions.length > 0) {
     receipts = inheritedReceipts;
   }
+  const guardedTipTransition = guardedTipTransitions.at(-1);
   const candidate = selectStrictMaximalRecoverySource(coordinates.taskId, coordinates.liveTip, [
     {
       selectedSourceHandle: {
@@ -1013,7 +1085,8 @@ async function journalSuccessorSource(
       sourceTerminalDigest: terminalDigest,
       gitReceipts: receipts,
       gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
-      ...(guardedTipTransition === null ? {} : { guardedTipTransition }),
+      ...(guardedTipTransition === undefined ? {} : { guardedTipTransition }),
+      ...(guardedTipTransitions.length < 2 ? {} : { guardedTipTransitions }),
     },
   ]);
   const suffix = candidate.gitReceipts.slice(inheritedReceipts.length);

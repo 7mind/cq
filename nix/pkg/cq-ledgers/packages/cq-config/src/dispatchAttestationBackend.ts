@@ -1677,6 +1677,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       const hasInheritedGitReceipts = Object.hasOwn(bindingRecord, "inheritedGitReceipts");
       const hasGuardedRebaseBridge = Object.hasOwn(bindingRecord, "guardedRebaseBridge");
       const hasReceiptChainTransition = Object.hasOwn(bindingRecord, "receiptChainTransition");
+      const hasReceiptChainTransitions = Object.hasOwn(bindingRecord, "receiptChainTransitions");
       const expectedFields = hasGitConflictHash
         ? [...fields, "conflictStateDigest"]
         : [
@@ -1684,6 +1685,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
             ...(hasInheritedGitReceipts ? ["inheritedGitReceipts"] : []),
             ...(hasGuardedRebaseBridge ? ["guardedRebaseBridge"] : []),
             ...(hasReceiptChainTransition ? ["receiptChainTransition"] : []),
+            ...(hasReceiptChainTransitions ? ["receiptChainTransitions"] : []),
           ];
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
@@ -1695,7 +1697,10 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         (hasGitConflictHash &&
           !STORED_SHA256_HEX.test(String(bindingRecord["conflictStateDigest"]))) ||
         (hasGitConflictHash &&
-          (hasInheritedGitReceipts || hasGuardedRebaseBridge || hasReceiptChainTransition))
+          (hasInheritedGitReceipts ||
+            hasGuardedRebaseBridge ||
+            hasReceiptChainTransition ||
+            hasReceiptChainTransitions))
       ) {
         throw new AttestationStorageError(
           'stored attestation envelope has malformed "gitEffectBinding"',
@@ -1709,6 +1714,21 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       }
       if (hasReceiptChainTransition) {
         assertStoredReceiptChainTransition(bindingRecord["receiptChainTransition"]);
+      }
+      if (hasReceiptChainTransitions) {
+        const transitions = bindingRecord["receiptChainTransitions"];
+        if (
+          !Array.isArray(transitions) ||
+          transitions.length < 2 ||
+          !hasReceiptChainTransition ||
+          JSON.stringify(transitions.at(-1)) !==
+            JSON.stringify(bindingRecord["receiptChainTransition"])
+        ) {
+          throw new AttestationStorageError(
+            'stored attestation envelope has malformed "gitEffectBinding"',
+          );
+        }
+        for (const transition of transitions) assertStoredReceiptChainTransition(transition);
       }
     }
   }

@@ -1022,6 +1022,8 @@ export interface DispatchGitEffectBinding {
   readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
   /** Recovery-journal authority for the one discontinuity in inherited receipts. */
   readonly receiptChainTransition?: DispatchReceiptChainTransition;
+  /** Ordered recovery-journal authority when inherited receipts cross repeated guarded rebases. */
+  readonly receiptChainTransitions?: readonly DispatchReceiptChainTransition[];
 }
 
 /** Trusted live-Git evidence captured while the managed worktree effect lock is held. */
@@ -1029,6 +1031,7 @@ export interface DispatchRecoveryContext {
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
   readonly receiptChainTransition?: DispatchReceiptChainTransition;
+  readonly receiptChainTransitions?: readonly DispatchReceiptChainTransition[];
 }
 
 /** Trusted live-Git evidence captured while the continuation effect lock is held. */
@@ -1207,6 +1210,12 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
       : {
           receiptChainTransition:
             binding.receiptChainTransition as unknown as DispatchJSONValue,
+        }),
+    ...(binding.receiptChainTransitions === undefined
+      ? {}
+      : {
+          receiptChainTransitions:
+            binding.receiptChainTransitions as unknown as DispatchJSONValue,
         }),
   };
 }
@@ -1664,6 +1673,70 @@ function assertReceiptChainTransition(
   return Object.freeze({ ...value, source, successor });
 }
 
+function assertReceiptChainTransitions(
+  transition: DispatchReceiptChainTransition | undefined,
+  transitions: readonly DispatchReceiptChainTransition[] | undefined,
+  path: string,
+): readonly DispatchReceiptChainTransition[] {
+  if (transitions === undefined) return transition === undefined ? [] : [transition];
+  if (!Array.isArray(transitions) || transitions.length < 2 || transition === undefined) {
+    throw new AttestationContractError(path, "expected at least two transitions and a current edge");
+  }
+  const parsed = transitions.map((entry, index) =>
+    assertReceiptChainTransition(entry, `${path}[${String(index)}]`),
+  );
+  if (
+    dispatchPayloadDigest(parsed.at(-1)! as unknown as DispatchJSONValue) !==
+    dispatchPayloadDigest(transition as unknown as DispatchJSONValue)
+  ) {
+    throw new AttestationBindingError(path, "transition chain does not end at its current edge");
+  }
+  return Object.freeze(parsed);
+}
+
+function receiptChainTip(
+  receipts: readonly DispatchGitChangeReceipt[],
+  transitions: readonly DispatchReceiptChainTransition[],
+  path: string,
+): string | undefined {
+  if (receipts.length === 0) return undefined;
+  let transitionIndex = 0;
+  let head = receipts[0]!.oldHead;
+  for (let prefixLength = 0; prefixLength <= receipts.length; prefixLength += 1) {
+    while (transitions[transitionIndex]?.receiptPrefixLength === prefixLength) {
+      const transition = transitions[transitionIndex]!;
+      if (transition.oldResultCommit !== head) {
+        throw new AttestationBindingError(
+          `${path}[${String(transitionIndex)}]`,
+          "transition does not start at the preceding authenticated tip",
+        );
+      }
+      head = transition.rebasedStartCommit;
+      transitionIndex += 1;
+    }
+    const receipt = receipts[prefixLength];
+    if (receipt !== undefined) {
+      if (receipt.oldHead !== head) {
+        throw new AttestationBindingError(
+          `${path}.receipts[${String(prefixLength)}]`,
+          "receipt does not continue the preceding authenticated tip",
+        );
+      }
+      head = receipt.newHead;
+    }
+  }
+  if (transitionIndex !== transitions.length) {
+    throw new AttestationBindingError(
+      `${path}[${String(transitionIndex)}]`,
+      transitions[transitionIndex]!.receiptPrefixLength <
+        (transitions[transitionIndex - 1]?.receiptPrefixLength ?? 0)
+        ? "transition order regresses"
+        : "transition exceeds the receipt closure",
+    );
+  }
+  return head;
+}
+
 function assertGitEffectBinding(
   binding: DispatchGitEffectBinding | undefined,
   roleId: string,
@@ -1815,23 +1888,27 @@ function assertGitEffectBinding(
           binding.receiptChainTransition,
           "gitEffectBinding.receiptChainTransition",
         );
-  if (receiptChainTransition !== undefined) {
+  const receiptChainTransitions = assertReceiptChainTransitions(
+    receiptChainTransition,
+    binding.receiptChainTransitions,
+    "gitEffectBinding.receiptChainTransitions",
+  );
+  if (receiptChainTransitions.length > 0) {
     if (
       roleId !== "implement-worker" ||
       guardedRebaseBridge !== undefined ||
-      inheritedGitReceipts === undefined ||
-      receiptChainTransition.receiptPrefixLength > inheritedGitReceipts.length ||
-      inheritedGitReceipts[receiptChainTransition.receiptPrefixLength - 1]?.newHead !==
-        receiptChainTransition.oldResultCommit ||
-      (receiptChainTransition.receiptPrefixLength < inheritedGitReceipts.length &&
-        inheritedGitReceipts[receiptChainTransition.receiptPrefixLength]?.oldHead !==
-          receiptChainTransition.rebasedStartCommit)
+      inheritedGitReceipts === undefined
     ) {
       throw new AttestationBindingError(
         "gitEffectBinding.receiptChainTransition",
         "transition does not bind the exact inherited receipt components",
       );
     }
+    receiptChainTip(
+      inheritedGitReceipts,
+      receiptChainTransitions,
+      "gitEffectBinding.receiptChainTransitions",
+    );
   }
   return Object.freeze({
     ...binding,
@@ -1842,6 +1919,7 @@ function assertGitEffectBinding(
       ? {}
       : { guardedRebaseBridge: Object.freeze({ ...guardedRebaseBridge }) }),
     ...(receiptChainTransition === undefined ? {} : { receiptChainTransition }),
+    ...(receiptChainTransitions.length < 2 ? {} : { receiptChainTransitions }),
   });
 }
 
@@ -2125,6 +2203,11 @@ function createDispatchRecoveryBinding(
   }
   const inherited = row.gitEffectBinding.inheritedGitReceipts ?? [];
   const receiptChainTransition = row.gitEffectBinding.receiptChainTransition;
+  const receiptChainTransitions = assertReceiptChainTransitions(
+    receiptChainTransition,
+    row.gitEffectBinding.receiptChainTransitions,
+    "recoveryContext.receiptChainTransitions",
+  );
   if (
     dispatchPayloadDigest(receipts.slice(0, inherited.length) as unknown as DispatchJSONValue) !==
     dispatchPayloadDigest(inherited as unknown as DispatchJSONValue)
@@ -2141,22 +2224,6 @@ function createDispatchRecoveryBinding(
         "receipt carries a foreign task identity",
       );
     }
-    const previous = receipts[index - 1];
-    const crossesRecoveryTransition =
-      receiptChainTransition !== undefined &&
-      index === receiptChainTransition.receiptPrefixLength &&
-      previous?.newHead === receiptChainTransition.oldResultCommit &&
-      receipt.oldHead === receiptChainTransition.rebasedStartCommit;
-    if (
-      previous !== undefined &&
-      receipt.oldHead !== previous.newHead &&
-      !crossesRecoveryTransition
-    ) {
-      throw new AttestationBindingError(
-        `recoveryContext.gitReceipts[${String(index)}].oldHead`,
-        "receipt closure is not contiguous",
-      );
-    }
     if (
       index >= inherited.length &&
       (receipt.attestationId !== row.attestationId || receipt.generation !== row.generation)
@@ -2168,6 +2235,11 @@ function createDispatchRecoveryBinding(
     }
   }
   const startingCommit = dispatchInputStartingCommit(row);
+  const closureTip = receiptChainTip(
+    receipts,
+    receiptChainTransitions,
+    "recoveryContext.receiptChainTransitions",
+  );
   if (receipts.length === 0) {
     if (liveTip !== startingCommit) {
       throw new AttestationBindingError(
@@ -2176,7 +2248,7 @@ function createDispatchRecoveryBinding(
       );
     }
   } else {
-    if (receipts.at(-1)?.newHead !== liveTip) {
+    if (closureTip !== liveTip) {
       throw new AttestationBindingError(
         "recoveryContext.gitReceipts",
         "receipt closure does not end at the live tip",

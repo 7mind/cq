@@ -3269,8 +3269,7 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3292,6 +3291,7 @@ throw new Error("unexpected controlled cq invocation");
           >
         >[0];
         let launchedSuccessor: LaunchedSuccessor | undefined;
+        const currentLaunchedSuccessor = (): LaunchedSuccessor | undefined => launchedSuccessor;
         let capability = createDispatchCapability({
           ...subject.capabilityOptions,
           recoveryJournal,
@@ -3807,7 +3807,7 @@ throw new Error("unexpected controlled cq invocation");
             terminal: { reason: "staged-rebase" },
           },
         });
-        const secondGuarded = launchedSuccessor;
+        const secondGuarded = currentLaunchedSuccessor();
         if (secondGuarded === undefined) {
           throw new Error("retired exact-tip worker did not launch its guarded successor");
         }
@@ -3838,6 +3838,90 @@ throw new Error("unexpected controlled cq invocation");
         ).toMatchObject({ state: "aborted", reason: "cancelled" });
         const recaptured = await capability.resolveRecovery(binding, secondStartingCommit);
         expect(recaptured.preparation.kind).toBe("current");
+        if (recaptured.preparation.kind !== "current") {
+          throw new Error("cancelled repeated guarded successor did not recapture recovery");
+        }
+        const resumedChild = {
+          childId: `implement-worker#t6576-repeated-resumed-${attestationBackend}-${String(sequence)}`,
+          runId: `t6576-repeated-resumed-${attestationBackend}-run-${String(sequence)}`,
+        };
+        const resumed = await capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2081",
+            headline: "supervise exact tip",
+            description: "run the full gate outside the workspace-write sandbox",
+            acceptance: "only a green exact tip becomes consumable",
+            worktreePath: subject.managed.handle.absolutePath,
+            branch: subject.managed.handle.branch,
+            baseCommit: secondBaseCommit,
+            round: 5,
+            startingCommit: secondStartingCommit,
+            validationIntent: "final",
+            priorResultCommit: secondStartingCommit,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-repeated-resumed`,
+          timeoutMs: 600_000,
+          expectedChild: resumedChild,
+          recoveryPreparation: recaptured.preparation.recoveryPreparation,
+        });
+        if (!resumed.accepted || resumed.prepared.gitChangeCapability === undefined) {
+          throw new Error(
+            resumed.accepted ? "resumed worker lacks Git authority" : resumed.detail,
+          );
+        }
+        await capability.fetchInput({
+          ...resumed.handle,
+          inputCapability: resumed.prepared.inputCapability,
+        });
+        const resumedBytes = `resumed after repeated guarded rebase ${attestationBackend}\n`;
+        await fs.writeFile(
+          path.join(subject.managed.handle.absolutePath, "second-recovery.txt"),
+          resumedBytes,
+        );
+        const resumedReceipt = await capability.gitCommit({
+          ...resumed.handle,
+          gitChangeCapability: resumed.prepared.gitChangeCapability,
+          operationId: `T2081-${String(sequence)}-${attestationBackend}-repeated-resumed-commit`,
+          expectedHead: secondStartingCommit,
+          message: "resume repeated guarded recovery",
+          changes: [
+            {
+              kind: "add",
+              path: "second-recovery.txt",
+              newState: { mode: "100644", digest: sha256(resumedBytes) },
+            },
+          ],
+        });
+        expect(
+          await capability.storeResult({
+            resultCapability: resumed.prepared.resultCapability,
+            output: {
+              taskId: "T2081",
+              status: "pass",
+              resultCommit: resumedReceipt.newHead,
+              branch: subject.managed.handle.branch,
+              actualWorktreePath: subject.managed.handle.absolutePath,
+              filesTouched: ["file.txt", "second-recovery.txt"],
+              gitReceipts: [{
+                ...resumedReceipt,
+                objectOids: [...resumedReceipt.objectOids],
+                paths: [...resumedReceipt.paths],
+              }],
+              checkSummary: "repeated guarded recovery awaits its gate",
+              baseVerification: {
+                status: "verified",
+                relation: "descendant",
+                baseCommit: secondBaseCommit,
+                headCommit: resumedReceipt.newHead,
+              },
+              summary: "ordinary recovery resumes after repeated guarded transitions",
+            },
+          }),
+        ).toMatchObject({ state: "gate-pending" });
+        expect(
+          await qualify(resumed.prepared, resumedChild, "2026-08-12T20:00:14.000Z"),
+        ).toMatchObject({ state: "queued" });
         await reopenedBackend.close();
       }
     },

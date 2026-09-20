@@ -11,6 +11,7 @@ import {
   createCurrentRecoverySeal,
   createCurrentRecoverySeed,
   createDispatchLineageCutoverFence,
+  currentRecoveryReceiptClosureDigest,
   currentRecoveryStatus,
   parseCurrentRecoveryStatus,
   parseCurrentRecoverySeal,
@@ -135,6 +136,57 @@ function guardedTransitionJournal(version: 1 | 2) {
   journal.seal.sealReference =
     `cq-current-recovery-seal:v${String(version)}:${journal.seal.sealDigest}`;
   return journal;
+}
+
+function repeatedGuardedTransitionJournal(version: 1 | 2, freshBetween: boolean) {
+  const journal = guardedTransitionJournal(version);
+  const firstTransition = journal.seal.seed["guardedTipTransition"] as Record<string, unknown>;
+  const firstTip = String(firstTransition["rebasedStartCommit"]);
+  const intermediateTip = freshBetween ? "a".repeat(40) : firstTip;
+  const finalTip = "b".repeat(40);
+  const receipts = [
+    ...(journal.seal.seed["gitReceipts"] as ReturnType<typeof receipt>[]),
+    ...(freshBetween ? [receipt(20, firstTip, intermediateTip, "post-first-bridge")] : []),
+  ];
+  const requestDigest = "c".repeat(64);
+  const secondTransition = {
+    kind: "cq-current-recovery-guarded-tip-transition",
+    version: 1,
+    source: { attestationId: RECOVERY_ATTESTATION, generation: 20 },
+    successor: { attestationId: RECOVERY_ATTESTATION, generation: 21 },
+    guardedRebase: `cq-guarded-rebase:v1:${requestDigest}`,
+    requestDigest,
+    oldResultCommit: intermediateTip,
+    ontoCommit: "d".repeat(40),
+    rebasedStartCommit: finalTip,
+    receiptPrefixLength: receipts.length,
+  };
+  journal.seal.seed["selectedSourceHandle"] = {
+    attestationId: RECOVERY_ATTESTATION,
+    generation: 21,
+  };
+  journal.seal.seed["lineageMaximumGeneration"] = 21;
+  journal.seal.seed["gitReceipts"] = receipts;
+  journal.seal.seed["gitReceiptsDigest"] = currentRecoveryReceiptClosureDigest(receipts);
+  journal.seal.seed["liveTip"] = finalTip;
+  journal.seal.seed["guardedTipTransition"] = secondTransition;
+  journal.seal.seed["guardedTipTransitions"] = [firstTransition, secondTransition];
+  journal.seal.sealDigest = dispatchPayloadDigest(
+    journal.seal.seed as unknown as DispatchJSONValue,
+  );
+  journal.seal.sealReference =
+    `cq-current-recovery-seal:v${String(version)}:${journal.seal.sealDigest}`;
+  return journal;
+}
+
+function authenticateMutatedSeal(seal: {
+  version: 1 | 2;
+  sealDigest: string;
+  sealReference: string;
+  seed: Record<string, unknown>;
+}): void {
+  seal.sealDigest = dispatchPayloadDigest(seal.seed as unknown as DispatchJSONValue);
+  seal.sealReference = `cq-current-recovery-seal:v${String(seal.version)}:${seal.sealDigest}`;
 }
 
 for (const backend of ["fs", "git-object"]) {
@@ -317,6 +369,68 @@ for (const factory of factories) {
         const store = await factory.make();
         await store.put(journal as never);
         expect(await store.read(RECOVERY_TASK)).toEqual(journal as never);
+      }
+    });
+
+    test("repeated guarded transitions authenticate fresh and empty receipt components [Blackbox-Atomic]", async () => {
+      for (const version of [1, 2] as const) {
+        for (const freshBetween of [false, true]) {
+          const journal = repeatedGuardedTransitionJournal(version, freshBetween);
+          expect(parseCurrentRecoverySeal(journal.seal)).toEqual(journal.seal as never);
+          const store = await factory.make();
+          await store.put(journal as never);
+          expect(await store.read(RECOVERY_TASK)).toEqual(journal as never);
+
+          const changedOldResult = structuredClone(journal.seal);
+          const changedTransitions = changedOldResult.seed[
+            "guardedTipTransitions"
+          ] as Record<string, unknown>[];
+          changedTransitions[1] = {
+            ...changedTransitions[1],
+            oldResultCommit: "e".repeat(40),
+          };
+          changedOldResult.seed["guardedTipTransition"] = changedTransitions[1];
+          authenticateMutatedSeal(changedOldResult);
+          expect(() => parseCurrentRecoverySeal(changedOldResult)).toThrow(
+            "recovery guarded-tip transition 1 does not start at the preceding authenticated tip",
+          );
+
+          const reordered = structuredClone(journal.seal);
+          const reorderedTransitions = [
+            ...(reordered.seed["guardedTipTransitions"] as Record<string, unknown>[]),
+          ].reverse();
+          reordered.seed["guardedTipTransitions"] = reorderedTransitions;
+          authenticateMutatedSeal(reordered);
+          expect(() => parseCurrentRecoverySeal(reordered)).toThrow(
+            "recovery guarded-tip transition chain does not end at its current transition",
+          );
+
+          const gapped = structuredClone(journal.seal);
+          const gappedTransitions = gapped.seed[
+            "guardedTipTransitions"
+          ] as Record<string, unknown>[];
+          gappedTransitions[1] = {
+            ...gappedTransitions[1],
+            receiptPrefixLength:
+              (gapped.seed["gitReceipts"] as readonly unknown[]).length + 1,
+          };
+          gapped.seed["guardedTipTransition"] = gappedTransitions[1];
+          authenticateMutatedSeal(gapped);
+          expect(() => parseCurrentRecoverySeal(gapped)).toThrow(
+            "recovery guarded-tip transition 1 exceeds the receipt closure",
+          );
+
+          const substitutedCurrent = structuredClone(journal.seal);
+          substitutedCurrent.seed["guardedTipTransition"] = {
+            ...(substitutedCurrent.seed["guardedTipTransition"] as Record<string, unknown>),
+            requestDigest: "f".repeat(64),
+            guardedRebase: `cq-guarded-rebase:v1:${"f".repeat(64)}`,
+          };
+          authenticateMutatedSeal(substitutedCurrent);
+          expect(() => parseCurrentRecoverySeal(substitutedCurrent)).toThrow(
+            "recovery guarded-tip transition chain does not end at its current transition",
+          );
+        }
       }
     });
 

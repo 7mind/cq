@@ -687,6 +687,7 @@ export type {
   NativeChildIdentity,
   DispatchProvenanceBinding,
   DispatchGitEffectBinding,
+  DispatchReceiptChainTransition,
   DispatchRecoveryContext,
   DispatchRecoveryBinding,
   ResolvedDispatchRecovery,

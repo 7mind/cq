@@ -833,10 +833,21 @@ function isJournalRecoveryAncestor(
     !isAttestationTombstone(selected)
       ? selected.gitEffectBinding?.guardedRebaseBridge
       : undefined;
+  const receiptChainTransition = successorBinding.receiptChainTransition;
   const guardedRecoveryTipMatches =
     stagedRecoveryBridge !== undefined &&
+    receiptChainTransition !== undefined &&
     claim?.liveTip === stagedRecoveryBridge.rebasedStartCommit &&
-    inheritedReceipts.at(-1)?.newHead === stagedRecoveryBridge.oldResultCommit;
+    receiptChainTransition.source.attestationId ===
+      stagedRecoverySources[0]?.attestationId &&
+    receiptChainTransition.source.generation === stagedRecoverySources[0]?.generation &&
+    receiptChainTransition.successor.attestationId === selected?.attestationId &&
+    receiptChainTransition.successor.generation === selected.generation &&
+    receiptChainTransition.guardedRebase === stagedRecoveryBridge.guardedRebase &&
+    receiptChainTransition.requestDigest === stagedRecoveryBridge.requestDigest &&
+    receiptChainTransition.oldResultCommit === stagedRecoveryBridge.oldResultCommit &&
+    receiptChainTransition.ontoCommit === stagedRecoveryBridge.ontoCommit &&
+    receiptChainTransition.rebasedStartCommit === stagedRecoveryBridge.rebasedStartCommit;
   const selectedTerminalMatches =
     selected !== undefined &&
     selected.terminalDigest === claim?.sourceTerminalDigest &&
