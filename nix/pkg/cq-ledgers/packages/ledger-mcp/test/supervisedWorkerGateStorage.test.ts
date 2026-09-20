@@ -5812,6 +5812,19 @@ throw new Error("unexpected controlled cq invocation");
       },
     ]);
     const subject = await fixture(runner, true);
+    if (subject.capability.resolveContinuation === undefined) {
+      throw new Error("sealed correction continuation runtime is unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("sealed correction binding disappeared");
     const source = {
       attestationId: subject.prepared.attestationId,
       generation: subject.prepared.generation,
@@ -6031,6 +6044,38 @@ throw new Error("unexpected controlled cq invocation");
       state: "aborted",
       abortReason: "gate-rejected",
     });
+
+    const continuation = await subject.capability.resolveContinuation(
+      binding,
+      correctionReceipt.newHead,
+    );
+    const next = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 3,
+        startingCommit: correctionReceipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: correctionReceipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-sealed-correction-continuation`,
+      timeoutMs: 600_000,
+      expectedChild: {
+        childId: `implement-worker#sealed-correction-continuation-${String(sequence)}`,
+        runId: `sealed-correction-continuation-run-${String(sequence)}`,
+      },
+      continuation: continuation.continuationReference,
+    });
+    if (!next.accepted) throw new Error(next.detail);
+    expect(subject.store.read(next.handle)?.gitEffectBinding).not.toHaveProperty(
+      "guardedRebaseBridge",
+    );
   }, 30_000);
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
