@@ -506,6 +506,195 @@ describe("runGuardedRebase", () => {
     }
   });
 
+  // expected-failure: tasks:T6576
+  test.failing(
+    "independent guarded-rebase transactions select only their journal-bound receipt component",
+    async () => {
+      const fixture = await seedGuarded({ conflict: true });
+      try {
+        const effectFor = async (ontoCommit: string) => {
+          const provider = worksetEffectAdmissionProviderFromStore(requireWorksetStore(fixture.store));
+          const effectBinding: RebaseOntoEffectBinding = {
+            kind: "rebase",
+            targetRef: `tasks:${TASK_ID}`,
+            repositoryRoot: fixture.repositoryRoot,
+            worktreePath: fixture.worktreePath,
+            ontoCommit,
+          };
+          return await runWorksetGitEffectGate({
+            expected: effectBinding,
+            resolve: async () => effectBinding,
+            provider,
+          });
+        };
+        const resolveConflict = async (
+          operationId: string,
+          ontoCommit: string,
+          generation: number,
+          resolution: string,
+        ) => {
+          const stopped = await runGuardedRebase({
+            binding: fixture.binding,
+            operationId,
+            ontoCommit,
+            runEffect: async () => await effectFor(ontoCommit),
+            stateDir: fixture.stateDir,
+          });
+          if (stopped.kind !== "conflict-pending") {
+            throw new Error(`${operationId} did not stop on a genuine conflict`);
+          }
+          let conflict = await observeManagedWorktreeConflictState(fixture.binding, {
+            stateDir: fixture.stateDir,
+          });
+          const authorization = Object.freeze({
+            ...fixture.binding,
+            attestationId: "cq_attest_t6576_resolver",
+            generation,
+            roleId: "implement-conflict-resolver" as const,
+            surface: "codex",
+            childCancelAt: "2099-01-01T00:00:00.000Z",
+            conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+          });
+          let receipt;
+          for (let step = 1; step <= 8; step += 1) {
+            await fs.writeFile(path.join(fixture.worktreePath, "file.txt"), resolution);
+            receipt = await continueManagedWorktreeRebase(
+              {
+                authorization,
+                operationId: `${operationId}-resolution-${String(step)}`,
+                expectedState: conflict,
+                resolutions: [
+                  {
+                    kind: "regular" as const,
+                    path: "file.txt",
+                    newState: { mode: "100644" as const, digest: digest(resolution) },
+                  },
+                ],
+              },
+              { stateDir: fixture.stateDir, authorize: async () => {} },
+            );
+            if (receipt.outcome.kind === "terminal") break;
+            conflict = receipt.outcome.state;
+          }
+          if (receipt === undefined || receipt.outcome.kind !== "terminal") {
+            throw new Error(`${operationId} did not reach a terminal continuation receipt`);
+          }
+          const finalized = await runGuardedRebase({
+            binding: fixture.binding,
+            operationId,
+            ontoCommit,
+            runEffect: async () => {
+              throw new Error("terminal conflict reconciliation must not relaunch the effect");
+            },
+            stateDir: fixture.stateDir,
+          });
+          if (finalized.kind !== "finalized") {
+            throw new Error(`${operationId} did not reconcile its terminal receipt component`);
+          }
+          expect(finalized.bridge.outcome).toBe("conflicted");
+          expect(finalized.bridge.rebasedStartCommit).toBe(receipt.newHead);
+          return finalized;
+        };
+        const receiptJournalBodies = async () => {
+          const root = path.join(fixture.stateDir, "git-conflict-broker");
+          const entries = await fs.readdir(root, { withFileTypes: true });
+          return new Map(
+            await Promise.all(
+              entries
+                .filter((entry) => entry.isDirectory())
+                .map(async (entry) => [
+                  entry.name,
+                  await fs.readFile(path.join(root, entry.name, "journal.json"), "utf8"),
+                ] as const),
+            ),
+          );
+        };
+
+        const first = await resolveConflict(
+          "t6576-conflicted-first",
+          fixture.ontoCommit,
+          1,
+          "first main + task resolution\n",
+        );
+        const retainedFirstJournals = await receiptJournalBodies();
+        expect(
+          await runGuardedRebase({
+            binding: fixture.binding,
+            operationId: "t6576-conflicted-first",
+            ontoCommit: fixture.ontoCommit,
+            runEffect: async () => {
+              throw new Error("exact replay must not relaunch the first transaction");
+            },
+            stateDir: fixture.stateDir,
+          }),
+        ).toEqual({ ...first, effect: null });
+
+        await git(fixture.repositoryRoot, [
+          "merge",
+          "--ff-only",
+          first.bridge.rebasedStartCommit,
+        ]);
+
+        await fs.writeFile(path.join(fixture.worktreePath, "file.txt"), "second task change\n");
+        await git(fixture.worktreePath, ["add", "file.txt"]);
+        await git(fixture.worktreePath, ["commit", "-q", "-m", "second task change"]);
+        await fs.writeFile(path.join(fixture.repositoryRoot, "file.txt"), "second main change\n");
+        await git(fixture.repositoryRoot, ["add", "file.txt"]);
+        await git(fixture.repositoryRoot, ["commit", "-q", "-m", "second main change"]);
+        const secondOnto = await git(fixture.repositoryRoot, ["rev-parse", "HEAD"]);
+        await resolveConflict(
+          "t6576-conflicted-second",
+          secondOnto,
+          2,
+          "second main + task resolution\n",
+        );
+        const afterSecondJournals = await receiptJournalBodies();
+        for (const [name, body] of retainedFirstJournals) {
+          expect(afterSecondJournals.get(name)).toBe(body);
+        }
+
+        await fs.writeFile(path.join(fixture.worktreePath, "worker-clean.txt"), "worker clean\n");
+        await git(fixture.worktreePath, ["add", "worker-clean.txt"]);
+        await git(fixture.worktreePath, ["commit", "-q", "-m", "clean worker change"]);
+        const cleanOldTip = await git(fixture.worktreePath, ["rev-parse", "HEAD"]);
+        await fs.writeFile(path.join(fixture.repositoryRoot, "main-clean.txt"), "main clean\n");
+        await git(fixture.repositoryRoot, ["add", "main-clean.txt"]);
+        await git(fixture.repositoryRoot, ["commit", "-q", "-m", "clean main change"]);
+        const cleanOnto = await git(fixture.repositoryRoot, ["rev-parse", "HEAD"]);
+        await expect(
+          runGuardedRebase({
+            binding: fixture.binding,
+            operationId: "t6576-clean-unrecorded",
+            ontoCommit: cleanOnto,
+            runEffect: async () => await effectFor(cleanOnto),
+            onIntent: async () => {
+              throw new Error("simulated crash after clean intent durability");
+            },
+            stateDir: fixture.stateDir,
+          }),
+        ).rejects.toThrow("simulated crash after clean intent durability");
+        await git(fixture.worktreePath, ["rebase", cleanOnto]);
+        const clean = await runGuardedRebase({
+          binding: fixture.binding,
+          operationId: "t6576-clean-unrecorded",
+          ontoCommit: cleanOnto,
+          runEffect: async () => {
+            throw new Error("completed intent reconciliation must not relaunch the effect");
+          },
+          stateDir: fixture.stateDir,
+        });
+        if (clean.kind !== "finalized") throw new Error("clean intent did not reconcile");
+        expect(clean.bridge).toMatchObject({ oldResultCommit: cleanOldTip, outcome: "clean" });
+        const afterCleanJournals = await receiptJournalBodies();
+        for (const [name, body] of afterSecondJournals) {
+          expect(afterCleanJournals.get(name)).toBe(body);
+        }
+      } finally {
+        await fixture.store.dispose();
+      }
+    },
+  );
+
   test("a foreign repository cannot resolve another handle's guarded-rebase reference", async () => {
     const first = await seedGuarded({});
     const second = await seedGuarded({});
