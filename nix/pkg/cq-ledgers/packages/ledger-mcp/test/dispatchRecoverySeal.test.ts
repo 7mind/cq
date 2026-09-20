@@ -29,6 +29,7 @@ import {
 } from "@cq/ledger";
 import {
   captureCurrentRecoverySeal,
+  currentRecoveryTaskSpecificationDigest,
   currentRecoveryTaskEvidence,
   readCurrentDispatchRecoveryStatusForLineage,
 } from "../src/dispatchRecoverySeal.js";
@@ -956,6 +957,76 @@ describe("protected current dispatch-recovery capture", () => {
         rows,
       }),
     ).rejects.toMatchObject({ reason: "lineage-active" });
+  });
+
+  // expected-failure: tasks:T6576
+  test.failing("a staged-retired consumed recovery intermediate admits its ordinary cancelled successor", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const rows: AttestationRow[] = [abortedEnvelope({ generation: 2 })];
+    const promotionCoordinates = {
+      ...coordinates,
+      taskSpecificationDigest: currentRecoveryTaskSpecificationDigest(RECOVERY_INPUT),
+    };
+    await captureCurrentRecoverySeal(promotionCoordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+    const intermediate = {
+      ...abortedEnvelope({ generation: 3, state: "consumed" }),
+      consumedAt: RECOVERY_LATER,
+      gitEffectBinding: {
+        ...RECOVERY_BINDING,
+        inheritedGitReceipts: RECOVERY_RECEIPTS,
+      },
+      implementationQueue: {
+        state: "staged-rebase-retired",
+        attempt: {
+          resultCommit: RECOVERY_TIP,
+          gitReceipts: RECOVERY_RECEIPTS,
+        },
+      },
+      dispatchContinuationBinding: {
+        attestationId: RECOVERY_ATTESTATION,
+        generation: 3,
+        terminalDigest: "8".repeat(64),
+        terminalAt: RECOVERY_LATER,
+        liveTip: RECOVERY_TIP,
+        gitReceipts: RECOVERY_RECEIPTS,
+      },
+    } as unknown as AttestationRow;
+    const finalTerminalDigest = dispatchPayloadDigest({
+      terminalKind: "aborted",
+      reason: "cancelled",
+      detailsDigest: null,
+    });
+    const successor = {
+      ...abortedEnvelope({ generation: 4, reason: "cancelled" }),
+      terminalDigest: finalTerminalDigest,
+      gitEffectBinding: {
+        ...RECOVERY_BINDING,
+        inheritedGitReceipts: RECOVERY_RECEIPTS,
+      },
+    } as unknown as AttestationRow;
+    rows.push(intermediate, successor);
+
+    const promoted = await captureCurrentRecoverySeal(promotionCoordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_LATER,
+    });
+
+    expect(promoted.seed.selectedSourceHandle).toEqual({
+      attestationId: RECOVERY_ATTESTATION,
+      generation: 4,
+    });
+    expect(promoted.seed.gitReceipts).toEqual(RECOVERY_RECEIPTS);
   });
 
   test("invalid broker journals and excluded terminal reasons never become sources", async () => {
