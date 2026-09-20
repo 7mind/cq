@@ -4171,8 +4171,7 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // expected-failure: tasks:T6573
-  test.failing(
+  test(
     "a sealed recovery successor admits one exact changed gate correction",
     async () => {
       const runner = new GateSequenceDummy([

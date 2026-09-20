@@ -11,6 +11,7 @@ import {
   IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   implementWorkerSupervisedGateEvidenceSchema,
+  isImplementWorkerSupervisedGateRejectionDetails,
   IDEMPOTENCY_HORIZON_MS,
   AttestationKeyReuseError,
   AttestationBackendUnsupportedError,
@@ -758,7 +759,161 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   ): Promise<boolean | GuardedRebaseRejection> {
     if (dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) return true;
     if (await continuationExitsRecoveryFence(fence, binding, input.continuation)) return true;
+    if (await gateRejectedSuccessorExitsRecoveryFence(fence, binding, input)) return true;
     return await guardedRebaseExitsRecoveryFence(fence, binding, input);
+  }
+
+  async function gateRejectedSuccessorExitsRecoveryFence(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): Promise<boolean> {
+    if (
+      input.roleId !== "implement-worker" ||
+      input.reprepareOf === undefined ||
+      input.reprepareOf.attestationId !== fence.sourceAttestationId ||
+      input.reprepareOf.generation !== fence.lineageMaximumGeneration + 1 ||
+      input.guardedRebase !== undefined ||
+      input.recovery !== undefined ||
+      input.continuation !== undefined ||
+      input.recoveryPreparation !== undefined ||
+      input.implementationEvidenceBootstrap !== undefined ||
+      input.input === null ||
+      typeof input.input !== "object" ||
+      Array.isArray(input.input) ||
+      options.ledgerStore === undefined ||
+      recoveryJournal === undefined
+    ) {
+      return false;
+    }
+    try {
+      const requestInput = input.input as Readonly<Record<string, DispatchJSONValue>>;
+      const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+      const goalRef = exactGoalRef(options.ledgerStore, binding.taskId);
+      if (
+        requestInput["taskId"] !== binding.taskId ||
+        requestInput["worktreePath"] !== binding.worktreePath ||
+        requestInput["branch"] !== binding.branch ||
+        currentRecoveryTaskSpecificationDigest(requestInput) !==
+          taskEvidence.taskSpecificationDigest
+      ) {
+        return false;
+      }
+      const journal = await recoveryJournal.read(binding.taskId);
+      if (
+        journal?.state !== "committed" ||
+        journal.fence === undefined ||
+        journal.fence.fenceRef !== fence.fenceRef ||
+        journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest
+      ) {
+        return false;
+      }
+      const rows = await options.backend.transact({ kind: "namespace" }, (store) =>
+        store.rows().map((row) => structuredClone(row)),
+      );
+      const source = rows.find(
+        (row) =>
+          !isAttestationTombstone(row) &&
+          row.attestationId === input.reprepareOf!.attestationId &&
+          row.generation === input.reprepareOf!.generation,
+      );
+      if (source === undefined || isAttestationTombstone(source)) return false;
+      const sourceBinding = source.gitEffectBinding;
+      const control = source.implementationQueue;
+      const output = dispatchObject(source.output) ? source.output : undefined;
+      const bindingMatches =
+        sourceBinding !== undefined &&
+        (
+          [
+            "taskId",
+            "handleToken",
+            "handleFingerprint",
+            "repositoryRoot",
+            "repositoryId",
+            "commonDir",
+            "worktreePath",
+            "branch",
+            "ref",
+            "baseCommit",
+          ] as const
+        ).every((field) => sourceBinding[field] === binding[field]);
+      const authenticatedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
+      const bridgeMatches =
+        authenticatedBridge === undefined
+          ? sourceBinding?.guardedRebaseBridge === undefined
+          : sourceBinding?.guardedRebaseBridge !== undefined &&
+            dispatchPayloadDigest(
+              authenticatedBridge as unknown as DispatchJSONValue,
+            ) ===
+              dispatchPayloadDigest(
+                sourceBinding.guardedRebaseBridge as unknown as DispatchJSONValue,
+              );
+      if (
+        !bindingMatches ||
+        !bridgeMatches ||
+        source.promptProvenance.roleId !== "implement-worker" ||
+        source.promptProvenance.inputDigest !== dispatchPayloadDigest(source.input) ||
+        currentRecoveryTaskSpecificationDigest(source.input) !==
+          taskEvidence.taskSpecificationDigest ||
+        source.state !== "aborted" ||
+        source.abortReason !== "gate-rejected" ||
+        source.parentGateCapabilityHash === undefined ||
+        source.abortDetails === undefined ||
+        source.abortDetailsDigest !== dispatchPayloadDigest(source.abortDetails) ||
+        !isImplementWorkerSupervisedGateRejectionDetails(source.abortDetails) ||
+        control === undefined ||
+        control.state !== "terminal" ||
+        control.terminal?.reason !== "gate-rejected" ||
+        control.terminal.detailsDigest !== source.abortDetailsDigest ||
+        control.qualification === undefined ||
+        source.stagedCompletionQualification?.qualificationDigest !==
+          control.qualification.qualificationDigest ||
+        output === undefined ||
+        output["status"] !== "pass" ||
+        output["taskId"] !== binding.taskId ||
+        output["resultCommit"] !== control.attempt.resultCommit ||
+        control.enrollment.taskId !== binding.taskId ||
+        control.enrollment.goalRef !== goalRef ||
+        control.enrollment.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest ||
+        control.attempt.taskId !== binding.taskId ||
+        control.attempt.repositoryId !== binding.repositoryId ||
+        control.attempt.worktreePath !== binding.worktreePath ||
+        control.attempt.managedWorktreeBindingDigest !==
+          dispatchPayloadDigest(sourceBinding as unknown as DispatchJSONValue)
+      ) {
+        return false;
+      }
+      const liveTip = await observeManagedWorktreeLiveTip(
+        binding,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      if (
+        requestInput["startingCommit"] !== liveTip ||
+        output["resultCommit"] !== liveTip
+      ) {
+        return false;
+      }
+      const inherited = sourceBinding.inheritedGitReceipts ?? [];
+      if (
+        dispatchPayloadDigest(inherited as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue)
+      ) {
+        return false;
+      }
+      const receipts = await resolveInheritedGitChangeReceipts(
+        { ...sourceBinding, ...input.reprepareOf },
+        liveTip,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      return (
+        dispatchPayloadDigest(receipts as unknown as DispatchJSONValue) ===
+          control.attempt.gitReceiptLineageDigest &&
+        dispatchPayloadDigest(output["gitReceipts"] ?? []) ===
+          control.attempt.gitReceiptLineageDigest
+      );
+    } catch {
+      return false;
+    }
   }
 
   async function guardedRebaseExitsRecoveryFence(
@@ -840,7 +995,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       input.recovery === undefined;
     const guardedRebase =
       noOtherAuthority && input.continuation === undefined && input.guardedRebase !== undefined;
-    return continuation || guardedRebase;
+    const gateRejectedCorrection =
+      noOtherAuthority &&
+      input.reprepareOf !== undefined &&
+      input.continuation === undefined &&
+      input.guardedRebase === undefined;
+    return continuation || guardedRebase || gateRejectedCorrection;
   }
 
   function callerPrepareFingerprint(
