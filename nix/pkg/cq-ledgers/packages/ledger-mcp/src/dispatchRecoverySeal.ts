@@ -55,6 +55,7 @@ import {
 const TASK_ID = /^T[0-9]+$/u;
 const TERMINAL_STATES: ReadonlySet<string> = new Set(["consumed", "aborted"]);
 const ELIGIBLE_ABORT_REASONS: ReadonlySet<string> = new Set([
+  "cancelled",
   "invalid-output",
   "missing-result",
   "deadline-exceeded",

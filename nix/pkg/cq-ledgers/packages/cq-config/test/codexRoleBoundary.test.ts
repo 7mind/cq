@@ -355,6 +355,116 @@ throw new Error("unexpected cq invocation");
     }
   });
 
+  test("native qualifier accepts one handle-only consumed-failure acknowledgement [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-consumed-failure-qualification-"));
+    const runner = join(root, "qualifier");
+    const codex = join(root, "codex-observation");
+    const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
+    if (initialized.exitCode !== 0) throw new Error("consumed failure git init failed");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `printf %s ${JSON.stringify(JSON.stringify({
+          state: "consumed",
+          result: {
+            state: "consumed",
+            attestationId: HANDLE.attestationId,
+            generation: HANDLE.generation,
+            consumedAt: "2026-09-20T01:00:01.000Z",
+            outputDigest: "a".repeat(64),
+          },
+        }))}`,
+      ].join("\n"),
+    );
+    chmodSync(runner, 0o755);
+    const stored = {
+      state: "gate-pending",
+      result: {
+        state: "gate-pending",
+        ...HANDLE,
+        submittedAt: "2026-09-20T01:00:00.000Z",
+        outputDigest: "a".repeat(64),
+      },
+    };
+    writeFileSync(
+      codex,
+      [
+        "#!/usr/bin/env bun",
+        "await Bun.stdin.text();",
+        `process.stdout.write(${JSON.stringify(
+          [
+            JSON.stringify({ type: "thread.started", thread_id: "consumed-failure-thread" }),
+            JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "mcp_tool_call",
+                server: "ledger",
+                tool: "store_result",
+                result: { content: [{ type: "text", text: JSON.stringify(stored) }] },
+              },
+            }),
+            JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: JSON.stringify(HANDLE) },
+            }),
+            JSON.stringify({ type: "turn.completed", usage: {} }),
+          ].join("\n"),
+        )});`,
+      ].join("\n"),
+    );
+    chmodSync(codex, 0o755);
+    try {
+      const execution = await executeCodexRoleBoundary(
+        createCodexRoleBoundaryPlan({
+          roleId: "implement-worker",
+          roleInstructions: "consume one intentional failure",
+          handle: HANDLE,
+          inputCapability: INPUT_CAPABILITY,
+          resultCapability: RESULT_CAPABILITY,
+          gitChangeCapability: GIT_CHANGE_CAPABILITY,
+          parentGateCapability: PARENT_GATE_CAPABILITY,
+          cwd: root,
+          ledgerCwd: root,
+          model: "recording",
+          reasoningEffort: "medium",
+          sandboxMode: "danger-full-access",
+          timeoutMs: 5_000,
+          promptRoot: root,
+          ledgerCommand: runner,
+          codexExecutable: codex,
+        }),
+        "consumed-failure-correlation",
+        undefined,
+        {
+          provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+          targetRef: "tasks:T6575",
+        },
+      );
+      const qualified = await executeCodexImplementationCandidateQualifier({
+        command: runner,
+        ledgerCwd: root,
+        promptRoot: root,
+        execution,
+        expectedRunId: "consumed-failure-parent-run",
+        observedAt: "2026-09-20T01:00:01.000Z",
+        timeoutMs: 2_000,
+      });
+      expect(qualified).toEqual({
+        state: "consumed",
+        result: {
+          state: "consumed",
+          ...HANDLE,
+          consumedAt: "2026-09-20T01:00:01.000Z",
+          outputDigest: "a".repeat(64),
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("candidate qualification rejects a reconstructed process observation", async () => {
     const fabricated = {
       handle: HANDLE,

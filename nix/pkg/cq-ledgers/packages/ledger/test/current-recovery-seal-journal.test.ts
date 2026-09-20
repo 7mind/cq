@@ -30,6 +30,25 @@ import {
 
 const roots: string[] = [];
 
+function cancelledRecoverySeal() {
+  const template = recoverySeal().seed;
+  const {
+    kind: _kind,
+    version: _version,
+    sourceAbortReason: _sourceAbortReason,
+    gitReceiptsDigest: _gitReceiptsDigest,
+    managedFingerprint,
+    ...input
+  } = template;
+  return createCurrentRecoverySeal(
+    createCurrentRecoverySeed({
+      ...input,
+      source: { kind: "aborted", version: 1, abortReason: "cancelled" },
+      gitBinding: { ...input.gitBinding, handleFingerprint: managedFingerprint },
+    }),
+  );
+}
+
 for (const backend of ["fs", "git-object"]) {
   test(`T6419 refuses recovery seal namespace ${backend} [Blackbox-Atomic]`, () => {
     const seed = recoverySeal().seed;
@@ -143,6 +162,24 @@ for (const factory of factories) {
         sealReference: committed.seal.sealReference,
         sealDigest: committed.seal.sealDigest,
         seal: committed.seal,
+      });
+    });
+
+    test("operator-cancelled authority round-trips with its terminal cause", async () => {
+      const store = await factory.make();
+      const seal = cancelledRecoverySeal();
+      if (seal.version !== 1) throw new Error("cancelled source did not create a v1 seal");
+      const journal = {
+        ...committedJournal(),
+        snapshotDigest: seal.seed.snapshotDigest,
+        seal,
+      } as const;
+      await store.put(journal);
+
+      expect(await store.read(RECOVERY_TASK)).toEqual(journal);
+      expect(await currentRecoveryStatus(store, RECOVERY_TASK)).toMatchObject({
+        state: "committed",
+        seal: { seed: { sourceAbortReason: "cancelled" } },
       });
     });
 

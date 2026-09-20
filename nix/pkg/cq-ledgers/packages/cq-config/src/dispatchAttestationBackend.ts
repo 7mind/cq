@@ -80,6 +80,7 @@ import {
   authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   confirmDispatchCompletion,
+  confirmStagedFailureCompletion,
   replayConfirmedDispatchCompletion,
   claimParentGate,
   claimQualifiedParentGate,
@@ -111,6 +112,7 @@ import {
   type AttestationSweepReport,
   type ConfirmDispatchCompletionOutcome,
   type ConfirmDispatchCompletionRequest,
+  type ConfirmStagedFailureCompletionRequest,
   type ClaimParentGateOutcome,
   type CompleteParentGateRequest,
   type CompleteQualifiedParentGateRequest,
@@ -998,6 +1000,16 @@ export async function confirmDispatchCompletionOn(
 ): Promise<ConfirmDispatchCompletionOutcome> {
   return backend.transact({ kind: "namespace" }, (store) =>
     confirmDispatchCompletion(request, { store, now: deps.now }),
+  );
+}
+
+export async function confirmStagedFailureCompletionOn(
+  backend: AttestationBackend,
+  request: ConfirmStagedFailureCompletionRequest,
+  deps: AttestationBackendDeps,
+): Promise<Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }>> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    confirmStagedFailureCompletion(request, { store, now: deps.now }),
   );
 }
 

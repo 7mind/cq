@@ -140,7 +140,8 @@ export type QualifyImplementationCandidateOutcome =
   | {
       readonly state: "aborted";
       readonly result: AbortedDispatchResult;
-    };
+    }
+  | Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }>;
 
 export interface FetchDispatchInputToolInput extends DispatchHandle {
   readonly inputCapability: InputCapability;

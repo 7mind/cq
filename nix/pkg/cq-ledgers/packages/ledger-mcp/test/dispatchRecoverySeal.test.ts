@@ -293,7 +293,7 @@ describe("protected current dispatch-recovery capture", () => {
     );
   });
 
-  test("records an older maximal source separately from a later ineligible lineage maximum", async () => {
+  test("selects a later operator-cancelled source and retains its terminal cause", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
     const rows = [
       abortedEnvelope({ generation: 2 }),
@@ -313,15 +313,16 @@ describe("protected current dispatch-recovery capture", () => {
       now: () => RECOVERY_NOW,
     });
 
-    expect(seal.seed.selectedSourceHandle.generation).toBe(2);
+    expect(seal.seed.selectedSourceHandle.generation).toBe(9);
     expect(seal.seed.lineageMaximumGeneration).toBe(9);
+    expect(seal.version === 1 ? seal.seed.sourceAbortReason : undefined).toBe("cancelled");
     expect((await currentRecoveryStatus(journal, RECOVERY_TASK)).state).toBe("committed");
     expect(
       dispatchLineageFenceFromRecoveryJournal(await journal.read(RECOVERY_TASK)),
     ).toMatchObject({
       state: "journal-only",
       recoverySeedRef: seal.sealReference,
-      selectedSourceGeneration: 2,
+      selectedSourceGeneration: 9,
       lineageMaximumGeneration: 9,
     });
   });

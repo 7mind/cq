@@ -150,7 +150,7 @@ export async function main(): Promise<void> {
         "codex-role-dispatch: implement-worker requires a registered process observation",
       );
     }
-    await executeCodexImplementationCandidateQualifier({
+    const qualification = await executeCodexImplementationCandidateQualifier({
       command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
       ledgerCwd: invocation.ledgerCwd,
       promptRoot,
@@ -159,6 +159,10 @@ export async function main(): Promise<void> {
       observedAt: new Date().toISOString(),
       timeoutMs: plan.effectivePreturn.postStoreSubmissionFinalizationMs,
     });
+    if (qualification.state === "consumed") {
+      process.stdout.write(`${JSON.stringify(handle)}\n`);
+      return;
+    }
     const roleScript = process.argv[1];
     if (roleScript === undefined || roleScript.trim() === "") {
       throw new Error("codex-role-dispatch: current role script path is unavailable");

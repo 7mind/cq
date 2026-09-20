@@ -30,6 +30,7 @@ export const CURRENT_RECOVERY_TASK_IDENTITY_SCHEME = "finalized-task-membership-
 export const LINEAGE_CUTOVER_FENCE_ACTION_KEY = "lineage-cutover-fence" as const;
 
 export const CURRENT_RECOVERY_SOURCE_ABORT_REASONS = [
+  "cancelled",
   "invalid-output",
   "missing-result",
   "deadline-exceeded",

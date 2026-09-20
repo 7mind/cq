@@ -91,7 +91,9 @@ const argv = process.argv.slice(2);
 if (argv.includes("--implementation-candidate-qualify")) {
   appendFileSync(markers, "qualifier\\n");
   writeFileSync(process.env.T2844_QUALIFIER_CAPTURE, JSON.stringify({ argv, environment: process.env, request }));
-  process.stdout.write(JSON.stringify({state:"queued",attestationId:request.attestationId,generation:request.generation,partitionKey:"cq-implementation-queue:v1:t2844",outputDigest:"${"a".repeat(64)}",qualificationDigest:"${"b".repeat(64)}"}));
+  process.stdout.write(JSON.stringify(process.env.T2844_QUALIFICATION_STATE === "consumed"
+    ? {state:"consumed",result:{state:"consumed",attestationId:request.attestationId,generation:request.generation,consumedAt:"2026-09-20T01:00:01.000Z",outputDigest:"${"a".repeat(64)}"}}
+    : {state:"queued",attestationId:request.attestationId,generation:request.generation,partitionKey:"cq-implementation-queue:v1:t2844",outputDigest:"${"a".repeat(64)}",qualificationDigest:"${"b".repeat(64)}"}));
   process.exit(0);
 }
 if (argv.includes("--implementation-candidate-coordinate")) {
@@ -243,6 +245,20 @@ process.exit(1);
       ]) {
         expect(JSON.stringify(coordinator.environment)).not.toContain(forbidden);
       }
+
+      const consumedStart = markerLines.length;
+      const consumed = await invoke(
+        { ...request, effectTargetRef: "tasks:T2844" },
+        { ...environment, T2844_QUALIFICATION_STATE: "consumed" },
+      );
+      expect(consumed).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(consumed.stdout)).toEqual(HANDLE);
+      const consumedMarkers = (await readFile(markers, "utf8"))
+        .trim()
+        .split("\n")
+        .slice(consumedStart);
+      expect(consumedMarkers.filter((line) => line === "qualifier")).toHaveLength(1);
+      expect(consumedMarkers.filter((line) => line === "coordinator")).toHaveLength(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -957,8 +957,7 @@ describe("journal recovery epoch promotion", () => {
     }
   });
 
-  // expected-failure: tasks:T6575
-  test.failing("operator-cancelled journal successor promotes the committed recovery epoch", async () => {
+  test("operator-cancelled journal successor promotes the committed recovery epoch", async () => {
     const { journal, generation17 } = await generation17Journal();
     const successor = journalDerivedAbort("cancelled");
     const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), {

@@ -574,6 +574,7 @@ async function fixtureWithDispatchBase(
     },
   };
   return {
+    capabilityOptions,
     capability,
     repositoryRoot,
     managed,
@@ -651,15 +652,18 @@ async function stageAndFinalize(subject: GateFixture) {
   return await finalize(subject);
 }
 
-// expected-failure: tasks:T6575
-test.failing("intentional worker failure is consumed without queue or gate side effects", async () => {
+test("intentional worker failure is consumed without queue or gate side effects", async () => {
   const runner = new GateDummy();
+  let successorLaunches = 0;
   const subject = await fixtureWithDispatchBase(
     runner,
     "managed",
     () => "2026-08-12T20:00:00.000Z",
     false,
     true,
+    async () => {
+      successorLaunches += 1;
+    },
   );
   const failure = {
     ...subject.output,
@@ -698,7 +702,21 @@ test.failing("intentional worker failure is consumed without queue or gate side 
     },
   });
   expect(await subject.capability.qualifyImplementationCandidate(observation)).toEqual(consumed);
+  await expect(
+    subject.capability.qualifyImplementationCandidate({
+      ...observation,
+      childThreadId: "altered-intentional-fail-child-thread",
+    }),
+  ).rejects.toThrow("different qualification observation");
+  expect(await subject.capability.fetch(subject.prepared)).toMatchObject({
+    state: "consumed",
+    output: failure,
+  });
+  expect(await subject.capability.fetch(subject.prepared)).toMatchObject({
+    state: "output-already-materialized",
+  });
   expect(runner.requests).toHaveLength(0);
+  expect(successorLaunches).toBe(0);
   expect(subject.backend.storedRows()[0]).toMatchObject({
     state: "consumed",
     dispatchContinuationBinding: {
@@ -706,6 +724,299 @@ test.failing("intentional worker failure is consumed without queue or gate side 
     },
   });
   expect(subject.backend.storedRows()[0]?.implementationQueue).toBeUndefined();
+});
+
+test("real SQLite reopens and replays one consumed intentional failure", async () => {
+  const runner = new GateDummy();
+  let successorLaunches = 0;
+  const subject = await fixtureWithDispatchBase(
+    runner,
+    "managed",
+    () => "2026-08-12T20:00:00.000Z",
+    false,
+    true,
+    async () => {
+      successorLaunches += 1;
+    },
+    artifactStore(),
+    "sqlite",
+  );
+  const failure = {
+    ...subject.output,
+    status: "fail",
+    resultCommit: null,
+    blockedReason: "intentional SQLite worker failure",
+  } as const;
+  expect(
+    await subject.capability.storeResult({
+      resultCapability: subject.prepared.resultCapability,
+      output: failure,
+    }),
+  ).toMatchObject({ state: "gate-pending" });
+  await subject.backend.close();
+  const backend = new SqliteAttestationBackend({
+    namespace: subject.backend.namespace,
+    dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+  });
+  const capability = createDispatchCapability({ ...subject.capabilityOptions, backend });
+  try {
+    if (capability.qualifyImplementationCandidate === undefined) {
+      throw new Error("SQLite qualification is unavailable after reopen");
+    }
+    const observation = {
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+      childThreadId: "sqlite-intentional-fail-child-thread",
+      expectedRunId: subject.expectedChild.runId,
+      outcome: "completed" as const,
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    };
+    const consumed = await capability.qualifyImplementationCandidate(observation);
+    expect(consumed).toMatchObject({ state: "consumed" });
+    expect(await capability.qualifyImplementationCandidate(observation)).toEqual(consumed);
+    await expect(
+      capability.qualifyImplementationCandidate({
+        ...observation,
+        childThreadId: "changed-sqlite-intentional-fail-child-thread",
+      }),
+    ).rejects.toThrow("different qualification observation");
+    expect(await capability.fetch(subject.prepared)).toMatchObject({
+      state: "consumed",
+      output: failure,
+    });
+    const row = await backend.transact({ kind: "handle", handle: subject.prepared }, (store) =>
+      store.read(subject.prepared),
+    );
+    expect(row).toMatchObject({
+      state: "consumed",
+      dispatchContinuationBinding: {
+        currentRecoverySource: { kind: "consumed-fail", status: "fail" },
+      },
+    });
+    expect(row?.kind === "envelope" ? row.implementationQueue : undefined).toBeUndefined();
+    expect(runner.requests).toHaveLength(0);
+    expect(successorLaunches).toBe(0);
+  } finally {
+    await backend.close();
+  }
+});
+
+test("intentional failure receipt and manager substitutions fail closed before consumption", async () => {
+  const cases = [
+    {
+      label: "incomplete receipts",
+      mutate: (subject: GateFixture) => ({ ...subject.output, gitReceipts: [] }),
+      expected: "omits or invents",
+    },
+    {
+      label: "substituted receipt",
+      mutate: (subject: GateFixture) => ({
+        ...subject.output,
+        gitReceipts: [
+          { ...subject.output.gitReceipts[0]!, requestDigest: "f".repeat(64) },
+        ],
+      }),
+      expected: "does not match its durable journal",
+    },
+    {
+      label: "extended receipts",
+      mutate: (subject: GateFixture) => ({
+        ...subject.output,
+        gitReceipts: [...subject.output.gitReceipts, ...subject.output.gitReceipts],
+      }),
+      expected: "omits or invents",
+    },
+    {
+      label: "foreign task",
+      mutate: (subject: GateFixture) => ({ ...subject.output, taskId: "T9999" }),
+      expected: "taskId does not match",
+    },
+    {
+      label: "foreign branch",
+      mutate: (subject: GateFixture) => ({ ...subject.output, branch: "implement/T9999" }),
+      expected: "branch does not match",
+    },
+    {
+      label: "foreign worktree",
+      mutate: (subject: GateFixture) => ({
+        ...subject.output,
+        actualWorktreePath: path.join(subject.repositoryRoot, "foreign-worktree"),
+      }),
+      expected: "worktree path does not match",
+    },
+  ] as const;
+  for (const control of cases) {
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+    );
+    const failure = {
+      ...control.mutate(subject),
+      status: "fail",
+      resultCommit: null,
+      blockedReason: `controlled ${control.label}`,
+    } as const;
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: failure,
+      }),
+      control.label,
+    ).toMatchObject({ state: "gate-pending" });
+    if (subject.capability.qualifyImplementationCandidate === undefined) {
+      throw new Error("implementation candidate qualification is unavailable");
+    }
+    await expect(
+      subject.capability.qualifyImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+        childThreadId: `rejected-${control.label.replaceAll(" ", "-")}`,
+        expectedRunId: subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: "2026-08-12T20:00:02.000Z",
+        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      }),
+      control.label,
+    ).rejects.toThrow(control.expected);
+    const row = await subject.backend.transact(
+      { kind: "handle", handle: subject.prepared },
+      (store) => store.read(subject.prepared),
+    );
+    expect(row, control.label).toMatchObject({ state: "gate-pending" });
+    expect(row?.kind === "envelope" ? row.implementationQueue : undefined).toBeUndefined();
+    expect(runner.requests, control.label).toHaveLength(0);
+  }
+});
+
+test("malformed failure and invalid pass receipts cannot consume or enter the queue", async () => {
+  for (const status of ["fail", "pass"] as const) {
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+    );
+    const output = {
+      ...subject.output,
+      status,
+      ...(status === "fail"
+        ? { resultCommit: null, blockedReason: "malformed receipt" }
+        : {}),
+      gitReceipts: [{ ...subject.output.gitReceipts[0]!, requestDigest: "f".repeat(64) }],
+    } as const;
+    if (status === "pass") {
+      await expect(
+        subject.capability.storeResult({
+          resultCapability: subject.prepared.resultCapability,
+          output,
+        }),
+      ).rejects.toThrow("does not match its durable journal");
+    } else {
+      const malformed = { ...output, gitReceipts: [{ kind: "not-a-receipt" }] };
+      expect(
+        await subject.capability.storeResult({
+          resultCapability: subject.prepared.resultCapability,
+          output: malformed as never,
+        }),
+      ).toMatchObject({ state: "aborted", result: { reason: "invalid-output" } });
+    }
+    expect(runner.requests).toHaveLength(0);
+    const row = await subject.backend.transact(
+      { kind: "handle", handle: subject.prepared },
+      (store) => store.read(subject.prepared),
+    );
+    expect(row?.kind === "envelope" ? row.implementationQueue : undefined).toBeUndefined();
+  }
+});
+
+test("reordered intentional-failure receipts are rejected before consumption", async () => {
+  const runner = new GateDummy();
+  const subject = await fixtureWithDispatchBase(
+    runner,
+    "managed",
+    () => "2026-08-12T20:00:00.000Z",
+    false,
+    true,
+  );
+  if (
+    subject.capability.gitCommit === undefined ||
+    subject.prepared.gitChangeCapability === undefined ||
+    subject.capability.qualifyImplementationCandidate === undefined
+  ) {
+    throw new Error("brokered qualification is unavailable");
+  }
+  await fs.writeFile(path.join(subject.managed.handle.absolutePath, "extra.txt"), "extra\n");
+  const secondReceipt = await subject.capability.gitCommit({
+    attestationId: subject.prepared.attestationId,
+    generation: subject.prepared.generation,
+    gitChangeCapability: subject.prepared.gitChangeCapability,
+    operationId: `T2081-${sequence}-second-commit`,
+    expectedHead: subject.receipt.newHead,
+    message: "second supervised result",
+    changes: [
+      {
+        kind: "add",
+        path: "extra.txt",
+        newState: { mode: "100644", digest: sha256("extra\n") },
+      },
+    ],
+  });
+  const failure = {
+    ...subject.output,
+    status: "fail",
+    resultCommit: null,
+    blockedReason: "controlled reordered receipt closure",
+    filesTouched: ["extra.txt", "file.txt"],
+    gitReceipts: [secondReceipt, subject.receipt].map((receipt) => ({
+      ...receipt,
+      objectOids: [...receipt.objectOids],
+      paths: [...receipt.paths],
+    })),
+    baseVerification: {
+      ...subject.output.baseVerification,
+      headCommit: secondReceipt.newHead,
+    },
+  } as const;
+  expect(
+    await subject.capability.storeResult({
+      resultCapability: subject.prepared.resultCapability,
+      output: failure,
+    }),
+  ).toMatchObject({ state: "gate-pending" });
+  await expect(
+    subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+      childThreadId: "reordered-receipts-child-thread",
+      expectedRunId: subject.expectedChild.runId,
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    }),
+  ).rejects.toThrow("does not match its durable journal");
+  const row = await subject.backend.transact(
+    { kind: "handle", handle: subject.prepared },
+    (store) => store.read(subject.prepared),
+  );
+  expect(row).toMatchObject({ state: "gate-pending" });
+  expect(row?.kind === "envelope" ? row.implementationQueue : undefined).toBeUndefined();
+  expect(runner.requests).toHaveLength(0);
 });
 
 const D342_ADMISSION_TIMEOUT_MS = 15_000;

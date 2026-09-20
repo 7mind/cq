@@ -1083,6 +1083,8 @@ export interface DispatchContinuationBinding {
   readonly implementationEvidenceBootstrapRef?: string;
   /** Present only when the server-validated consumed worker output was a failure. */
   readonly currentRecoverySource?: DispatchCurrentRecoverySource;
+  /** Exact registered-process observation consumed by native failure qualification. */
+  readonly completionObservationDigest?: string;
   readonly callerLineage: DispatchContinuationCallerLineage;
 }
 
@@ -1932,6 +1934,13 @@ export function assertDispatchContinuationBinding(
           value.currentRecoverySource,
           `${path}.currentRecoverySource`,
         );
+  const completionObservationDigest =
+    value.completionObservationDigest === undefined
+      ? undefined
+      : assertDigest(
+          value.completionObservationDigest,
+          `${path}.completionObservationDigest`,
+        );
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-continuation-binding" as const,
     version: 1 as const,
@@ -1946,6 +1955,7 @@ export function assertDispatchContinuationBinding(
       ? {}
       : { implementationEvidenceBootstrapRef: value.implementationEvidenceBootstrapRef }),
     ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
+    ...(completionObservationDigest === undefined ? {} : { completionObservationDigest }),
     callerLineage: Object.freeze({ actor: value.callerLineage.actor, ...child }),
   });
   const expectedReference = dispatchContinuationReferenceOf(normalizedWithoutReference);
@@ -2084,6 +2094,7 @@ function createDispatchContinuationBinding(
   terminalDigest: string,
   proof: NativeCompletionProof,
   context: DispatchContinuationContext,
+  completionObservationDigest?: string,
 ): DispatchContinuationBinding {
   const validated = createDispatchRecoveryBinding(row, terminalAt, terminalDigest, context);
   const currentRecoverySource =
@@ -2110,6 +2121,7 @@ function createDispatchContinuationBinding(
       ? {}
       : { implementationEvidenceBootstrapRef: validated.implementationEvidenceBootstrapRef }),
     ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
+    ...(completionObservationDigest === undefined ? {} : { completionObservationDigest }),
     callerLineage: Object.freeze({
       actor: proof.actor,
       childId: proof.childId,
@@ -4180,6 +4192,11 @@ export type ConfirmDispatchCompletionOutcome =
       readonly result: AbortedDispatchResult<DispatchAbortReason>;
     };
 
+export interface ConfirmStagedFailureCompletionRequest
+  extends ConfirmDispatchCompletionRequest {
+  readonly completionObservationDigest: string;
+}
+
 const CONFIRM: DispatchProtocolOperation = "confirm_dispatch_completion";
 
 interface ConfirmDispatchContext {
@@ -4243,6 +4260,96 @@ export function replayConfirmedDispatchCompletion(
   deps: DispatchServiceDeps,
 ): Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }> | undefined {
   return consumedConfirmationReplay(confirmDispatchContext(request, deps));
+}
+
+/** Consume one schema-valid staged worker failure without admitting it to the pass-only gate. */
+export function confirmStagedFailureCompletion(
+  request: ConfirmStagedFailureCompletionRequest,
+  deps: DispatchServiceDeps,
+): Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }> {
+  const context = confirmDispatchContext(request, deps);
+  const completionObservationDigest = assertDigest(
+    request.completionObservationDigest,
+    "completionObservationDigest",
+  );
+  const replay = consumedConfirmationReplay(context);
+  if (replay !== undefined) {
+    const continuation = context.row.dispatchContinuationBinding;
+    if (
+      continuation?.currentRecoverySource?.kind !== "consumed-fail" ||
+      continuation.currentRecoverySource.status !== "fail" ||
+      continuation.completionObservationDigest !== completionObservationDigest
+    ) {
+      throw new DispatchStateConflictError(
+        CONFIRM,
+        context.row.state,
+        `attestation "${context.row.attestationId}" was consumed under a different qualification observation`,
+      );
+    }
+    return replay;
+  }
+  const { proof, row } = context;
+  if (
+    row.state !== "gate-pending" ||
+    row.parentGateCapabilityHash === undefined ||
+    row.gateSubmittedOutputDigest === undefined ||
+    row.outputDigest === undefined ||
+    row.output === undefined
+  ) {
+    throw new DispatchStateConflictError(
+      CONFIRM,
+      row.state,
+      `attestation "${row.attestationId}" does not carry one staged worker failure`,
+    );
+  }
+  if (
+    row.output === null ||
+    typeof row.output !== "object" ||
+    Array.isArray(row.output) ||
+    (row.output as Readonly<Record<string, DispatchJSONValue>>)["status"] !== "fail" ||
+    (row.output as Readonly<Record<string, DispatchJSONValue>>)["resultCommit"] !== null ||
+    row.outputDigest !== row.gateSubmittedOutputDigest ||
+    row.outputDigest !== dispatchPayloadDigest(row.output) ||
+    row.implementationQueue !== undefined ||
+    row.stagedCompletionQualification !== undefined
+  ) {
+    throw new AttestationContractError(
+      "row",
+      "native failure qualification requires exact unqueued staged failure bytes",
+    );
+  }
+  if (request.continuationContext === undefined) {
+    throw new AttestationContractError(
+      "continuationContext",
+      "consuming a staged managed failure requires locked continuation evidence",
+    );
+  }
+  const { at } = readNow(deps);
+  const terminalDigest = terminalDigestOf("consumed", {
+    outputDigest: row.outputDigest,
+    childId: proof.childId,
+    runId: proof.runId,
+    completedAt: proof.completedAt,
+  });
+  const continuationBinding = createDispatchContinuationBinding(
+    row,
+    at,
+    terminalDigest,
+    proof,
+    request.continuationContext,
+    completionObservationDigest,
+  );
+  const next: AttestationEnvelope = Object.freeze({
+    ...row,
+    state: "consumed" as const,
+    consumedAt: at,
+    nativeCompletion: proof,
+    terminalAt: at,
+    terminalDigest,
+    dispatchContinuationBinding: continuationBinding,
+  });
+  deps.store.replace(row, next);
+  return Object.freeze({ state: "consumed" as const, result: confirmedViewOf(next) });
 }
 
 /**

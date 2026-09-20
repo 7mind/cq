@@ -233,14 +233,25 @@ const CODEX_IMPLEMENTATION_CANDIDATE_QUALIFIER_ATTEMPTS = 2;
 
 class CodexImplementationCandidateTerminalError extends Error {}
 
-export interface CodexImplementationCandidateQualification {
-  readonly state: "queued";
-  readonly attestationId: string;
-  readonly generation: number;
-  readonly partitionKey: string;
-  readonly outputDigest: string;
-  readonly qualificationDigest: string;
-}
+export type CodexImplementationCandidateQualification =
+  | {
+      readonly state: "queued";
+      readonly attestationId: string;
+      readonly generation: number;
+      readonly partitionKey: string;
+      readonly outputDigest: string;
+      readonly qualificationDigest: string;
+    }
+  | {
+      readonly state: "consumed";
+      readonly result: {
+        readonly state: "consumed";
+        readonly attestationId: string;
+        readonly generation: number;
+        readonly consumedAt: string;
+        readonly outputDigest: string;
+      };
+    };
 
 export interface CodexImplementationCandidateCoordinatorRequest {
   readonly command: string;
@@ -323,6 +334,24 @@ async function executeCodexImplementationCandidateQualifierAttempt(
     throw new CodexRoleBoundaryError("implementation candidate qualification emitted a malformed acknowledgement");
   }
   const acknowledgement = parsed as Record<string, unknown>;
+  const consumed = acknowledgement["result"] as Record<string, unknown> | undefined;
+  if (
+    Object.keys(acknowledgement).sort().join(",") === "result,state" &&
+    acknowledgement["state"] === "consumed" &&
+    consumed !== undefined &&
+    Object.keys(consumed).sort().join(",") ===
+      "attestationId,consumedAt,generation,outputDigest,state" &&
+    consumed["state"] === "consumed" &&
+    consumed["attestationId"] === input.execution.handle.attestationId &&
+    consumed["generation"] === input.execution.handle.generation &&
+    typeof consumed["consumedAt"] === "string" &&
+    typeof consumed["outputDigest"] === "string"
+  ) {
+    return Object.freeze({
+      state: "consumed" as const,
+      result: Object.freeze({ ...consumed }),
+    }) as CodexImplementationCandidateQualification;
+  }
   if (
     Object.keys(acknowledgement).sort().join(",") !==
       "attestationId,generation,outputDigest,partitionKey,qualificationDigest,state" ||

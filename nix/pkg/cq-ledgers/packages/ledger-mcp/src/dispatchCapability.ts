@@ -27,6 +27,7 @@ import {
   assembleDispatchInput,
   attestationInstantMs,
   confirmDispatchCompletionOn,
+  confirmStagedFailureCompletionOn,
   enqueueImplementationCandidateOn,
   replayConfirmedDispatchCompletionOn,
   defaultDispatchRandomBytes,
@@ -381,6 +382,60 @@ function brokerResultEvidence(
   return {
     taskId: result["taskId"],
     resultCommit: result["resultCommit"] as string,
+    branch: result["branch"],
+    actualWorktreePath: result["actualWorktreePath"],
+    filesTouched: result["filesTouched"] as string[],
+    gitReceipts: result["gitReceipts"] as unknown as GitChangeBrokerResultEvidence["gitReceipts"],
+    ...(lineage === undefined
+      ? {}
+      : {
+          gitLineage: lineage as unknown as NonNullable<
+            GitChangeBrokerResultEvidence["gitLineage"]
+          >,
+        }),
+  };
+}
+
+function brokerFailureResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultEvidence {
+  if (output === null || typeof output !== "object" || Array.isArray(output)) {
+    throw new Error("broker-capable worker failure must be an object carrying receipt evidence");
+  }
+  const result = output as Record<string, DispatchJSONValue>;
+  if (
+    result["status"] !== "fail" ||
+    result["resultCommit"] !== null ||
+    typeof result["taskId"] !== "string" ||
+    typeof result["branch"] !== "string" ||
+    typeof result["actualWorktreePath"] !== "string" ||
+    !Array.isArray(result["filesTouched"]) ||
+    !result["filesTouched"].every((entry) => typeof entry === "string") ||
+    !Array.isArray(result["gitReceipts"])
+  ) {
+    throw new Error("broker-capable worker failure lacks a complete receipt chain");
+  }
+  const lineage = result["gitLineage"];
+  if (lineage !== undefined) {
+    if (lineage === null || typeof lineage !== "object" || Array.isArray(lineage)) {
+      throw new Error("broker-capable worker failure carries a malformed gitLineage");
+    }
+    const record = lineage as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(record).sort().join(",") !==
+        ["exactTip", "guardedRebase", "kind", "ontoCommit", "rebasedStartCommit"]
+          .sort()
+          .join(",") ||
+      record["kind"] !== "guarded-rebase" ||
+      typeof record["guardedRebase"] !== "string" ||
+      typeof record["ontoCommit"] !== "string" ||
+      typeof record["rebasedStartCommit"] !== "string" ||
+      typeof record["exactTip"] !== "boolean"
+    ) {
+      throw new Error("broker-capable worker failure carries a malformed gitLineage");
+    }
+  }
+  return {
+    taskId: result["taskId"],
+    resultCommit: null,
     branch: result["branch"],
     actualWorktreePath: result["actualWorktreePath"],
     filesTouched: result["filesTouched"] as string[],
@@ -3157,9 +3212,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (persisted === undefined || isAttestationTombstone(persisted)) {
             throw new Error("implementation candidate qualification requires a live dispatch");
           }
+          const replayableConsumedFailure =
+            persisted.state === "consumed" &&
+            persisted.dispatchContinuationBinding?.currentRecoverySource?.kind ===
+              "consumed-fail";
           if (
-            persisted.state !== "gate-pending" ||
-            persisted.gateSubmittedOutputDigest === undefined ||
+            (persisted.state !== "gate-pending" && !replayableConsumedFailure) ||
+            (persisted.state === "gate-pending" &&
+              persisted.gateSubmittedOutputDigest === undefined) ||
             persisted.gitEffectBinding === undefined ||
             persisted.output === undefined
           ) {
@@ -3180,6 +3240,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         row.expectedChild.childId !== expectedChildId ||
         row.expectedChild.runId !== input.expectedRunId
       ) {
+        if (row.state === "consumed") {
+          throw new Error("consumed failure qualification replay carries altered process identity");
+        }
         const aborted = await abortDispatchOn(
           options.backend,
           {
@@ -3199,6 +3262,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return Object.freeze({ state: "aborted" as const, result: aborted });
       }
       if (input.outcome !== "completed" || input.exitStatus !== 0) {
+        if (row.state === "consumed") {
+          throw new Error("consumed failure qualification replay carries altered terminal outcome");
+        }
         const aborted = await abortDispatchOn(
           options.backend,
           {
@@ -3223,6 +3289,81 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         throw new Error("staged implementation candidate output must be an object");
       }
       const output = row.output as Readonly<Record<string, DispatchJSONValue>>;
+      const nativeCompletion = Object.freeze({
+        kind: "native-completion" as const,
+        actor: "trusted-extension" as const,
+        childId: row.expectedChild.childId,
+        runId: row.expectedChild.runId,
+        completedAt: input.observedAt,
+      });
+      const completionObservationDigest = dispatchPayloadDigest(
+        input as unknown as DispatchJSONValue,
+      );
+      const expectedProvenance = {
+        roleId: row.promptProvenance.roleId,
+        version: row.promptProvenance.version,
+        promptDigest: row.promptProvenance.promptDigest,
+        inputDigest: row.promptProvenance.inputDigest,
+      } as const;
+      if (output["status"] === "fail") {
+        if (row.state === "consumed") {
+          return await confirmStagedFailureCompletionOn(
+            options.backend,
+            {
+              namespace,
+              attestationId: input.attestationId,
+              generation: input.generation,
+              nativeCompletion,
+              expectedProvenance,
+              completionObservationDigest,
+            },
+            { now },
+          );
+        }
+        const failureEvidence = brokerFailureResultEvidence(row.output);
+        const consumeFailure = async () => {
+          const liveTip = await observeManagedWorktreeLiveTip(
+            binding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          const normalized = await validateGitChangeBrokerResultEvidence(
+            {
+              ...binding,
+              attestationId: row.attestationId,
+              generation: row.generation,
+              roleId: "implement-worker",
+              surface: row.promptProvenance.surface,
+              childCancelAt: row.deadlines.childCancelAt,
+            },
+            { ...failureEvidence, resultCommit: liveTip },
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          return await confirmStagedFailureCompletionOn(
+            options.backend,
+            {
+              namespace,
+              attestationId: input.attestationId,
+              generation: input.generation,
+              nativeCompletion,
+              expectedProvenance,
+              completionObservationDigest,
+              continuationContext: {
+                liveTip,
+                gitReceipts: normalized.gitReceipts,
+              },
+            },
+            { now },
+          );
+        };
+        return await withManagedWorktreeEffectLock(
+          binding,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          consumeFailure,
+        );
+      }
+      if (row.state === "consumed") {
+        throw new Error("only a consumed failure may replay native qualification");
+      }
       const resultCommit = output["resultCommit"];
       const gitReceipts = output["gitReceipts"];
       if (
@@ -3294,13 +3435,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         },
         { now },
       );
-      const nativeCompletion = Object.freeze({
-        kind: "native-completion" as const,
-        actor: "trusted-extension" as const,
-        childId: row.expectedChild.childId,
-        runId: row.expectedChild.runId,
-        completedAt: input.observedAt,
-      });
       const qualification = await qualifyDispatchStagedCompletionOn(
         options.backend,
         {
@@ -3313,14 +3447,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           attemptId: queue.attempt.attemptId,
           stagedOutputDigest: row.gateSubmittedOutputDigest!,
           expectedChild: row.expectedChild,
-          expectedProvenance: {
-            roleId: row.promptProvenance.roleId,
-            version: row.promptProvenance.version,
-            promptDigest: row.promptProvenance.promptDigest,
-            inputDigest: row.promptProvenance.inputDigest,
-          },
+          expectedProvenance,
           nativeCompletion,
-          completionObservationDigest: dispatchPayloadDigest(input as unknown as DispatchJSONValue),
+          completionObservationDigest,
         },
         { now },
       );
