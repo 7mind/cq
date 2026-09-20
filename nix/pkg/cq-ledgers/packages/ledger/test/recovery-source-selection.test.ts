@@ -79,11 +79,22 @@ describe("strict maximal current-recovery source selection", () => {
 
     const ineligible = {
       ...sourceCandidate({ generation: 4 }),
-      source: { kind: "aborted", version: 1, abortReason: "cancelled" },
+      source: { kind: "aborted", version: 1, abortReason: "gate-rejected" },
     };
     expect(() =>
       selectStrictMaximalRecoverySource(RECOVERY_TASK, RECOVERY_TIP, [ineligible as never]),
     ).toThrow("abortReason");
+  });
+
+  test("admits an explicit cancelled source", () => {
+    const cancelled = {
+      ...sourceCandidate({ generation: 4 }),
+      source: { kind: "aborted" as const, version: 1 as const, abortReason: "cancelled" as const },
+    };
+
+    expect(
+      selectStrictMaximalRecoverySource(RECOVERY_TASK, RECOVERY_TIP, [cancelled]),
+    ).toEqual(cancelled);
   });
 
   test("rejects a maximal closure whose tip is not live", () => {
