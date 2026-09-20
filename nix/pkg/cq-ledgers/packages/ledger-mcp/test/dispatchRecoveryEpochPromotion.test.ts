@@ -93,7 +93,7 @@ function terminalAbortDigest(reason: string): string {
 }
 
 function journalDerivedAbort(
-  reason: "invalid-output" | "missing-result" | "deadline-exceeded" | "parent-lost" = "parent-lost",
+  reason: "invalid-output" | "missing-result" | "deadline-exceeded" | "parent-lost" | "cancelled" = "parent-lost",
 ): AttestationEnvelope {
   const input = { ...RECOVERY_INPUT, round: 18 };
   const row = abortedEnvelope({ generation: 18, reason });
@@ -955,6 +955,27 @@ describe("journal recovery epoch promotion", () => {
       });
       expect(promoted.version === 1 ? promoted.seed.sourceAbortReason : undefined).toBe(reason);
     }
+  });
+
+  // expected-failure: tasks:T6575
+  test.failing("operator-cancelled journal successor promotes the committed recovery epoch", async () => {
+    const { journal, generation17 } = await generation17Journal();
+    const successor = journalDerivedAbort("cancelled");
+    const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), {
+      journal,
+      snapshot: async () => [generation17, successor],
+      resolveReceipts: async () => promotedReceipts(),
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => PROMOTED_TIP,
+      now: () => LATER,
+    });
+    expect(promoted.seed.selectedSourceHandle).toEqual({
+      attestationId: RECOVERY_ATTESTATION,
+      generation: 18,
+    });
+    expect(promoted.version === 1 ? promoted.seed.sourceAbortReason : undefined).toBe(
+      "cancelled",
+    );
   });
 
   // Regression: a journal-derived worker may terminalize before producing a new Git receipt.

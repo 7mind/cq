@@ -651,6 +651,63 @@ async function stageAndFinalize(subject: GateFixture) {
   return await finalize(subject);
 }
 
+// expected-failure: tasks:T6575
+test.failing("intentional worker failure is consumed without queue or gate side effects", async () => {
+  const runner = new GateDummy();
+  const subject = await fixtureWithDispatchBase(
+    runner,
+    "managed",
+    () => "2026-08-12T20:00:00.000Z",
+    false,
+    true,
+  );
+  const failure = {
+    ...subject.output,
+    status: "fail",
+    resultCommit: null,
+    blockedReason: "intentional worker failure",
+  } as const;
+  expect(
+    await subject.capability.storeResult({
+      resultCapability: subject.prepared.resultCapability,
+      output: failure,
+    }),
+  ).toMatchObject({ state: "gate-pending" });
+  if (subject.capability.qualifyImplementationCandidate === undefined) {
+    throw new Error("implementation candidate qualification is unavailable");
+  }
+  const observation = {
+    attestationId: subject.prepared.attestationId,
+    generation: subject.prepared.generation,
+    roleId: "implement-worker",
+    correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+    childThreadId: "intentional-fail-child-thread",
+    expectedRunId: subject.expectedChild.runId,
+    outcome: "completed" as const,
+    exitStatus: 0,
+    observedAt: "2026-08-12T20:00:02.000Z",
+    promptDigest: subject.prepared.promptProvenance.promptDigest,
+  };
+  const consumed = await subject.capability.qualifyImplementationCandidate(observation);
+  expect(consumed).toMatchObject({
+    state: "consumed",
+    result: {
+      state: "consumed",
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+    },
+  });
+  expect(await subject.capability.qualifyImplementationCandidate(observation)).toEqual(consumed);
+  expect(runner.requests).toHaveLength(0);
+  expect(subject.backend.storedRows()[0]).toMatchObject({
+    state: "consumed",
+    dispatchContinuationBinding: {
+      currentRecoverySource: { kind: "consumed-fail", version: 1, status: "fail" },
+    },
+  });
+  expect(subject.backend.storedRows()[0]?.implementationQueue).toBeUndefined();
+});
+
 const D342_ADMISSION_TIMEOUT_MS = 15_000;
 const D342_EXECUTION_TIMEOUT_MS = 5_000;
 const D342_MARKER_TIMEOUT_MS = 90_000;
