@@ -726,28 +726,218 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   async function continuationExitsRecoveryFence(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
-    continuationReference: string | undefined,
+    input: Parameters<DispatchCapability["prepare"]>[0],
   ): Promise<boolean> {
+    const continuationReference = input.continuation;
     if (continuationReference === undefined) return false;
     try {
       const liveTip = await observeManagedWorktreeLiveTip(
         binding,
         options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
       );
-      const continuation = await resolveDispatchContinuationOn(
-        options.backend,
-        {
-          namespace,
-          actor: "trusted-parent",
-          continuationReference,
-          gitEffectBinding: binding,
-          liveTip,
-        },
-        { now },
-      );
-      return (
+      let replayRows: readonly AttestationEnvelope[] | undefined;
+      let continuation: {
+        readonly reprepareOf: { readonly attestationId: string; readonly generation: number };
+        readonly gitEffectBinding: AttestationEnvelope["gitEffectBinding"];
+      };
+      try {
+        continuation = await resolveDispatchContinuationOn(
+          options.backend,
+          {
+            namespace,
+            actor: "trusted-parent",
+            continuationReference,
+            gitEffectBinding: binding,
+            liveTip,
+          },
+          { now },
+        );
+      } catch {
+        if (
+          input.input === null ||
+          typeof input.input !== "object" ||
+          Array.isArray(input.input)
+        ) {
+          return false;
+        }
+        replayRows = await options.backend.transact({ kind: "namespace" }, (store) =>
+          store
+            .rows()
+            .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
+            .map((row) => structuredClone(row)),
+        );
+        const replayMatches = replayRows.filter((row) => {
+          if (!dispatchObject(row.input)) return false;
+          const { guardedRebaseLineage: _serverLineage, ...callerInput } = row.input;
+          return (
+            row.idempotencyKey === input.idempotencyKey &&
+            row.promptProvenance.roleId === "implement-worker" &&
+            row.expectedChild.childId === input.expectedChild.childId &&
+            row.expectedChild.runId === input.expectedChild.runId &&
+            dispatchPayloadDigest(callerInput as DispatchJSONValue) ===
+              dispatchPayloadDigest(input.input!) &&
+            row.dispatchContinuationClaim?.continuationReference === continuationReference &&
+            row.generation === row.dispatchContinuationClaim.source.generation + 1
+          );
+        });
+        if (replayMatches.length !== 1) return false;
+        const claim = replayMatches[0]!.dispatchContinuationClaim!;
+        const sources = replayRows.filter(
+          (row) =>
+            row.attestationId === claim.source.attestationId &&
+            row.generation === claim.source.generation &&
+            row.dispatchContinuationBinding?.continuationReference === continuationReference,
+        );
+        if (sources.length !== 1) return false;
+        const association = sources[0]!.dispatchContinuationBinding!;
+        if (association.liveTip !== liveTip) return false;
+        continuation = {
+          reprepareOf: claim.source,
+          gitEffectBinding: association.gitEffectBinding,
+        };
+      }
+      if (
         continuation.reprepareOf.attestationId === fence.sourceAttestationId &&
         continuation.reprepareOf.generation === fence.lineageMaximumGeneration + 1
+      ) {
+        return true;
+      }
+      if (
+        continuation.reprepareOf.attestationId !== fence.sourceAttestationId ||
+        continuation.reprepareOf.generation !== fence.lineageMaximumGeneration + 2 ||
+        options.ledgerStore === undefined ||
+        recoveryJournal === undefined ||
+        input.input === null ||
+        typeof input.input !== "object" ||
+        Array.isArray(input.input)
+      ) {
+        return false;
+      }
+      const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+      if (
+        currentRecoveryTaskSpecificationDigest(input.input) !==
+        taskEvidence.taskSpecificationDigest
+      ) {
+        return false;
+      }
+      const journal = await recoveryJournal.read(binding.taskId);
+      if (
+        journal?.state !== "committed" ||
+        journal.fence === undefined ||
+        journal.fence.fenceRef !== fence.fenceRef ||
+        journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest
+      ) {
+        return false;
+      }
+      const rows =
+        replayRows ??
+        (await options.backend.transact({ kind: "namespace" }, (store) =>
+          store
+            .rows()
+            .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
+            .map((row) => structuredClone(row)),
+        ));
+      const predecessorRows = rows.filter(
+        (row) =>
+          row.attestationId === fence.sourceAttestationId &&
+          row.generation === fence.lineageMaximumGeneration + 1,
+      );
+      const continuedRows = rows.filter(
+        (row) =>
+          row.attestationId === continuation.reprepareOf.attestationId &&
+          row.generation === continuation.reprepareOf.generation,
+      );
+      if (predecessorRows.length !== 1 || continuedRows.length !== 1) return false;
+      const predecessor = predecessorRows[0]!;
+      const continued = continuedRows[0]!;
+      const predecessorBinding = predecessor.gitEffectBinding;
+      const continuedBinding = continued.gitEffectBinding;
+      const bridge = continuedBinding?.guardedRebaseBridge;
+      const continuedOutput = dispatchObject(continued.output) ? continued.output : undefined;
+      if (
+        predecessor.promptProvenance.roleId !== "implement-worker" ||
+        predecessor.state !== "aborted" ||
+        predecessor.abortReason !== "cancelled" ||
+        predecessorBinding === undefined ||
+        predecessor.implementationQueue !== undefined ||
+        predecessor.stagedRebaseSourceBinding !== undefined ||
+        continued.promptProvenance.roleId !== "implement-worker" ||
+        continued.state !== "consumed" ||
+        continuedBinding === undefined ||
+        bridge === undefined ||
+        continued.stagedRebaseSourceBinding !== undefined ||
+        continued.implementationQueue?.state === "staged-rebase-retired" ||
+        continuedOutput?.["status"] !== "pass" ||
+        continuedOutput["taskId"] !== binding.taskId ||
+        continuedOutput["resultCommit"] !== liveTip ||
+        currentRecoveryTaskSpecificationDigest(predecessor.input) !==
+          taskEvidence.taskSpecificationDigest ||
+        currentRecoveryTaskSpecificationDigest(continued.input) !==
+          taskEvidence.taskSpecificationDigest ||
+        continuation.gitEffectBinding === undefined ||
+        dispatchPayloadDigest(continuation.gitEffectBinding as unknown as DispatchJSONValue) !==
+          dispatchPayloadDigest(continuedBinding as unknown as DispatchJSONValue)
+      ) {
+        return false;
+      }
+      for (const candidate of [predecessorBinding, continuedBinding]) {
+        if (
+          !(
+            [
+              "taskId",
+              "handleToken",
+              "handleFingerprint",
+              "repositoryRoot",
+              "repositoryId",
+              "commonDir",
+              "worktreePath",
+              "branch",
+              "ref",
+              "baseCommit",
+            ] as const
+          ).every((field) => candidate[field] === binding[field])
+        ) {
+          return false;
+        }
+      }
+      const sealedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
+      if (
+        dispatchPayloadDigest(
+          (predecessorBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
+        ) !==
+          dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue) ||
+        (sealedBridge === undefined
+          ? predecessorBinding.guardedRebaseBridge !== undefined
+          : predecessorBinding.guardedRebaseBridge === undefined ||
+            dispatchPayloadDigest(
+              predecessorBinding.guardedRebaseBridge as unknown as DispatchJSONValue,
+            ) !== dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue))
+      ) {
+        return false;
+      }
+      const continuedInput = continued.input as Readonly<Record<string, DispatchJSONValue>>;
+      const baseCommitInput = continuedInput["baseCommit"];
+      const startingCommitInput = continuedInput["startingCommit"];
+      if (typeof baseCommitInput !== "string" || typeof startingCommitInput !== "string") {
+        return false;
+      }
+      const verifiedBridge = await materializeGuardedRebase({
+        reference: bridge.guardedRebase,
+        prior: {
+          ...predecessorBinding,
+          attestationId: predecessor.attestationId,
+          generation: predecessor.generation,
+        },
+        current: binding,
+        baseCommitInput,
+        startingCommitInput,
+        priorResultCommitInput:
+          (continuedInput["priorResultCommit"] as string | null | undefined) ?? null,
+        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+      });
+      return (
+        dispatchPayloadDigest(verifiedBridge as unknown as DispatchJSONValue) ===
+        dispatchPayloadDigest(bridge as unknown as DispatchJSONValue)
       );
     } catch {
       return false;
@@ -763,7 +953,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return true;
     }
     if (dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) return true;
-    if (await continuationExitsRecoveryFence(fence, binding, input.continuation)) return true;
+    if (await continuationExitsRecoveryFence(fence, binding, input)) return true;
     if (await gateRejectedSuccessorExitsRecoveryFence(fence, binding, input)) return true;
     return await guardedRebaseExitsRecoveryFence(fence, binding, input);
   }

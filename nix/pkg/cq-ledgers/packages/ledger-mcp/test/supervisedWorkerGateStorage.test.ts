@@ -3297,8 +3297,8 @@ throw new Error("unexpected controlled cq invocation");
     90_000,
   );
 
-  // expected-failure: tasks:T6573
-  test.failing(
+  // regression: tasks:T6573 — continuation must retain its sealed manual-rebase ancestry.
+  test(
     "a cancelled sealed successor composes one authenticated manual guarded rebase into continuation",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3592,10 +3592,43 @@ throw new Error("unexpected controlled cq invocation");
           );
         }
         expect(await restarted.prepare(continuedRequest)).toEqual(continued);
+        const rowCount = async (): Promise<number> =>
+          await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length);
+        const rowsAfterContinuation = await rowCount();
+        for (const changed of [
+          {
+            ...continuedRequest,
+            input: { ...continuedRequest.input, headline: "changed task specification" },
+          },
+          {
+            ...continuedRequest,
+            idempotencyKey: `${continuedRequest.idempotencyKey}-second-successor`,
+          },
+          {
+            ...continuedRequest,
+            idempotencyKey: `${continuedRequest.idempotencyKey}-foreign-authority`,
+            continuation: `cq-dispatch-continuation:v1:${"f".repeat(64)}`,
+          },
+        ]) {
+          expect(await restarted.prepare(changed)).toMatchObject({ accepted: false });
+        }
+        expect(await rowCount()).toBe(rowsAfterContinuation);
         expect(continued.handle).toEqual({
           attestationId: guarded.handle.attestationId,
           generation: guarded.handle.generation + 1,
         });
+        expect(
+          await activeBackend.transact({ kind: "namespace" }, (store) =>
+            store
+              .rows()
+              .filter(
+                (row) =>
+                  !isAttestationTombstone(row) &&
+                  (row.implementationQueue?.state === "staged-rebase-retired" ||
+                    row.stagedRebaseSourceBinding !== undefined),
+              ),
+          ),
+        ).toEqual([]);
         expect(runner.requests).toHaveLength(1);
         await activeBackend.close();
       }
