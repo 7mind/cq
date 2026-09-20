@@ -1434,6 +1434,7 @@ export function enqueueImplementationCandidate(
     (candidate) =>
       (candidate.attestationId !== row.attestationId ||
         candidate.generation !== row.generation) &&
+      candidate.implementationQueue!.state !== "staged-rebase-retired" &&
       !isComposedTerminalAncestor(
         candidate,
         row,
