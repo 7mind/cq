@@ -684,13 +684,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "0f95e9fec902b733244dcb6fbdafd6cc2955dd7efea0c53b4245ea46a40a1612",
+      "sha256": "1f4d5f4d78f32294f83547e7f5135f7b41b650746c3099152afdfa5ee43dd96d",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "0f95e9fec902b733244dcb6fbdafd6cc2955dd7efea0c53b4245ea46a40a1612",
+      "sha256": "1f4d5f4d78f32294f83547e7f5135f7b41b650746c3099152afdfa5ee43dd96d",
       "targets": []
     },
     {
@@ -1656,7 +1656,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/currentRecoverySeal.ts",
-      "sha256": "ca0e79e279c492e22198bb611c1b7736c3b699c4e32fa62dba47f4457e9b5ac6",
+      "sha256": "0f90c9129c3e709e6ddddde0629de3f8bb9bd5b1a3ea40abdc06347300f3544b",
       "targets": []
     },
     {
