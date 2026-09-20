@@ -104,7 +104,21 @@ const promptProvenanceSchema = z
   })
   .strict();
 
-const gitBindingSchema = z
+const guardedRebaseBridgeSchema = z
+  .object({
+    guardedRebase: z.string().regex(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u),
+    operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+    requestDigest: z.string().regex(SHA256),
+    oldResultCommit: z.string().regex(FULL_COMMIT),
+    ontoCommit: z.string().regex(FULL_COMMIT),
+    rebasedStartCommit: z.string().regex(FULL_COMMIT),
+    outcome: z.enum(["clean", "conflicted"]),
+    exactTip: z.boolean(),
+    finalizedAt: z.string().regex(ISO_INSTANT),
+  })
+  .strict();
+
+const gitBindingBaseSchema = z
   .object({
     taskId: z.string().regex(TASK_ID),
     repositoryRoot: z.string().min(1),
@@ -116,6 +130,11 @@ const gitBindingSchema = z
     baseCommit: z.string().regex(FULL_COMMIT),
   })
   .strict();
+
+const gitBindingSchema = z.union([
+  gitBindingBaseSchema,
+  gitBindingBaseSchema.extend({ guardedRebaseBridge: guardedRebaseBridgeSchema }).strict(),
+]);
 
 const gitChangeReceiptSchema = z
   .object({
@@ -424,6 +443,26 @@ function isCommittedRecoveryEpochPromotion(
     currentSeed.gitReceipts.length < nextSeed.gitReceipts.length ||
     (currentSeed.gitReceipts.length === nextSeed.gitReceipts.length &&
       currentSeed.liveTip === nextSeed.liveTip);
+  const currentGuardedRebaseBridge =
+    "guardedRebaseBridge" in currentSeed.gitBinding
+      ? currentSeed.gitBinding.guardedRebaseBridge
+      : undefined;
+  const nextGuardedRebaseBridge =
+    "guardedRebaseBridge" in nextSeed.gitBinding
+      ? nextSeed.gitBinding.guardedRebaseBridge
+      : undefined;
+  const currentManagerBinding =
+    "guardedRebaseBridge" in currentSeed.gitBinding
+      ? (({ guardedRebaseBridge: _bridge, ...manager }) => manager)(currentSeed.gitBinding)
+      : currentSeed.gitBinding;
+  const nextManagerBinding =
+    "guardedRebaseBridge" in nextSeed.gitBinding
+      ? (({ guardedRebaseBridge: _bridge, ...manager }) => manager)(nextSeed.gitBinding)
+      : nextSeed.gitBinding;
+  const guardedRebaseBridgePreserved =
+    currentGuardedRebaseBridge === undefined ||
+    (nextGuardedRebaseBridge !== undefined &&
+      payloadDigest(currentGuardedRebaseBridge) === payloadDigest(nextGuardedRebaseBridge));
   return (
     nextSeed.version === 1 &&
     currentSeed.taskId === nextSeed.taskId &&
@@ -434,7 +473,8 @@ function isCommittedRecoveryEpochPromotion(
         currentSeed.taskDigest === nextSeed.taskDigest) &&
     currentSeed.finalizedManifestDigest === nextSeed.finalizedManifestDigest &&
     payloadDigest(currentSeed.namespace) === payloadDigest(nextSeed.namespace) &&
-    payloadDigest(currentSeed.gitBinding) === payloadDigest(nextSeed.gitBinding) &&
+    payloadDigest(currentManagerBinding) === payloadDigest(nextManagerBinding) &&
+    guardedRebaseBridgePreserved &&
     currentSeed.managedFingerprint === nextSeed.managedFingerprint &&
     currentSeed.selectedSourceHandle.attestationId ===
       nextSeed.selectedSourceHandle.attestationId &&
@@ -560,13 +600,20 @@ export function selectStrictMaximalRecoverySource(
 
 function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   const seed = seal.seed;
+  const guardedRebaseBridge =
+    "guardedRebaseBridge" in seed.gitBinding
+      ? seed.gitBinding.guardedRebaseBridge
+      : undefined;
   if (
     seal.version !== seed.version ||
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
     seed.liveTip !== seed.gitReceipts.at(-1)?.newHead ||
     (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
-    seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
+    seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts) ||
+    (guardedRebaseBridge !== undefined &&
+      guardedRebaseBridge.guardedRebase !==
+        `cq-guarded-rebase:v1:${guardedRebaseBridge.requestDigest}`)
   ) {
     throw new CurrentRecoverySealError("invalid", "recovery seal has inconsistent seed bindings");
   }
@@ -1021,6 +1068,9 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
       branch: gitBinding.branch,
       ref: gitBinding.ref,
       baseCommit: gitBinding.baseCommit,
+      ...("guardedRebaseBridge" in gitBinding
+        ? { guardedRebaseBridge: gitBinding.guardedRebaseBridge }
+        : {}),
     },
     gitReceiptsDigest: currentRecoveryReceiptClosureDigest(input.gitReceipts),
     managedFingerprint: gitBinding.handleFingerprint,

@@ -11,6 +11,7 @@ import {
   type AttestationEnvelope,
   type AttestationRow,
   type DispatchGitEffectBinding,
+  type DispatchGuardedRebaseBridge,
   type DispatchJSONValue,
 } from "@cq/config";
 import {
@@ -124,6 +125,12 @@ function bindingMatches(
   );
 }
 
+function retainedGitEffectBinding(row: AttestationRow): DispatchGitEffectBinding | undefined {
+  return isAttestationTombstone(row)
+    ? row.dispatchContinuationBinding?.gitEffectBinding
+    : row.gitEffectBinding;
+}
+
 export function assertManagedRecoveryTipEligible(
   rows: readonly AttestationRow[],
   binding: ManagedWorktreeDispatchBinding,
@@ -201,6 +208,79 @@ function assertNoActiveGeneration(snapshot: RecoveryLineageSnapshot): void {
       `dispatch lineage ${active.attestationId} generation ${String(active.generation)} is ${active.state}`,
     );
   }
+}
+
+export function currentRecoveryGuardedRebaseBridge(
+  journal: CurrentRecoveryCommittedJournal,
+  rows: readonly AttestationRow[],
+  binding: ManagedWorktreeDispatchBinding,
+): DispatchGuardedRebaseBridge | undefined {
+  const seed = journal.seal.seed;
+  const sealedRows = rows.filter((row) => row.generation <= seed.lineageMaximumGeneration);
+  const snapshot = lineageSnapshot(sealedRows, binding, journal.version !== 1);
+  assertNoActiveGeneration(snapshot);
+  if (snapshot.digest !== journal.snapshotDigest || snapshot.digest !== seed.snapshotDigest) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "committed recovery snapshot no longer matches its original journal",
+    );
+  }
+  const selectedRows = sealedRows.filter(
+    (row) =>
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation === seed.selectedSourceHandle.generation,
+  );
+  if (
+    selectedRows.length !== 1 ||
+    selectedRows[0]!.terminalDigest !== seed.sourceTerminalDigest
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "committed recovery source no longer matches its original terminal identity",
+    );
+  }
+  const candidates = sealedRows
+    .filter(
+      (row) =>
+        row.attestationId === seed.selectedSourceHandle.attestationId &&
+        row.generation <= seed.selectedSourceHandle.generation,
+    )
+    .flatMap((row) => {
+      const candidate = retainedGitEffectBinding(row);
+      return candidate !== undefined &&
+        bindingMatches(candidate, binding) &&
+        candidate.guardedRebaseBridge !== undefined
+        ? [candidate.guardedRebaseBridge]
+        : [];
+    });
+  const distinct = new Map(
+    candidates.map((bridge) => [
+      dispatchPayloadDigest(bridge as unknown as DispatchJSONValue),
+      bridge,
+    ]),
+  );
+  const sealedBridge =
+    "guardedRebaseBridge" in seed.gitBinding
+      ? seed.gitBinding.guardedRebaseBridge
+      : undefined;
+  if (sealedBridge !== undefined) {
+    const digest = dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue);
+    if (distinct.size !== 1 || !distinct.has(digest)) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "sealed guarded bridge differs from its authenticated source ancestry",
+      );
+    }
+    return sealedBridge;
+  }
+  if (distinct.size === 0) return undefined;
+  if (distinct.size !== 1) {
+    throw new CurrentRecoverySealError(
+      "source-ambiguous",
+      "bridge-less recovery epoch has multiple authenticated guarded ancestors",
+    );
+  }
+  return distinct.values().next().value;
 }
 
 function lineageMaximumGeneration(snapshot: RecoveryLineageSnapshot): number {
@@ -328,7 +408,11 @@ function sealForSource(
   source: CurrentRecoverySourceCandidate,
   snapshotDigest: string,
   capturedAt: string,
+  recoveredGuardedRebaseBridge?: DispatchGuardedRebaseBridge,
 ): CurrentRecoverySeal {
+  const sourceBinding = retainedGitEffectBinding(row);
+  const guardedRebaseBridge =
+    recoveredGuardedRebaseBridge ?? sourceBinding?.guardedRebaseBridge;
   const common = {
     selectedSourceHandle: source.selectedSourceHandle,
     lineageMaximumGeneration: source.lineageMaximumGeneration,
@@ -338,7 +422,10 @@ function sealForSource(
     taskId: coordinates.taskId,
     taskDigest: coordinates.taskDigest,
     finalizedManifestDigest: coordinates.finalizedManifestDigest,
-    gitBinding: coordinates.binding,
+    gitBinding: {
+      ...coordinates.binding,
+      ...(guardedRebaseBridge === undefined ? {} : { guardedRebaseBridge }),
+    },
     gitReceipts: source.gitReceipts,
     liveTip: coordinates.liveTip,
     capturedAt,
@@ -662,11 +749,20 @@ async function journalSuccessorSource(
   deps: CurrentRecoveryCaptureDeps,
 ): Promise<CurrentRecoverySourceCandidate | null> {
   assertCommittedCoordinates(journal, coordinates);
+  const seed = journal.seal.seed;
+  const guardedRebaseBridge = currentRecoveryGuardedRebaseBridge(
+    journal,
+    rows,
+    coordinates.binding,
+  );
+  const sealedGuardedRebaseBridge =
+    "guardedRebaseBridge" in seed.gitBinding
+      ? seed.gitBinding.guardedRebaseBridge
+      : undefined;
   const successors = [...journalSuccessorRows(rows, journal, coordinates.binding)].sort(
     (left, right) => left.generation - right.generation,
   );
   if (successors.length === 0) return null;
-  const seed = journal.seal.seed;
   const onlySuccessor = successors.length === 1 ? successors[0] : undefined;
   if (
     onlySuccessor !== undefined &&
@@ -722,10 +818,26 @@ async function journalSuccessorSource(
       );
     }
     const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
+    const successorBridge = successor.gitEffectBinding?.guardedRebaseBridge;
+    const bridgeMatches =
+      guardedRebaseBridge === undefined
+        ? successorBridge === undefined
+        : successorBridge === undefined
+          ? sealedGuardedRebaseBridge === undefined
+          : dispatchPayloadDigest(successorBridge as unknown as DispatchJSONValue) ===
+            dispatchPayloadDigest(guardedRebaseBridge as unknown as DispatchJSONValue);
+    const logicalBaseCommit = guardedRebaseBridge?.ontoCommit ?? coordinates.binding.baseCommit;
+    const expectedBaseCommit =
+      guardedRebaseBridge !== undefined &&
+      sealedGuardedRebaseBridge === undefined &&
+      successorBridge === undefined
+        ? coordinates.binding.baseCommit
+        : logicalBaseCommit;
     if (
+      !bridgeMatches ||
       input["taskId"] !== coordinates.taskId ||
       input["branch"] !== coordinates.binding.branch ||
-      input["baseCommit"] !== coordinates.binding.baseCommit ||
+      input["baseCommit"] !== expectedBaseCommit ||
       input["startingCommit"] !== inheritedTip
     ) {
       throw new CurrentRecoverySealError(
@@ -899,7 +1011,14 @@ export async function captureCurrentRecoverySeal(
       assertNoActiveGeneration(snapshot);
       const row = sourceRow(snapshot, source);
       const capturedAt = deps.now();
-      const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
+      const seal = sealForSource(
+        coordinates,
+        row,
+        source,
+        snapshot.digest,
+        capturedAt,
+        currentRecoveryGuardedRebaseBridge(existing, rows, coordinates.binding),
+      );
       if (seal.version !== 1) {
         throw new CurrentRecoverySealError(
           "journal-conflict",

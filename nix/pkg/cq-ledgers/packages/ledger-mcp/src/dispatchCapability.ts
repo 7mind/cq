@@ -128,6 +128,7 @@ import type { PromptArtifactStore } from "./promptArtifactStore.js";
 import {
   assertManagedRecoveryTipEligible,
   captureCurrentDispatchRecoverySealUnderLock,
+  currentRecoveryGuardedRebaseBridge,
   currentRecoveryTaskEvidence,
   currentRecoveryTaskSpecificationDigest,
 } from "./dispatchRecoverySeal.js";
@@ -2647,16 +2648,51 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               "journal recovery startingCommit must equal the live managed-worktree tip",
             );
           }
-          if (baseCommitInput !== resolvedGitEffectBinding.baseCommit) {
-            return rejectLaunch(
-              "input.baseCommit",
-              "journal recovery baseCommit differs from the managed binding",
-            );
+          if (typeof baseCommitInput !== "string") {
+            return rejectLaunch("input.baseCommit", "journal recovery requires baseCommit");
           }
           if (journal.seal.seed.gitReceipts.at(-1)?.newHead !== startingCommit) {
             return rejectLaunch(
               "input.startingCommit",
               "journal recovery seed receipt closure does not end at the live tip",
+            );
+          }
+          let guardedRebaseBridge;
+          try {
+            const rows = await options.backend.transact({ kind: "namespace" }, (store) =>
+              store.rows().map((row) => structuredClone(row)),
+            );
+            const retainedBridge = currentRecoveryGuardedRebaseBridge(
+              journal,
+              rows,
+              resolvedGitEffectBinding,
+            );
+            guardedRebaseBridge =
+              retainedBridge === undefined
+                ? undefined
+                : await reverifyGuardedRebaseBridge({
+                    bridge: retainedBridge,
+                    current: resolvedGitEffectBinding,
+                    baseCommitInput,
+                    startingCommitInput: startingCommit,
+                    firstInheritedOldHead:
+                      journal.seal.seed.gitReceipts[0]?.oldHead ?? null,
+                    ...(options.worktreeStateDir === undefined
+                      ? {}
+                      : { stateDir: options.worktreeStateDir }),
+                  });
+          } catch (error) {
+            return rejectLaunch(
+              error instanceof GuardedRebaseRejection ? error.path : "recoveryPreparation",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          const logicalBaseCommit =
+            guardedRebaseBridge?.ontoCommit ?? resolvedGitEffectBinding.baseCommit;
+          if (baseCommitInput !== logicalBaseCommit) {
+            return rejectLaunch(
+              "input.baseCommit",
+              "journal recovery baseCommit differs from the authenticated logical binding",
             );
           }
           resolvedReprepareOf = {
@@ -2704,7 +2740,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           gitEffectBinding = {
             ...resolvedGitEffectBinding,
             inheritedGitReceipts: journal.seal.seed.gitReceipts,
+            ...(guardedRebaseBridge === undefined ? {} : { guardedRebaseBridge }),
           };
+          if (guardedRebaseBridge !== undefined) {
+            dispatchInput = {
+              ...dispatchRecord,
+              guardedRebaseLineage: guardedRebaseLineageOf(guardedRebaseBridge),
+            };
+          }
         } else if (input.continuation !== undefined) {
           const startingCommit = dispatchRecord["startingCommit"];
           const baseCommitInput = dispatchRecord["baseCommit"];

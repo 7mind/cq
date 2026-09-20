@@ -407,6 +407,21 @@ async function guardedOriginRecovery(): Promise<void> {
     await f.capability.abort({ ...guarded.handle, reason: "missing-result" });
     const resolved = (await f.resolveRecovery()) as unknown as DispatchRecoveryResolution;
     if (resolved.preparation.kind !== "current") throw new Error("expected current authority");
+    expect(await f.journal.read(TASK_ID)).toMatchObject({
+      state: "committed",
+      seal: {
+        seed: {
+          gitBinding: {
+            baseCommit: f.input.baseCommit,
+            guardedRebaseBridge: {
+              guardedRebase: rebase.reference,
+              ontoCommit,
+              rebasedStartCommit,
+            },
+          },
+        },
+      },
+    });
     const recovered = await f.capability.prepare({
       roleId: "implement-worker",
       input: {
@@ -447,8 +462,7 @@ async function guardedOriginRecovery(): Promise<void> {
 }
 
 describe("manager-bound dispatch recovery", () => {
-  // expected-failure: tasks:T6573
-  test.failing(
+  test(
     "guarded-origin current recovery preserves its authenticated bridge and logical onto",
     guardedOriginRecovery,
     TEST_TIMEOUT_MS,
