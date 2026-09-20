@@ -225,6 +225,21 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
       await fixture.adapter.acquire({
         partitionKey: correctionQualified.queue.partition.partitionKey,
         holderId: "retained-completion",
+        expectedCandidate: correction.prepared,
+      }),
+    ).toMatchObject({
+      state: "blocked",
+      front: {
+        attestationId: retained.prepared.attestationId,
+        generation: retained.prepared.generation,
+      },
+      frontState: "leased",
+    });
+
+    expect(
+      await fixture.adapter.acquire({
+        partitionKey: correctionQualified.queue.partition.partitionKey,
+        holderId: "retained-completion",
         expectedCandidate: retained.prepared,
       }),
     ).toMatchObject({
