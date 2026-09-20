@@ -12,6 +12,8 @@ import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   SqliteAttestationBackend,
+  implementConflictResolverSidecar,
+  implementWorkerSidecar,
   isAttestationTombstone,
   serializeWipArtifact,
   sequentialDispatchRandomBytes,
@@ -50,6 +52,7 @@ import {
   type SupervisedWorkerGateRunner,
   type LedgerStore,
   type DispatchStagedRebaseResolution,
+  type GitRebaseConflictState,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import { createImplementationSuccessorLauncher } from "../src/main.js";
@@ -91,23 +94,35 @@ function artifactStore(
   promptDigest = "a".repeat(64),
   roleBytes = new Uint8Array([1]),
 ): PromptArtifactStore {
-  const metadata = {
+  const workerMetadata = {
     roleId: "implement-worker",
     roleKind: "dispatched-subagent" as const,
     artifactPath: "roles/implement-worker.md",
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: "codex" as const,
     promptDigest,
-    schemaVersion: 8,
+    schemaVersion: implementWorkerSidecar.version,
+  };
+  const resolverMetadata = {
+    roleId: "implement-conflict-resolver",
+    roleKind: "dispatched-subagent" as const,
+    artifactPath: "roles/implement-conflict-resolver.md",
+    sidecarSchemaRoleId: "implement-conflict-resolver",
+    promptSurface: "codex" as const,
+    promptDigest,
+    schemaVersion: implementConflictResolverSidecar.version,
   };
   return {
     readManifest: () => ({
       bytes: new Uint8Array(),
-      roles: [metadata],
+      roles: [workerMetadata, resolverMetadata],
       promptSurface: "codex",
       catalogHash: "b".repeat(64),
     }),
-    readRole: () => ({ metadata, bytes: roleBytes }),
+    readRole: (roleId) => ({
+      metadata: roleId === "implement-conflict-resolver" ? resolverMetadata : workerMetadata,
+      bytes: roleBytes,
+    }),
   };
 }
 
@@ -2927,6 +2942,355 @@ throw new Error("unexpected controlled cq invocation");
       ).toBeUndefined();
       await activeBackend.close();
     },
+  );
+
+  // expected-failure: tasks:T6573
+  test.failing(
+    "an authenticated sealed staged-rebase conflict admits one resolver and guarded successor",
+    async () => {
+      for (const attestationBackend of ["memory", "sqlite"] as const) {
+        const runner = new GateDummy();
+        const subject = await fixtureWithDispatchBase(
+          runner,
+          "managed",
+          () => "2026-08-12T20:00:00.000Z",
+          false,
+          true,
+          undefined,
+          artifactStore(),
+          attestationBackend,
+        );
+        expect(
+          await subject.capability.abort({
+            ...subject.prepared,
+            reason: "parent-lost",
+          }),
+        ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+        if (subject.capability.resolveRecovery === undefined || subject.ledgerStore === undefined) {
+          throw new Error("sealed recovery fixture is unavailable");
+        }
+        const currentRecovery = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveDispatchRecovery: subject.capability.resolveRecovery,
+          },
+          { operation: "resolve-dispatch-recovery", handle: subject.managed.handle },
+        )) as unknown as DispatchRecoveryResolution;
+        if (currentRecovery.preparation.kind !== "current") {
+          throw new Error("source did not produce a current recovery seal");
+        }
+        const sealedChild = {
+          childId: `implement-worker#sealed-conflict-${String(sequence)}`,
+          runId: `sealed-conflict-run-${String(sequence)}`,
+        };
+        const sealedWorkerInput = {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          round: 1,
+          startingCommit: subject.receipt.newHead,
+          validationIntent: "final" as const,
+          priorResultCommit: subject.receipt.newHead,
+        };
+        const sealed = await subject.capability.prepare({
+          roleId: "implement-worker",
+          input: sealedWorkerInput,
+          idempotencyKey: `T2081-${String(sequence)}-sealed-conflict-source`,
+          timeoutMs: 600_000,
+          expectedChild: sealedChild,
+          recoveryPreparation: currentRecovery.preparation.recoveryPreparation,
+        });
+        if (!sealed.accepted) throw new Error(`sealed worker refused: ${sealed.detail}`);
+        await subject.capability.fetchInput({
+          ...sealed.handle,
+          inputCapability: sealed.prepared.inputCapability,
+        });
+        expect(
+          await subject.capability.storeResult({
+            resultCapability: sealed.prepared.resultCapability,
+            output: {
+              ...subject.output,
+              gitReceipts: [],
+              checkSummary: "sealed source requests queue coordination",
+            },
+          }),
+        ).toMatchObject({ state: "gate-pending" });
+        if (
+          subject.capability.qualifyImplementationCandidate === undefined ||
+          subject.capability.coordinateImplementationCandidate === undefined
+        ) {
+          throw new Error("sealed source coordinator is unavailable");
+        }
+        const qualified = await subject.capability.qualifyImplementationCandidate({
+          ...sealed.handle,
+          roleId: "implement-worker",
+          correlationId: sealedChild.childId.slice("implement-worker#".length),
+          childThreadId: `sealed-conflict-thread-${String(sequence)}`,
+          expectedRunId: sealedChild.runId,
+          outcome: "completed",
+          exitStatus: 0,
+          observedAt: "2026-08-12T20:00:02.000Z",
+          promptDigest: sealed.prepared.promptProvenance.promptDigest,
+        });
+        if (qualified.state !== "queued") throw new Error("sealed source did not qualify");
+
+        await fs.writeFile(path.join(subject.repositoryRoot, "file.txt"), "protected\n");
+        await git(subject.repositoryRoot, ["add", "file.txt"]);
+        await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
+        const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+        const retired = await subject.capability.coordinateImplementationCandidate({
+          partitionKey: qualified.partitionKey,
+          holderId: `sealed-conflict-coordinator-${attestationBackend}`,
+        });
+        expect(retired).toMatchObject({
+          state: "blocked",
+          front: sealed.handle,
+          frontState: "staged-rebase-retired",
+        });
+        if (retired.state !== "blocked" || !("sourceReference" in retired)) {
+          throw new Error("sealed source did not return a conflict handoff");
+        }
+        expect(runner.requests).toHaveLength(0);
+
+        let activeBackend = subject.backend;
+        const reopenBackend = async (): Promise<void> => {
+          if (attestationBackend !== "sqlite") return;
+          await activeBackend.close();
+          activeBackend = new SqliteAttestationBackend({
+            namespace: subject.backend.namespace,
+            dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+          });
+        };
+        await reopenBackend();
+        const restarted = createDispatchCapability({
+          backend: activeBackend,
+          promptArtifactStore: artifactStore(),
+          ledgerStore: subject.ledgerStore,
+          implementationEvidenceStore: subject.implementationEvidenceStore,
+          repositoryRoot: subject.repositoryRoot,
+          worktreeStateDir: subject.stateDir,
+          supervisedWorkerGateRunner: runner,
+          now: () => "2026-08-12T20:00:00.000Z",
+          randomBytes: sequentialDispatchRandomBytes(sequence * 128),
+        });
+        if (restarted.resolveStagedRebase === undefined) {
+          throw new Error("sealed staged-rebase recovery is unavailable");
+        }
+        const pending = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: restarted.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: retired.front,
+            sourceReference: retired.sourceReference,
+          },
+        )) as unknown as DispatchStagedRebaseResolution;
+        expect(pending).toMatchObject({
+          status: "staged-rebase-conflict-pending",
+          source: sealed.handle,
+          sourceReference: retired.sourceReference,
+        });
+        const observed = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+          },
+          { operation: "observe-conflict", handle: subject.managed.handle },
+        )) as unknown as {
+          readonly status: "conflict-observed";
+          readonly conflictState: GitRebaseConflictState;
+        };
+        expect(observed.status).toBe("conflict-observed");
+        const conflictingFiles = [
+          ...new Set(observed.conflictState.conflicts.map((entry) => entry.path)),
+        ].sort();
+        const resolverRequest = {
+          roleId: "implement-conflict-resolver" as const,
+          input: {
+            taskId: "T2081",
+            headline: "supervise exact tip",
+            description: "resolve the authenticated staged-rebase conflict",
+            worktreePath: subject.managed.handle.absolutePath,
+            branch: subject.managed.handle.branch,
+            baseCommit: subject.dispatchBaseCommit,
+            validationIntent: "focused-only" as const,
+            conflictingFiles,
+            conflictState: observed.conflictState,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-sealed-conflict-resolver`,
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: `implement-conflict-resolver#sealed-${String(sequence)}`,
+            runId: `sealed-conflict-resolver-run-${String(sequence)}`,
+          },
+        };
+        const rowCount = async (): Promise<number> =>
+          await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length);
+        const beforeNegativeControls = await rowCount();
+        for (const changed of [
+          {
+            ...resolverRequest,
+            idempotencyKey: `${resolverRequest.idempotencyKey}-foreign-task`,
+            input: { ...resolverRequest.input, taskId: "T9999" },
+          },
+          {
+            ...resolverRequest,
+            idempotencyKey: `${resolverRequest.idempotencyKey}-changed-conflict`,
+            input: {
+              ...resolverRequest.input,
+              conflictState: { ...observed.conflictState, currentHead: "f".repeat(40) },
+            },
+          },
+          {
+            ...resolverRequest,
+            idempotencyKey: `${resolverRequest.idempotencyKey}-substituted-authority`,
+            reprepareOf: sealed.handle,
+          },
+        ]) {
+          expect(await restarted.prepare(changed)).toMatchObject({ accepted: false });
+        }
+        expect(await rowCount()).toBe(beforeNegativeControls);
+
+        const resolver = await restarted.prepare(resolverRequest);
+        if (!resolver.accepted || resolver.prepared.gitConflictCapability === undefined) {
+          throw new Error(
+            `sealed conflict resolver refused: ${
+              resolver.accepted ? "missing Git authority" : `${resolver.reason}: ${resolver.detail}`
+            }`,
+          );
+        }
+        expect(await restarted.prepare(resolverRequest)).toEqual(resolver);
+        await restarted.fetchInput({
+          ...resolver.handle,
+          inputCapability: resolver.prepared.inputCapability,
+        });
+        const resolvedBody = "protected + sealed candidate\n";
+        await fs.writeFile(
+          path.join(subject.managed.handle.absolutePath, "file.txt"),
+          resolvedBody,
+        );
+        if (restarted.gitResolveContinue === undefined) {
+          throw new Error("sealed resolver continuation is unavailable");
+        }
+        const conflictReceipt = await restarted.gitResolveContinue({
+          ...resolver.handle,
+          gitConflictCapability: resolver.prepared.gitConflictCapability,
+          operationId: `T2081-${String(sequence)}-sealed-conflict-resolution`,
+          expectedState: observed.conflictState,
+          resolutions: [
+            {
+              kind: "regular",
+              path: "file.txt",
+              newState: { mode: "100644", digest: sha256(resolvedBody) },
+            },
+          ],
+        });
+        expect(conflictReceipt.outcome).toMatchObject({ kind: "terminal" });
+        expect(
+          await restarted.storeResult({
+            resultCapability: resolver.prepared.resultCapability,
+            output: {
+              taskId: "T2081",
+              status: "pass",
+              resultCommit: conflictReceipt.newHead,
+              filesResolved: conflictingFiles,
+              checkSummary: "authenticated conflict continuation completed",
+              focusedChecks: [
+                {
+                  command: "bun test sealed-conflict-resolver.test.ts",
+                  exitCode: 0,
+                  passCount: 1,
+                  failCount: 0,
+                },
+              ],
+              summary: "continued the exact manager-observed guarded conflict",
+              actualWorktreePath: subject.managed.handle.absolutePath,
+              branch: subject.managed.handle.branch,
+              conflictReceipts: [conflictReceipt],
+            },
+          }),
+        ).toMatchObject({ state: "result-stored" });
+
+        await reopenBackend();
+        const finalized = createDispatchCapability({
+          backend: activeBackend,
+          promptArtifactStore: artifactStore(),
+          ledgerStore: subject.ledgerStore,
+          implementationEvidenceStore: subject.implementationEvidenceStore,
+          repositoryRoot: subject.repositoryRoot,
+          worktreeStateDir: subject.stateDir,
+          supervisedWorkerGateRunner: runner,
+          now: () => "2026-08-12T20:00:00.000Z",
+          randomBytes: sequentialDispatchRandomBytes(sequence * 160),
+        });
+        if (finalized.resolveStagedRebase === undefined) {
+          throw new Error("finalized sealed staged-rebase recovery is unavailable");
+        }
+        const recovered = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveStagedRebase: finalized.resolveStagedRebase,
+          },
+          {
+            operation: "resolve-staged-rebase",
+            handle: subject.managed.handle,
+            sourceDispatch: retired.front,
+            sourceReference: retired.sourceReference,
+          },
+        )) as unknown as DispatchStagedRebaseResolution;
+        if (recovered.status !== "staged-rebase-preparation-ready") {
+          throw new Error("sealed conflict did not produce guarded worker preparation");
+        }
+        const successor = await finalized.prepare({
+          roleId: "implement-worker",
+          input: {
+            ...sealedWorkerInput,
+            baseCommit: protectedHead,
+            round: 2,
+            startingCommit: recovered.liveTip,
+            priorResultCommit: subject.receipt.newHead,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-sealed-conflict-successor`,
+          timeoutMs: 600_000,
+          expectedChild: sealedChild,
+          reprepareOf: recovered.preparation.reprepareOf,
+          guardedRebase: recovered.preparation.guardedRebase,
+        });
+        if (!successor.accepted) throw new Error(`guarded successor refused: ${successor.detail}`);
+        expect(
+          await finalized.fetchInput({
+            ...successor.handle,
+            inputCapability: successor.prepared.inputCapability,
+          }),
+        ).toMatchObject({
+          input: {
+            baseCommit: protectedHead,
+            startingCommit: recovered.liveTip,
+            guardedRebaseLineage: {
+              guardedRebase: recovered.preparation.guardedRebase,
+              ontoCommit: protectedHead,
+            },
+          },
+        });
+        expect(runner.requests).toHaveLength(0);
+        await activeBackend.close();
+      }
+    },
+    90_000,
   );
 
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {
