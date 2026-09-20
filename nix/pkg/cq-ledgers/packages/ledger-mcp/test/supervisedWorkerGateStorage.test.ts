@@ -7442,9 +7442,8 @@ throw new Error("unexpected controlled cq invocation");
           await expect(qualify(recovered.prepared, recoveredChild, observedAt)).rejects.toThrow();
           expect(runner.requests).toHaveLength(3);
           expect(
-            await reopenedBackend.transact(
-              { kind: "handle", handle: recovered.handle },
-              (store) => store.read(recovered.handle),
+            await reopenedBackend.transact({ kind: "handle", handle: recovered.handle }, (store) =>
+              store.read(recovered.handle),
             ),
           ).not.toHaveProperty("implementationQueue");
         } finally {

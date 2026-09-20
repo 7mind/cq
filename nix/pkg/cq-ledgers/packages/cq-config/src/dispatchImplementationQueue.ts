@@ -891,11 +891,7 @@ function isJournalRecoveryAncestor(
       directContinuationSource,
       directContinuationSource.gitEffectBinding,
     ) &&
-    isUnenrolledCancelledContinuationIntermediate(
-      directContinuationSource,
-      selected,
-      authority,
-    ) &&
+    isUnenrolledCancelledContinuationIntermediate(directContinuationSource, selected, authority) &&
     claim?.liveTip === directGuardedBridge.rebasedStartCommit &&
     receiptChainTransition.source.attestationId === directGuardedSource.attestationId &&
     receiptChainTransition.source.generation === directGuardedSource.generation &&
