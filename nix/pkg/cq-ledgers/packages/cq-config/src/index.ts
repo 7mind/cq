@@ -715,6 +715,7 @@ export type {
   PrepareDispatchDeps,
   PrepareDispatchRequest,
   DispatchJournalRecoveryReservation,
+  DispatchGateRejectedCorrectionClaim,
   DispatchPrepareAccepted,
   PrepareDispatchOutcome,
   StoreDispatchResultOutcome,

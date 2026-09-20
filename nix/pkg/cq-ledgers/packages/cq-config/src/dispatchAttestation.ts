@@ -1489,6 +1489,8 @@ export interface PrepareDispatchRequest {
   readonly continuationClaim?: DispatchContinuationClaim;
   /** Trusted fence-authorized generation reservation; never contains the capability token. */
   readonly journalRecoveryReservation?: DispatchJournalRecoveryReservation;
+  /** Trusted proof that one exact rejected guarded descendant may receive a changed correction. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Complete authenticated journal ancestry retained on the allocated successor. */
   readonly journalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Protected historical-evidence bootstrap authority consumed by this prepare. */
@@ -1500,6 +1502,14 @@ export interface DispatchJournalRecoveryReservation {
   readonly sourceAttestationId: string;
   readonly selectedSourceGeneration: number;
   readonly lineageMaximumGeneration: number;
+}
+
+export interface DispatchGateRejectedCorrectionClaim {
+  readonly fenceRef: string;
+  readonly source: DispatchHandle;
+  readonly resultCommit: string;
+  readonly gitReceiptLineageDigest: string;
+  readonly guardedRebaseBridgeDigest: string | null;
 }
 
 /**
@@ -1552,6 +1562,20 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             sourceAttestationId: request.journalRecoveryReservation.sourceAttestationId,
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
+          },
+    gateRejectedCorrectionClaim:
+      request.gateRejectedCorrectionClaim === undefined
+        ? null
+        : {
+            fenceRef: request.gateRejectedCorrectionClaim.fenceRef,
+            source: {
+              attestationId: request.gateRejectedCorrectionClaim.source.attestationId,
+              generation: request.gateRejectedCorrectionClaim.source.generation,
+            },
+            resultCommit: request.gateRejectedCorrectionClaim.resultCommit,
+            gitReceiptLineageDigest: request.gateRejectedCorrectionClaim.gitReceiptLineageDigest,
+            guardedRebaseBridgeDigest:
+              request.gateRejectedCorrectionClaim.guardedRebaseBridgeDigest,
           },
     journalRecoveryClaim:
       request.journalRecoveryClaim === undefined
@@ -1967,10 +1991,7 @@ export function assertDispatchContinuationBinding(
   const completionObservationDigest =
     value.completionObservationDigest === undefined
       ? undefined
-      : assertDigest(
-          value.completionObservationDigest,
-          `${path}.completionObservationDigest`,
-        );
+      : assertDigest(value.completionObservationDigest, `${path}.completionObservationDigest`);
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-continuation-binding" as const,
     version: 1 as const,
@@ -2615,6 +2636,78 @@ function claimStagedRebaseSuccessor(
     typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
       ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
       : undefined;
+  const gateRejectedClaim = request.gateRejectedCorrectionClaim;
+  if (gateRejectedClaim !== undefined) {
+    if (isAttestationTombstone(previous)) {
+      throw new AttestationBindingError(
+        "gateRejectedCorrectionClaim",
+        "rejected guarded correction source is no longer retained",
+      );
+    }
+    const output =
+      previous.output !== null &&
+      typeof previous.output === "object" &&
+      !Array.isArray(previous.output)
+        ? (previous.output as Readonly<Record<string, DispatchJSONValue>>)
+        : undefined;
+    const correctionQueue = queue !== undefined && "attempt" in queue ? queue : undefined;
+    const inherited = gitEffectBinding?.inheritedGitReceipts ?? [];
+    const sourceInherited = priorManagerBinding?.inheritedGitReceipts ?? [];
+    const priorBridgeDigest =
+      priorGuardedBridge === undefined
+        ? null
+        : dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue);
+    const bridgeDigest =
+      bridge === undefined ? null : dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
+    if (
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(gateRejectedClaim.fenceRef) ||
+      gateRejectedClaim.source.attestationId !== reprepareOf.attestationId ||
+      gateRejectedClaim.source.generation !== reprepareOf.generation ||
+      !/^[0-9a-f]{40}$/u.test(gateRejectedClaim.resultCommit) ||
+      !/^[0-9a-f]{64}$/u.test(gateRejectedClaim.gitReceiptLineageDigest) ||
+      (gateRejectedClaim.guardedRebaseBridgeDigest !== null &&
+        !/^[0-9a-f]{64}$/u.test(gateRejectedClaim.guardedRebaseBridgeDigest)) ||
+      previous.promptProvenance.roleId !== "implement-worker" ||
+      previous.state !== "aborted" ||
+      previous.abortReason !== "gate-rejected" ||
+      previous.parentGateCapabilityHash === undefined ||
+      previous.abortDetails === undefined ||
+      previous.abortDetailsDigest !== dispatchPayloadDigest(previous.abortDetails) ||
+      !isImplementWorkerSupervisedGateRejectionDetails(previous.abortDetails) ||
+      correctionQueue === undefined ||
+      correctionQueue.state !== "terminal" ||
+      correctionQueue.terminal?.reason !== "gate-rejected" ||
+      correctionQueue.terminal.detailsDigest !== previous.abortDetailsDigest ||
+      source !== undefined ||
+      gitEffectBinding === undefined ||
+      priorManagerBinding === undefined ||
+      managerBindingChanged ||
+      output?.["status"] !== "pass" ||
+      output["resultCommit"] !== gateRejectedClaim.resultCommit ||
+      correctionQueue.attempt.resultCommit !== gateRejectedClaim.resultCommit ||
+      correctionQueue.attempt.gitReceiptLineageDigest !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      dispatchPayloadDigest(output["gitReceipts"] ?? []) !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      dispatchPayloadDigest(correctionQueue.attempt.gitReceipts as unknown as DispatchJSONValue) !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      priorBridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+      bridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+      input?.["startingCommit"] !== gateRejectedClaim.resultCommit ||
+      sourceInherited.length > inherited.length ||
+      dispatchPayloadDigest(sourceInherited as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(
+          inherited.slice(0, sourceInherited.length) as unknown as DispatchJSONValue,
+        ) ||
+      (inherited.length > 0 && inherited.at(-1)?.newHead !== gateRejectedClaim.resultCommit)
+    ) {
+      throw new AttestationBindingError(
+        "gateRejectedCorrectionClaim",
+        "rejected guarded correction does not match its authenticated terminal source",
+      );
+    }
+    return;
+  }
   const retainedQueueBindingsMatch =
     !isAttestationTombstone(previous) &&
     previous.state === "consumed" &&
@@ -4231,8 +4324,7 @@ export type ConfirmDispatchCompletionOutcome =
       readonly result: AbortedDispatchResult<DispatchAbortReason>;
     };
 
-export interface ConfirmStagedFailureCompletionRequest
-  extends ConfirmDispatchCompletionRequest {
+export interface ConfirmStagedFailureCompletionRequest extends ConfirmDispatchCompletionRequest {
   readonly completionObservationDigest: string;
 }
 

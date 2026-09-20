@@ -58,6 +58,7 @@ import {
   type AttestationEnvelope,
   type AttestationRow,
   type DispatchNarrativeSource,
+  type DispatchGateRejectedCorrectionClaim,
   type DispatchJSONValue,
   type DispatchPrepareAccepted,
   type DispatchPrepared,
@@ -889,18 +890,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         { now },
       );
     } catch {
-      if (
-        input.input === null ||
-        typeof input.input !== "object" ||
-        Array.isArray(input.input)
-      ) {
+      if (input.input === null || typeof input.input !== "object" || Array.isArray(input.input)) {
         return recoveryFenceRefused("continuation-snapshot", "input-shape-invalid");
       }
       try {
         replayRows = await options.backend.transact({ kind: "namespace" }, (store) =>
-          store
-            .rows()
-            .map((row) => structuredClone(row)),
+          store.rows().map((row) => structuredClone(row)),
         );
       } catch {
         return recoveryFenceRefused("continuation-snapshot", "ledger-read-failed");
@@ -952,9 +947,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       rows =
         replayRows ??
         (await options.backend.transact({ kind: "namespace" }, (store) =>
-          store
-            .rows()
-            .map((row) => structuredClone(row)),
+          store.rows().map((row) => structuredClone(row)),
         ));
     } catch {
       return recoveryFenceRefused("continuation-snapshot", "ledger-read-failed");
@@ -980,13 +973,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (!dispatchObject(input.input)) {
       return recoveryFenceRefused("continuation-snapshot", "input-shape-invalid");
     }
-    if (
-      currentRecoveryTaskSpecificationDigest(input.input) !== taskSpecificationDigest
-    ) {
-      return recoveryFenceRefused(
-        "continuation-specification",
-        "task-specification-mismatch",
-      );
+    if (currentRecoveryTaskSpecificationDigest(input.input) !== taskSpecificationDigest) {
+      return recoveryFenceRefused("continuation-specification", "task-specification-mismatch");
     }
     if (continuation.gitEffectBinding === undefined) {
       return recoveryFenceRefused("continuation-manager", "continuation-binding-missing");
@@ -994,18 +982,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (
       dispatchPayloadDigest(continuation.gitEffectBinding as unknown as DispatchJSONValue) !==
       dispatchPayloadDigest(
-        sourceRows[0]!.dispatchContinuationBinding?.gitEffectBinding as unknown as DispatchJSONValue,
+        sourceRows[0]!.dispatchContinuationBinding
+          ?.gitEffectBinding as unknown as DispatchJSONValue,
       )
     ) {
       return recoveryFenceRefused("continuation-manager", "continuation-binding-mismatch");
     }
     try {
-      if (await sourceDescendsFromRecoveryFence(
-        fence,
-        binding,
-        rows,
-        continuation.reprepareOf,
-      )) {
+      if (await sourceDescendsFromRecoveryFence(fence, binding, rows, continuation.reprepareOf)) {
         return { state: "authorized" };
       }
       return {
@@ -1076,9 +1060,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         dispatchPayloadDigest(
           (rowBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
         ) ===
-          dispatchPayloadDigest(
-            journal.seal.seed.gitReceipts as unknown as DispatchJSONValue,
-          ) &&
+          dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue) &&
         (sealedBridge === undefined
           ? rowBridge === undefined
           : rowBridge !== undefined &&
@@ -1157,9 +1139,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           baseCommitInput: baseCommit,
           startingCommitInput: startingCommit,
           firstInheritedOldHead: rowBinding.inheritedGitReceipts?.[0]?.oldHead ?? null,
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
         });
         return (
           dispatchPayloadDigest(verified as unknown as DispatchJSONValue) ===
@@ -1174,23 +1154,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (visited.has(key)) return false;
       visited.add(key);
       if (row === anchor) return true;
-      if (
-        row.state !== "consumed" ||
-        row.dispatchContinuationBinding === undefined ||
-        !rowMatchesTask(row)
-      ) {
-        return false;
-      }
+      if (!rowMatchesTask(row)) return false;
       const continuation = row.dispatchContinuationBinding;
-      if (
-        continuation.attestationId !== row.attestationId ||
-        continuation.generation !== row.generation ||
-        !dispatchBindingMatchesManaged(continuation.gitEffectBinding, binding) ||
-        continuation.liveTip !== sourceTip(row)
-      ) {
+      if (row.state === "consumed") {
+        if (
+          continuation === undefined ||
+          continuation.attestationId !== row.attestationId ||
+          continuation.generation !== row.generation ||
+          !dispatchBindingMatchesManaged(continuation.gitEffectBinding, binding) ||
+          continuation.liveTip !== sourceTip(row)
+        ) {
+          return false;
+        }
+      } else if (row.state !== "aborted" || row.abortReason !== "gate-rejected") {
         return false;
       }
-
       const claim = row.dispatchContinuationClaim;
       if (claim !== undefined) {
         const predecessor = rowFor(claim.source);
@@ -1221,6 +1199,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         return await visit(predecessor);
       }
+      if (row.state !== "consumed") return false;
 
       const stagedPredecessors = envelopes.filter((candidate) => {
         const control = candidate.implementationQueue;
@@ -1286,6 +1265,34 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     };
     const row = rowFor(source);
     return row === undefined ? false : await visit(row);
+  }
+
+  async function dispatchReceiptClosureMatches(
+    row: AttestationEnvelope,
+    resultCommit: string,
+  ): Promise<boolean> {
+    if (row.gitEffectBinding === undefined || !dispatchObject(row.input)) return false;
+    const startingCommit = row.input["startingCommit"];
+    if (typeof startingCommit !== "string") return false;
+    const inherited = row.gitEffectBinding.inheritedGitReceipts ?? [];
+    if (inherited.length > 0 && inherited.at(-1)?.newHead !== startingCommit) return false;
+    try {
+      const receipts = await resolveInheritedGitChangeReceipts(
+        {
+          ...row.gitEffectBinding,
+          attestationId: row.attestationId,
+          generation: row.generation,
+        },
+        resultCommit,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      const current = receipts.slice(inherited.length);
+      return current.length === 0
+        ? resultCommit === startingCommit
+        : current[0]?.oldHead === startingCommit;
+    } catch {
+      return false;
+    }
   }
 
   type RecoveryFenceDiagnosticScope = "continuation" | "pending-conflict";
@@ -1409,17 +1416,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return scopedRecoveryFenceDiagnostic(scope, "snapshot", "anchor-snapshot-mismatch");
     }
     if (currentRecoveryTaskSpecificationDigest(anchor.input) !== taskSpecificationDigest) {
-      return scopedRecoveryFenceDiagnostic(
-        scope,
-        "specification",
-        "task-specification-mismatch",
-      );
+      return scopedRecoveryFenceDiagnostic(scope, "specification", "task-specification-mismatch");
     }
     if (
       dispatchPayloadDigest(
         (anchorBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
-      ) !==
-      dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue)
+      ) !== dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue)
     ) {
       return scopedRecoveryFenceDiagnostic(scope, "journal", "receipt-lineage-mismatch");
     }
@@ -1457,11 +1459,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return scopedRecoveryFenceDiagnostic(scope, "manager", "manager-binding-mismatch");
     }
     if (currentRecoveryTaskSpecificationDigest(sourceRow.input) !== taskSpecificationDigest) {
-      return scopedRecoveryFenceDiagnostic(
-        scope,
-        "specification",
-        "task-specification-mismatch",
-      );
+      return scopedRecoveryFenceDiagnostic(scope, "specification", "task-specification-mismatch");
     }
     const sourceBridge = sourceRow.gitEffectBinding?.guardedRebaseBridge;
     if (sourceBridge !== undefined) {
@@ -1478,9 +1476,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           startingCommitInput: startingCommit,
           firstInheritedOldHead:
             sourceRow.gitEffectBinding?.inheritedGitReceipts?.[0]?.oldHead ?? null,
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
         });
         if (
           dispatchPayloadDigest(verified as unknown as DispatchJSONValue) !==
@@ -1531,16 +1527,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       input.recoveryPreparation !== undefined ||
       input.implementationEvidenceBootstrap !== undefined
     ) {
-      return recoveryFenceRefused(
-        "pending-conflict-request",
-        "authority-combination-invalid",
-      );
+      return recoveryFenceRefused("pending-conflict-request", "authority-combination-invalid");
     }
-    if (
-      input.input === null ||
-      typeof input.input !== "object" ||
-      Array.isArray(input.input)
-    ) {
+    if (input.input === null || typeof input.input !== "object" || Array.isArray(input.input)) {
       return recoveryFenceRefused("pending-conflict-request", "input-shape-invalid");
     }
     const record = input.input as Readonly<Record<string, DispatchJSONValue>>;
@@ -1575,9 +1564,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     } catch {
       return recoveryFenceRefused("pending-conflict-ledger", "ledger-read-failed");
     }
-    const rows = allRows.filter(
-      (row): row is AttestationEnvelope => !isAttestationTombstone(row),
-    );
+    const rows = allRows.filter((row): row is AttestationEnvelope => !isAttestationTombstone(row));
     const replay = rows.find((row) => row.idempotencyKey === input.idempotencyKey);
     if (
       replay?.promptProvenance.roleId === "implement-conflict-resolver" &&
@@ -1671,10 +1658,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       let reconciled: Awaited<ReturnType<typeof reconcileRetiredStagedRebase>>;
       try {
-        reconciled = await reconcileRetiredStagedRebase(
-          context,
-          runGuardedRebaseUnderManagedLock,
-        );
+        reconciled = await reconcileRetiredStagedRebase(context, runGuardedRebaseUnderManagedLock);
       } catch {
         return recoveryFenceRefused("pending-conflict-reconciliation", "caught-exception");
       }
@@ -1722,10 +1706,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     ) {
       return recoveryFenceRefused("pending-conflict-anchor", "anchor-state-mismatch");
     }
-    if (
-      !dispatchObject(anchor.input) ||
-      anchor.input["startingCommit"] !== pending.oldResultCommit
-    ) {
+    if (!(await dispatchReceiptClosureMatches(anchor, pending.oldResultCommit))) {
       return recoveryFenceRefused("pending-conflict-anchor", "anchor-source-mismatch");
     }
     let protectedHead: string;
@@ -1775,12 +1756,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
     input: Parameters<DispatchCapability["prepare"]>[0],
-  ): Promise<boolean> {
+  ): Promise<DispatchGateRejectedCorrectionClaim | undefined> {
     if (
       input.roleId !== "implement-worker" ||
       input.reprepareOf === undefined ||
       input.reprepareOf.attestationId !== fence.sourceAttestationId ||
-      input.reprepareOf.generation !== fence.lineageMaximumGeneration + 1 ||
+      input.reprepareOf.generation <= fence.lineageMaximumGeneration ||
       input.guardedRebase !== undefined ||
       input.recovery !== undefined ||
       input.continuation !== undefined ||
@@ -1792,7 +1773,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       options.ledgerStore === undefined ||
       recoveryJournal === undefined
     ) {
-      return false;
+      return undefined;
     }
     try {
       const requestInput = input.input as Readonly<Record<string, DispatchJSONValue>>;
@@ -1805,7 +1786,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         currentRecoveryTaskSpecificationDigest(requestInput) !==
           taskEvidence.taskSpecificationDigest
       ) {
-        return false;
+        return undefined;
       }
       const journal = await recoveryJournal.read(binding.taskId);
       if (
@@ -1814,7 +1795,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         journal.fence.fenceRef !== fence.fenceRef ||
         journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest
       ) {
-        return false;
+        return undefined;
       }
       const rows = await options.backend.transact({ kind: "namespace" }, (store) =>
         store.rows().map((row) => structuredClone(row)),
@@ -1825,7 +1806,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           row.attestationId === input.reprepareOf!.attestationId &&
           row.generation === input.reprepareOf!.generation,
       );
-      if (source === undefined || isAttestationTombstone(source)) return false;
+      if (source === undefined || isAttestationTombstone(source)) {
+        return undefined;
+      }
       const sourceBinding = source.gitEffectBinding;
       const control = source.implementationQueue;
       const output = dispatchObject(source.output) ? source.output : undefined;
@@ -1845,20 +1828,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             "baseCommit",
           ] as const
         ).every((field) => sourceBinding[field] === binding[field]);
-      const authenticatedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
-      const bridgeMatches =
-        authenticatedBridge === undefined
-          ? sourceBinding?.guardedRebaseBridge === undefined
-          : sourceBinding?.guardedRebaseBridge !== undefined &&
-            dispatchPayloadDigest(
-              authenticatedBridge as unknown as DispatchJSONValue,
-            ) ===
-              dispatchPayloadDigest(
-                sourceBinding.guardedRebaseBridge as unknown as DispatchJSONValue,
-              );
       if (
         !bindingMatches ||
-        !bridgeMatches ||
         source.promptProvenance.roleId !== "implement-worker" ||
         source.promptProvenance.inputDigest !== dispatchPayloadDigest(source.input) ||
         currentRecoveryTaskSpecificationDigest(source.input) !==
@@ -1889,38 +1860,43 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         control.attempt.managedWorktreeBindingDigest !==
           dispatchPayloadDigest(sourceBinding as unknown as DispatchJSONValue)
       ) {
-        return false;
+        return undefined;
       }
       const liveTip = await observeManagedWorktreeLiveTip(
         binding,
         options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
       );
-      if (
-        requestInput["startingCommit"] !== liveTip ||
-        output["resultCommit"] !== liveTip
-      ) {
-        return false;
+      if (requestInput["startingCommit"] !== liveTip || output["resultCommit"] !== liveTip) {
+        return undefined;
       }
-      const inherited = sourceBinding.inheritedGitReceipts ?? [];
-      if (
-        dispatchPayloadDigest(inherited as unknown as DispatchJSONValue) !==
-        dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue)
-      ) {
-        return false;
+      if (!(await sourceDescendsFromRecoveryFence(fence, binding, rows, input.reprepareOf))) {
+        return undefined;
       }
-      const receipts = await resolveInheritedGitChangeReceipts(
-        { ...sourceBinding, ...input.reprepareOf },
-        liveTip,
-        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-      );
-      return (
-        dispatchPayloadDigest(receipts as unknown as DispatchJSONValue) ===
-          control.attempt.gitReceiptLineageDigest &&
-        dispatchPayloadDigest(output["gitReceipts"] ?? []) ===
+      if (!(await dispatchReceiptClosureMatches(source, liveTip))) {
+        return undefined;
+      }
+      if (
+        dispatchPayloadDigest(output["gitReceipts"] ?? []) !==
+          control.attempt.gitReceiptLineageDigest ||
+        dispatchPayloadDigest(control.attempt.gitReceipts as unknown as DispatchJSONValue) !==
           control.attempt.gitReceiptLineageDigest
-      );
+      ) {
+        return undefined;
+      }
+      return Object.freeze({
+        fenceRef: fence.fenceRef,
+        source: Object.freeze({ ...input.reprepareOf }),
+        resultCommit: liveTip,
+        gitReceiptLineageDigest: control.attempt.gitReceiptLineageDigest,
+        guardedRebaseBridgeDigest:
+          sourceBinding.guardedRebaseBridge === undefined
+            ? null
+            : dispatchPayloadDigest(
+                sourceBinding.guardedRebaseBridge as unknown as DispatchJSONValue,
+              ),
+      });
     } catch {
-      return false;
+      return undefined;
     }
   }
 
@@ -3388,58 +3364,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           "implementation evidence bootstrap admission is a fresh implement-worker dispatch and cannot accompany continuation authority",
         );
       }
-      if (earlyCoordinates !== undefined) {
-        const candidate = await resolveManagedWorktreeDispatchBinding(
-          earlyCoordinates,
-          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-        );
-        const cachedBinding = await durableCachedWorkerBinding(input.idempotencyKey);
-        const lockBinding = candidate ?? cachedBinding;
-        if (lockBinding !== undefined) {
-          const preflight = await withManagedWorktreeEffectLock(
-            lockBinding,
-            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-            async () => {
-              const liveBinding =
-                candidate === null ? null : await revalidateManagedPrepareBinding(candidate, false);
-              const binding = liveBinding ?? cachedBinding;
-              if (binding === undefined) {
-                return rejectLaunch(
-                  "input.worktreePath",
-                  "prepare worktree coordinates lost their authoritative manager binding",
-                );
-              }
-              const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-              if (fence !== null) {
-                const authorization = await recoveryFenceAuthorizesPrepare(fence, binding, input);
-                if (authorization instanceof GuardedRebaseRejection) {
-                  return rejectLaunch(authorization.path, authorization.message);
-                }
-                if (authorization !== true) {
-                  return journalRecoveryRequiredWithDiagnostic(fence, authorization);
-                }
-              }
-              if (callerFingerprint === undefined) return undefined;
-              const replay = await replayCachedPrepare(
-                input.idempotencyKey,
-                callerFingerprint,
-                "caller",
-              );
-              if (replay !== undefined) return replay;
-              return liveBinding === null
-                ? rejectLaunch(
-                    "input.worktreePath",
-                    "prepare worktree coordinates lost their authoritative manager binding",
-                  )
-                : undefined;
-            },
-          );
-          if (preflight !== undefined) return preflight;
-        }
-      } else if (callerFingerprint !== undefined) {
-        const replay = await replayCachedPrepare(input.idempotencyKey, callerFingerprint, "caller");
-        if (replay !== undefined) return replay;
-      }
       let roleId: string;
       let dispatchInput: Parameters<typeof dispatchPayloadDigest>[0];
       let requestedSurface: string | undefined;
@@ -3478,7 +3402,68 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         roleId = input.roleId;
         dispatchInput = input.input;
       }
-
+      const { refs: _refs, ...prepareAuthority } = input;
+      const canonicalPrepareInput = {
+        ...prepareAuthority,
+        roleId,
+        input: dispatchInput,
+      } as Parameters<DispatchCapability["prepare"]>[0];
+      if (earlyCoordinates !== undefined) {
+        const candidate = await resolveManagedWorktreeDispatchBinding(
+          earlyCoordinates,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        const cachedBinding = await durableCachedWorkerBinding(input.idempotencyKey);
+        const lockBinding = candidate ?? cachedBinding;
+        if (lockBinding !== undefined) {
+          const preflight = await withManagedWorktreeEffectLock(
+            lockBinding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            async () => {
+              const liveBinding =
+                candidate === null ? null : await revalidateManagedPrepareBinding(candidate, false);
+              const binding = liveBinding ?? cachedBinding;
+              if (binding === undefined) {
+                return rejectLaunch(
+                  "input.worktreePath",
+                  "prepare worktree coordinates lost their authoritative manager binding",
+                );
+              }
+              const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
+              if (fence !== null) {
+                const authorization = await recoveryFenceAuthorizesPrepare(
+                  fence,
+                  binding,
+                  canonicalPrepareInput,
+                );
+                if (authorization instanceof GuardedRebaseRejection) {
+                  return rejectLaunch(authorization.path, authorization.message);
+                }
+                if (authorization !== true) {
+                  return journalRecoveryRequiredWithDiagnostic(fence, authorization);
+                }
+              }
+              if (callerFingerprint === undefined) return undefined;
+              const replay = await replayCachedPrepare(
+                input.idempotencyKey,
+                callerFingerprint,
+                "caller",
+              );
+              if (replay !== undefined) return replay;
+              return liveBinding === null
+                ? rejectLaunch(
+                    "input.worktreePath",
+                    "prepare worktree coordinates lost their authoritative manager binding",
+                  )
+                : undefined;
+            },
+          );
+          if (preflight !== undefined) return preflight;
+        }
+      } else if (callerFingerprint !== undefined) {
+        const replay = await replayCachedPrepare(input.idempotencyKey, callerFingerprint, "caller");
+        if (replay !== undefined) return replay;
+      }
       if (
         implementationExecutorMode === "metadata-only" &&
         (roleId === "implement-worker" ||
@@ -3659,6 +3644,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       let resolvedImplementationEvidenceBootstrapRef = input.implementationEvidenceBootstrap;
       let continuationClaim;
       let journalRecoveryReservation;
+      let gateRejectedCorrectionClaim: DispatchGateRejectedCorrectionClaim | undefined;
       let journalRecoveryClaim;
       let prepareLockBinding: ManagedWorktreeDispatchBinding | undefined;
       if (
@@ -3720,7 +3706,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           const authorization = await recoveryFenceAuthorizesPrepare(
             fence,
             resolvedGitEffectBinding,
-            input,
+            canonicalPrepareInput,
           );
           if (authorization instanceof GuardedRebaseRejection) {
             return rejectLaunch(authorization.path, authorization.message);
@@ -3728,6 +3714,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (authorization !== true) {
             return journalRecoveryRequiredWithDiagnostic(fence, authorization);
           }
+          gateRejectedCorrectionClaim = await gateRejectedSuccessorExitsRecoveryFence(
+            fence,
+            resolvedGitEffectBinding,
+            canonicalPrepareInput,
+          );
         }
         let inferredGuardedRebasePrior;
         if (
@@ -3847,8 +3838,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                     current: resolvedGitEffectBinding,
                     baseCommitInput,
                     startingCommitInput: startingCommit,
-                    firstInheritedOldHead:
-                      journal.seal.seed.gitReceipts[0]?.oldHead ?? null,
+                    firstInheritedOldHead: journal.seal.seed.gitReceipts[0]?.oldHead ?? null,
                     ...(options.worktreeStateDir === undefined
                       ? {}
                       : { stateDir: options.worktreeStateDir }),
@@ -4325,6 +4315,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
         ...(journalRecoveryReservation === undefined ? {} : { journalRecoveryReservation }),
+        ...(gateRejectedCorrectionClaim === undefined ? {} : { gateRejectedCorrectionClaim }),
         ...(journalRecoveryClaim === undefined ? {} : { journalRecoveryClaim }),
         ...(resolvedImplementationEvidenceBootstrapRef === undefined
           ? {}
@@ -4347,7 +4338,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
           if (fence !== null) {
-            const authorization = await recoveryFenceAuthorizesPrepare(fence, binding, input);
+            const authorization = await recoveryFenceAuthorizesPrepare(
+              fence,
+              binding,
+              canonicalPrepareInput,
+            );
             if (authorization instanceof GuardedRebaseRejection) {
               return rejectLaunch(authorization.path, authorization.message);
             }
@@ -4390,7 +4385,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                     const authorization = await recoveryFenceAuthorizesPrepare(
                       fence,
                       prepareLockBinding,
-                      input,
+                      canonicalPrepareInput,
                     );
                     return authorization === true
                       ? null
@@ -4560,8 +4555,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           const replayableConsumedFailure =
             persisted.state === "consumed" &&
-            persisted.dispatchContinuationBinding?.currentRecoverySource?.kind ===
-              "consumed-fail";
+            persisted.dispatchContinuationBinding?.currentRecoverySource?.kind === "consumed-fail";
           if (
             (persisted.state !== "gate-pending" && !replayableConsumedFailure) ||
             (persisted.state === "gate-pending" &&
