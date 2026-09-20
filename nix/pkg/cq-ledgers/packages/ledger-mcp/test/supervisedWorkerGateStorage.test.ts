@@ -3269,8 +3269,7 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3925,7 +3924,7 @@ throw new Error("unexpected controlled cq invocation");
               resultCommit: resumedReceipt.newHead,
               branch: subject.managed.handle.branch,
               actualWorktreePath: subject.managed.handle.absolutePath,
-              filesTouched: ["file.txt", "second-recovery.txt"],
+              filesTouched: ["file.txt", "fresh-guarded.txt", "second-recovery.txt"],
               gitReceipts: [{
                 ...resumedReceipt,
                 objectOids: [...resumedReceipt.objectOids],
@@ -3938,6 +3937,13 @@ throw new Error("unexpected controlled cq invocation");
                 baseCommit: secondBaseCommit,
                 headCommit: resumedReceipt.newHead,
               },
+              mutationTable: [
+                {
+                  mutation: "remove the repeated guarded receipt-prefix assembly",
+                  observed: "current-seal recovery rejects the incomplete receipt closure",
+                  restored: "the repeated guarded recovery and resumed worker both validate",
+                },
+              ],
               summary: "ordinary recovery resumes after repeated guarded transitions",
             },
           }),
@@ -3955,6 +3961,7 @@ throw new Error("unexpected controlled cq invocation");
     cancelGuardedSuccessor: boolean,
     attestationBackend: "memory" | "sqlite",
     guardedFreshReceiptCount: 0 | 1 | 2,
+    exerciseReceiptJournalControls: boolean,
   ): Promise<void> {
     const runner = new ParentLossThenGreenGateDummy();
     const subject = await fixtureWithDispatchBase(
@@ -4605,6 +4612,7 @@ throw new Error("unexpected controlled cq invocation");
         throw new Error("guarded recovery successor lacks Git authority");
       }
       let guardedLiveTip = guardedSuccessorTip;
+      let guardedFreshReceiptOperationId: string | undefined;
       for (let index = 0; index < guardedFreshReceiptCount; index += 1) {
         const relativePath = `fresh-guarded-${String(index)}.txt`;
         const bytes = `fresh guarded recovery ${String(index)}\n`;
@@ -4623,12 +4631,69 @@ throw new Error("unexpected controlled cq invocation");
             },
           ],
         });
+        guardedFreshReceiptOperationId = receipt.operationId;
         guardedLiveTip = receipt.newHead;
       }
       expect(await activeCapability.abort({ ...next.handle, reason: "cancelled" })).toMatchObject({
         state: "aborted",
         reason: "cancelled",
       });
+      if (exerciseReceiptJournalControls) {
+        if (guardedFreshReceiptOperationId === undefined) {
+          throw new Error("receipt-journal controls require one fresh guarded receipt");
+        }
+        const operationKey = sha256(
+          `${next.handle.attestationId}\n${String(next.handle.generation)}\n${guardedFreshReceiptOperationId}`,
+        );
+        const journalPath = path.join(
+          subject.stateDir,
+          "git-broker",
+          operationKey,
+          "journal.json",
+        );
+        const journalBytes = await fs.readFile(journalPath);
+        const journalRecord = JSON.parse(journalBytes.toString()) as {
+          receipt?: Record<string, unknown>;
+        };
+        if (journalRecord.receipt === undefined) {
+          throw new Error("fresh guarded receipt journal omitted its receipt");
+        }
+        const recoveryBeforeControls = await recoveryJournal.read("T2081");
+        const rejectJournalBytes = async (bytes: string): Promise<void> => {
+          await fs.writeFile(journalPath, bytes);
+          try {
+            await expect(
+              activeCapability.resolveRecovery!(binding, guardedLiveTip),
+            ).rejects.toThrow();
+            expect(await recoveryJournal.read("T2081")).toEqual(recoveryBeforeControls);
+          } finally {
+            await fs.writeFile(journalPath, journalBytes);
+          }
+        };
+        await rejectJournalBytes("{}\n");
+        const missingPath = `${journalPath}.missing`;
+        await fs.rename(journalPath, missingPath);
+        try {
+          await expect(
+            activeCapability.resolveRecovery!(binding, guardedLiveTip),
+          ).rejects.toThrow();
+          expect(await recoveryJournal.read("T2081")).toEqual(recoveryBeforeControls);
+        } finally {
+          await fs.rename(missingPath, journalPath);
+        }
+        await rejectJournalBytes(
+          `${JSON.stringify({
+            ...journalRecord,
+            receipt: { ...journalRecord.receipt, attestationId: `att_${"f".repeat(32)}` },
+          })}\n`,
+        );
+        await rejectJournalBytes(
+          `${JSON.stringify({
+            ...journalRecord,
+            receipt: { ...journalRecord.receipt, oldHead: "0".repeat(40) },
+          })}\n`,
+        );
+      }
       const recaptured = await activeCapability.resolveRecovery!(binding, guardedLiveTip);
       expect(recaptured.preparation.kind).toBe("current");
       if (recaptured.preparation.kind !== "current") {
@@ -4855,14 +4920,14 @@ throw new Error("unexpected controlled cq invocation");
   test(
     "a cancelled sealed recovery successor composes into an ordinary consumed continuation",
     async () => {
-      await exerciseCancelledRecoveryContinuation("ordinary", false, "sqlite", 0);
+      await exerciseCancelledRecoveryContinuation("ordinary", false, "sqlite", 0, false);
     },
   );
 
   test(
     "a cancelled sealed recovery successor composes into an authenticated guarded rebase",
     async () => {
-      await exerciseCancelledRecoveryContinuation("guarded-rebase", false, "sqlite", 0);
+      await exerciseCancelledRecoveryContinuation("guarded-rebase", false, "sqlite", 0, false);
     },
   );
 
@@ -4875,6 +4940,7 @@ throw new Error("unexpected controlled cq invocation");
           true,
           attestationBackend,
           0,
+          false,
         );
       }
     },
@@ -4890,6 +4956,7 @@ throw new Error("unexpected controlled cq invocation");
             true,
             attestationBackend,
             receiptCount,
+            receiptCount === 1,
           );
         }
       }

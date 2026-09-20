@@ -487,6 +487,19 @@ function dispatchReceiptChainTransitions(
   );
 }
 
+function dispatchReceiptChainLiveTip(
+  seed: Parameters<typeof currentRecoveryGuardedTipTransitions>[0],
+): string | undefined {
+  const transition = currentRecoveryGuardedTipTransitions(seed).at(-1);
+  if (transition === undefined) return seed.gitReceipts.at(-1)?.newHead;
+  if (seed.gitReceipts.length < transition.receiptPrefixLength) {
+    throw new Error("recovery receipt-chain transition exceeds its authenticated closure");
+  }
+  return seed.gitReceipts.length === transition.receiptPrefixLength
+    ? transition.rebasedStartCommit
+    : seed.gitReceipts.at(-1)?.newHead;
+}
+
 function conflictResultEvidence(output: DispatchJSONValue): GitConflictContinuationResultEvidence {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable resolver result must carry conflict receipt evidence");
@@ -2633,9 +2646,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               "journal recovery baseCommit differs from the managed binding",
             );
           }
-          const sealedLiveTip =
-            guardedTipTransition?.rebasedStartCommit ??
-            journal.seal.seed.gitReceipts.at(-1)?.newHead;
+          const sealedLiveTip = dispatchReceiptChainLiveTip(journal.seal.seed);
           if (sealedLiveTip !== startingCommit) {
             return rejectLaunch(
               "input.startingCommit",

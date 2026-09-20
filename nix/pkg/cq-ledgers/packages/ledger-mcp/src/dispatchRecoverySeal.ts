@@ -869,6 +869,74 @@ function stagedRecoverySuccessorEdge(
   });
 }
 
+function assembleGuardedJournalSuccessorReceiptClosure(
+  taskId: string,
+  row: AttestationEnvelope,
+  liveTip: string,
+  inheritedReceipts: readonly GitChangeBrokerReceipt[],
+  inheritedTip: string,
+  transition: CurrentRecoveryGuardedTipTransition | undefined,
+  resolvedReceipts: readonly GitChangeBrokerReceipt[],
+): readonly GitChangeBrokerReceipt[] {
+  if (resolvedReceipts.length === 0) {
+    return transition === undefined ? resolvedReceipts : inheritedReceipts;
+  }
+  if (
+    resolvedReceipts.length >= inheritedReceipts.length &&
+    receiptClosuresEqual(
+      resolvedReceipts.slice(0, inheritedReceipts.length),
+      inheritedReceipts,
+    )
+  ) {
+    return resolvedReceipts;
+  }
+  if (
+    transition === undefined ||
+    transition.successor.attestationId !== row.attestationId ||
+    transition.successor.generation !== row.generation
+  ) {
+    return resolvedReceipts;
+  }
+  const bridge = row.gitEffectBinding?.guardedRebaseBridge;
+  if (
+    bridge === undefined ||
+    transition.guardedRebase !== bridge.guardedRebase ||
+    transition.requestDigest !== bridge.requestDigest ||
+    transition.oldResultCommit !== bridge.oldResultCommit ||
+    transition.ontoCommit !== bridge.ontoCommit ||
+    transition.rebasedStartCommit !== bridge.rebasedStartCommit ||
+    transition.rebasedStartCommit !== inheritedTip ||
+    transition.receiptPrefixLength !== inheritedReceipts.length
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "guarded journal recovery successor receipt component lacks its exact authenticated bridge",
+    );
+  }
+  let componentTip = inheritedTip;
+  for (const [index, receipt] of resolvedReceipts.entries()) {
+    if (
+      receipt.taskId !== taskId ||
+      receipt.attestationId !== row.attestationId ||
+      receipt.generation !== row.generation ||
+      receipt.oldHead !== componentTip
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        `guarded journal recovery successor receipt component ${String(index)} is foreign or divergent`,
+      );
+    }
+    componentTip = receipt.newHead;
+  }
+  if (componentTip !== liveTip) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "guarded journal recovery successor receipt component does not end at the live tip",
+    );
+  }
+  return Object.freeze([...inheritedReceipts, ...resolvedReceipts]);
+}
+
 async function journalSuccessorSource(
   rows: readonly AttestationRow[],
   journal: CurrentRecoveryCommittedJournal,
@@ -1066,10 +1134,16 @@ async function journalSuccessorSource(
       `journal recovery successor receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (receipts.length === 0 && guardedTipTransitions.length > 0) {
-    receipts = inheritedReceipts;
-  }
   const guardedTipTransition = guardedTipTransitions.at(-1);
+  receipts = assembleGuardedJournalSuccessorReceiptClosure(
+    coordinates.taskId,
+    row,
+    coordinates.liveTip,
+    inheritedReceipts,
+    inheritedTip,
+    guardedTipTransition,
+    receipts,
+  );
   const candidate = selectStrictMaximalRecoverySource(coordinates.taskId, coordinates.liveTip, [
     {
       selectedSourceHandle: {
