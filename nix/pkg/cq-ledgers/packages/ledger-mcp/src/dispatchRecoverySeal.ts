@@ -252,12 +252,17 @@ export function currentRecoveryGuardedRebaseBridge(
       row.attestationId === seed.selectedSourceHandle.attestationId &&
       row.generation === seed.selectedSourceHandle.generation,
   );
-  if (selectedRows.length !== 1 || selectedRows[0]!.terminalDigest !== seed.sourceTerminalDigest) {
+  const selectedRow = selectedRows[0];
+  if (selectedRows.length !== 1 || selectedRow?.terminalDigest !== seed.sourceTerminalDigest) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
       "committed recovery source no longer matches its original terminal identity",
     );
   }
+  const selectedBinding = retainedGitEffectBinding(selectedRow);
+  const selectedBridge = bindingMatches(selectedBinding, binding)
+    ? selectedBinding.guardedRebaseBridge
+    : undefined;
   const guardedAncestorRows = sealedRows.filter(
     (row) =>
       row.attestationId === seed.selectedSourceHandle.attestationId &&
@@ -281,6 +286,17 @@ export function currentRecoveryGuardedRebaseBridge(
     "guardedRebaseBridge" in seed.gitBinding ? seed.gitBinding.guardedRebaseBridge : undefined;
   if (sealedBridge !== undefined) {
     const digest = dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue);
+    if (selectedBridge !== undefined) {
+      if (
+        dispatchPayloadDigest(selectedBridge as unknown as DispatchJSONValue) !== digest
+      ) {
+        throw new CurrentRecoverySealError(
+          "journal-conflict",
+          "sealed guarded bridge differs from its authenticated source ancestry",
+        );
+      }
+      return sealedBridge;
+    }
     if (distinct.size !== 1 || !distinct.has(digest)) {
       throw new CurrentRecoverySealError(
         "journal-conflict",

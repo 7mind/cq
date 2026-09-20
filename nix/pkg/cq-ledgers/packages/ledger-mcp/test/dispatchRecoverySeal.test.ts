@@ -305,8 +305,7 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 }
 
 describe("protected current dispatch-recovery capture", () => {
-  // expected-failure: tasks:T6573
-  test.failing("sealed recovery selects its exact authenticated source bridge", async () => {
+  test("sealed recovery selects its exact authenticated source bridge", async () => {
     const olderBridge = guardedBridge("b");
     const selectedBridge = guardedBridge("c");
     const rows = [guardedRecoveryRow(1, olderBridge), guardedRecoveryRow(2, selectedBridge)];
@@ -333,6 +332,13 @@ describe("protected current dispatch-recovery capture", () => {
     expect(currentRecoveryGuardedRebaseBridge(committed, rows, RECOVERY_BINDING)).toEqual(
       selectedBridge,
     );
+    expect(() =>
+      currentRecoveryGuardedRebaseBridge(
+        committed,
+        [rows[0]!, guardedRecoveryRow(2, guardedBridge("d"))],
+        RECOVERY_BINDING,
+      ),
+    ).toThrow("original journal");
   });
 
   test("bridge-less committed epochs recover only one authenticated same-attestation guarded ancestor", async () => {
