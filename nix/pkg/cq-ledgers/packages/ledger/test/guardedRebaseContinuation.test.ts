@@ -28,6 +28,7 @@ import {
   observeManagedWorktreeConflictState,
   prepareManagedWorktree,
   requireWorksetStore,
+  resolveUniquePendingGuardedRebaseConflict,
   resolveManagedWorktreeDispatchBinding,
   runGuardedRebase,
   worksetEffectAdmissionProviderFromStore,
@@ -439,6 +440,45 @@ describe("runGuardedRebase", () => {
       const conflict = await observeManagedWorktreeConflictState(fixture.binding, {
         stateDir: fixture.stateDir,
       });
+      expect(
+        await resolveUniquePendingGuardedRebaseConflict(fixture.binding, conflict, {
+          stateDir: fixture.stateDir,
+        }),
+      ).toMatchObject({
+        oldResultCommit: fixture.oldTip,
+        ontoCommit: fixture.ontoCommit,
+        conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+        conflictIdentity: conflict.sequencer.identity,
+      });
+      await expect(
+        resolveUniquePendingGuardedRebaseConflict(
+          fixture.binding,
+          {
+            ...conflict,
+            sequencer: { ...conflict.sequencer, onto: "f".repeat(40) },
+          },
+          { stateDir: fixture.stateDir },
+        ),
+      ).rejects.toThrow("differs from the live managed worktree");
+      await expect(
+        resolveUniquePendingGuardedRebaseConflict(
+          { ...fixture.binding, repositoryId: "e".repeat(64) },
+          conflict,
+          { stateDir: fixture.stateDir },
+        ),
+      ).rejects.toThrow("binding changed at repositoryId");
+      const duplicateJournalDir = path.join(journalRoot, "duplicate-pending-journal");
+      await fs.mkdir(duplicateJournalDir);
+      await fs.copyFile(
+        path.join(journalRoot, journalDirs[0]!, "journal.json"),
+        path.join(duplicateJournalDir, "journal.json"),
+      );
+      await expect(
+        resolveUniquePendingGuardedRebaseConflict(fixture.binding, conflict, {
+          stateDir: fixture.stateDir,
+        }),
+      ).rejects.toThrow("does not resolve to one durable journal");
+      await fs.rm(duplicateJournalDir, { recursive: true });
       const authorization = Object.freeze({
         ...resolverAuthorization,
         conflictStateDigest: gitRebaseConflictStateDigest(conflict),

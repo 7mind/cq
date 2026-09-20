@@ -31,6 +31,7 @@ import {
   gitRebaseConflictStateDigest,
   observeManagedWorktreeConflictState,
   type GitConflictContinuationReceipt,
+  type GitRebaseConflictState,
 } from "./gitConflictContinuation.js";
 import {
   withManagedWorktreeEffectLock,
@@ -100,6 +101,15 @@ export interface GuardedRebaseEffectResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/** Server-only identity of one still-active guarded conflict. */
+export interface PendingGuardedRebaseConflict {
+  readonly requestDigest: string;
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly conflictStateDigest: string;
+  readonly conflictIdentity: string;
 }
 
 export type GuardedRebaseRunOutcome =
@@ -751,6 +761,47 @@ function journalMatchesBinding(
   binding: ManagedWorktreeDispatchBinding,
 ): boolean {
   return BINDING_IDENTITY_FIELDS.every((field) => journal[field] === binding[field]);
+}
+
+/**
+ * Authenticate the unique nonterminal guarded journal for the exact live
+ * manager binding and caller-observed conflict. No journal path, operation id,
+ * or opaque authority is returned to the caller-facing boundary.
+ */
+export async function resolveUniquePendingGuardedRebaseConflict(
+  binding: ManagedWorktreeDispatchBinding,
+  expectedState: GitRebaseConflictState,
+  deps: Pick<ManagedWorktreeDeps, "stateDir"> = {},
+): Promise<PendingGuardedRebaseConflict> {
+  const expectedDigest = gitRebaseConflictStateDigest(expectedState);
+  const observed = await observeManagedWorktreeConflictState(binding, deps);
+  if (gitRebaseConflictStateDigest(observed) !== expectedDigest) {
+    throw new Error("pending guarded rebase conflict differs from the live managed worktree");
+  }
+  const journals = await readJournals(binding, deps.stateDir);
+  const matches = journals.filter(
+    (journal) =>
+      journal.state === "rebase-stopped" &&
+      journalMatchesBinding(journal, binding) &&
+      guardedRebaseRequestDigest(binding, journal.operationId, journal.ontoCommit) ===
+        journal.requestDigest &&
+      journal.oldResultCommit === expectedState.sequencer.originalTip &&
+      journal.ontoCommit === expectedState.sequencer.onto &&
+      journal.conflictStateDigest === expectedDigest &&
+      journal.conflictHead === expectedState.currentHead &&
+      journal.conflictIdentity === expectedState.sequencer.identity,
+  );
+  if (matches.length !== 1) {
+    throw new Error("pending guarded rebase conflict does not resolve to one durable journal");
+  }
+  const journal = matches[0]!;
+  return Object.freeze({
+    requestDigest: journal.requestDigest,
+    oldResultCommit: journal.oldResultCommit,
+    ontoCommit: journal.ontoCommit,
+    conflictStateDigest: expectedDigest,
+    conflictIdentity: expectedState.sequencer.identity,
+  });
 }
 
 function composeGuardedRebaseBridge(

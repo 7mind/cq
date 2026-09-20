@@ -573,6 +573,7 @@ export {
   GuardedRebaseRejection,
   guardedRebaseReference,
   materializeGuardedRebaseBridge,
+  resolveUniquePendingGuardedRebaseConflict,
   reverifyGuardedRebaseBridge,
   runGuardedRebase,
   runGuardedRebaseUnderManagedLock,
@@ -582,6 +583,7 @@ export type {
   GuardedRebaseJournal,
   GuardedRebaseRunOutcome,
   MaterializeGuardedRebaseBridgeOptions,
+  PendingGuardedRebaseConflict,
   ReverifyGuardedRebaseBridgeOptions,
   RunGuardedRebaseOptions,
 } from "./guardedRebaseContinuation.js";

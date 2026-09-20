@@ -94,6 +94,7 @@ import {
   observeManagedWorktreeConflictState,
   observeManagedWorktreeRebaseTip,
   resolveInheritedGitChangeReceipts,
+  resolveUniquePendingGuardedRebaseConflict,
   runGuardedRebase,
   runGuardedRebaseUnderManagedLock,
   runLedgerWorksetGitEffect,
@@ -144,12 +145,34 @@ import {
 
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
 const SHA256_DIGEST = /^[0-9a-f]{64}$/u;
+const MANAGED_BINDING_IDENTITY_FIELDS = [
+  "taskId",
+  "handleToken",
+  "handleFingerprint",
+  "repositoryRoot",
+  "repositoryId",
+  "commonDir",
+  "worktreePath",
+  "branch",
+  "ref",
+  "baseCommit",
+] as const;
 
 function dispatchObject(
   value: DispatchJSONValue | undefined,
 ): value is Readonly<Record<string, DispatchJSONValue>> {
   return (
     value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value)
+  );
+}
+
+function dispatchBindingMatchesManaged(
+  candidate: AttestationEnvelope["gitEffectBinding"],
+  binding: ManagedWorktreeDispatchBinding,
+): boolean {
+  return (
+    candidate !== undefined &&
+    MANAGED_BINDING_IDENTITY_FIELDS.every((field) => candidate[field] === binding[field])
   );
 }
 
@@ -796,39 +819,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           gitEffectBinding: association.gitEffectBinding,
         };
       }
-      if (
-        continuation.reprepareOf.attestationId === fence.sourceAttestationId &&
-        continuation.reprepareOf.generation === fence.lineageMaximumGeneration + 1
-      ) {
-        return true;
-      }
-      if (
-        continuation.reprepareOf.attestationId !== fence.sourceAttestationId ||
-        continuation.reprepareOf.generation !== fence.lineageMaximumGeneration + 2 ||
-        options.ledgerStore === undefined ||
-        recoveryJournal === undefined ||
-        input.input === null ||
-        typeof input.input !== "object" ||
-        Array.isArray(input.input)
-      ) {
-        return false;
-      }
-      const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
-      if (
-        currentRecoveryTaskSpecificationDigest(input.input) !==
-        taskEvidence.taskSpecificationDigest
-      ) {
-        return false;
-      }
-      const journal = await recoveryJournal.read(binding.taskId);
-      if (
-        journal?.state !== "committed" ||
-        journal.fence === undefined ||
-        journal.fence.fenceRef !== fence.fenceRef ||
-        journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest
-      ) {
-        return false;
-      }
       const rows =
         replayRows ??
         (await options.backend.transact({ kind: "namespace" }, (store) =>
@@ -837,111 +827,286 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
             .map((row) => structuredClone(row)),
         ));
-      const predecessorRows = rows.filter(
-        (row) =>
-          row.attestationId === fence.sourceAttestationId &&
-          row.generation === fence.lineageMaximumGeneration + 1,
-      );
-      const continuedRows = rows.filter(
+      const sourceRows = rows.filter(
         (row) =>
           row.attestationId === continuation.reprepareOf.attestationId &&
           row.generation === continuation.reprepareOf.generation,
       );
-      if (predecessorRows.length !== 1 || continuedRows.length !== 1) return false;
-      const predecessor = predecessorRows[0]!;
-      const continued = continuedRows[0]!;
-      const predecessorBinding = predecessor.gitEffectBinding;
-      const continuedBinding = continued.gitEffectBinding;
-      const bridge = continuedBinding?.guardedRebaseBridge;
-      const continuedOutput = dispatchObject(continued.output) ? continued.output : undefined;
       if (
-        predecessor.promptProvenance.roleId !== "implement-worker" ||
-        predecessor.state !== "aborted" ||
-        predecessor.abortReason !== "cancelled" ||
-        predecessorBinding === undefined ||
-        predecessor.implementationQueue !== undefined ||
-        predecessor.stagedRebaseSourceBinding !== undefined ||
-        continued.promptProvenance.roleId !== "implement-worker" ||
-        continued.state !== "consumed" ||
-        continuedBinding === undefined ||
-        bridge === undefined ||
-        continued.stagedRebaseSourceBinding !== undefined ||
-        continued.implementationQueue?.state === "staged-rebase-retired" ||
-        continuedOutput?.["status"] !== "pass" ||
-        continuedOutput["taskId"] !== binding.taskId ||
-        continuedOutput["resultCommit"] !== liveTip ||
-        currentRecoveryTaskSpecificationDigest(predecessor.input) !==
-          taskEvidence.taskSpecificationDigest ||
-        currentRecoveryTaskSpecificationDigest(continued.input) !==
-          taskEvidence.taskSpecificationDigest ||
+        sourceRows.length !== 1 ||
+        options.ledgerStore === undefined ||
+        !dispatchObject(input.input) ||
+        currentRecoveryTaskSpecificationDigest(input.input) !==
+          currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId).taskSpecificationDigest ||
         continuation.gitEffectBinding === undefined ||
         dispatchPayloadDigest(continuation.gitEffectBinding as unknown as DispatchJSONValue) !==
-          dispatchPayloadDigest(continuedBinding as unknown as DispatchJSONValue)
+          dispatchPayloadDigest(
+            sourceRows[0]!.dispatchContinuationBinding?.gitEffectBinding as unknown as DispatchJSONValue,
+          )
       ) {
         return false;
       }
-      for (const candidate of [predecessorBinding, continuedBinding]) {
-        if (
-          !(
-            [
-              "taskId",
-              "handleToken",
-              "handleFingerprint",
-              "repositoryRoot",
-              "repositoryId",
-              "commonDir",
-              "worktreePath",
-              "branch",
-              "ref",
-              "baseCommit",
-            ] as const
-          ).every((field) => candidate[field] === binding[field])
-        ) {
-          return false;
-        }
-      }
-      const sealedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
-      if (
-        dispatchPayloadDigest(
-          (predecessorBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
-        ) !==
-          dispatchPayloadDigest(journal.seal.seed.gitReceipts as unknown as DispatchJSONValue) ||
-        (sealedBridge === undefined
-          ? predecessorBinding.guardedRebaseBridge !== undefined
-          : predecessorBinding.guardedRebaseBridge === undefined ||
-            dispatchPayloadDigest(
-              predecessorBinding.guardedRebaseBridge as unknown as DispatchJSONValue,
-            ) !== dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue))
-      ) {
-        return false;
-      }
-      const continuedInput = continued.input as Readonly<Record<string, DispatchJSONValue>>;
-      const baseCommitInput = continuedInput["baseCommit"];
-      const startingCommitInput = continuedInput["startingCommit"];
-      if (typeof baseCommitInput !== "string" || typeof startingCommitInput !== "string") {
-        return false;
-      }
-      const verifiedBridge = await materializeGuardedRebase({
-        reference: bridge.guardedRebase,
-        prior: {
-          ...predecessorBinding,
-          attestationId: predecessor.attestationId,
-          generation: predecessor.generation,
-        },
-        current: binding,
-        baseCommitInput,
-        startingCommitInput,
-        priorResultCommitInput:
-          (continuedInput["priorResultCommit"] as string | null | undefined) ?? null,
-        ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
-      });
-      return (
-        dispatchPayloadDigest(verifiedBridge as unknown as DispatchJSONValue) ===
-        dispatchPayloadDigest(bridge as unknown as DispatchJSONValue)
+      return await sourceDescendsFromRecoveryFence(
+        fence,
+        binding,
+        rows,
+        continuation.reprepareOf,
       );
     } catch {
       return false;
     }
+  }
+
+  async function authenticatedRecoveryFenceAnchor(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    rows: readonly AttestationEnvelope[],
+  ): Promise<AttestationEnvelope | undefined> {
+    if (options.ledgerStore === undefined || recoveryJournal === undefined) return undefined;
+    const journal = await recoveryJournal.read(binding.taskId);
+    if (
+      journal?.state !== "committed" ||
+      journal.fence === undefined ||
+      journal.fence.fenceRef !== fence.fenceRef
+    ) {
+      return undefined;
+    }
+    const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+    if (journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest) {
+      return undefined;
+    }
+    const sealedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
+    const candidates = rows.filter((row) => {
+      if (
+        row.attestationId !== fence.sourceAttestationId ||
+        row.generation !== fence.lineageMaximumGeneration + 1 ||
+        row.promptProvenance.roleId !== "implement-worker" ||
+        !dispatchBindingMatchesManaged(row.gitEffectBinding, binding) ||
+        !dispatchObject(row.input)
+      ) {
+        return false;
+      }
+      const input = row.input;
+      const rowBinding = row.gitEffectBinding!;
+      const rowBridge = rowBinding.guardedRebaseBridge;
+      const logicalBase = sealedBridge?.ontoCommit ?? binding.baseCommit;
+      return (
+        input["taskId"] === binding.taskId &&
+        input["worktreePath"] === binding.worktreePath &&
+        input["branch"] === binding.branch &&
+        input["baseCommit"] === logicalBase &&
+        input["startingCommit"] === journal.seal.seed.liveTip &&
+        currentRecoveryTaskSpecificationDigest(input) === taskEvidence.taskSpecificationDigest &&
+        dispatchPayloadDigest(
+          (rowBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
+        ) ===
+          dispatchPayloadDigest(
+            journal.seal.seed.gitReceipts as unknown as DispatchJSONValue,
+          ) &&
+        (sealedBridge === undefined
+          ? rowBridge === undefined
+          : rowBridge !== undefined &&
+            dispatchPayloadDigest(rowBridge as unknown as DispatchJSONValue) ===
+              dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue))
+      );
+    });
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+
+  async function sourceDescendsFromRecoveryFence(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    rows: readonly AttestationEnvelope[],
+    source: { readonly attestationId: string; readonly generation: number },
+  ): Promise<boolean> {
+    const anchor = await authenticatedRecoveryFenceAnchor(fence, binding, rows);
+    if (anchor === undefined) return false;
+    const byHandle = new Map(
+      rows.map((row) => [`${row.attestationId}:${String(row.generation)}`, row]),
+    );
+    const visited = new Set<string>();
+    const rowFor = (handle: { readonly attestationId: string; readonly generation: number }) =>
+      byHandle.get(`${handle.attestationId}:${String(handle.generation)}`);
+    const sourceTip = (row: AttestationEnvelope): string | undefined => {
+      if (row.dispatchContinuationBinding !== undefined) {
+        return row.dispatchContinuationBinding.liveTip;
+      }
+      if (row.implementationQueue !== undefined) {
+        return row.implementationQueue.attempt.resultCommit;
+      }
+      if (dispatchObject(row.output) && typeof row.output["resultCommit"] === "string") {
+        return row.output["resultCommit"];
+      }
+      return dispatchObject(row.input) && typeof row.input["startingCommit"] === "string"
+        ? row.input["startingCommit"]
+        : undefined;
+    };
+    const rowMatchesTask = (row: AttestationEnvelope): boolean => {
+      if (
+        options.ledgerStore === undefined ||
+        row.promptProvenance.roleId !== "implement-worker" ||
+        !dispatchBindingMatchesManaged(row.gitEffectBinding, binding) ||
+        !dispatchObject(row.input)
+      ) {
+        return false;
+      }
+      const evidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+      return (
+        row.input["taskId"] === binding.taskId &&
+        row.input["worktreePath"] === binding.worktreePath &&
+        row.input["branch"] === binding.branch &&
+        currentRecoveryTaskSpecificationDigest(row.input) === evidence.taskSpecificationDigest
+      );
+    };
+    const verifyGuardedRow = async (row: AttestationEnvelope): Promise<boolean> => {
+      if (!rowMatchesTask(row) || !dispatchObject(row.input)) return false;
+      const rowBinding = row.gitEffectBinding!;
+      const bridge = rowBinding.guardedRebaseBridge;
+      const baseCommit = row.input["baseCommit"];
+      const startingCommit = row.input["startingCommit"];
+      if (
+        bridge === undefined ||
+        typeof baseCommit !== "string" ||
+        typeof startingCommit !== "string"
+      ) {
+        return false;
+      }
+      try {
+        const verified = await reverifyGuardedRebaseBridge({
+          bridge,
+          current: binding,
+          baseCommitInput: baseCommit,
+          startingCommitInput: startingCommit,
+          firstInheritedOldHead: rowBinding.inheritedGitReceipts?.[0]?.oldHead ?? null,
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+        });
+        return (
+          dispatchPayloadDigest(verified as unknown as DispatchJSONValue) ===
+          dispatchPayloadDigest(bridge as unknown as DispatchJSONValue)
+        );
+      } catch {
+        return false;
+      }
+    };
+    const visit = async (row: AttestationEnvelope): Promise<boolean> => {
+      const key = `${row.attestationId}:${String(row.generation)}`;
+      if (visited.has(key)) return false;
+      visited.add(key);
+      if (row === anchor) return true;
+      if (
+        row.state !== "consumed" ||
+        row.dispatchContinuationBinding === undefined ||
+        !rowMatchesTask(row)
+      ) {
+        return false;
+      }
+      const continuation = row.dispatchContinuationBinding;
+      if (
+        continuation.attestationId !== row.attestationId ||
+        continuation.generation !== row.generation ||
+        !dispatchBindingMatchesManaged(continuation.gitEffectBinding, binding) ||
+        continuation.liveTip !== sourceTip(row)
+      ) {
+        return false;
+      }
+
+      const claim = row.dispatchContinuationClaim;
+      if (claim !== undefined) {
+        const predecessor = rowFor(claim.source);
+        if (
+          predecessor === undefined ||
+          predecessor.state !== "consumed" ||
+          predecessor.dispatchContinuationBinding?.continuationReference !==
+            claim.continuationReference ||
+          row.attestationId !== predecessor.attestationId ||
+          row.generation !== predecessor.generation + 1 ||
+          !dispatchBindingMatchesManaged(predecessor.gitEffectBinding, binding) ||
+          !dispatchObject(row.input) ||
+          row.input["startingCommit"] !== predecessor.dispatchContinuationBinding.liveTip ||
+          dispatchPayloadDigest(
+            (row.gitEffectBinding?.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
+          ) !==
+            dispatchPayloadDigest(
+              predecessor.dispatchContinuationBinding.gitReceipts as unknown as DispatchJSONValue,
+            ) ||
+          dispatchPayloadDigest(
+            row.gitEffectBinding?.guardedRebaseBridge as unknown as DispatchJSONValue,
+          ) !==
+            dispatchPayloadDigest(
+              predecessor.gitEffectBinding?.guardedRebaseBridge as unknown as DispatchJSONValue,
+            )
+        ) {
+          return false;
+        }
+        return await visit(predecessor);
+      }
+
+      const stagedPredecessors = rows.filter((candidate) => {
+        const control = candidate.implementationQueue;
+        const staged = candidate.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
+        return (
+          candidate.state === "aborted" &&
+          candidate.abortReason === "staged-rebase" &&
+          control?.state === "staged-rebase-retired" &&
+          control.terminal?.reason === "staged-rebase" &&
+          staged?.successor?.attestationId === row.attestationId &&
+          staged.successor.generation === row.generation
+        );
+      });
+      if (stagedPredecessors.length === 1) {
+        const predecessor = stagedPredecessors[0]!;
+        const control = predecessor.implementationQueue!;
+        const staged = predecessor.stagedRebaseSourceBinding ?? control.stagedRebaseSource!;
+        const bridge = row.gitEffectBinding?.guardedRebaseBridge;
+        if (
+          staged.source.attestationId !== predecessor.attestationId ||
+          staged.source.generation !== predecessor.generation ||
+          row.attestationId !== predecessor.attestationId ||
+          row.generation !== predecessor.generation + 1 ||
+          !dispatchBindingMatchesManaged(predecessor.gitEffectBinding, binding) ||
+          staged.partitionKey !== control.partition.partitionKey ||
+          staged.enrollmentId !== control.enrollment.enrollmentId ||
+          staged.attemptId !== control.attempt.attemptId ||
+          staged.leaseGeneration !== control.leaseGeneration ||
+          staged.repositoryId !== binding.repositoryId ||
+          staged.worktreePath !== binding.worktreePath ||
+          staged.sourceResultCommit !== control.attempt.resultCommit ||
+          bridge === undefined ||
+          staged.sourceResultCommit !== bridge.oldResultCommit ||
+          staged.ontoCommit !== bridge.ontoCommit ||
+          staged.guardedRebase !== bridge.guardedRebase ||
+          staged.guardedRebaseJournalDigest !== bridge.requestDigest ||
+          !(await verifyGuardedRow(row))
+        ) {
+          return false;
+        }
+        return await visit(predecessor);
+      }
+      if (stagedPredecessors.length > 1) return false;
+
+      const bridge = row.gitEffectBinding?.guardedRebaseBridge;
+      if (bridge === undefined || !(await verifyGuardedRow(row))) return false;
+      const predecessor = rowFor({
+        attestationId: row.attestationId,
+        generation: row.generation - 1,
+      });
+      if (
+        predecessor === undefined ||
+        predecessor.stagedRebaseSourceBinding !== undefined ||
+        predecessor.implementationQueue?.state === "staged-rebase-retired" ||
+        !rowMatchesTask(predecessor) ||
+        sourceTip(predecessor) !== bridge.oldResultCommit ||
+        !dispatchObject(row.input) ||
+        row.input["priorResultCommit"] !== bridge.oldResultCommit
+      ) {
+        return false;
+      }
+      return await visit(predecessor);
+    };
+    const row = rowFor(source);
+    return row === undefined ? false : await visit(row);
   }
 
   async function recoveryFenceAuthorizesPrepare(
@@ -1002,20 +1167,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         replay.gitEffectBinding !== undefined &&
         replay.gitEffectBinding.conflictStateDigest === requestedDigest &&
         dispatchPayloadDigest(replay.input) === dispatchPayloadDigest(input.input) &&
-        (
-          [
-            "taskId",
-            "handleToken",
-            "handleFingerprint",
-            "repositoryRoot",
-            "repositoryId",
-            "commonDir",
-            "worktreePath",
-            "branch",
-            "ref",
-            "baseCommit",
-          ] as const
-        ).every((field) => replay.gitEffectBinding![field] === binding[field])
+        dispatchBindingMatchesManaged(replay.gitEffectBinding, binding)
       ) {
         return true;
       }
@@ -1027,8 +1179,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           control.stagedRebaseDisposition?.state !== "conflict-pending" ||
           source === undefined ||
           row.gitEffectBinding === undefined ||
-          source.source.attestationId !== fence.sourceAttestationId ||
-          source.source.generation !== fence.lineageMaximumGeneration + 1 ||
           source.partitionKey !== control.partition.partitionKey ||
           source.enrollmentId !== control.enrollment.enrollmentId ||
           source.attemptId !== control.attempt.attemptId ||
@@ -1039,49 +1189,66 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           source.ontoCommit !== requestedState.sequencer.onto ||
           source.sourceResultCommit !== requestedState.sequencer.originalTip ||
           guardedRebaseReference(source.guardedRebaseJournalDigest) !== source.guardedRebase ||
-          !(
-            [
-              "taskId",
-              "handleToken",
-              "handleFingerprint",
-              "repositoryRoot",
-              "repositoryId",
-              "commonDir",
-              "worktreePath",
-              "branch",
-              "ref",
-              "baseCommit",
-            ] as const
-          ).every((field) => row.gitEffectBinding![field] === binding[field])
+          !dispatchBindingMatchesManaged(row.gitEffectBinding, binding)
         ) {
           return [];
         }
         return [source];
       });
-      if (sources.length !== 1) return false;
-      const source = sources[0]!;
-      const context = await loadRetiredStagedRebaseContext(source.sourceReference);
+      if (sources.length > 1) return false;
+      if (sources.length === 1) {
+        const source = sources[0]!;
+        if (!(await sourceDescendsFromRecoveryFence(fence, binding, rows, source.source))) {
+          return false;
+        }
+        const context = await loadRetiredStagedRebaseContext(source.sourceReference);
+        if (
+          context.source.guardedRebase !== source.guardedRebase ||
+          context.source.guardedRebaseJournalDigest !== source.guardedRebaseJournalDigest ||
+          context.source.ontoCommit !== source.ontoCommit ||
+          (await readProtectedIntegrationHead(
+            binding.repositoryRoot,
+            context.control.partition.integrationRef,
+          )) !== source.ontoCommit
+        ) {
+          return false;
+        }
+        const reconciled = await reconcileRetiredStagedRebase(
+          context,
+          runGuardedRebaseUnderManagedLock,
+        );
+        if (reconciled.kind !== "conflict-pending") return false;
+        const observed = await observeManagedWorktreeConflictState(
+          binding,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        return gitRebaseConflictStateDigest(observed) === requestedDigest;
+      }
+
+      const pending = await resolveUniquePendingGuardedRebaseConflict(
+        binding,
+        requestedState,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      const anchor = await authenticatedRecoveryFenceAnchor(fence, binding, rows);
       if (
-        context.source.guardedRebase !== source.guardedRebase ||
-        context.source.guardedRebaseJournalDigest !== source.guardedRebaseJournalDigest ||
-        context.source.ontoCommit !== source.ontoCommit ||
-        (await readProtectedIntegrationHead(
-          binding.repositoryRoot,
-          context.control.partition.integrationRef,
-        )) !== source.ontoCommit
+        anchor === undefined ||
+        anchor.state !== "aborted" ||
+        anchor.abortReason !== "cancelled" ||
+        anchor.implementationQueue !== undefined ||
+        anchor.stagedRebaseSourceBinding !== undefined ||
+        !dispatchObject(anchor.input) ||
+        anchor.input["startingCommit"] !== pending.oldResultCommit ||
+        (await readOnlyGit(binding.repositoryRoot, ["rev-parse", "HEAD"])) !==
+          pending.ontoCommit ||
+        !(await sourceDescendsFromRecoveryFence(fence, binding, rows, {
+          attestationId: anchor.attestationId,
+          generation: anchor.generation,
+        }))
       ) {
         return false;
       }
-      const reconciled = await reconcileRetiredStagedRebase(
-        context,
-        runGuardedRebaseUnderManagedLock,
-      );
-      if (reconciled.kind !== "conflict-pending") return false;
-      const observed = await observeManagedWorktreeConflictState(
-        binding,
-        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-      );
-      return gitRebaseConflictStateDigest(observed) === requestedDigest;
+      return true;
     } catch {
       return false;
     }

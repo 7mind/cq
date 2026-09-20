@@ -3159,6 +3159,29 @@ throw new Error("unexpected controlled cq invocation");
           },
           {
             ...resolverRequest,
+            idempotencyKey: `${resolverRequest.idempotencyKey}-changed-onto`,
+            input: JSON.parse(
+              JSON.stringify({
+                ...resolverInput,
+                conflictState: {
+                  ...observed.conflictState,
+                  sequencer: { ...observed.conflictState.sequencer, onto: "e".repeat(40) },
+                },
+              }),
+            ) as DispatchJSONValue,
+          },
+          {
+            ...resolverRequest,
+            idempotencyKey: `${resolverRequest.idempotencyKey}-foreign-worktree`,
+            input: JSON.parse(
+              JSON.stringify({
+                ...resolverInput,
+                worktreePath: `${subject.managed.handle.absolutePath}-foreign`,
+              }),
+            ) as DispatchJSONValue,
+          },
+          {
+            ...resolverRequest,
             idempotencyKey: `${resolverRequest.idempotencyKey}-substituted-authority`,
             reprepareOf: sealed.handle,
           },
@@ -3593,11 +3616,14 @@ throw new Error("unexpected controlled cq invocation");
           { kind: "namespace" },
           (store) => store.rows().length,
         );
+        const {
+          continuation: _continuation,
+          ...unrelatedHigherGenerationRequest
+        } = secondContinuationRequest;
         expect(
           await continuationRuntime.prepare({
-            ...secondContinuationRequest,
+            ...unrelatedHigherGenerationRequest,
             idempotencyKey: `${secondContinuationRequest.idempotencyKey}-unrelated-high-generation`,
-            continuation: undefined,
             reprepareOf: {
               attestationId: successor.handle.attestationId,
               generation: successor.handle.generation + 100,
@@ -3761,7 +3787,7 @@ throw new Error("unexpected controlled cq invocation");
           worktreeStateDir: subject.stateDir,
           supervisedWorkerGateRunner: runner,
           now: () => "2026-08-12T20:00:00.000Z",
-          randomBytes: sequentialDispatchRandomBytes(sequence * 224),
+          randomBytes: sequentialDispatchRandomBytes(sequence * 32 + 128),
         });
         const observed = (await WORKTREE_MANAGE_TOOL_SPEC.run(
           subject.ledgerStore,
