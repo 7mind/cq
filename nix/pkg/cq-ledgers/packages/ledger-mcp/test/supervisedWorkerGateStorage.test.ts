@@ -4903,8 +4903,7 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "a staged-retired recovery source and its cancelled guarded successor advance the current seal",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {

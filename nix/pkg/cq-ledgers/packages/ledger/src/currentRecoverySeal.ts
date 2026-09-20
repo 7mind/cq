@@ -705,16 +705,23 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   const seed = seal.seed;
   const guardedTipTransitions = currentRecoveryGuardedTipTransitions(seed);
   const guardedTipTransition = guardedTipTransitions.at(-1) ?? null;
+  const selectedSourceClosesTransition =
+    guardedTipTransition !== null &&
+    (guardedTipTransition.successor.attestationId ===
+      seed.selectedSourceHandle.attestationId &&
+    guardedTipTransition.successor.generation === seed.selectedSourceHandle.generation
+      ? true
+      : seed.gitReceipts.at(-1)?.attestationId ===
+          seed.selectedSourceHandle.attestationId &&
+        seed.gitReceipts.at(-1)?.generation === seed.selectedSourceHandle.generation &&
+        seed.gitReceipts.at(-1)?.newHead === seed.liveTip);
   if (
     seal.version !== seed.version ||
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
     (guardedTipTransition === null
       ? seed.liveTip !== seed.gitReceipts.at(-1)?.newHead
-      : guardedTipTransition.successor.attestationId !==
-          seed.selectedSourceHandle.attestationId ||
-        guardedTipTransition.successor.generation !==
-          seed.selectedSourceHandle.generation) ||
+      : !selectedSourceClosesTransition) ||
     (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
     seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
   ) {

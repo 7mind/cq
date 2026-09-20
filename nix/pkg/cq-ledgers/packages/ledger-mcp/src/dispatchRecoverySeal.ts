@@ -1022,7 +1022,10 @@ async function journalSuccessorSource(
       );
     }
     const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
-    const expectedBaseCommit = incomingStagedEdge?.ontoCommit ?? coordinates.binding.baseCommit;
+    const expectedBaseCommit =
+      incomingStagedEdge?.ontoCommit ??
+      guardedTipTransitions.at(-1)?.ontoCommit ??
+      coordinates.binding.baseCommit;
     const expectedStartingCommit = incomingStagedEdge?.rebasedStartCommit ?? inheritedTip;
     if (
       input["taskId"] !== coordinates.taskId ||
@@ -1564,26 +1567,31 @@ export async function captureCurrentDispatchRecoverySealUnderLock(
           journal,
           now: options.now ?? (() => new Date().toISOString()),
           snapshot: async () => store.rows().map((row) => structuredClone(row)),
-          resolveReceipts: async (row, tip) =>
-            await resolveInheritedGitChangeReceipts(
+          resolveReceipts: async (row, tip) => {
+            const retainedBinding = isAttestationTombstone(row)
+              ? row.dispatchContinuationBinding?.gitEffectBinding
+              : row.gitEffectBinding;
+            return await resolveInheritedGitChangeReceipts(
               {
                 ...binding,
                 attestationId: row.attestationId,
                 generation: row.generation,
-                ...((isAttestationTombstone(row)
-                  ? row.dispatchContinuationBinding?.gitEffectBinding.inheritedGitReceipts
-                  : row.gitEffectBinding?.inheritedGitReceipts) === undefined
+                ...(retainedBinding?.inheritedGitReceipts === undefined
                   ? {}
-                  : {
-                      inheritedGitReceipts: (isAttestationTombstone(row)
-                        ? row.dispatchContinuationBinding!.gitEffectBinding.inheritedGitReceipts
-                        : row.gitEffectBinding!
-                            .inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
-                    }),
+                  : { inheritedGitReceipts: retainedBinding.inheritedGitReceipts }),
               },
               tip,
-              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-            ),
+              {
+                ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+                ...(retainedBinding?.receiptChainTransition === undefined
+                  ? {}
+                  : { receiptChainTransition: retainedBinding.receiptChainTransition }),
+                ...(retainedBinding?.receiptChainTransitions === undefined
+                  ? {}
+                  : { receiptChainTransitions: retainedBinding.receiptChainTransitions }),
+              },
+            );
+          },
           revalidateBinding: async () =>
             await assertManagedWorktreeDispatchBindingLive(
               binding,
