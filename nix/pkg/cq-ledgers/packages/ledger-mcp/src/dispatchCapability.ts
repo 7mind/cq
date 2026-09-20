@@ -1382,7 +1382,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         const transition =
           recoveryJournalState?.state === "committed"
-            ? recoveryJournalState.seal.seed.guardedTipTransition
+            ? (recoveryJournalState.seal.seed.guardedTipTransition ?? null)
             : null;
         const gitReceipts = await resolveInheritedGitChangeReceipts(
           { ...binding, ...input.lease },
@@ -2651,25 +2651,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   managedFingerprint: journal.seal.seed.managedFingerprint,
                   gitReceiptsDigest: journal.seal.seed.gitReceiptsDigest,
                 };
+          const guardedTipTransition = journal.seal.seed.guardedTipTransition ?? null;
           gitEffectBinding = {
             ...resolvedGitEffectBinding,
             inheritedGitReceipts: journal.seal.seed.gitReceipts,
-            ...(journal.seal.seed.guardedTipTransition === null
+            ...(guardedTipTransition === null
               ? {}
               : {
                   receiptChainTransition: {
                     kind: "cq-dispatch-receipt-chain-transition" as const,
                     version: 1 as const,
-                    source: journal.seal.seed.guardedTipTransition.source,
-                    successor: journal.seal.seed.guardedTipTransition.successor,
-                    guardedRebase: journal.seal.seed.guardedTipTransition.guardedRebase,
-                    requestDigest: journal.seal.seed.guardedTipTransition.requestDigest,
-                    oldResultCommit: journal.seal.seed.guardedTipTransition.oldResultCommit,
-                    ontoCommit: journal.seal.seed.guardedTipTransition.ontoCommit,
-                    rebasedStartCommit:
-                      journal.seal.seed.guardedTipTransition.rebasedStartCommit,
-                    receiptPrefixLength:
-                      journal.seal.seed.guardedTipTransition.receiptPrefixLength,
+                    source: guardedTipTransition.source,
+                    successor: guardedTipTransition.successor,
+                    guardedRebase: guardedTipTransition.guardedRebase,
+                    requestDigest: guardedTipTransition.requestDigest,
+                    oldResultCommit: guardedTipTransition.oldResultCommit,
+                    ontoCommit: guardedTipTransition.ontoCommit,
+                    rebasedStartCommit: guardedTipTransition.rebasedStartCommit,
+                    receiptPrefixLength: guardedTipTransition.receiptPrefixLength,
                   },
                 }),
           };
@@ -3266,7 +3265,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               ) {
                 throw new Error("dispatch recovery claim no longer matches committed authority");
               }
-              const transition = journal.seal.seed.guardedTipTransition;
+              const transition = journal.seal.seed.guardedTipTransition ?? null;
               if (transition !== null) {
                 receiptChainTransition = {
                   oldResultCommit: transition.oldResultCommit,

@@ -11,6 +11,7 @@ import {
   type AttestationEnvelope,
   type AttestationNamespace,
   type AttestationRow,
+  type DispatchJSONValue,
   type PromptSurface,
 } from "@cq/config";
 import {
@@ -206,7 +207,9 @@ async function preSchemeGeneration17Journal() {
   };
   delete legacy.seal.seed.taskIdentityScheme;
   legacy.seal.seed.taskDigest = "0".repeat(64);
-  legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+  legacy.seal.sealDigest = dispatchPayloadDigest(
+    legacy.seal.seed as unknown as DispatchJSONValue,
+  );
   legacy.seal.sealReference = `cq-current-recovery-seal:v1:${legacy.seal.sealDigest}`;
   if (legacy.fence !== undefined) {
     legacy.fence = createDispatchLineageCutoverFence({
@@ -253,7 +256,9 @@ async function preSchemeConsumedFailureJournal(generation17: AttestationEnvelope
   };
   delete legacy.seal.seed.taskIdentityScheme;
   legacy.seal.seed.taskDigest = "0".repeat(64);
-  legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+  legacy.seal.sealDigest = dispatchPayloadDigest(
+    legacy.seal.seed as unknown as DispatchJSONValue,
+  );
   legacy.seal.sealReference = `cq-current-recovery-seal:v2:${legacy.seal.sealDigest}`;
   if (legacy.fence !== undefined) {
     legacy.fence = createDispatchLineageCutoverFence({

@@ -793,7 +793,7 @@ async function journalSuccessorSource(
   }
   let inheritedReceipts: readonly GitChangeBrokerReceipt[] = seed.gitReceipts;
   let inheritedTip = seed.liveTip;
-  let guardedTipTransition = seed.guardedTipTransition;
+  let guardedTipTransition = seed.guardedTipTransition ?? null;
   for (const [index, successor] of successorEnvelopes.entries()) {
     if (!bindingMatches(successor.gitEffectBinding, coordinates.binding)) {
       throw new CurrentRecoverySealError(

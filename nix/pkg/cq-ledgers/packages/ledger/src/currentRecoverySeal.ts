@@ -165,7 +165,7 @@ const recoverySeedCommonSchema = z.object({
   gitReceipts: z.array(gitChangeReceiptSchema).min(1),
   gitReceiptsDigest: z.string().regex(SHA256),
   liveTip: z.string().regex(FULL_COMMIT),
-  guardedTipTransition: guardedTipTransitionSchema.nullable().default(null),
+  guardedTipTransition: guardedTipTransitionSchema.nullable().optional(),
   managedFingerprint: z.string().regex(SHA256),
   capturedAt: z.string().regex(ISO_INSTANT),
 });
@@ -478,26 +478,26 @@ function isCommittedRecoveryEpochPromotion(
   if (currentFence === undefined || nextFence === undefined) return false;
   const currentSeed = current.seal.seed;
   const nextSeed = next.seal.seed;
+  const currentGuardedTipTransition = currentSeed.guardedTipTransition ?? null;
+  const nextGuardedTipTransition = nextSeed.guardedTipTransition ?? null;
   const promotedGeneration = nextSeed.selectedSourceHandle.generation;
   const suffix = nextSeed.gitReceipts.slice(currentSeed.gitReceipts.length);
   const receiptsAdvanceOrPreserveTip =
     currentSeed.gitReceipts.length < nextSeed.gitReceipts.length ||
     (currentSeed.gitReceipts.length === nextSeed.gitReceipts.length &&
       (currentSeed.liveTip === nextSeed.liveTip ||
-        (nextSeed.guardedTipTransition !== null &&
-          nextSeed.guardedTipTransition.oldResultCommit === currentSeed.liveTip &&
-          nextSeed.guardedTipTransition.rebasedStartCommit === nextSeed.liveTip)));
+        (nextGuardedTipTransition !== null &&
+          nextGuardedTipTransition.oldResultCommit === currentSeed.liveTip &&
+          nextGuardedTipTransition.rebasedStartCommit === nextSeed.liveTip)));
   const guardedTransitionProgression =
-    payloadDigest(currentSeed.guardedTipTransition ?? null) ===
-      payloadDigest(nextSeed.guardedTipTransition ?? null) ||
-    (currentSeed.guardedTipTransition === null &&
-      nextSeed.guardedTipTransition !== null &&
-      nextSeed.guardedTipTransition.receiptPrefixLength >=
-        currentSeed.gitReceipts.length &&
-      nextSeed.gitReceipts[nextSeed.guardedTipTransition.receiptPrefixLength - 1]?.newHead ===
-        nextSeed.guardedTipTransition.oldResultCommit &&
-      nextSeed.guardedTipTransition.rebasedStartCommit === nextSeed.liveTip &&
-      nextSeed.guardedTipTransition.receiptPrefixLength <= nextSeed.gitReceipts.length);
+    payloadDigest(currentGuardedTipTransition) === payloadDigest(nextGuardedTipTransition) ||
+    (currentGuardedTipTransition === null &&
+      nextGuardedTipTransition !== null &&
+      nextGuardedTipTransition.receiptPrefixLength >= currentSeed.gitReceipts.length &&
+      nextSeed.gitReceipts[nextGuardedTipTransition.receiptPrefixLength - 1]?.newHead ===
+        nextGuardedTipTransition.oldResultCommit &&
+      nextGuardedTipTransition.rebasedStartCommit === nextSeed.liveTip &&
+      nextGuardedTipTransition.receiptPrefixLength <= nextSeed.gitReceipts.length);
   return (
     nextSeed.version === 1 &&
     currentSeed.taskId === nextSeed.taskId &&
@@ -635,15 +635,16 @@ export function selectStrictMaximalRecoverySource(
 
 function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   const seed = seal.seed;
+  const guardedTipTransition = seed.guardedTipTransition ?? null;
   if (
     seal.version !== seed.version ||
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
-    (seed.guardedTipTransition === null
+    (guardedTipTransition === null
       ? seed.liveTip !== seed.gitReceipts.at(-1)?.newHead
-      : seed.guardedTipTransition.successor.attestationId !==
+      : guardedTipTransition.successor.attestationId !==
           seed.selectedSourceHandle.attestationId ||
-        seed.guardedTipTransition.successor.generation !==
+        guardedTipTransition.successor.generation !==
           seed.selectedSourceHandle.generation) ||
     (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
     seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
@@ -654,7 +655,7 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
     seed.taskId,
     seed.gitReceipts,
     seed.liveTip,
-    seed.guardedTipTransition ?? undefined,
+    guardedTipTransition ?? undefined,
   );
   const sealDigest = payloadDigest(seed);
   const referencePrefix =
