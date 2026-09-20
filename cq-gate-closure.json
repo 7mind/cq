@@ -33,7 +33,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "43c200c8a1f35fb00cbcb2392df5d99e139ffe7260e9b6fbe71b1a4175dcb913",
+      "sha256": "3416574daa91421815f6d458740ef8f17553c216c676989dce4a01fd59bfe50b",
       "targets": []
     },
     {
@@ -581,7 +581,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchCapability.test.ts",
-      "sha256": "2d3f2987b152a76242fd53e8eec2b50a3e681590ca12418b206a0c914b8ecd74",
+      "sha256": "654303cabc491ecf311cea50f35111b6c7b14b7712e25970c00d34bf991c05cb",
       "targets": []
     },
     {

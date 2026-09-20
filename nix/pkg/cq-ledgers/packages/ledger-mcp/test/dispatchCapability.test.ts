@@ -29,6 +29,7 @@ import {
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   createDispatchNarrativeSource,
+  createInMemoryImplementationEvidenceStore,
   dispatchLineageFenceFromRecoveryJournal,
   journalRecoveryRequiredForFence,
   prepareManagedWorktree,
@@ -806,6 +807,7 @@ describe("live compact-dispatch capability", () => {
         repositoryRoot,
         worktreeStateDir: stateDir,
         recoveryJournal: journal,
+        implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
         now: () => NOW,
         randomBytes: sequentialDispatchRandomBytes(2816),
       });
@@ -902,6 +904,7 @@ describe("live compact-dispatch capability", () => {
         },
       });
       if (!recovered.accepted) throw new Error(recovered.detail);
+      expect(store.read(recovered.handle)?.dispatchJournalRecoveryClaim).toBeUndefined();
       const recoveredInput = await capability.fetchInput({
         ...recovered.handle,
         inputCapability: recovered.prepared.inputCapability,
@@ -909,6 +912,22 @@ describe("live compact-dispatch capability", () => {
       expect(
         (recoveredInput.input as Readonly<Record<string, unknown>>)["inheritedGitReceipts"],
       ).toBeUndefined();
+      if (capability.qualifyImplementationCandidate === undefined) {
+        throw new Error("implementation candidate qualification capability is unavailable");
+      }
+      await expect(
+        capability.qualifyImplementationCandidate({
+          ...recovered.handle,
+          roleId: "implement-worker",
+          correlationId: "refs-recovery",
+          childThreadId: "child-refs-recovery",
+          expectedRunId: EXPECTED_CHILD.runId,
+          outcome: "completed",
+          exitStatus: 0,
+          observedAt: NOW,
+          promptDigest: recovered.prepared.promptProvenance.promptDigest,
+        }),
+      ).rejects.toThrow("implementation executor unavailable for qualify");
       await capability.abort({ ...recovered.handle, reason: "parent-lost" });
     } finally {
       await ledger.dispose();

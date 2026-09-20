@@ -2584,27 +2584,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             selectedSourceGeneration: fence.selectedSourceGeneration,
             lineageMaximumGeneration: fence.lineageMaximumGeneration,
           };
-          journalRecoveryClaim = {
-            kind: "cq-dispatch-journal-recovery-claim" as const,
-            version: 1 as const,
-            fenceRef: fence.fenceRef,
-            sealReference: journal.seal.sealReference,
-            sealDigest: journal.seal.sealDigest,
-            selectedSource: {
-              attestationId: fence.sourceAttestationId,
-              generation: fence.selectedSourceGeneration,
-            },
-            lineageMaximumGeneration: fence.lineageMaximumGeneration,
-            sourceTerminalDigest: journal.seal.seed.sourceTerminalDigest,
-            source: recoverySource,
-            taskId: journal.seal.seed.taskId,
-            goalRef: exactGoalRef(options.ledgerStore!, journal.seal.seed.taskId),
-            taskDigest: journal.seal.seed.taskDigest,
-            finalizedManifestDigest: journal.seal.seed.finalizedManifestDigest,
-            liveTip: journal.seal.seed.liveTip,
-            managedFingerprint: journal.seal.seed.managedFingerprint,
-            gitReceiptsDigest: journal.seal.seed.gitReceiptsDigest,
-          };
+          journalRecoveryClaim =
+            options.ledgerStore === undefined
+              ? undefined
+              : {
+                  kind: "cq-dispatch-journal-recovery-claim" as const,
+                  version: 1 as const,
+                  fenceRef: fence.fenceRef,
+                  sealReference: journal.seal.sealReference,
+                  sealDigest: journal.seal.sealDigest,
+                  selectedSource: {
+                    attestationId: fence.sourceAttestationId,
+                    generation: fence.selectedSourceGeneration,
+                  },
+                  lineageMaximumGeneration: fence.lineageMaximumGeneration,
+                  sourceTerminalDigest: journal.seal.seed.sourceTerminalDigest,
+                  source: recoverySource,
+                  taskId: journal.seal.seed.taskId,
+                  goalRef: exactGoalRef(options.ledgerStore, journal.seal.seed.taskId),
+                  taskDigest: journal.seal.seed.taskDigest,
+                  finalizedManifestDigest: journal.seal.seed.finalizedManifestDigest,
+                  liveTip: journal.seal.seed.liveTip,
+                  managedFingerprint: journal.seal.seed.managedFingerprint,
+                  gitReceiptsDigest: journal.seal.seed.gitReceiptsDigest,
+                };
           gitEffectBinding = {
             ...resolvedGitEffectBinding,
             inheritedGitReceipts: journal.seal.seed.gitReceipts,
