@@ -5704,6 +5704,18 @@ throw new Error("unexpected controlled cq invocation");
         throw new Error("guarded continuation omitted server lineage");
       }
       const guardedLineageRecord = guardedLineage as Readonly<Record<string, DispatchJSONValue>>;
+      const guardedRebase = guardedLineageRecord["guardedRebase"];
+      const lineageOntoCommit = guardedLineageRecord["ontoCommit"];
+      const rebasedStartCommit = guardedLineageRecord["rebasedStartCommit"];
+      const exactTip = guardedLineageRecord["exactTip"];
+      if (
+        typeof guardedRebase !== "string" ||
+        typeof lineageOntoCommit !== "string" ||
+        typeof rebasedStartCommit !== "string" ||
+        typeof exactTip !== "boolean"
+      ) {
+        throw new Error("guarded continuation lineage is malformed");
+      }
       const filesTouched = (
         await git(subject.managed.handle.absolutePath, [
           "diff",
@@ -5730,10 +5742,10 @@ throw new Error("unexpected controlled cq invocation");
             gitReceipts: [],
             gitLineage: {
               kind: "guarded-rebase",
-              guardedRebase: guardedLineageRecord["guardedRebase"],
-              ontoCommit: guardedLineageRecord["ontoCommit"],
-              rebasedStartCommit: guardedLineageRecord["rebasedStartCommit"],
-              exactTip: guardedLineageRecord["exactTip"],
+              guardedRebase,
+              ontoCommit: lineageOntoCommit,
+              rebasedStartCommit,
+              exactTip,
             },
             checkSummary: "guarded continuation awaits native qualification",
             baseVerification: {
