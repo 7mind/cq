@@ -3266,8 +3266,7 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  // expected-failure: tasks:T6576
-  test.failing(
+  test(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3626,6 +3625,118 @@ throw new Error("unexpected controlled cq invocation");
             },
           }),
         ).toMatchObject({ state: "gate-pending" });
+        const readLiveRow = async (handle: {
+          readonly attestationId: string;
+          readonly generation: number;
+        }) => {
+          const row = await reopenedBackend.transact({ kind: "handle", handle }, (store) =>
+            store.read(handle),
+          );
+          if (row === undefined || isAttestationTombstone(row)) {
+            throw new Error("legacy recovery evidence row disappeared");
+          }
+          return row;
+        };
+        const legacyParentLost = await readLiveRow(correction.handle);
+        const legacyRetired = await readLiveRow(recovered.handle);
+        const rejectLegacyEvidenceMutation = async (
+          retained: AttestationEnvelope,
+          mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+          observedAt: string,
+        ) => {
+          const corrupted = mutate(retained);
+          await reopenedBackend.transact(
+            {
+              kind: "handle",
+              handle: {
+                attestationId: retained.attestationId,
+                generation: retained.generation,
+              },
+            },
+            (store) => {
+              const current = store.read(retained);
+              if (current === undefined) throw new Error("legacy recovery evidence disappeared");
+              store.replace(current, corrupted);
+            },
+          );
+          try {
+            await expect(
+              qualify(guarded.prepared, guarded.expectedChild, observedAt),
+            ).rejects.toThrow("cannot be resurrected");
+            const pending = await readLiveRow(guarded.prepared);
+            expect(pending.state).toBe("gate-pending");
+            expect(pending.implementationQueue).toBeUndefined();
+          } finally {
+            await reopenedBackend.transact(
+              {
+                kind: "handle",
+                handle: {
+                  attestationId: retained.attestationId,
+                  generation: retained.generation,
+                },
+              },
+              (store) => {
+                const current = store.read(retained);
+                if (current === undefined) throw new Error("legacy recovery evidence disappeared");
+                store.replace(current, retained);
+              },
+            );
+          }
+        };
+        await rejectLegacyEvidenceMutation(
+          legacyParentLost,
+          (row) => ({
+            ...row,
+            implementationQueue: {
+              ...row.implementationQueue!,
+              attempt: {
+                ...row.implementationQueue!.attempt,
+                gitReceipts: row.implementationQueue!.attempt.gitReceipts.map((receipt, index) =>
+                  index === row.implementationQueue!.attempt.gitReceipts.length - 1
+                    ? { ...receipt, requestDigest: "0".repeat(64) }
+                    : receipt,
+                ),
+              },
+            },
+          }),
+          "2026-08-12T20:00:10.100Z",
+        );
+        await rejectLegacyEvidenceMutation(
+          legacyRetired,
+          (row) => ({
+            ...row,
+            stagedRebaseSourceBinding: {
+              ...row.stagedRebaseSourceBinding!,
+              guardedRebaseJournalDigest: "0".repeat(64),
+            },
+          }),
+          "2026-08-12T20:00:10.200Z",
+        );
+        await rejectLegacyEvidenceMutation(
+          legacyRetired,
+          (row) => ({
+            ...row,
+            gitEffectBinding: {
+              ...row.gitEffectBinding!,
+              repositoryId: "0".repeat(64),
+            },
+          }),
+          "2026-08-12T20:00:10.300Z",
+        );
+        await rejectLegacyEvidenceMutation(
+          legacyRetired,
+          (row) => ({
+            ...row,
+            implementationQueue: {
+              ...row.implementationQueue!,
+              enrollment: {
+                ...row.implementationQueue!.enrollment,
+                finalizedManifestDigest: "0".repeat(64),
+              },
+            },
+          }),
+          "2026-08-12T20:00:10.400Z",
+        );
         const guardedQualified = await qualify(
           guarded.prepared,
           guarded.expectedChild,

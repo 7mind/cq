@@ -993,6 +993,162 @@ function isQualifiedJournalRecoveryIntermediate(
   );
 }
 
+function isLegacyRetiredJournalRecoveryIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationEnvelope,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  authority: ImplementationQueueAuthority,
+  priorEnrollment: readonly AttestationRow[],
+): boolean {
+  if (isAttestationTombstone(candidate)) return false;
+  const candidateControl = candidate.implementationQueue;
+  const intermediateControl = intermediate.implementationQueue;
+  const candidateTerminal = candidateControl?.terminal;
+  const candidateBinding = candidate.gitEffectBinding;
+  const intermediateBinding = intermediate.gitEffectBinding;
+  const candidateOutput =
+    candidate.output !== null &&
+    typeof candidate.output === "object" &&
+    !Array.isArray(candidate.output)
+      ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const intermediateOutput =
+    intermediate.output !== null &&
+    typeof intermediate.output === "object" &&
+    !Array.isArray(intermediate.output)
+      ? (intermediate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const sameManagerBinding =
+    candidateBinding !== undefined &&
+    intermediateBinding !== undefined &&
+    ([
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const).every((field) => candidateBinding[field] === intermediateBinding[field]);
+  const sameLineageBridge =
+    candidateBinding?.guardedRebaseBridge === undefined
+      ? intermediateBinding?.guardedRebaseBridge === undefined
+      : intermediateBinding?.guardedRebaseBridge !== undefined &&
+        digest(candidateBinding.guardedRebaseBridge) ===
+          digest(intermediateBinding.guardedRebaseBridge);
+  const guardedSuccessors = [
+    successor,
+    ...priorEnrollment.filter(
+      (row): row is AttestationEnvelope =>
+        !isAttestationTombstone(row) &&
+        (row.attestationId !== successor.attestationId || row.generation !== successor.generation),
+    ),
+  ]
+    .filter(
+      (row) =>
+        row.gitEffectBinding !== undefined &&
+        isRetiredGuardedRebaseAncestor(intermediate, row, row.gitEffectBinding),
+    );
+  if (
+    candidateControl === undefined ||
+    intermediateControl === undefined ||
+    candidateBinding === undefined ||
+    intermediateBinding === undefined ||
+    candidateOutput === undefined ||
+    intermediateOutput === undefined ||
+    intermediate.dispatchJournalRecoveryClaim !== undefined ||
+    intermediate.dispatchContinuationClaim !== undefined ||
+    candidate.attestationId !== intermediate.attestationId ||
+    intermediate.attestationId !== successor.attestationId ||
+    candidate.generation + 1 !== intermediate.generation ||
+    candidate.state !== "aborted" ||
+    candidate.abortReason !== "parent-lost" ||
+    candidateTerminal === undefined ||
+    candidate.abortedAt !== candidate.terminalAt ||
+    candidate.abortedAt !== candidateTerminal.terminalAt ||
+    candidate.abortDetailsDigest !== candidateTerminal.detailsDigest ||
+    candidate.abortDetailsDigest !== digest(candidate.abortDetails ?? null) ||
+    candidate.terminalDigest !==
+      digest({
+        terminalKind: "aborted",
+        reason: "parent-lost",
+        detailsDigest: candidate.abortDetailsDigest,
+      }) ||
+    candidateControl.state !== "terminal" ||
+    candidateTerminal.reason !== "parent-lost" ||
+    candidateControl.qualification === undefined ||
+    candidate.stagedCompletionQualification?.qualificationDigest !==
+      candidateControl.qualification.qualificationDigest ||
+    candidateOutput["status"] !== "pass" ||
+    candidateOutput["taskId"] !== candidateControl.attempt.taskId ||
+    candidateOutput["resultCommit"] !== candidateControl.attempt.resultCommit ||
+    digest(candidateOutput["gitReceipts"] ?? []) !==
+      candidateControl.attempt.gitReceiptLineageDigest ||
+    digest(candidateControl.attempt.gitReceipts) !==
+      candidateControl.attempt.gitReceiptLineageDigest ||
+    intermediateControl.qualification === undefined ||
+    intermediate.stagedCompletionQualification?.qualificationDigest !==
+      intermediateControl.qualification.qualificationDigest ||
+    intermediateOutput["status"] !== "pass" ||
+    intermediateOutput["taskId"] !== intermediateControl.attempt.taskId ||
+    intermediateOutput["resultCommit"] !== intermediateControl.attempt.resultCommit ||
+    digest(intermediateOutput["gitReceipts"] ?? []) !==
+      intermediateControl.attempt.gitReceiptLineageDigest ||
+    digest(intermediateControl.attempt.gitReceipts) !==
+      intermediateControl.attempt.gitReceiptLineageDigest ||
+    candidateControl.enrollment.taskId !== authority.taskId ||
+    candidateControl.enrollment.goalRef !== authority.goalRef ||
+    candidateControl.enrollment.finalizedManifestDigest !==
+      authority.finalizedManifestDigest ||
+    intermediateControl.enrollment.taskId !== authority.taskId ||
+    intermediateControl.enrollment.goalRef !== authority.goalRef ||
+    intermediateControl.enrollment.finalizedManifestDigest !==
+      authority.finalizedManifestDigest ||
+    candidateControl.attempt.taskId !== authority.taskId ||
+    candidateControl.attempt.repositoryId !== intermediateBinding.repositoryId ||
+    candidateControl.attempt.worktreePath !== intermediateBinding.worktreePath ||
+    intermediateControl.attempt.taskId !== authority.taskId ||
+    intermediateControl.attempt.repositoryId !== intermediateBinding.repositoryId ||
+    intermediateControl.attempt.worktreePath !== intermediateBinding.worktreePath ||
+    !sameManagerBinding ||
+    !sameLineageBridge ||
+    guardedSuccessors.length !== 1
+  ) {
+    return false;
+  }
+  const candidateClosure = candidateControl.attempt.gitReceipts;
+  const candidateInherited = candidateBinding.inheritedGitReceipts ?? [];
+  const intermediateClosure = intermediateControl.attempt.gitReceipts;
+  const intermediateInherited = intermediateBinding.inheritedGitReceipts ?? [];
+  if (
+    candidateInherited.length > candidateClosure.length ||
+    digest(candidateInherited) !==
+      digest(candidateClosure.slice(0, candidateInherited.length)) ||
+    digest(candidateClosure) !== digest(intermediateInherited) ||
+    candidateClosure.at(-1)?.newHead !== candidateControl.attempt.resultCommit ||
+    intermediateClosure.length <= candidateClosure.length ||
+    digest(candidateClosure) !==
+      digest(intermediateClosure.slice(0, candidateClosure.length)) ||
+    intermediateClosure.at(-1)?.newHead !== intermediateControl.attempt.resultCommit
+  ) {
+    return false;
+  }
+  return intermediateClosure.slice(candidateClosure.length).every((receipt, index, suffix) => {
+    const previousHead =
+      index === 0 ? candidateControl.attempt.resultCommit : suffix[index - 1]?.newHead;
+    return (
+      receipt.attestationId === intermediate.attestationId &&
+      receipt.taskId === authority.taskId &&
+      receipt.generation === intermediate.generation &&
+      receipt.oldHead === previousHead
+    );
+  });
+}
+
 function isRetiredGuardedRebaseAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -1141,6 +1297,14 @@ function isComposedTerminalAncestor(
       intermediate.generation >= successor.generation ||
       intermediate.gitEffectBinding === undefined ||
       (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
+        !isLegacyRetiredJournalRecoveryIntermediate(
+          candidate,
+          intermediate,
+          successor,
+          successorBinding,
+          authority,
+          priorEnrollment,
+        ) &&
         !isGateRejectedCorrectionAncestor(
           candidate,
           intermediate,
