@@ -233,6 +233,10 @@ throw new Error("unexpected cq invocation");
     );
     chmodSync(cq, 0o755);
     writeFileSync(attempts, "0");
+    const fixtureEnvironment = {
+      CQ_T6573_MARKERS: markers,
+      CQ_T6573_ATTEMPTS: attempts,
+    } as const;
     const invocation = {
       roleId: "implement-worker",
       handle: HANDLE,
@@ -258,8 +262,7 @@ throw new Error("unexpected cq invocation");
           CQ_CODEX_LEDGER_COMMAND: cq,
           CQ_CODEX_ROLE_CORRELATION_ID: "staged-rebase-handoff-correlation",
           CQ_CODEX_ROLE_EXPECTED_RUN_ID: "staged-rebase-handoff-run",
-          CQ_T6573_MARKERS: markers,
-          CQ_T6573_ATTEMPTS: attempts,
+          ...fixtureEnvironment,
         },
         stdin: new Blob([`${JSON.stringify(invocation)}\n`]),
         stdout: "pipe",
@@ -288,6 +291,7 @@ throw new Error("unexpected cq invocation");
         parentGateCapability: PARENT_GATE_CAPABILITY,
         holderId: "staged-rebase-handoff-parent",
         timeoutMs: 2_000,
+        environment: fixtureEnvironment,
       });
       expect(handoff).toEqual({
         state: "blocked",
