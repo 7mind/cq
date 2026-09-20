@@ -1322,7 +1322,6 @@ export async function validateGitChangeBrokerResultEvidence(
     throw new Error("broker result filesTouched must be unique and sorted");
   }
 
-  let previousHead: string | undefined;
   for (const [index, receipt] of durableReceipts.entries()) {
     if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
       throw new Error(`broker receipt chain entry ${index} has an unsupported kind or version`);
@@ -1395,7 +1394,6 @@ export async function validateGitChangeBrokerResultEvidence(
     if (new Set(receipt.objectOids).size !== receipt.objectOids.length) {
       throw new Error(`broker receipt chain entry ${index} repeats an object oid`);
     }
-    previousHead = receipt.newHead;
   }
 
   const first = durableReceipts[0];
