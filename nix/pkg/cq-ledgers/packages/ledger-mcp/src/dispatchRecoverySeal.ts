@@ -138,16 +138,24 @@ export function assertManagedRecoveryTipEligible(
 ): void {
   for (const row of rows) {
     if (
-      isAttestationTombstone(row) || row.state !== "aborted" ||
-      row.abortReason !== "gate-rejected" || !bindingMatches(row.gitEffectBinding, binding)
-    ) continue;
+      isAttestationTombstone(row) ||
+      row.state !== "aborted" ||
+      row.abortReason !== "gate-rejected" ||
+      !bindingMatches(row.gitEffectBinding, binding)
+    )
+      continue;
     const output = row.output;
     if (
-      output === undefined || output === null || typeof output !== "object" ||
-      Array.isArray(output) || !("resultCommit" in output) || typeof output.resultCommit !== "string"
+      output === undefined ||
+      output === null ||
+      typeof output !== "object" ||
+      Array.isArray(output) ||
+      !("resultCommit" in output) ||
+      typeof output.resultCommit !== "string"
     ) {
       throw new CurrentRecoverySealError(
-        "invalid", "gate-rejected row lacks its staged candidate tip",
+        "invalid",
+        "gate-rejected row lacks its staged candidate tip",
       );
     }
     if (output.resultCommit === liveTip) {
@@ -217,6 +225,20 @@ export function currentRecoveryGuardedRebaseBridge(
 ): DispatchGuardedRebaseBridge | undefined {
   const seed = journal.seal.seed;
   const sealedRows = rows.filter((row) => row.generation <= seed.lineageMaximumGeneration);
+  for (const row of sealedRows) {
+    const candidate = retainedGitEffectBinding(row);
+    if (
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation <= seed.selectedSourceHandle.generation &&
+      candidate?.guardedRebaseBridge !== undefined &&
+      !bindingMatches(candidate, binding)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "guarded recovery ancestor carries a foreign managed binding",
+      );
+    }
+  }
   const snapshot = lineageSnapshot(sealedRows, binding, journal.version !== 1);
   assertNoActiveGeneration(snapshot);
   if (snapshot.digest !== journal.snapshotDigest || snapshot.digest !== seed.snapshotDigest) {
@@ -230,29 +252,25 @@ export function currentRecoveryGuardedRebaseBridge(
       row.attestationId === seed.selectedSourceHandle.attestationId &&
       row.generation === seed.selectedSourceHandle.generation,
   );
-  if (
-    selectedRows.length !== 1 ||
-    selectedRows[0]!.terminalDigest !== seed.sourceTerminalDigest
-  ) {
+  if (selectedRows.length !== 1 || selectedRows[0]!.terminalDigest !== seed.sourceTerminalDigest) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
       "committed recovery source no longer matches its original terminal identity",
     );
   }
-  const candidates = sealedRows
-    .filter(
-      (row) =>
-        row.attestationId === seed.selectedSourceHandle.attestationId &&
-        row.generation <= seed.selectedSourceHandle.generation,
-    )
-    .flatMap((row) => {
-      const candidate = retainedGitEffectBinding(row);
-      return candidate !== undefined &&
-        bindingMatches(candidate, binding) &&
-        candidate.guardedRebaseBridge !== undefined
-        ? [candidate.guardedRebaseBridge]
-        : [];
-    });
+  const guardedAncestorRows = sealedRows.filter(
+    (row) =>
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation <= seed.selectedSourceHandle.generation,
+  );
+  const candidates = guardedAncestorRows.flatMap((row) => {
+    const candidate = retainedGitEffectBinding(row);
+    return candidate !== undefined &&
+      bindingMatches(candidate, binding) &&
+      candidate.guardedRebaseBridge !== undefined
+      ? [candidate.guardedRebaseBridge]
+      : [];
+  });
   const distinct = new Map(
     candidates.map((bridge) => [
       dispatchPayloadDigest(bridge as unknown as DispatchJSONValue),
@@ -260,9 +278,7 @@ export function currentRecoveryGuardedRebaseBridge(
     ]),
   );
   const sealedBridge =
-    "guardedRebaseBridge" in seed.gitBinding
-      ? seed.gitBinding.guardedRebaseBridge
-      : undefined;
+    "guardedRebaseBridge" in seed.gitBinding ? seed.gitBinding.guardedRebaseBridge : undefined;
   if (sealedBridge !== undefined) {
     const digest = dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue);
     if (distinct.size !== 1 || !distinct.has(digest)) {
@@ -411,8 +427,7 @@ function sealForSource(
   recoveredGuardedRebaseBridge?: DispatchGuardedRebaseBridge,
 ): CurrentRecoverySeal {
   const sourceBinding = retainedGitEffectBinding(row);
-  const guardedRebaseBridge =
-    recoveredGuardedRebaseBridge ?? sourceBinding?.guardedRebaseBridge;
+  const guardedRebaseBridge = recoveredGuardedRebaseBridge ?? sourceBinding?.guardedRebaseBridge;
   const common = {
     selectedSourceHandle: source.selectedSourceHandle,
     lineageMaximumGeneration: source.lineageMaximumGeneration,
@@ -756,9 +771,7 @@ async function journalSuccessorSource(
     coordinates.binding,
   );
   const sealedGuardedRebaseBridge =
-    "guardedRebaseBridge" in seed.gitBinding
-      ? seed.gitBinding.guardedRebaseBridge
-      : undefined;
+    "guardedRebaseBridge" in seed.gitBinding ? seed.gitBinding.guardedRebaseBridge : undefined;
   const successors = [...journalSuccessorRows(rows, journal, coordinates.binding)].sort(
     (left, right) => left.generation - right.generation,
   );

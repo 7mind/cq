@@ -13,6 +13,8 @@ import {
   InMemoryCurrentRecoverySealJournalStore,
   InMemoryLedgerStore,
   WORKTREE_MANAGE_TOOL_SPEC,
+  createCurrentRecoverySeal,
+  createDispatchLineageCutoverFence,
   prepareManagedWorktree,
   resolveInheritedGitChangeReceipts,
   resolveManagedWorktreeDispatchBinding,
@@ -219,6 +221,7 @@ async function fixture(journalKind: "memory" | "filesystem", advance: boolean) {
       binding,
       journal,
       store,
+      backend,
       capability,
       prepared,
       input,
@@ -306,15 +309,21 @@ async function missingResultRecovery(journalKind: "memory" | "filesystem", dirty
     await expect(f.resolveRecovery()).rejects.toThrow();
     if (!next.accepted) throw new Error("recovery successor was not prepared");
     await f.capability.abort({ ...next.handle, reason: "missing-result" });
-    await expect(f.capability.prepare({ ...request, idempotencyKey: "reused-after-terminal" }))
-      .rejects.toThrow("already allocated a successor");
-    const renewed = await f.resolveRecovery() as unknown as DispatchRecoveryResolution;
+    await expect(
+      f.capability.prepare({ ...request, idempotencyKey: "reused-after-terminal" }),
+    ).rejects.toThrow("already allocated a successor");
+    const renewed = (await f.resolveRecovery()) as unknown as DispatchRecoveryResolution;
     if (renewed.preparation.kind !== "current") throw new Error("expected promoted authority");
-    expect(renewed.preparation.recoveryPreparation.recoverySeedRef)
-      .not.toBe(resolved.preparation.recoveryPreparation.recoverySeedRef);
-    expect(await f.capability.prepare({ ...request, idempotencyKey: "promoted-recovery",
-      recoveryPreparation: renewed.preparation.recoveryPreparation,
-    })).toMatchObject({ accepted: true });
+    expect(renewed.preparation.recoveryPreparation.recoverySeedRef).not.toBe(
+      resolved.preparation.recoveryPreparation.recoverySeedRef,
+    );
+    expect(
+      await f.capability.prepare({
+        ...request,
+        idempotencyKey: "promoted-recovery",
+        recoveryPreparation: renewed.preparation.recoveryPreparation,
+      }),
+    ).toMatchObject({ accepted: true });
   } finally {
     await f.dispose();
   }
@@ -407,7 +416,8 @@ async function guardedOriginRecovery(): Promise<void> {
     await f.capability.abort({ ...guarded.handle, reason: "missing-result" });
     const resolved = (await f.resolveRecovery()) as unknown as DispatchRecoveryResolution;
     if (resolved.preparation.kind !== "current") throw new Error("expected current authority");
-    expect(await f.journal.read(TASK_ID)).toMatchObject({
+    const authenticatedJournal = await f.journal.read(TASK_ID);
+    expect(authenticatedJournal).toMatchObject({
       state: "committed",
       seal: {
         seed: {
@@ -422,7 +432,68 @@ async function guardedOriginRecovery(): Promise<void> {
         },
       },
     });
-    const recovered = await f.capability.prepare({
+    if (
+      authenticatedJournal?.state !== "committed" ||
+      authenticatedJournal.version !== 1 ||
+      !("guardedRebaseBridge" in authenticatedJournal.seal.seed.gitBinding) ||
+      authenticatedJournal.fence === undefined
+    ) {
+      throw new Error("authenticated guarded recovery journal is unavailable");
+    }
+    const { guardedRebaseBridge: _omittedGuardedBridge, ...legacyManagerBinding } =
+      authenticatedJournal.seal.seed.gitBinding;
+    const legacySeal = createCurrentRecoverySeal({
+      ...authenticatedJournal.seal.seed,
+      gitBinding: legacyManagerBinding,
+    });
+    if (legacySeal.version !== 1) throw new Error("legacy guarded seal changed version");
+    const legacyJournal = new InMemoryCurrentRecoverySealJournalStore();
+    await legacyJournal.put({
+      ...authenticatedJournal,
+      seal: legacySeal,
+      fence: createDispatchLineageCutoverFence({
+        namespace: legacySeal.seed.namespace,
+        taskId: legacySeal.seed.taskId,
+        managedFingerprint: legacySeal.seed.managedFingerprint,
+        sourceAttestationId: legacySeal.seed.selectedSourceHandle.attestationId,
+        selectedSourceGeneration: legacySeal.seed.selectedSourceHandle.generation,
+        lineageMaximumGeneration: legacySeal.seed.lineageMaximumGeneration,
+        recoverySeedRef: legacySeal.sealReference,
+        fenceCapability: {
+          scope: "dispatch-lineage-fence",
+          token: f.binding.handleToken,
+        },
+        installedAt: authenticatedJournal.fence.installedAt,
+      }),
+    });
+    const recoveryCapability = createDispatchCapability({
+      backend: f.backend,
+      ledgerStore: f.ledgerStore,
+      repositoryRoot: f.root,
+      worktreeStateDir: f.stateDir,
+      recoveryJournal: legacyJournal,
+      promptArtifactStore: artifactStore(),
+      now: () => NOW,
+      randomBytes: sequentialDispatchRandomBytes(6573),
+    });
+    if (recoveryCapability.resolveRecovery === undefined) {
+      throw new Error("legacy guarded recovery resolver is unavailable");
+    }
+    const resolveLegacyRecovery = async () =>
+      (await WORKTREE_MANAGE_TOOL_SPEC.run(
+        f.ledgerStore,
+        {
+          repositoryRoot: f.root,
+          deps: { stateDir: f.stateDir },
+          resolveDispatchRecovery: recoveryCapability.resolveRecovery!,
+        },
+        { operation: "resolve-dispatch-recovery", handle: f.managed.handle },
+      )) as unknown as DispatchRecoveryResolution;
+    const legacyResolved = await resolveLegacyRecovery();
+    if (legacyResolved.preparation.kind !== "current") {
+      throw new Error("expected bridge-less current authority");
+    }
+    const recovered = await recoveryCapability.prepare({
       roleId: "implement-worker",
       input: {
         ...f.input,
@@ -434,15 +505,13 @@ async function guardedOriginRecovery(): Promise<void> {
       idempotencyKey: "guarded-origin-recovery",
       timeoutMs: 600_000,
       expectedChild: { childId: "guarded-origin-recovery", runId: "guarded-origin-recovery" },
-      recoveryPreparation: resolved.preparation.recoveryPreparation,
+      recoveryPreparation: legacyResolved.preparation.recoveryPreparation,
     });
     if (!recovered.accepted) {
-      throw new Error(
-        `guarded-origin recovery rejected at ${recovered.path}: ${recovered.detail}`,
-      );
+      throw new Error(`guarded-origin recovery rejected at ${recovered.path}: ${recovered.detail}`);
     }
     expect(
-      await f.capability.fetchInput({
+      await recoveryCapability.fetchInput({
         ...recovered.handle,
         inputCapability: recovered.prepared.inputCapability,
       }),
@@ -453,6 +522,55 @@ async function guardedOriginRecovery(): Promise<void> {
           guardedRebase: rebase.reference,
           ontoCommit,
           rebasedStartCommit,
+        },
+      },
+    });
+    if (
+      recoveryCapability.gitCommit === undefined ||
+      recovered.prepared.gitChangeCapability === undefined
+    ) {
+      throw new Error("guarded-origin recovery broker authority is unavailable");
+    }
+    const promotedBody = "guarded recovery promoted\n";
+    await fs.writeFile(join(f.binding.worktreePath, "promoted.txt"), promotedBody);
+    const promotedReceipt = await recoveryCapability.gitCommit({
+      ...recovered.handle,
+      gitChangeCapability: recovered.prepared.gitChangeCapability,
+      operationId: "guarded-origin-promoted-change",
+      expectedHead: receipt.newHead,
+      message: "promote guarded-origin recovery",
+      changes: [
+        {
+          kind: "add",
+          path: "promoted.txt",
+          newState: {
+            mode: "100644",
+            digest: createHash("sha256").update(promotedBody).digest("hex"),
+          },
+        },
+      ],
+    });
+    await recoveryCapability.abort({ ...recovered.handle, reason: "missing-result" });
+    const promoted = await resolveLegacyRecovery();
+    expect(promoted).toMatchObject({
+      status: "dispatch-recovery-resolved",
+      liveTip: promotedReceipt.newHead,
+      preparation: { kind: "current" },
+    });
+    expect(await resolveLegacyRecovery()).toEqual(promoted);
+    expect(await legacyJournal.read(TASK_ID)).toMatchObject({
+      state: "committed",
+      seal: {
+        seed: {
+          selectedSourceHandle: recovered.handle,
+          gitBinding: {
+            baseCommit: f.input.baseCommit,
+            guardedRebaseBridge: {
+              guardedRebase: rebase.reference,
+              ontoCommit,
+              rebasedStartCommit,
+            },
+          },
         },
       },
     });

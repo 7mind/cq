@@ -2456,11 +2456,11 @@ throw new Error("unexpected controlled cq invocation");
       if (first.state !== "blocked" || !("sourceReference" in first)) {
         throw new Error("conflicted retirement did not return its staged-source handoff");
       }
+      let activeBackend = subject.backend;
       const readPersisted = async (handle: {
         readonly attestationId: string;
         readonly generation: number;
-      }) =>
-        await subject.backend.transact({ kind: "handle", handle }, (store) => store.read(handle));
+      }) => await activeBackend.transact({ kind: "handle", handle }, (store) => store.read(handle));
       const sourceReference = first.sourceReference;
       expect(runner.requests).toHaveLength(0);
       const retired = await readPersisted(subject.prepared);
@@ -2470,8 +2470,18 @@ throw new Error("unexpected controlled cq invocation");
       });
       const persistedControl = retired?.implementationQueue;
 
+      const reopenSqliteBackend = async (): Promise<void> => {
+        if (attestationBackend !== "sqlite") return;
+        await activeBackend.close();
+        activeBackend = new SqliteAttestationBackend({
+          namespace: subject.backend.namespace,
+          dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+        });
+      };
+      await reopenSqliteBackend();
+
       const restarted = createDispatchCapability({
-        backend: subject.backend,
+        backend: activeBackend,
         promptArtifactStore: artifactStore(),
         ledgerStore: subject.ledgerStore,
         implementationEvidenceStore: subject.implementationEvidenceStore,
@@ -2628,8 +2638,9 @@ throw new Error("unexpected controlled cq invocation");
         },
         { stateDir: subject.stateDir, authorize: async () => undefined },
       );
+      await reopenSqliteBackend();
       const finalizedRestart = createDispatchCapability({
-        backend: subject.backend,
+        backend: activeBackend,
         promptArtifactStore: artifactStore(),
         ledgerStore: subject.ledgerStore,
         implementationEvidenceStore: subject.implementationEvidenceStore,
@@ -2785,7 +2796,136 @@ throw new Error("unexpected controlled cq invocation");
           generation: successor.handle.generation + 1,
         }),
       ).toBeUndefined();
-      await subject.backend.close();
+      if (
+        finalizedRestart.gitCommit === undefined ||
+        successor.prepared.gitChangeCapability === undefined
+      ) {
+        throw new Error("successor Git authority is unavailable");
+      }
+      const successorBody = "successor completed\n";
+      await fs.writeFile(
+        path.join(subject.managed.handle.absolutePath, "successor.txt"),
+        successorBody,
+      );
+      const successorReceipt = await finalizedRestart.gitCommit({
+        ...successor.handle,
+        gitChangeCapability: successor.prepared.gitChangeCapability,
+        operationId: "t6573-public-staged-rebase-successor-result",
+        expectedHead: recovered.liveTip,
+        message: "complete recovered staged-rebase successor",
+        changes: [
+          {
+            kind: "add",
+            path: "successor.txt",
+            newState: { mode: "100644", digest: sha256(successorBody) },
+          },
+        ],
+      });
+      const successorInputRecord = successorInput.input as Readonly<
+        Record<string, DispatchJSONValue>
+      >;
+      const guardedLineage = successorInputRecord["guardedRebaseLineage"];
+      if (
+        guardedLineage === null ||
+        typeof guardedLineage !== "object" ||
+        Array.isArray(guardedLineage)
+      ) {
+        throw new Error("successor guarded lineage is unavailable");
+      }
+      const guardedLineageRecord = guardedLineage as Readonly<Record<string, DispatchJSONValue>>;
+      const changedPaths = (
+        await git(subject.managed.handle.absolutePath, [
+          "diff",
+          "--name-only",
+          "--no-renames",
+          protectedHead,
+          successorReceipt.newHead,
+          "--",
+        ])
+      )
+        .split("\n")
+        .filter((entry) => entry !== "")
+        .sort();
+      expect(
+        await finalizedRestart.storeResult({
+          resultCapability: successor.prepared.resultCapability,
+          output: {
+            taskId: subject.managed.handle.taskId,
+            status: "pass",
+            resultCommit: successorReceipt.newHead,
+            branch: subject.managed.handle.branch,
+            actualWorktreePath: subject.managed.handle.absolutePath,
+            filesTouched: changedPaths,
+            gitReceipts: [successorReceipt],
+            gitLineage: {
+              kind: "guarded-rebase",
+              guardedRebase: guardedLineageRecord["guardedRebase"],
+              ontoCommit: guardedLineageRecord["ontoCommit"],
+              rebasedStartCommit: guardedLineageRecord["rebasedStartCommit"],
+              exactTip: guardedLineageRecord["exactTip"],
+            },
+            checkSummary: "trusted gate delegated after recovered successor completion",
+            baseVerification: {
+              status: "verified",
+              relation: "descendant",
+              baseCommit: protectedHead,
+              headCommit: successorReceipt.newHead,
+            },
+            summary: "completed the receipt-backed recovered successor",
+          } as unknown as DispatchJSONValue,
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      if (
+        finalizedRestart.finalizeParentGate === undefined ||
+        successor.prepared.parentGateCapability === undefined
+      ) {
+        throw new Error("successor parent gate authority is unavailable");
+      }
+      expect(
+        await finalizedRestart.finalizeParentGate({
+          ...successor.handle,
+          parentGateCapability: successor.prepared.parentGateCapability,
+        }),
+      ).toMatchObject({ state: "result-stored" });
+      expect(runner.requests).toHaveLength(1);
+      expect(
+        await finalizedRestart.confirmCompletion({
+          ...successor.handle,
+          nativeCompletion: {
+            kind: "native-completion",
+            actor: "trusted-parent",
+            childId: subject.expectedChild.childId,
+            runId: subject.expectedChild.runId,
+            completedAt: "2026-08-12T20:00:03.000Z",
+          },
+          expectedProvenance: {
+            roleId: successor.prepared.promptProvenance.roleId,
+            version: successor.prepared.promptProvenance.version,
+            promptDigest: successor.prepared.promptProvenance.promptDigest,
+            inputDigest: successor.prepared.promptProvenance.inputDigest,
+          },
+        }),
+      ).toMatchObject({ state: "consumed" });
+      expect(await readPersisted(subject.prepared)).toMatchObject({
+        state: "aborted",
+        abortReason: "staged-rebase",
+        implementationQueue: {
+          state: "staged-rebase-retired",
+          terminal: { reason: "staged-rebase" },
+          stagedRebaseSource: {
+            source: first.front,
+            sourceReference,
+            successor: successor.handle,
+          },
+        },
+      });
+      expect(
+        await readPersisted({
+          attestationId: successor.handle.attestationId,
+          generation: successor.handle.generation + 1,
+        }),
+      ).toBeUndefined();
+      await activeBackend.close();
     },
   );
 
