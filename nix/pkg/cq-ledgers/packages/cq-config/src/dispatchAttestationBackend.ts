@@ -1723,6 +1723,44 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       );
     }
   }
+  if (Object.hasOwn(record, "gateRejectedCorrectionClaim")) {
+    const claim = record["gateRejectedCorrectionClaim"];
+    if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "gateRejectedCorrectionClaim"',
+      );
+    }
+    const claimRecord = claim as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(claimRecord).sort().join(",") !==
+        "fenceRef,gitReceiptLineageDigest,guardedRebaseBridgeDigest,resultCommit,source" ||
+      typeof claimRecord["fenceRef"] !== "string" ||
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/.test(claimRecord["fenceRef"]) ||
+      typeof claimRecord["resultCommit"] !== "string" ||
+      !STORED_GIT_OBJECT_ID.test(claimRecord["resultCommit"]) ||
+      typeof claimRecord["gitReceiptLineageDigest"] !== "string" ||
+      !STORED_SHA256_HEX.test(claimRecord["gitReceiptLineageDigest"]) ||
+      (claimRecord["guardedRebaseBridgeDigest"] !== null &&
+        (typeof claimRecord["guardedRebaseBridgeDigest"] !== "string" ||
+          !STORED_SHA256_HEX.test(claimRecord["guardedRebaseBridgeDigest"])))
+    ) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "gateRejectedCorrectionClaim"',
+      );
+    }
+    try {
+      assertDispatchHandle(
+        claimRecord["source"] as never,
+        "storedRow.gateRejectedCorrectionClaim.source",
+      );
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "gateRejectedCorrectionClaim": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   if (Object.hasOwn(record, "dispatchJournalRecoveryClaim")) {
     const claim = record["dispatchJournalRecoveryClaim"];
     if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {

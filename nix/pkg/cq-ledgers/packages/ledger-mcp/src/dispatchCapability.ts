@@ -1149,7 +1149,65 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return false;
       }
     };
-    const visit = async (row: AttestationEnvelope): Promise<boolean> => {
+    const legacyGateRejectedClaim = (
+      row: AttestationEnvelope,
+    ): DispatchGateRejectedCorrectionClaim | undefined => {
+      if (
+        row.dispatchContinuationClaim !== undefined ||
+        row.dispatchJournalRecoveryClaim !== undefined ||
+        row.gitEffectBinding === undefined
+      ) {
+        return undefined;
+      }
+      const predecessor = rowFor({
+        attestationId: row.attestationId,
+        generation: row.generation - 1,
+      });
+      const control = predecessor?.implementationQueue;
+      if (predecessor === undefined || control === undefined) return undefined;
+      const predecessorBridge = predecessor.gitEffectBinding?.guardedRebaseBridge;
+      const claim = Object.freeze({
+        fenceRef: fence.fenceRef,
+        source: Object.freeze({
+          attestationId: predecessor.attestationId,
+          generation: predecessor.generation,
+        }),
+        resultCommit: control.attempt.resultCommit,
+        gitReceiptLineageDigest: control.attempt.gitReceiptLineageDigest,
+        guardedRebaseBridgeDigest:
+          predecessorBridge === undefined
+            ? null
+            : dispatchPayloadDigest(predecessorBridge as unknown as DispatchJSONValue),
+      });
+      const timeoutMs =
+        attestationInstantMs(row.deadlines.childCancelAt, "deadlines.childCancelAt") -
+        attestationInstantMs(row.createdAt, "createdAt");
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return undefined;
+      const request: PrepareDispatchRequest = {
+        namespace: row.namespace,
+        roleId: row.promptProvenance.roleId,
+        surface: row.promptProvenance.surface,
+        input: row.input,
+        idempotencyKey: row.idempotencyKey,
+        timeoutMs,
+        overlays: row.overlays,
+        registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest: row.promptProvenance.promptDigest,
+        catalogHash: row.promptProvenance.catalogHash,
+        expectedChild: row.expectedChild,
+        reprepareOf: claim.source,
+        gitEffectBinding: row.gitEffectBinding,
+        gateRejectedCorrectionClaim: claim,
+        ...(row.implementationEvidenceBootstrapRef === undefined
+          ? {}
+          : { implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef }),
+      };
+      return prepareDispatchRequestDigest(request) === row.prepareRequestDigest ? claim : undefined;
+    };
+    const visit = async (
+      row: AttestationEnvelope,
+      authenticatedStagedPredecessor = false,
+    ): Promise<boolean> => {
       const key = `${row.attestationId}:${String(row.generation)}`;
       if (visited.has(key)) return false;
       visited.add(key);
@@ -1166,8 +1224,69 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ) {
           return false;
         }
-      } else if (row.state !== "aborted" || row.abortReason !== "gate-rejected") {
+      } else if (
+        row.state !== "aborted" ||
+        (row.abortReason !== "gate-rejected" &&
+          (!authenticatedStagedPredecessor || row.abortReason !== "staged-rebase"))
+      ) {
         return false;
+      }
+      const gateRejectedClaim =
+        row.gateRejectedCorrectionClaim ?? legacyGateRejectedClaim(row);
+      if (gateRejectedClaim !== undefined) {
+        const predecessor = rowFor(gateRejectedClaim.source);
+        const control = predecessor?.implementationQueue;
+        const output =
+          predecessor !== undefined && dispatchObject(predecessor.output)
+            ? predecessor.output
+            : undefined;
+        const predecessorBridge = predecessor?.gitEffectBinding?.guardedRebaseBridge;
+        const predecessorBridgeDigest =
+          predecessorBridge === undefined
+            ? null
+            : dispatchPayloadDigest(predecessorBridge as unknown as DispatchJSONValue);
+        const rowBridge = row.gitEffectBinding?.guardedRebaseBridge;
+        const rowBridgeDigest =
+          rowBridge === undefined
+            ? null
+            : dispatchPayloadDigest(rowBridge as unknown as DispatchJSONValue);
+        const inherited = row.gitEffectBinding?.inheritedGitReceipts ?? [];
+        if (
+          gateRejectedClaim.fenceRef !== fence.fenceRef ||
+          predecessor === undefined ||
+          !rowMatchesTask(predecessor) ||
+          predecessor.state !== "aborted" ||
+          predecessor.abortReason !== "gate-rejected" ||
+          predecessor.parentGateCapabilityHash === undefined ||
+          predecessor.abortDetails === undefined ||
+          predecessor.abortDetailsDigest !== dispatchPayloadDigest(predecessor.abortDetails) ||
+          !isImplementWorkerSupervisedGateRejectionDetails(predecessor.abortDetails) ||
+          control === undefined ||
+          control.state !== "terminal" ||
+          control.terminal?.reason !== "gate-rejected" ||
+          control.terminal.detailsDigest !== predecessor.abortDetailsDigest ||
+          row.attestationId !== predecessor.attestationId ||
+          row.generation !== predecessor.generation + 1 ||
+          output?.["status"] !== "pass" ||
+          output["resultCommit"] !== gateRejectedClaim.resultCommit ||
+          control.attempt.resultCommit !== gateRejectedClaim.resultCommit ||
+          control.attempt.gitReceiptLineageDigest !==
+            gateRejectedClaim.gitReceiptLineageDigest ||
+          dispatchPayloadDigest(output["gitReceipts"] ?? []) !==
+            gateRejectedClaim.gitReceiptLineageDigest ||
+          dispatchPayloadDigest(control.attempt.gitReceipts as unknown as DispatchJSONValue) !==
+            gateRejectedClaim.gitReceiptLineageDigest ||
+          predecessorBridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+          rowBridgeDigest !== predecessorBridgeDigest ||
+          !dispatchObject(row.input) ||
+          row.input["startingCommit"] !== gateRejectedClaim.resultCommit ||
+          row.input["priorResultCommit"] !== gateRejectedClaim.resultCommit ||
+          inherited.at(-1)?.newHead !== gateRejectedClaim.resultCommit ||
+          !(await dispatchReceiptClosureMatches(predecessor, gateRejectedClaim.resultCommit))
+        ) {
+          return false;
+        }
+        return await visit(predecessor);
       }
       const claim = row.dispatchContinuationClaim;
       if (claim !== undefined) {
@@ -1240,7 +1359,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ) {
           return false;
         }
-        return await visit(predecessor);
+        return await visit(predecessor, true);
       }
       if (stagedPredecessors.length > 1) return false;
 

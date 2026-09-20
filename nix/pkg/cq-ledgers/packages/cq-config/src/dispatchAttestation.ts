@@ -1254,6 +1254,8 @@ export interface AttestationEnvelope {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Present only on the generation whose allocation claimed a consumed predecessor. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Present only on a changed correction allocated from one rejected guarded descendant. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Present only on a successor allocated from an exact committed recovery journal. */
   readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
 }
@@ -1286,6 +1288,8 @@ export interface AttestationTombstone {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Retained so collapse cannot resurrect a predecessor's single-use authority. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Retained so later continuations can authenticate the rejected correction edge. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Retained so a collapsed successor preserves its committed recovery ancestry. */
   readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Minimal terminal queue identity/provenance retained through collapse. */
@@ -2445,6 +2449,9 @@ export function prepareDispatch(
               }),
             }),
         }),
+    ...(request.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: request.gateRejectedCorrectionClaim }),
     ...(request.journalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: request.journalRecoveryClaim }),
@@ -3499,6 +3506,9 @@ function writeAbort(
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: row.gateRejectedCorrectionClaim }),
     ...(row.dispatchJournalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),
@@ -5426,6 +5436,9 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: row.gateRejectedCorrectionClaim }),
     ...(row.dispatchJournalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),

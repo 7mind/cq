@@ -3093,7 +3093,7 @@ throw new Error("unexpected controlled cq invocation");
         worktreeStateDir: subject.stateDir,
         supervisedWorkerGateRunner: runner,
         now: () => "2026-08-12T20:00:00.000Z",
-        randomBytes: sequentialDispatchRandomBytes(sequence * 128),
+        randomBytes: sequentialDispatchRandomBytes(sequence * 32 + 128),
       });
       if (restarted.resolveStagedRebase === undefined) {
         throw new Error("sealed staged-rebase recovery is unavailable");
@@ -3274,7 +3274,7 @@ throw new Error("unexpected controlled cq invocation");
         worktreeStateDir: subject.stateDir,
         supervisedWorkerGateRunner: runner,
         now: () => "2026-08-12T20:00:00.000Z",
-        randomBytes: sequentialDispatchRandomBytes(sequence * 160),
+        randomBytes: sequentialDispatchRandomBytes(sequence * 32 + 160),
       });
       if (finalized.resolveStagedRebase === undefined) {
         throw new Error("finalized sealed staged-rebase recovery is unavailable");
@@ -3427,7 +3427,7 @@ throw new Error("unexpected controlled cq invocation");
         ...subject.capabilityOptions,
         backend: activeBackend,
         now: () => "2026-08-12T20:00:00.000Z",
-        randomBytes: sequentialDispatchRandomBytes(sequence * 192),
+        randomBytes: sequentialDispatchRandomBytes(sequence * 32 + 192),
       });
       if (
         continuationRuntime.resolveContinuation === undefined ||
@@ -3729,6 +3729,19 @@ throw new Error("unexpected controlled cq invocation");
             input: { ...correctionInput, headline: "changed task specification" },
           }),
         ).toMatchObject({ accepted: false, reason: "journal-recovery-required" });
+        await activeBackend.transact({ kind: "handle", handle: correction.handle }, (store) => {
+          const row = store.read(correction.handle);
+          if (
+            row === undefined ||
+            isAttestationTombstone(row) ||
+            row.gateRejectedCorrectionClaim === undefined
+          ) {
+            throw new Error("current correction omitted its persisted rejection claim");
+          }
+          // The retained r3fp producer bound this claim in prepareRequestDigest but omitted the field.
+          const { gateRejectedCorrectionClaim: _legacyOmission, ...legacyEncodedRow } = row;
+          store.replace(row, legacyEncodedRow);
+        });
         const correctionMaterialized = await continuationRuntime.fetchInput({
           ...correction.handle,
           inputCapability: correction.prepared.inputCapability,
@@ -3839,6 +3852,54 @@ throw new Error("unexpected controlled cq invocation");
           }),
         ).toEqual({ state: "completed", handle: correction.handle });
         expect(runner.requests).toHaveLength(2);
+        await reopenBackend();
+        const correctionContinuationRuntime = createDispatchCapability({
+          ...subject.capabilityOptions,
+          backend: activeBackend,
+          now: () => "2026-08-12T20:00:00.000Z",
+          randomBytes: sequentialDispatchRandomBytes(sequence * 32 + 224),
+        });
+        if (correctionContinuationRuntime.resolveContinuation === undefined) {
+          throw new Error("reopened correction continuation runtime is unavailable");
+        }
+        const correctionAuthority = (await WORKTREE_MANAGE_TOOL_SPEC.run(
+          subject.ledgerStore,
+          {
+            repositoryRoot: subject.repositoryRoot,
+            deps: { stateDir: subject.stateDir },
+            resolveDispatchContinuation: correctionContinuationRuntime.resolveContinuation,
+          },
+          { operation: "resolve-dispatch-continuation", handle: subject.managed.handle },
+        )) as unknown as {
+          readonly status: "dispatch-continuation-resolved";
+          readonly continuationReference: string;
+          readonly liveTip: string;
+        };
+        expect(correctionAuthority).toMatchObject({
+          status: "dispatch-continuation-resolved",
+          liveTip: correctionReceipt.newHead,
+        });
+        const resumedCorrection = await correctionContinuationRuntime.prepare({
+          roleId: "implement-worker",
+          input: {
+            ...firstContinuationSpec,
+            round: 5,
+            startingCommit: correctionReceipt.newHead,
+            priorResultCommit: correctionReceipt.newHead,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-automatic-gate-correction-continuation`,
+          timeoutMs: firstContinuationEnvelope.timeoutMs,
+          expectedChild: {
+            childId: `implement-worker#automatic-gate-correction-continuation-${String(sequence)}`,
+            runId: `automatic-gate-correction-continuation-run-${String(sequence)}`,
+          },
+          continuation: correctionAuthority.continuationReference,
+        });
+        if (!resumedCorrection.accepted) {
+          throw new Error(
+            `case C ordinary continuation refused: ${resumedCorrection.reason}: ${resumedCorrection.detail}`,
+          );
+        }
         await activeBackend.close();
         continue;
       }
@@ -6073,9 +6134,11 @@ throw new Error("unexpected controlled cq invocation");
       continuation: continuation.continuationReference,
     });
     if (!next.accepted) throw new Error(next.detail);
-    expect(subject.store.read(next.handle)?.gitEffectBinding).not.toHaveProperty(
-      "guardedRebaseBridge",
-    );
+    const nextRow = subject.store.read(next.handle);
+    if (nextRow === undefined || isAttestationTombstone(nextRow)) {
+      throw new Error("ordinary correction continuation was not retained");
+    }
+    expect(nextRow.gitEffectBinding).not.toHaveProperty("guardedRebaseBridge");
   }, 30_000);
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
