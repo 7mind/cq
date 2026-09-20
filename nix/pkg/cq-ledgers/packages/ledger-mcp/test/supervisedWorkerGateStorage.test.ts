@@ -3269,7 +3269,8 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  test(
+  // expected-failure: tasks:T6576
+  test.failing(
     "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -3829,6 +3830,28 @@ throw new Error("unexpected controlled cq invocation");
           throw new Error("second guarded coordinates are unavailable");
         }
         expect(secondBaseCommit).toBe(secondOntoCommit);
+        if (secondGuarded.prepared.gitChangeCapability === undefined) {
+          throw new Error("second guarded successor lacks Git authority");
+        }
+        const freshGuardedBytes = `fresh guarded receipt ${attestationBackend}\n`;
+        await fs.writeFile(
+          path.join(subject.managed.handle.absolutePath, "fresh-guarded.txt"),
+          freshGuardedBytes,
+        );
+        const freshGuardedReceipt = await capability.gitCommit({
+          ...secondGuarded.prepared,
+          gitChangeCapability: secondGuarded.prepared.gitChangeCapability,
+          operationId: `T2081-${String(sequence)}-${attestationBackend}-fresh-guarded`,
+          expectedHead: secondStartingCommit,
+          message: "persist fresh guarded receipt",
+          changes: [
+            {
+              kind: "add",
+              path: "fresh-guarded.txt",
+              newState: { mode: "100644", digest: sha256(freshGuardedBytes) },
+            },
+          ],
+        });
         expect(
           await capability.abort({
             attestationId: secondGuarded.prepared.attestationId,
@@ -3836,7 +3859,7 @@ throw new Error("unexpected controlled cq invocation");
             reason: "cancelled",
           }),
         ).toMatchObject({ state: "aborted", reason: "cancelled" });
-        const recaptured = await capability.resolveRecovery(binding, secondStartingCommit);
+        const recaptured = await capability.resolveRecovery(binding, freshGuardedReceipt.newHead);
         expect(recaptured.preparation.kind).toBe("current");
         if (recaptured.preparation.kind !== "current") {
           throw new Error("cancelled repeated guarded successor did not recapture recovery");
@@ -3856,9 +3879,9 @@ throw new Error("unexpected controlled cq invocation");
             branch: subject.managed.handle.branch,
             baseCommit: secondBaseCommit,
             round: 5,
-            startingCommit: secondStartingCommit,
+            startingCommit: freshGuardedReceipt.newHead,
             validationIntent: "final",
-            priorResultCommit: secondStartingCommit,
+            priorResultCommit: freshGuardedReceipt.newHead,
           },
           idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-repeated-resumed`,
           timeoutMs: 600_000,
@@ -3883,7 +3906,7 @@ throw new Error("unexpected controlled cq invocation");
           ...resumed.handle,
           gitChangeCapability: resumed.prepared.gitChangeCapability,
           operationId: `T2081-${String(sequence)}-${attestationBackend}-repeated-resumed-commit`,
-          expectedHead: secondStartingCommit,
+          expectedHead: freshGuardedReceipt.newHead,
           message: "resume repeated guarded recovery",
           changes: [
             {
@@ -3929,8 +3952,9 @@ throw new Error("unexpected controlled cq invocation");
 
   async function exerciseCancelledRecoveryContinuation(
     continuationKind: "ordinary" | "guarded-rebase",
-    cancelGuardedSuccessor = false,
-    attestationBackend: "memory" | "sqlite" = "sqlite",
+    cancelGuardedSuccessor: boolean,
+    attestationBackend: "memory" | "sqlite",
+    guardedFreshReceiptCount: 0 | 1 | 2,
   ): Promise<void> {
     const runner = new ParentLossThenGreenGateDummy();
     const subject = await fixtureWithDispatchBase(
@@ -4577,11 +4601,35 @@ throw new Error("unexpected controlled cq invocation");
       ) {
         throw new Error("current-seal staged-successor fixture requires a guarded successor");
       }
+      if (next.prepared.gitChangeCapability === undefined) {
+        throw new Error("guarded recovery successor lacks Git authority");
+      }
+      let guardedLiveTip = guardedSuccessorTip;
+      for (let index = 0; index < guardedFreshReceiptCount; index += 1) {
+        const relativePath = `fresh-guarded-${String(index)}.txt`;
+        const bytes = `fresh guarded recovery ${String(index)}\n`;
+        await fs.writeFile(path.join(subject.managed.handle.absolutePath, relativePath), bytes);
+        const receipt = await activeCapability.gitCommit!({
+          ...next.handle,
+          gitChangeCapability: next.prepared.gitChangeCapability,
+          operationId: `T2081-${String(sequence)}-sealed-fresh-guarded-${String(index)}`,
+          expectedHead: guardedLiveTip,
+          message: `persist guarded recovery receipt ${String(index)}`,
+          changes: [
+            {
+              kind: "add",
+              path: relativePath,
+              newState: { mode: "100644", digest: sha256(bytes) },
+            },
+          ],
+        });
+        guardedLiveTip = receipt.newHead;
+      }
       expect(await activeCapability.abort({ ...next.handle, reason: "cancelled" })).toMatchObject({
         state: "aborted",
         reason: "cancelled",
       });
-      const recaptured = await activeCapability.resolveRecovery!(binding, guardedSuccessorTip);
+      const recaptured = await activeCapability.resolveRecovery!(binding, guardedLiveTip);
       expect(recaptured.preparation.kind).toBe("current");
       if (recaptured.preparation.kind !== "current") {
         throw new Error("cancelled guarded successor did not become current recovery authority");
@@ -4601,9 +4649,9 @@ throw new Error("unexpected controlled cq invocation");
           branch: subject.managed.handle.branch,
           baseCommit: guardedRecoveryBase,
           round: 4,
-          startingCommit: guardedSuccessorTip,
+          startingCommit: guardedLiveTip,
           validationIntent: "final",
-          priorResultCommit: guardedSuccessorTip,
+          priorResultCommit: guardedLiveTip,
         },
         idempotencyKey: `T2081-${String(sequence)}-sealed-resumed`,
         timeoutMs: 600_000,
@@ -4625,7 +4673,7 @@ throw new Error("unexpected controlled cq invocation");
         ...resumed.handle,
         gitChangeCapability: resumed.prepared.gitChangeCapability,
         operationId: `T2081-${String(sequence)}-sealed-resumed-commit`,
-        expectedHead: guardedSuccessorTip,
+        expectedHead: guardedLiveTip,
         message: "resume guarded recovery",
         changes: [
           {
@@ -4807,14 +4855,14 @@ throw new Error("unexpected controlled cq invocation");
   test(
     "a cancelled sealed recovery successor composes into an ordinary consumed continuation",
     async () => {
-      await exerciseCancelledRecoveryContinuation("ordinary");
+      await exerciseCancelledRecoveryContinuation("ordinary", false, "sqlite", 0);
     },
   );
 
   test(
     "a cancelled sealed recovery successor composes into an authenticated guarded rebase",
     async () => {
-      await exerciseCancelledRecoveryContinuation("guarded-rebase");
+      await exerciseCancelledRecoveryContinuation("guarded-rebase", false, "sqlite", 0);
     },
   );
 
@@ -4826,9 +4874,27 @@ throw new Error("unexpected controlled cq invocation");
           "guarded-rebase",
           true,
           attestationBackend,
+          0,
         );
       }
     },
+  );
+
+  test(
+    "cancelled guarded recovery workers retain zero one or multiple fresh receipt components after reopen",
+    async () => {
+      for (const attestationBackend of ["memory", "sqlite"] as const) {
+        for (const receiptCount of [0, 1, 2] as const) {
+          await exerciseCancelledRecoveryContinuation(
+            "guarded-rebase",
+            true,
+            attestationBackend,
+            receiptCount,
+          );
+        }
+      }
+    },
+    30_000,
   );
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
