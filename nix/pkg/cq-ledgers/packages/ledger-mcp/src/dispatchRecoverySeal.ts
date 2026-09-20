@@ -260,7 +260,8 @@ export function currentRecoveryGuardedRebaseBridge(
     );
   }
   const selectedBinding = retainedGitEffectBinding(selectedRow);
-  const selectedBridge = bindingMatches(selectedBinding, binding)
+  const selectedBridge =
+    selectedBinding !== undefined && bindingMatches(selectedBinding, binding)
     ? selectedBinding.guardedRebaseBridge
     : undefined;
   const guardedAncestorRows = sealedRows.filter(
