@@ -56,6 +56,7 @@ import {
   validateDispatchInput,
   type AttestationBackend,
   type AttestationEnvelope,
+  type AttestationRow,
   type DispatchNarrativeSource,
   type DispatchJSONValue,
   type DispatchPrepareAccepted,
@@ -746,6 +747,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     throw outcomes[0].rejection;
   }
 
+  async function recoveryFenceTaskSpecificationDigest(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+  ): Promise<string | undefined> {
+    if (recoveryJournal === undefined) return undefined;
+    const journal = await recoveryJournal.read(binding.taskId);
+    if (
+      journal?.state !== "committed" ||
+      journal.fence === undefined ||
+      journal.fence.fenceRef !== fence.fenceRef
+    ) {
+      return undefined;
+    }
+    if (options.ledgerStore !== undefined) {
+      const evidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
+      return journal.seal.seed.finalizedManifestDigest === evidence.finalizedManifestDigest
+        ? evidence.taskSpecificationDigest
+        : undefined;
+    }
+    return journal.seal.seed.version === 1 && dispatchObject(journal.seal.seed.inputRecipe)
+      ? currentRecoveryTaskSpecificationDigest(journal.seal.seed.inputRecipe)
+      : undefined;
+  }
+
   async function continuationExitsRecoveryFence(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
@@ -758,7 +783,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         binding,
         options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
       );
-      let replayRows: readonly AttestationEnvelope[] | undefined;
+      let replayRows: readonly AttestationRow[] | undefined;
       let continuation: {
         readonly reprepareOf: { readonly attestationId: string; readonly generation: number };
         readonly gitEffectBinding: AttestationEnvelope["gitEffectBinding"];
@@ -786,10 +811,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         replayRows = await options.backend.transact({ kind: "namespace" }, (store) =>
           store
             .rows()
-            .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
             .map((row) => structuredClone(row)),
         );
-        const replayMatches = replayRows.filter((row) => {
+        const replayMatches = replayRows.filter((row): row is AttestationEnvelope => {
+          if (isAttestationTombstone(row)) return false;
           if (!dispatchObject(row.input)) return false;
           const { guardedRebaseLineage: _serverLineage, ...callerInput } = row.input;
           return (
@@ -806,7 +831,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (replayMatches.length !== 1) return false;
         const claim = replayMatches[0]!.dispatchContinuationClaim!;
         const sources = replayRows.filter(
-          (row) =>
+          (row): row is AttestationEnvelope =>
+            !isAttestationTombstone(row) &&
             row.attestationId === claim.source.attestationId &&
             row.generation === claim.source.generation &&
             row.dispatchContinuationBinding?.continuationReference === continuationReference,
@@ -824,20 +850,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         (await options.backend.transact({ kind: "namespace" }, (store) =>
           store
             .rows()
-            .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
             .map((row) => structuredClone(row)),
         ));
       const sourceRows = rows.filter(
-        (row) =>
+        (row): row is AttestationEnvelope =>
+          !isAttestationTombstone(row) &&
           row.attestationId === continuation.reprepareOf.attestationId &&
           row.generation === continuation.reprepareOf.generation,
       );
+      const taskSpecificationDigest = await recoveryFenceTaskSpecificationDigest(fence, binding);
       if (
         sourceRows.length !== 1 ||
-        options.ledgerStore === undefined ||
+        taskSpecificationDigest === undefined ||
         !dispatchObject(input.input) ||
         currentRecoveryTaskSpecificationDigest(input.input) !==
-          currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId).taskSpecificationDigest ||
+          taskSpecificationDigest ||
         continuation.gitEffectBinding === undefined ||
         dispatchPayloadDigest(continuation.gitEffectBinding as unknown as DispatchJSONValue) !==
           dispatchPayloadDigest(
@@ -860,9 +887,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   async function authenticatedRecoveryFenceAnchor(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
-    rows: readonly AttestationEnvelope[],
+    rows: readonly AttestationRow[],
   ): Promise<AttestationEnvelope | undefined> {
-    if (options.ledgerStore === undefined || recoveryJournal === undefined) return undefined;
+    if (recoveryJournal === undefined) return undefined;
     const journal = await recoveryJournal.read(binding.taskId);
     if (
       journal?.state !== "committed" ||
@@ -871,12 +898,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     ) {
       return undefined;
     }
-    const taskEvidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
-    if (journal.seal.seed.finalizedManifestDigest !== taskEvidence.finalizedManifestDigest) {
-      return undefined;
-    }
+    const taskSpecificationDigest = await recoveryFenceTaskSpecificationDigest(fence, binding);
+    if (taskSpecificationDigest === undefined) return undefined;
     const sealedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
-    const candidates = rows.filter((row) => {
+    const candidates = rows.filter((row): row is AttestationEnvelope => {
+      if (isAttestationTombstone(row)) return false;
       if (
         row.attestationId !== fence.sourceAttestationId ||
         row.generation !== fence.lineageMaximumGeneration + 1 ||
@@ -896,7 +922,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         input["branch"] === binding.branch &&
         input["baseCommit"] === logicalBase &&
         input["startingCommit"] === journal.seal.seed.liveTip &&
-        currentRecoveryTaskSpecificationDigest(input) === taskEvidence.taskSpecificationDigest &&
+        currentRecoveryTaskSpecificationDigest(input) === taskSpecificationDigest &&
         dispatchPayloadDigest(
           (rowBinding.inheritedGitReceipts ?? []) as unknown as DispatchJSONValue,
         ) ===
@@ -916,13 +942,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   async function sourceDescendsFromRecoveryFence(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
-    rows: readonly AttestationEnvelope[],
+    rows: readonly AttestationRow[],
     source: { readonly attestationId: string; readonly generation: number },
   ): Promise<boolean> {
     const anchor = await authenticatedRecoveryFenceAnchor(fence, binding, rows);
     if (anchor === undefined) return false;
+    const taskSpecificationDigest = await recoveryFenceTaskSpecificationDigest(fence, binding);
+    if (taskSpecificationDigest === undefined) return false;
+    const envelopes = rows.filter(
+      (row): row is AttestationEnvelope => !isAttestationTombstone(row),
+    );
     const byHandle = new Map(
-      rows.map((row) => [`${row.attestationId}:${String(row.generation)}`, row]),
+      envelopes.map((row) => [`${row.attestationId}:${String(row.generation)}`, row]),
     );
     const visited = new Set<string>();
     const rowFor = (handle: { readonly attestationId: string; readonly generation: number }) =>
@@ -943,19 +974,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     };
     const rowMatchesTask = (row: AttestationEnvelope): boolean => {
       if (
-        options.ledgerStore === undefined ||
         row.promptProvenance.roleId !== "implement-worker" ||
         !dispatchBindingMatchesManaged(row.gitEffectBinding, binding) ||
         !dispatchObject(row.input)
       ) {
         return false;
       }
-      const evidence = currentRecoveryTaskEvidence(options.ledgerStore, binding.taskId);
       return (
         row.input["taskId"] === binding.taskId &&
         row.input["worktreePath"] === binding.worktreePath &&
         row.input["branch"] === binding.branch &&
-        currentRecoveryTaskSpecificationDigest(row.input) === evidence.taskSpecificationDigest
+        currentRecoveryTaskSpecificationDigest(row.input) === taskSpecificationDigest
       );
     };
     const verifyGuardedRow = async (row: AttestationEnvelope): Promise<boolean> => {
@@ -1043,7 +1072,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return await visit(predecessor);
       }
 
-      const stagedPredecessors = rows.filter((candidate) => {
+      const stagedPredecessors = envelopes.filter((candidate) => {
         const control = candidate.implementationQueue;
         const staged = candidate.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
         return (
@@ -1158,8 +1187,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const requestedState = conflictState as unknown as GitRebaseConflictState;
     const requestedDigest = gitRebaseConflictStateDigest(requestedState);
     try {
-      const rows = await options.backend.transact({ kind: "namespace" }, (store) =>
-        store.rows().filter((row): row is AttestationEnvelope => !isAttestationTombstone(row)),
+      const allRows = await options.backend.transact({ kind: "namespace" }, (store) =>
+        store.rows().map((row) => structuredClone(row)),
+      );
+      const rows = allRows.filter(
+        (row): row is AttestationEnvelope => !isAttestationTombstone(row),
       );
       const replay = rows.find((row) => row.idempotencyKey === input.idempotencyKey);
       if (
@@ -1198,7 +1230,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (sources.length > 1) return false;
       if (sources.length === 1) {
         const source = sources[0]!;
-        if (!(await sourceDescendsFromRecoveryFence(fence, binding, rows, source.source))) {
+        if (!(await sourceDescendsFromRecoveryFence(fence, binding, allRows, source.source))) {
           return false;
         }
         const context = await loadRetiredStagedRebaseContext(source.sourceReference);
@@ -1230,7 +1262,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         requestedState,
         options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
       );
-      const anchor = await authenticatedRecoveryFenceAnchor(fence, binding, rows);
+      const anchor = await authenticatedRecoveryFenceAnchor(fence, binding, allRows);
       if (
         anchor === undefined ||
         anchor.state !== "aborted" ||
@@ -1241,7 +1273,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         anchor.input["startingCommit"] !== pending.oldResultCommit ||
         (await readOnlyGit(binding.repositoryRoot, ["rev-parse", "HEAD"])) !==
           pending.ontoCommit ||
-        !(await sourceDescendsFromRecoveryFence(fence, binding, rows, {
+        !(await sourceDescendsFromRecoveryFence(fence, binding, allRows, {
           attestationId: anchor.attestationId,
           generation: anchor.generation,
         }))

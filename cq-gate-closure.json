@@ -33,7 +33,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "a2a5a8e23044c00e239cd2b0623ae700ec140bc6b64507e0adeeb7a66cff8372",
+      "sha256": "7fed772108c0dbee9fd84d518b1923a497e6928ef1edfd327194ccf15f1c725d",
       "targets": []
     },
     {
