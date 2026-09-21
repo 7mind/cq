@@ -14,7 +14,6 @@ import {
   dispatchPayloadDigest,
   formatAttestationNamespace,
   isAttestationTombstone,
-  prepareDispatchRequestDigest,
   prepareDispatchRequestDigestMatchesKnownFormat,
   type AttestationEnvelope,
   type AttestationNamespace,
