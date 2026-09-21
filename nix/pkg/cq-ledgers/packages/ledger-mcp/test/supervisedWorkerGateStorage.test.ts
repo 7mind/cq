@@ -5478,11 +5478,11 @@ throw new Error("unexpected controlled cq invocation");
     if (recovery.preparation.kind !== "current") {
       throw new Error("parent-lost source did not produce current recovery authority");
     }
-    const recoveredChild = {
-      childId: `implement-worker#recovered-source-${attestationBackend}-${String(sequence)}`,
-      runId: `recovered-source-${attestationBackend}-run-${String(sequence)}`,
+    const anchorChild = {
+      childId: `implement-worker#recovery-anchor-${attestationBackend}-${String(sequence)}`,
+      runId: `recovery-anchor-${attestationBackend}-run-${String(sequence)}`,
     };
-    const recovered = await capability.prepare({
+    const anchor = await capability.prepare({
       roleId: "implement-worker",
       input: {
         taskId: "T2081",
@@ -5497,10 +5497,47 @@ throw new Error("unexpected controlled cq invocation");
         validationIntent: "final",
         priorResultCommit: subject.receipt.newHead,
       },
+      idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-recovery-anchor`,
+      timeoutMs: 600_000,
+      expectedChild: anchorChild,
+      recoveryPreparation: recovery.preparation.recoveryPreparation,
+    });
+    if (!anchor.accepted) throw new Error(anchor.detail);
+    await capability.fetchInput({
+      ...anchor.handle,
+      inputCapability: anchor.prepared.inputCapability,
+    });
+    expect(await capability.abort({ ...anchor.handle, reason: "cancelled" })).toMatchObject({
+      state: "aborted",
+      reason: "cancelled",
+    });
+    const promotedRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (promotedRecovery.preparation.kind !== "current") {
+      throw new Error("cancelled anchor did not promote current recovery authority");
+    }
+    const recoveredChild = {
+      childId: `implement-worker#recovered-source-${attestationBackend}-${String(sequence)}`,
+      runId: `recovered-source-${attestationBackend}-run-${String(sequence)}`,
+    };
+    const recovered = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
       idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-recovered-source`,
       timeoutMs: 600_000,
       expectedChild: recoveredChild,
-      recoveryPreparation: recovery.preparation.recoveryPreparation,
+      recoveryPreparation: promotedRecovery.preparation.recoveryPreparation,
     });
     if (!recovered.accepted || recovered.prepared.gitChangeCapability === undefined) {
       throw new Error(
@@ -5691,8 +5728,8 @@ throw new Error("unexpected controlled cq invocation");
       childId: `implement-worker#recovered-guarded-correction-${attestationBackend}-${String(sequence)}`,
       runId: `recovered-guarded-correction-${attestationBackend}-run-${String(sequence)}`,
     };
-    const correction = await capability.prepare({
-      roleId: "implement-worker",
+    const correctionRequest = {
+      roleId: "implement-worker" as const,
       input: {
         taskId: "T2081",
         headline: "supervise exact tip",
@@ -5703,14 +5740,111 @@ throw new Error("unexpected controlled cq invocation");
         baseCommit: guardedBase,
         round: 3,
         startingCommit: redTip,
-        validationIntent: "final",
+        validationIntent: "final" as const,
         priorResultCommit: redTip,
       },
       idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-${freshGuardedReceipt ? "fresh" : "zero"}-red-correction`,
       timeoutMs: 600_000,
       expectedChild: correctionChild,
       reprepareOf: guarded.prepared,
-    });
+    };
+    const retainedRecovered = await subject.backend.transact(
+      { kind: "handle", handle: recovered.handle },
+      (store) => store.read(recovered.handle),
+    );
+    const retainedRed = await subject.backend.transact(
+      { kind: "handle", handle: guarded.prepared },
+      (store) => store.read(guarded.prepared),
+    );
+    if (
+      retainedRecovered === undefined ||
+      isAttestationTombstone(retainedRecovered) ||
+      retainedRecovered.stagedRebaseSourceBinding === undefined ||
+      retainedRecovered.implementationQueue === undefined ||
+      retainedRed === undefined ||
+      isAttestationTombstone(retainedRed) ||
+      retainedRed.gitEffectBinding?.guardedRebaseBridge === undefined
+    ) {
+      throw new Error("recovered guarded correction ancestry disappeared");
+    }
+    const rowsBeforeControls = await subject.backend.transact(
+      { kind: "namespace" },
+      (store) => store.rows().length,
+    );
+    const rejectPrepareMutation = async (
+      handle: { readonly attestationId: string; readonly generation: number },
+      retained: AttestationEnvelope,
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+    ) => {
+      await subject.backend.transact({ kind: "handle", handle }, (store) => {
+        const current = store.read(handle);
+        if (current === undefined) throw new Error("recovered guarded evidence disappeared");
+        store.replace(current, mutate(retained));
+      });
+      try {
+        expect(await capability.prepare(correctionRequest)).toMatchObject({
+          accepted: false,
+          reason: "journal-recovery-required",
+        });
+        expect(
+          await subject.backend.transact({ kind: "namespace" }, (store) => store.rows().length),
+        ).toBe(rowsBeforeControls);
+        expect(runner.requests).toHaveLength(2);
+      } finally {
+        await subject.backend.transact({ kind: "handle", handle }, (store) => {
+          const current = store.read(handle);
+          if (current === undefined) throw new Error("recovered guarded evidence disappeared");
+          store.replace(current, retained);
+        });
+      }
+    };
+    await rejectPrepareMutation(recovered.handle, retainedRecovered, (row) => ({
+      ...row,
+      stagedRebaseSourceBinding: {
+        ...row.stagedRebaseSourceBinding!,
+        source: {
+          ...row.stagedRebaseSourceBinding!.source,
+          generation: row.stagedRebaseSourceBinding!.source.generation + 1,
+        },
+      },
+    }));
+    await rejectPrepareMutation(recovered.handle, retainedRecovered, (row) => ({
+      ...row,
+      implementationQueue: {
+        ...row.implementationQueue!,
+        enrollment: {
+          ...row.implementationQueue!.enrollment,
+          finalizedManifestDigest: "0".repeat(64),
+        },
+      },
+    }));
+    await rejectPrepareMutation(recovered.handle, retainedRecovered, (row) => ({
+      ...row,
+      stagedRebaseSourceBinding: {
+        ...row.stagedRebaseSourceBinding!,
+        gitReceiptLineageDigest: "0".repeat(64),
+      },
+    }));
+    await rejectPrepareMutation(guarded.prepared, retainedRed, (row) => ({
+      ...row,
+      prepareRequestDigest: "0".repeat(64),
+    }));
+    await rejectPrepareMutation(guarded.prepared, retainedRed, (row) => ({
+      ...row,
+      gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+    }));
+    await rejectPrepareMutation(guarded.prepared, retainedRed, (row) => ({
+      ...row,
+      gitEffectBinding: {
+        ...row.gitEffectBinding!,
+        guardedRebaseBridge: {
+          ...row.gitEffectBinding!.guardedRebaseBridge!,
+          requestDigest: "0".repeat(64),
+          guardedRebase: `cq-guarded-rebase:v1:${"0".repeat(64)}`,
+        },
+      },
+    }));
+    const correction = await capability.prepare(correctionRequest);
     if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
       throw new Error(
         `recovered guarded red correction refused: ${

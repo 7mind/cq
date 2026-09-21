@@ -1116,6 +1116,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (anchor === undefined) return false;
     const taskSpecificationDigest = await recoveryFenceTaskSpecificationDigest(fence, binding);
     if (taskSpecificationDigest === undefined) return false;
+    const journal = await recoveryJournal?.read(binding.taskId);
+    if (
+      journal?.state !== "committed" ||
+      journal.fence === undefined ||
+      journal.fence.fenceRef !== fence.fenceRef
+    ) {
+      return false;
+    }
+    const goalRef =
+      options.ledgerStore === undefined
+        ? undefined
+        : exactGoalRef(options.ledgerStore, binding.taskId);
     const envelopes = rows.filter(
       (row): row is AttestationEnvelope => !isAttestationTombstone(row),
     );
@@ -1351,7 +1363,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         return await visit(predecessor);
       }
-      if (row.state !== "consumed") return false;
 
       const stagedPredecessors = envelopes.filter((candidate) => {
         const control = candidate.implementationQueue;
@@ -1369,13 +1380,45 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const predecessor = stagedPredecessors[0]!;
         const control = predecessor.implementationQueue!;
         const staged = predecessor.stagedRebaseSourceBinding ?? control.stagedRebaseSource!;
-        const bridge = row.gitEffectBinding?.guardedRebaseBridge;
+        const predecessorBinding = predecessor.gitEffectBinding;
+        const rowBinding = row.gitEffectBinding;
+        const bridge = rowBinding?.guardedRebaseBridge;
+        const timeoutMs =
+          attestationInstantMs(row.deadlines.childCancelAt, "deadlines.childCancelAt") -
+          attestationInstantMs(row.createdAt, "createdAt");
+        const prepareRequest: PrepareDispatchRequest | undefined =
+          rowBinding === undefined || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0
+            ? undefined
+            : {
+                namespace: row.namespace,
+                roleId: row.promptProvenance.roleId,
+                surface: row.promptProvenance.surface,
+                input: row.input,
+                idempotencyKey: row.idempotencyKey,
+                timeoutMs,
+                overlays: row.overlays,
+                registry: DISPATCH_OVERLAY_REGISTRY,
+                promptDigest: row.promptProvenance.promptDigest,
+                catalogHash: row.promptProvenance.catalogHash,
+                expectedChild: row.expectedChild,
+                reprepareOf: {
+                  attestationId: predecessor.attestationId,
+                  generation: predecessor.generation,
+                },
+                gitEffectBinding: rowBinding,
+                ...(row.implementationEvidenceBootstrapRef === undefined
+                  ? {}
+                  : {
+                      implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef,
+                    }),
+              };
         if (
           staged.source.attestationId !== predecessor.attestationId ||
           staged.source.generation !== predecessor.generation ||
           row.attestationId !== predecessor.attestationId ||
           row.generation !== predecessor.generation + 1 ||
-          !dispatchBindingMatchesManaged(predecessor.gitEffectBinding, binding) ||
+          predecessorBinding === undefined ||
+          !dispatchBindingMatchesManaged(predecessorBinding, binding) ||
           staged.partitionKey !== control.partition.partitionKey ||
           staged.enrollmentId !== control.enrollment.enrollmentId ||
           staged.attemptId !== control.attempt.attemptId ||
@@ -1383,11 +1426,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           staged.repositoryId !== binding.repositoryId ||
           staged.worktreePath !== binding.worktreePath ||
           staged.sourceResultCommit !== control.attempt.resultCommit ||
+          staged.gitReceiptLineageDigest !== control.attempt.gitReceiptLineageDigest ||
+          control.enrollment.taskId !== binding.taskId ||
+          goalRef === undefined ||
+          control.enrollment.goalRef !== goalRef ||
+          control.enrollment.finalizedManifestDigest !==
+            journal.seal.seed.finalizedManifestDigest ||
+          control.attempt.taskId !== binding.taskId ||
+          control.attempt.repositoryId !== binding.repositoryId ||
+          control.attempt.worktreePath !== binding.worktreePath ||
+          control.attempt.managedWorktreeBindingDigest !==
+            dispatchPayloadDigest(predecessorBinding as unknown as DispatchJSONValue) ||
           bridge === undefined ||
           staged.sourceResultCommit !== bridge.oldResultCommit ||
           staged.ontoCommit !== bridge.ontoCommit ||
           staged.guardedRebase !== bridge.guardedRebase ||
           staged.guardedRebaseJournalDigest !== bridge.requestDigest ||
+          prepareRequest === undefined ||
+          prepareDispatchRequestDigest(prepareRequest) !== row.prepareRequestDigest ||
           !(await verifyGuardedRow(row))
         ) {
           return false;
@@ -1395,6 +1451,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return await visit(predecessor, true);
       }
       if (stagedPredecessors.length > 1) return false;
+
+      if (row.state !== "consumed") return false;
 
       const bridge = row.gitEffectBinding?.guardedRebaseBridge;
       if (bridge === undefined || !(await verifyGuardedRow(row))) return false;
@@ -1427,7 +1485,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const startingCommit = row.input["startingCommit"];
     if (typeof startingCommit !== "string") return false;
     const inherited = row.gitEffectBinding.inheritedGitReceipts ?? [];
-    if (inherited.length > 0 && inherited.at(-1)?.newHead !== startingCommit) return false;
+    const bindingTransition = row.gitEffectBinding.receiptChainTransition;
+    const guardedBridge = row.gitEffectBinding.guardedRebaseBridge;
+    const receiptChainTransition =
+      bindingTransition ??
+      (guardedBridge === undefined || inherited.length === 0
+        ? undefined
+        : {
+            oldResultCommit: guardedBridge.oldResultCommit,
+            ontoCommit: guardedBridge.ontoCommit,
+            rebasedStartCommit: guardedBridge.rebasedStartCommit,
+            receiptPrefixLength: inherited.length,
+          });
     try {
       const receipts = await resolveInheritedGitChangeReceipts(
         {
@@ -1436,7 +1505,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           generation: row.generation,
         },
         resultCommit,
-        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        {
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
+          ...(receiptChainTransition === undefined ? {} : { receiptChainTransition }),
+          ...(row.gitEffectBinding.receiptChainTransitions === undefined
+            ? {}
+            : { receiptChainTransitions: row.gitEffectBinding.receiptChainTransitions }),
+        },
       );
       const current = receipts.slice(inherited.length);
       return current.length === 0
