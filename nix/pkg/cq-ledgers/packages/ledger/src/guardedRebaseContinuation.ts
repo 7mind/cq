@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DispatchGuardedRebaseBridge } from "@cq/config";
+import type { DispatchGitEffectBinding, DispatchGuardedRebaseBridge } from "@cq/config";
 import {
   resolveInheritedGitChangeReceipts,
   type GitChangeReceiptLineageBinding,
@@ -461,8 +461,17 @@ async function finalizeConflicted(
       "guarded rebase has not reached a verified terminal tip",
     );
   }
-  const receipts = await durableHandleConflictContinuationReceipts(binding, deps);
   const tip = await liveTip(binding);
+  const receipts = await durableHandleConflictContinuationReceipts(binding, deps, {
+    headName: binding.ref,
+    originalTip: journal.oldResultCommit,
+    onto: journal.ontoCommit,
+    liveTip: tip,
+    ...(journal.conflictHead === undefined ? {} : { conflictHead: journal.conflictHead }),
+    ...(journal.conflictIdentity === undefined
+      ? {}
+      : { conflictIdentity: journal.conflictIdentity }),
+  });
   const terminal = receipts.at(-1);
   if (
     receipts.length === 0 ||
@@ -617,9 +626,18 @@ async function runGuardedRebaseCore(
       const tip = await liveTip(binding);
       if (tip !== journal.oldResultCommit) {
         // The effect ran to completion but the outcome was never recorded.
-        const receipts = await durableHandleConflictContinuationReceipts(binding, {
-          ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-        });
+        const receipts = await durableHandleConflictContinuationReceipts(
+          binding,
+          {
+            ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+          },
+          {
+            headName: binding.ref,
+            originalTip: journal.oldResultCommit,
+            onto: journal.ontoCommit,
+            liveTip: tip,
+          },
+        );
         const finalized =
           receipts.length === 0
             ? await finalizeClean(binding, journal, tip, now)
@@ -848,7 +866,8 @@ function composeGuardedRebaseBridge(
 export interface MaterializeGuardedRebaseBridgeOptions {
   readonly reference: string;
   /** The exact terminal prior worker generation's persisted binding. */
-  readonly prior: GitChangeReceiptLineageBinding;
+  readonly prior: GitChangeReceiptLineageBinding &
+    Pick<DispatchGitEffectBinding, "receiptChainTransition" | "receiptChainTransitions">;
   /** The live binding resolved for THIS prepare. */
   readonly current: ManagedWorktreeDispatchBinding;
   readonly baseCommitInput: string;
@@ -943,6 +962,12 @@ export async function materializeGuardedRebaseBridge(
   try {
     await resolveInheritedGitChangeReceipts(options.prior, bridge.oldResultCommit, {
       ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+      ...(options.prior.receiptChainTransition === undefined
+        ? {}
+        : { receiptChainTransition: options.prior.receiptChainTransition }),
+      ...(options.prior.receiptChainTransitions === undefined
+        ? {}
+        : { receiptChainTransitions: options.prior.receiptChainTransitions }),
     });
   } catch (error) {
     throw new GuardedRebaseRejection(

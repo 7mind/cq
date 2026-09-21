@@ -6382,7 +6382,6 @@ throw new Error("unexpected controlled cq invocation");
           output: {
             ...subject.output,
             resultCommit: recoveredReceipt.newHead,
-            filesTouched: ["file.txt"],
             gitReceipts: [
               {
                 ...recoveredReceipt,
@@ -6390,6 +6389,7 @@ throw new Error("unexpected controlled cq invocation");
                 paths: [...recoveredReceipt.paths],
               },
             ],
+            filesTouched: ["file.txt"],
             checkSummary: "manual guarded recovery successor awaits its ordinary gate",
             baseVerification: {
               status: "verified",
@@ -7886,6 +7886,314 @@ throw new Error("unexpected controlled cq invocation");
       );
     }
   }, 30_000);
+
+  test("cancelled unenrolled recovery workers retain fresh receipts across exact manual guarded successors", async () => {
+    for (const attestationBackend of ["memory", "sqlite"] as const) {
+      for (const freshReceiptCount of [0, 1, 2] as const) {
+        const runner = new GateDummy();
+        const subject = await fixtureWithDispatchBase(
+          runner,
+          "managed",
+          () => "2026-08-12T20:00:00.000Z",
+          false,
+          true,
+          undefined,
+          artifactStore(),
+          attestationBackend,
+        );
+        const recoveryJournal = new InMemoryCurrentRecoverySealJournalStore();
+        let activeBackend = subject.backend;
+        let activeCapability = createDispatchCapability({
+          ...subject.capabilityOptions,
+          recoveryJournal,
+        });
+        if (activeCapability.resolveRecovery === undefined) {
+          throw new Error("manual guarded recovery resolver is unavailable");
+        }
+        expect(
+          await activeCapability.abort({ ...subject.prepared, reason: "parent-lost" }),
+        ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+        const binding = await resolveManagedWorktreeDispatchBinding(
+          {
+            repositoryRoot: subject.repositoryRoot,
+            taskId: subject.managed.handle.taskId,
+            worktreePath: subject.managed.handle.absolutePath,
+            branch: subject.managed.handle.branch,
+          },
+          { stateDir: subject.stateDir },
+        );
+        if (binding === null) throw new Error("manual guarded recovery binding disappeared");
+        let currentTip = subject.receipt.newHead;
+        let currentBase = subject.dispatchBaseCommit;
+        let recovery = await activeCapability.resolveRecovery(binding, currentTip);
+        expect(recovery.preparation.kind).toBe("current");
+        if (recovery.preparation.kind !== "current") {
+          throw new Error("parent-lost source did not produce current recovery authority");
+        }
+        const reopen = async (): Promise<void> => {
+          if (attestationBackend === "sqlite") {
+            await activeBackend.close();
+            activeBackend = new SqliteAttestationBackend({
+              namespace: subject.backend.namespace,
+              dbPath: path.join(subject.repositoryRoot, "attestations.sqlite"),
+            });
+          } else {
+            activeBackend = new InMemoryAttestationBackend(subject.store);
+          }
+          activeCapability = createDispatchCapability({
+            ...subject.capabilityOptions,
+            backend: activeBackend,
+            recoveryJournal,
+          });
+          if (activeCapability.resolveRecovery === undefined) {
+            throw new Error("reopened manual guarded recovery resolver is unavailable");
+          }
+        };
+        const bridgeRounds = freshReceiptCount === 2 ? 2 : 1;
+        for (let bridgeRound = 0; bridgeRound < bridgeRounds; bridgeRound += 1) {
+          const source = await activeCapability.prepare({
+            roleId: "implement-worker",
+            input: {
+              taskId: "T2081",
+              headline: "supervise exact tip",
+              description: "run the full gate outside the workspace-write sandbox",
+              acceptance: "only a green exact tip becomes consumable",
+              worktreePath: subject.managed.handle.absolutePath,
+              branch: subject.managed.handle.branch,
+              baseCommit: currentBase,
+              round: bridgeRound * 2 + 1,
+              startingCommit: currentTip,
+              validationIntent: "final",
+              priorResultCommit: currentTip,
+            },
+            idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-${String(freshReceiptCount)}-${String(bridgeRound)}-manual-source`,
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: `implement-worker#manual-source-${String(sequence)}-${String(bridgeRound)}`,
+              runId: `manual-source-${String(sequence)}-${String(bridgeRound)}-run`,
+            },
+            recoveryPreparation: recovery.preparation.recoveryPreparation,
+          });
+          if (!source.accepted || source.prepared.gitChangeCapability === undefined) {
+            throw new Error(
+              `manual source refused: ${source.accepted ? "missing Git authority" : source.detail}`,
+            );
+          }
+          await activeCapability.fetchInput({
+            ...source.handle,
+            inputCapability: source.prepared.inputCapability,
+          });
+          if (activeCapability.gitCommit === undefined) {
+            throw new Error("manual source Git broker is unavailable");
+          }
+          let sourceTip = currentTip;
+          for (let receiptIndex = 0; receiptIndex < freshReceiptCount; receiptIndex += 1) {
+            const relativePath = `manual-source-${String(bridgeRound)}-${String(receiptIndex)}.txt`;
+            const bytes = `manual source ${String(bridgeRound)} receipt ${String(receiptIndex)}\n`;
+            await fs.writeFile(path.join(binding.worktreePath, relativePath), bytes);
+            const receipt = await activeCapability.gitCommit({
+              ...source.handle,
+              gitChangeCapability: source.prepared.gitChangeCapability,
+              operationId: `T2081-${String(sequence)}-${attestationBackend}-${String(freshReceiptCount)}-${String(bridgeRound)}-source-${String(receiptIndex)}`,
+              expectedHead: sourceTip,
+              message: "persist cancelled unenrolled recovery source",
+              changes: [
+                {
+                  kind: "add",
+                  path: relativePath,
+                  newState: { mode: "100644", digest: sha256(bytes) },
+                },
+              ],
+            });
+            sourceTip = receipt.newHead;
+          }
+          expect(
+            await activeCapability.abort({ ...source.handle, reason: "cancelled" }),
+          ).toMatchObject({ state: "aborted", reason: "cancelled" });
+          await reopen();
+
+          const protectedPath = `manual-protected-${String(bridgeRound)}.txt`;
+          await fs.writeFile(path.join(subject.repositoryRoot, protectedPath), "protected\n");
+          await git(subject.repositoryRoot, ["add", protectedPath]);
+          await git(subject.repositoryRoot, [
+            "commit",
+            "-q",
+            "-m",
+            `advance protected head ${String(bridgeRound)}`,
+          ]);
+          const protectedHead = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+          const rebase = await runGuardedRebase({
+            binding,
+            operationId: `t6576-manual-${attestationBackend}-${String(freshReceiptCount)}-${String(bridgeRound)}`,
+            ontoCommit: protectedHead,
+            stateDir: subject.stateDir,
+            runEffect: async () => {
+              await git(binding.worktreePath, ["rebase", protectedHead]);
+              return { code: 0, stdout: "", stderr: "" };
+            },
+          });
+          if (rebase.kind !== "finalized") {
+            throw new Error("manual guarded recovery rebase did not finalize");
+          }
+          const guarded = await activeCapability.prepare({
+            roleId: "implement-worker",
+            input: {
+              taskId: "T2081",
+              headline: "supervise exact tip",
+              description: "run the full gate outside the workspace-write sandbox",
+              acceptance: "only a green exact tip becomes consumable",
+              worktreePath: subject.managed.handle.absolutePath,
+              branch: subject.managed.handle.branch,
+              baseCommit: protectedHead,
+              round: bridgeRound * 2 + 2,
+              startingCommit: rebase.bridge.rebasedStartCommit,
+              validationIntent: "final",
+              priorResultCommit: sourceTip,
+            },
+            idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-${String(freshReceiptCount)}-${String(bridgeRound)}-manual-successor`,
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: `implement-worker#manual-successor-${String(sequence)}-${String(bridgeRound)}`,
+              runId: `manual-successor-${String(sequence)}-${String(bridgeRound)}-run`,
+            },
+            reprepareOf: source.handle,
+            guardedRebase: rebase.reference,
+          });
+          if (!guarded.accepted || guarded.prepared.gitChangeCapability === undefined) {
+            throw new Error(
+              `manual guarded successor ${attestationBackend}/${String(freshReceiptCount)}/${String(bridgeRound)} refused: ${guarded.accepted ? "missing Git authority" : guarded.detail}`,
+            );
+          }
+          await activeCapability.fetchInput({
+            ...guarded.handle,
+            inputCapability: guarded.prepared.inputCapability,
+          });
+          let guardedTip = rebase.bridge.rebasedStartCommit;
+          for (let receiptIndex = 0; receiptIndex < freshReceiptCount; receiptIndex += 1) {
+            const relativePath = `manual-guarded-${String(bridgeRound)}-${String(receiptIndex)}.txt`;
+            const bytes = `manual guarded ${String(bridgeRound)} receipt ${String(receiptIndex)}\n`;
+            await fs.writeFile(path.join(binding.worktreePath, relativePath), bytes);
+            const receipt = await activeCapability.gitCommit!({
+              ...guarded.handle,
+              gitChangeCapability: guarded.prepared.gitChangeCapability,
+              operationId: `T2081-${String(sequence)}-${attestationBackend}-${String(freshReceiptCount)}-${String(bridgeRound)}-guarded-${String(receiptIndex)}`,
+              expectedHead: guardedTip,
+              message: "persist cancelled manual guarded successor",
+              changes: [
+                {
+                  kind: "add",
+                  path: relativePath,
+                  newState: { mode: "100644", digest: sha256(bytes) },
+                },
+              ],
+            });
+            guardedTip = receipt.newHead;
+          }
+          expect(
+            await activeCapability.abort({ ...guarded.handle, reason: "cancelled" }),
+          ).toMatchObject({ state: "aborted", reason: "cancelled" });
+          await reopen();
+          if (freshReceiptCount === 1 && bridgeRound === 0) {
+            const exactSource = await activeBackend.transact(
+              { kind: "handle", handle: source.handle },
+              (store) => store.read(source.handle),
+            );
+            if (
+              exactSource === undefined ||
+              isAttestationTombstone(exactSource) ||
+              exactSource.gitEffectBinding === undefined ||
+              exactSource.dispatchJournalRecoveryClaim === undefined
+            ) {
+              throw new Error("manual recovery source lost its authenticated context");
+            }
+            const journalBeforeControls = await recoveryJournal.read("T2081");
+            const rowsBeforeControls = await activeBackend.transact(
+              { kind: "namespace" },
+              (store) => store.rows().length,
+            );
+            const rejectSourceMutation = async (
+              mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+            ): Promise<void> => {
+              await activeBackend.transact({ kind: "handle", handle: source.handle }, (store) => {
+                const current = store.read(source.handle);
+                if (current === undefined) throw new Error("manual recovery source disappeared");
+                store.replace(current, mutate(exactSource));
+              });
+              await expect(
+                activeCapability.resolveRecovery!(binding, guardedTip),
+              ).rejects.toThrow();
+              expect(await recoveryJournal.read("T2081")).toEqual(journalBeforeControls);
+              await activeBackend.transact({ kind: "handle", handle: source.handle }, (store) => {
+                const current = store.read(source.handle);
+                if (current === undefined) throw new Error("mutated recovery source disappeared");
+                store.replace(current, exactSource);
+              });
+              expect(
+                await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+              ).toBe(rowsBeforeControls);
+            };
+            for (const mutate of [
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                prepareRequestDigest: "0".repeat(64),
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                terminalDigest: "0".repeat(64),
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                dispatchJournalRecoveryClaim: {
+                  ...row.dispatchJournalRecoveryClaim!,
+                  taskId: "T9999",
+                },
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                dispatchJournalRecoveryClaim: {
+                  ...row.dispatchJournalRecoveryClaim!,
+                  goalRef: "goals:G9999",
+                },
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                dispatchJournalRecoveryClaim: {
+                  ...row.dispatchJournalRecoveryClaim!,
+                  finalizedManifestDigest: "0".repeat(64),
+                },
+              }),
+              (row: AttestationEnvelope): AttestationEnvelope => ({
+                ...row,
+                dispatchJournalRecoveryClaim: {
+                  ...row.dispatchJournalRecoveryClaim!,
+                  gitReceiptsDigest: "0".repeat(64),
+                },
+              }),
+            ]) {
+              await rejectSourceMutation(mutate);
+            }
+          }
+          recovery = await activeCapability.resolveRecovery!(binding, guardedTip);
+          expect(recovery).toMatchObject({
+            status: "dispatch-recovery-resolved",
+            liveTip: guardedTip,
+            preparation: { kind: "current" },
+          });
+          if (recovery.preparation.kind !== "current") {
+            throw new Error("manual guarded successor did not become current recovery authority");
+          }
+          currentTip = guardedTip;
+          currentBase = protectedHead;
+        }
+        expect(runner.requests).toHaveLength(0);
+        await activeBackend.close();
+      }
+    }
+  }, 90_000);
 
   test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
     const subject = await fixtureWithDispatchBase(
