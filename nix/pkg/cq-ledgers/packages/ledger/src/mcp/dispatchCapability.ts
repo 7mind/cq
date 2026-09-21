@@ -180,6 +180,16 @@ export interface DispatchWorktreeActivityObservation {
   readonly liveLeases: readonly string[];
 }
 
+export interface AuthenticatedImplementationLineageVerification {
+  readonly kind: "cq-authenticated-implementation-lineage-verification";
+  readonly version: 1;
+  readonly taskId: string;
+  readonly resultCommit: string;
+  readonly receiptAttestationId: string;
+  readonly latestReceiptGeneration: number;
+  readonly receiptCount: number;
+}
+
 export type DispatchEvidenceObservation =
   | {
       readonly state: "consumed";
@@ -213,6 +223,11 @@ export interface DispatchCapability {
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
   /** Trusted non-materializing observation used only by protected completion evidence. */
   observeEvidence?(input: DispatchHandle): Promise<DispatchEvidenceObservation>;
+  /** Server-only reauthentication of one consumed worker's complete durable Git lineage. */
+  verifyImplementationLineage?(input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly resultCommit: string;
+  }): Promise<AuthenticatedImplementationLineageVerification>;
   resolveImplementationCandidateAuthority?(input: {
     readonly workerDispatch: DispatchHandle;
     readonly taskRef: string;

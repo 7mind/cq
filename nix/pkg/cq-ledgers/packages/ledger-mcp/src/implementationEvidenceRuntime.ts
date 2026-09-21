@@ -38,6 +38,7 @@ import {
   implementationAdoptionTaskDigest,
   requireWorksetStore,
   type DispatchCapability,
+  type AuthenticatedImplementationLineageVerification,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationReviewerIdentity,
   type PackagedImplementationAuditManifest,
@@ -281,6 +282,7 @@ export async function verifyProductionImplementation(
   resultCommit: string,
   workerInput: Record<string, DispatchJSONValue>,
   workerOutput: Record<string, DispatchJSONValue>,
+  authenticatedLineage?: AuthenticatedImplementationLineageVerification,
 ) {
   if (!validateAgainstSchema(implementWorkerSidecar.outputSchema, workerOutput).ok) {
     throw new Error("worker result does not match the implement-worker output contract");
@@ -457,6 +459,20 @@ export async function verifyProductionImplementation(
     if (previousHead !== resultCommit) {
       receiptsVerified = false;
     }
+  }
+  if (authenticatedLineage !== undefined) {
+    if (
+      authenticatedLineage.kind !== "cq-authenticated-implementation-lineage-verification" ||
+      authenticatedLineage.version !== 1 ||
+      authenticatedLineage.taskId !== workerTaskId ||
+      authenticatedLineage.resultCommit !== resultCommit ||
+      authenticatedLineage.receiptCount !== (Array.isArray(receipts) ? receipts.length : -1)
+    ) {
+      throw new Error("authenticated implementation lineage does not match the consumed worker");
+    }
+    receiptsVerified = true;
+    receiptAttestationId = authenticatedLineage.receiptAttestationId;
+    latestReceiptGeneration = authenticatedLineage.latestReceiptGeneration;
   }
   const gate = workerOutput["supervisedGateEvidence"];
   const trustedGate =
@@ -952,15 +968,23 @@ export function createProductionImplementationEvidenceService(
         taskRefs: cohort.taskRefs,
       };
     },
-    verifyImplementation: async ({ resultCommit, worker }) => {
+    verifyImplementation: async ({ resultCommit, workerDispatch, worker }) => {
       if (worker.state !== "consumed" || !object(worker.input) || !object(worker.output)) {
         throw new Error("worker evidence is not consumed");
       }
+      const authenticatedLineage =
+        options.dispatchCapability.verifyImplementationLineage === undefined
+          ? undefined
+          : await options.dispatchCapability.verifyImplementationLineage({
+              workerDispatch,
+              resultCommit,
+            });
       return await verifyProductionImplementation(
         options.repositoryRoot,
         resultCommit,
         worker.input,
         worker.output,
+        authenticatedLineage,
       );
     },
     recordLedgerCompletion: async ({ task, completion, author, session }) =>

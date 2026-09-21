@@ -1625,6 +1625,7 @@ export interface ImplementationEvidenceServiceDependencies {
   readonly verifyImplementation: (input: {
     readonly task: ImplementationTaskAuthority;
     readonly resultCommit: string;
+    readonly workerDispatch: DispatchHandle;
     readonly worker: ImplementationWorkerObservation;
     readonly attempts: readonly ImplementationReviewAttemptRecord[];
   }) => Promise<ImplementationVerificationObservation>;
@@ -4804,6 +4805,7 @@ export class ImplementationEvidenceService {
     const verification = await this.deps.verifyImplementation({
       task,
       resultCommit: input.resultCommit,
+      workerDispatch: input.workerDispatch,
       worker,
       attempts: boundAttempts,
     });
@@ -5107,6 +5109,7 @@ export class ImplementationEvidenceService {
     const verification = await this.deps.verifyImplementation({
       task,
       resultCommit: completion.resultCommit,
+      workerDispatch: completion.workerDispatch,
       worker,
       attempts: boundAttempts,
     });

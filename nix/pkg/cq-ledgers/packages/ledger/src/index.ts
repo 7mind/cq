@@ -915,6 +915,7 @@ export type { ReadLogCapability, ReadLogResult } from "./mcp/readLog.js";
 export { DispatchNotImplementedError } from "./mcp/dispatchCapability.js";
 export type {
   AbortDispatchToolInput,
+  AuthenticatedImplementationLineageVerification,
   ConfirmDispatchCompletionToolInput,
   CoordinateImplementationCandidateInput,
   CoordinateImplementationCandidateOutcome,

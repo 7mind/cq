@@ -500,6 +500,76 @@ function dispatchReceiptChainLiveTip(
     : seed.gitReceipts.at(-1)?.newHead;
 }
 
+interface RecoveryReceiptChainTransition {
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+  readonly receiptPrefixLength: number;
+}
+
+interface RecoveryLineageBindingProjection {
+  readonly guardedRebaseBridge?: { readonly ontoCommit: string };
+  readonly receiptChainTransition?: RecoveryReceiptChainTransition;
+  readonly receiptChainTransitions?: readonly RecoveryReceiptChainTransition[];
+}
+
+function recoveryLineageBindingProjection(
+  binding: ManagedWorktreeDispatchBinding,
+): RecoveryLineageBindingProjection {
+  const projected = binding as ManagedWorktreeDispatchBinding & RecoveryLineageBindingProjection;
+  const guardedRebaseBridge = projected.guardedRebaseBridge;
+  const transition = projected.receiptChainTransition;
+  const transitions = projected.receiptChainTransitions;
+  if (transitions === undefined) {
+    return {
+      ...(guardedRebaseBridge === undefined ? {} : { guardedRebaseBridge }),
+      ...(transition === undefined ? {} : { receiptChainTransition: transition }),
+    };
+  }
+  if (
+    transitions.length < 2 ||
+    transition === undefined ||
+    dispatchPayloadDigest(transitions.at(-1) as unknown as DispatchJSONValue) !==
+      dispatchPayloadDigest(transition as unknown as DispatchJSONValue)
+  ) {
+    throw new Error("receipt-chain transition sequence does not end at its current edge");
+  }
+  return {
+    ...(guardedRebaseBridge === undefined ? {} : { guardedRebaseBridge }),
+    receiptChainTransition: transition,
+    receiptChainTransitions: transitions,
+  };
+}
+
+function recoveryLineageEvidenceDeps(
+  binding: ManagedWorktreeDispatchBinding,
+): RecoveryLineageBindingProjection {
+  const projection = recoveryLineageBindingProjection(binding);
+  const coordinate = (transition: RecoveryReceiptChainTransition) => ({
+    oldResultCommit: transition.oldResultCommit,
+    ontoCommit: transition.ontoCommit,
+    rebasedStartCommit: transition.rebasedStartCommit,
+    receiptPrefixLength: transition.receiptPrefixLength,
+  });
+  return {
+    ...(projection.receiptChainTransition === undefined
+      ? {}
+      : { receiptChainTransition: coordinate(projection.receiptChainTransition) }),
+    ...(projection.receiptChainTransitions === undefined
+      ? {}
+      : { receiptChainTransitions: projection.receiptChainTransitions.map(coordinate) }),
+  };
+}
+
+function recoveryLogicalBaseCommit(binding: ManagedWorktreeDispatchBinding): string {
+  const projection = recoveryLineageBindingProjection(binding);
+  return (
+    projection.guardedRebaseBridge?.ontoCommit ??
+    projection.receiptChainTransition?.ontoCommit ??
+    binding.baseCommit
+  );
+}
+
 function conflictResultEvidence(output: DispatchJSONValue): GitConflictContinuationResultEvidence {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable resolver result must carry conflict receipt evidence");
@@ -2760,8 +2830,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           const guardedRebaseBridge = continuation.gitEffectBinding.guardedRebaseBridge;
-          const logicalBaseCommit =
-            guardedRebaseBridge?.ontoCommit ?? continuation.gitEffectBinding.baseCommit;
+          let lineageProjection: RecoveryLineageBindingProjection;
+          let logicalBaseCommit: string;
+          try {
+            lineageProjection = recoveryLineageBindingProjection(
+              continuation.gitEffectBinding,
+            );
+            logicalBaseCommit = recoveryLogicalBaseCommit(continuation.gitEffectBinding);
+          } catch (error) {
+            return rejectLaunch(
+              "continuation",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
           if (baseCommitInput !== logicalBaseCommit) {
             return rejectLaunch(
               "input.baseCommit",
@@ -2777,13 +2858,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             liveTip,
           };
           if (guardedRebaseBridge === undefined) {
-            gitEffectBinding =
-              continuation.gitReceipts.length === 0
-                ? resolvedGitEffectBinding
+            gitEffectBinding = {
+              ...resolvedGitEffectBinding,
+              ...(lineageProjection.receiptChainTransition === undefined
+                ? {}
                 : {
-                    ...resolvedGitEffectBinding,
-                    inheritedGitReceipts: continuation.gitReceipts,
-                  };
+                    baseCommit: continuation.gitEffectBinding.baseCommit,
+                    receiptChainTransition: lineageProjection.receiptChainTransition,
+                    ...(lineageProjection.receiptChainTransitions === undefined
+                      ? {}
+                      : {
+                          receiptChainTransitions:
+                            lineageProjection.receiptChainTransitions,
+                        }),
+                  }),
+              ...(continuation.gitReceipts.length === 0
+                ? {}
+                : { inheritedGitReceipts: continuation.gitReceipts }),
+            } as ManagedWorktreeDispatchBinding;
           } else {
             let bridge;
             try {
@@ -3867,6 +3959,99 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (row.state === "aborted") return { state: "aborted" as const, ...base };
         return { state: "nonterminal" as const, ...base };
       }),
+    verifyImplementationLineage: async ({ workerDispatch, resultCommit }) => {
+      if (options.repositoryRoot === undefined) {
+        throw new Error("implementation lineage verification requires a local repository");
+      }
+      const row = await options.backend.transact(
+        { kind: "handle", handle: workerDispatch },
+        (store) => store.read(workerDispatch),
+      );
+      if (
+        row === undefined ||
+        isAttestationTombstone(row) ||
+        row.state !== "consumed" ||
+        row.promptProvenance.roleId !== "implement-worker" ||
+        row.gitEffectBinding === undefined ||
+        row.output === undefined ||
+        row.outputDigest !== dispatchPayloadDigest(row.output)
+      ) {
+        throw new Error("implementation lineage verification requires the exact consumed worker");
+      }
+      const evidence = brokerResultEvidence(row.output);
+      if (evidence === undefined || evidence.resultCommit !== resultCommit) {
+        throw new Error("implementation lineage verification result commit does not match");
+      }
+      const binding = row.gitEffectBinding;
+      const inheritedReceipts = binding.inheritedGitReceipts ?? [];
+      if (
+        evidence.gitReceipts.length < inheritedReceipts.length ||
+        dispatchPayloadDigest(
+          evidence.gitReceipts.slice(0, inheritedReceipts.length) as unknown as DispatchJSONValue,
+        ) !== dispatchPayloadDigest(inheritedReceipts as unknown as DispatchJSONValue)
+      ) {
+        throw new Error("consumed worker output does not retain its authenticated receipt prefix");
+      }
+      const recoveryClaim = row.dispatchJournalRecoveryClaim;
+      if (recoveryClaim !== undefined) {
+        const journal = await recoveryJournal?.read(binding.taskId);
+        if (
+          journal?.state !== "committed" ||
+          journal.seal.sealReference !== recoveryClaim.sealReference ||
+          journal.seal.sealDigest !== recoveryClaim.sealDigest
+        ) {
+          throw new Error("implementation lineage recovery claim no longer matches authority");
+        }
+      }
+      const input = dispatchObject(row.input) ? row.input : undefined;
+      const diffBaseCommit = input?.["baseCommit"];
+      if (typeof diffBaseCommit !== "string" || !FULL_GIT_SHA.test(diffBaseCommit)) {
+        throw new Error("implementation lineage dispatch base is malformed");
+      }
+      const suffix = evidence.gitReceipts.slice(inheritedReceipts.length);
+      const deps = options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir };
+      const normalized = await withManagedWorktreeEffectLock(binding, deps, async () => {
+        await assertManagedWorktreeDispatchBindingLive(binding, deps);
+        if ((await observeManagedWorktreeLiveTip(binding, deps)) !== resultCommit) {
+          throw new Error("implementation lineage worktree tip changed");
+        }
+        return await validateGitChangeBrokerResultEvidence(
+          {
+            ...binding,
+            attestationId: row.attestationId,
+            generation: row.generation,
+            roleId: "implement-worker",
+            surface: row.promptProvenance.surface,
+            childCancelAt: row.deadlines.childCancelAt,
+          },
+          { ...evidence, gitReceipts: suffix },
+          {
+            ...deps,
+            diffBaseCommit,
+            ...recoveryLineageEvidenceDeps(binding),
+          },
+        );
+      });
+      if (
+        dispatchPayloadDigest(normalized.gitReceipts as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(evidence.gitReceipts as unknown as DispatchJSONValue)
+      ) {
+        throw new Error("consumed worker output does not equal the durable receipt closure");
+      }
+      const terminalReceipt = normalized.gitReceipts.at(-1);
+      return Object.freeze({
+        kind: "cq-authenticated-implementation-lineage-verification" as const,
+        version: 1 as const,
+        taskId: binding.taskId,
+        resultCommit,
+        receiptAttestationId: terminalReceipt?.attestationId ?? row.attestationId,
+        latestReceiptGeneration:
+          terminalReceipt === undefined
+            ? row.generation
+            : Math.max(...normalized.gitReceipts.map((receipt) => receipt.generation)),
+        receiptCount: normalized.gitReceipts.length,
+      });
+    },
     ...(options.repositoryRoot === undefined ||
     options.ledgerStore === undefined ||
     options.implementationEvidenceStore === undefined

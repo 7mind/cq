@@ -415,6 +415,51 @@ function bindingMatchesGuardedTransition(
   );
 }
 
+export function authenticateResolvedRecoveryReceiptClosure(input: {
+  readonly taskId: string;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly inheritedReceipts: readonly GitChangeBrokerReceipt[];
+  readonly inheritedTip: string;
+  readonly resultCommit: string;
+  readonly resolvedReceipts: readonly GitChangeBrokerReceipt[];
+  readonly componentPrefix?: readonly GitChangeBrokerReceipt[];
+}): readonly GitChangeBrokerReceipt[] | undefined {
+  const completePrefixMatches =
+    input.resolvedReceipts.length >= input.inheritedReceipts.length &&
+    receiptClosuresEqual(
+      input.resolvedReceipts.slice(0, input.inheritedReceipts.length),
+      input.inheritedReceipts,
+    );
+  const componentPrefixMatches =
+    !completePrefixMatches &&
+    input.componentPrefix !== undefined &&
+    input.resolvedReceipts.length >= input.componentPrefix.length &&
+    receiptClosuresEqual(
+      input.resolvedReceipts.slice(0, input.componentPrefix.length),
+      input.componentPrefix,
+    );
+  if (!completePrefixMatches && !componentPrefixMatches) return undefined;
+  const prefixLength = completePrefixMatches
+    ? input.inheritedReceipts.length
+    : input.componentPrefix!.length;
+  const suffix = input.resolvedReceipts.slice(prefixLength);
+  let tip = input.inheritedTip;
+  for (const receipt of suffix) {
+    if (
+      receipt.taskId !== input.taskId ||
+      receipt.attestationId !== input.attestationId ||
+      receipt.generation !== input.generation ||
+      receipt.oldHead !== tip
+    ) {
+      return undefined;
+    }
+    tip = receipt.newHead;
+  }
+  if (tip !== input.resultCommit) return undefined;
+  return Object.freeze([...input.inheritedReceipts, ...suffix]);
+}
+
 export function currentRecoveryTaskSpecificationDigest(input: unknown): string {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new CurrentRecoverySealError("journal-conflict", "recovery task specification is absent");
@@ -1311,65 +1356,30 @@ async function journalSuccessorSource(
       );
     }
     const closure = continuation.gitReceipts;
-    const suffix = closure.slice(inheritedReceipts.length);
-    const completeClosure =
-      closure.length >= inheritedReceipts.length &&
-      (closure.length !== inheritedReceipts.length || continuation.liveTip === inheritedTip) &&
-      receiptClosuresEqual(closure.slice(0, inheritedReceipts.length), inheritedReceipts) &&
-      !suffix.some(
-        (receipt) =>
-          receipt.attestationId !== successor.attestationId ||
-          receipt.generation !== successor.generation,
-      );
-    if (completeClosure) {
-      inheritedReceipts = closure;
-      inheritedTip = continuation.liveTip;
-      continue;
-    }
-
     const transition = guardedTipTransitions.at(-1);
     const componentPrefix =
-      transition === undefined
-        ? undefined
-        : inheritedReceipts.slice(transition.receiptPrefixLength);
-    const componentSuffix =
-      componentPrefix === undefined ? [] : closure.slice(componentPrefix.length);
-    if (
       transition === undefined ||
       transition.receiptPrefixLength > inheritedReceipts.length ||
-      !bindingMatchesGuardedTransition(continuation.gitEffectBinding, transition) ||
-      componentPrefix === undefined ||
-      closure.length < componentPrefix.length ||
-      (closure.length === componentPrefix.length && continuation.liveTip !== inheritedTip) ||
-      !receiptClosuresEqual(closure.slice(0, componentPrefix.length), componentPrefix)
-    ) {
+      !bindingMatchesGuardedTransition(continuation.gitEffectBinding, transition)
+        ? undefined
+        : inheritedReceipts.slice(transition.receiptPrefixLength);
+    const authenticatedClosure = authenticateResolvedRecoveryReceiptClosure({
+      taskId: coordinates.taskId,
+      attestationId: successor.attestationId,
+      generation: successor.generation,
+      inheritedReceipts,
+      inheritedTip,
+      resultCommit: continuation.liveTip,
+      resolvedReceipts: closure,
+      ...(componentPrefix === undefined ? {} : { componentPrefix }),
+    });
+    if (authenticatedClosure === undefined) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
         "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
       );
     }
-    let componentTip = inheritedTip;
-    for (const receipt of componentSuffix) {
-      if (
-        receipt.taskId !== coordinates.taskId ||
-        receipt.attestationId !== successor.attestationId ||
-        receipt.generation !== successor.generation ||
-        receipt.oldHead !== componentTip
-      ) {
-        throw new CurrentRecoverySealError(
-          "journal-conflict",
-          "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
-        );
-      }
-      componentTip = receipt.newHead;
-    }
-    if (componentTip !== continuation.liveTip) {
-      throw new CurrentRecoverySealError(
-        "journal-conflict",
-        "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
-      );
-    }
-    inheritedReceipts = Object.freeze([...inheritedReceipts, ...componentSuffix]);
+    inheritedReceipts = authenticatedClosure;
     inheritedTip = continuation.liveTip;
   }
   const row = successorEnvelopes.at(-1)!;

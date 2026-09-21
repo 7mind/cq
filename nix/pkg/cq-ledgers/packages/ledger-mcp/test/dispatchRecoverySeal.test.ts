@@ -28,6 +28,7 @@ import {
   type LedgerStore,
 } from "@cq/ledger";
 import {
+  authenticateResolvedRecoveryReceiptClosure,
   captureCurrentRecoverySeal,
   currentRecoveryTaskSpecificationDigest,
   currentRecoveryTaskEvidence,
@@ -46,6 +47,7 @@ import {
   RECOVERY_TIP,
   abortedEnvelope,
   provisionalJournal,
+  receipt,
 } from "../../ledger/test/recoverySealTestSupport.js";
 
 const coordinates = {
@@ -210,6 +212,68 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 }
 
 describe("protected current dispatch-recovery capture", () => {
+  test("cancelled genuine-red correction recaptures its complete receipt closure [Behavioral-Progression Blackbox-Atomic]", () => {
+    const correctionAttestation = `att_${"c".repeat(32)}`;
+    const firstCorrectionTip = "4".repeat(40);
+    const resultCommit = "5".repeat(40);
+    const firstCorrection = {
+      ...receipt(7, RECOVERY_TIP, firstCorrectionTip, "genuine-red-first"),
+      attestationId: correctionAttestation,
+    };
+    const secondCorrection = {
+      ...receipt(7, firstCorrectionTip, resultCommit, "genuine-red-second"),
+      attestationId: correctionAttestation,
+    };
+    const base = {
+      taskId: RECOVERY_TASK,
+      attestationId: correctionAttestation,
+      generation: 7,
+      inheritedReceipts: RECOVERY_RECEIPTS,
+      inheritedTip: RECOVERY_TIP,
+      componentPrefix: [] as const,
+    };
+
+    expect(
+      authenticateResolvedRecoveryReceiptClosure({
+        ...base,
+        resultCommit: RECOVERY_TIP,
+        resolvedReceipts: RECOVERY_RECEIPTS,
+      }),
+    ).toEqual(RECOVERY_RECEIPTS);
+    expect(
+      authenticateResolvedRecoveryReceiptClosure({
+        ...base,
+        resultCommit: firstCorrectionTip,
+        resolvedReceipts: [...RECOVERY_RECEIPTS, firstCorrection],
+      }),
+    ).toEqual([...RECOVERY_RECEIPTS, firstCorrection]);
+    expect(
+      authenticateResolvedRecoveryReceiptClosure({
+        ...base,
+        resultCommit,
+        resolvedReceipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+      }),
+    ).toEqual([...RECOVERY_RECEIPTS, firstCorrection, secondCorrection]);
+    expect(
+      authenticateResolvedRecoveryReceiptClosure({
+        ...base,
+        resultCommit,
+        resolvedReceipts: [firstCorrection, secondCorrection],
+      }),
+    ).toEqual([...RECOVERY_RECEIPTS, firstCorrection, secondCorrection]);
+    expect(
+      authenticateResolvedRecoveryReceiptClosure({
+        ...base,
+        resultCommit,
+        resolvedReceipts: [
+          ...RECOVERY_RECEIPTS,
+          { ...firstCorrection, attestationId: `att_${"d".repeat(32)}` },
+          secondCorrection,
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
   test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
     const rejected = authenticatedConsumedResult("pass", { rejectGate: true });

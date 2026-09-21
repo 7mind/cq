@@ -211,7 +211,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     ).rejects.toThrow('active harness "codex" requires a [harness.codex] block');
   });
 
-  test("revalidates the exact Git receipt chain against repository objects and paths", async () => {
+  test("protected completion accepts authenticated recovered receipt lineage [Behavioral-Active Blackbox-Group]", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-git-"));
     roots.push(root);
     await git(root, ["init", "-q", "-b", "implement/T2345"]);
@@ -295,6 +295,42 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
         })
       ).receiptsVerified,
     ).toBe(false);
+    expect(
+      (
+        await verifyProductionImplementation(
+          root,
+          resultCommit,
+          workerInput,
+          { ...workerOutput, gitReceipts: [receipt] },
+          {
+            kind: "cq-authenticated-implementation-lineage-verification",
+            version: 1,
+            taskId: "T2345",
+            resultCommit,
+            receiptAttestationId: receipt.attestationId,
+            latestReceiptGeneration: receipt.generation,
+            receiptCount: 1,
+          },
+        )
+      ).receiptsVerified,
+    ).toBe(true);
+    await expect(
+      verifyProductionImplementation(
+        root,
+        resultCommit,
+        workerInput,
+        { ...workerOutput, gitReceipts: [receipt] },
+        {
+          kind: "cq-authenticated-implementation-lineage-verification",
+          version: 1,
+          taskId: "T-substituted",
+          resultCommit,
+          receiptAttestationId: receipt.attestationId,
+          latestReceiptGeneration: receipt.generation,
+          receiptCount: 1,
+        },
+      ),
+    ).rejects.toThrow("authenticated implementation lineage does not match the consumed worker");
     expect(
       (
         await verifyProductionImplementation(root, resultCommit, workerInput, {
