@@ -2866,6 +2866,30 @@ function claimStagedRebaseSuccessor(
         : dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue);
     const bridgeDigest =
       bridge === undefined ? null : dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
+    const sourceTransition = priorManagerBinding?.receiptChainTransition;
+    const correctionTransition = gitEffectBinding?.receiptChainTransition;
+    const sameReceiptTransition =
+      sourceTransition === undefined
+        ? correctionTransition === undefined
+        : correctionTransition !== undefined &&
+          dispatchPayloadDigest(sourceTransition as unknown as DispatchJSONValue) ===
+            dispatchPayloadDigest(correctionTransition as unknown as DispatchJSONValue);
+    const sameReceiptTransitions =
+      priorManagerBinding?.receiptChainTransitions === undefined
+        ? gitEffectBinding?.receiptChainTransitions === undefined
+        : gitEffectBinding?.receiptChainTransitions !== undefined &&
+          dispatchPayloadDigest(
+            priorManagerBinding.receiptChainTransitions as unknown as DispatchJSONValue,
+          ) ===
+            dispatchPayloadDigest(
+              gitEffectBinding.receiptChainTransitions as unknown as DispatchJSONValue,
+            );
+    const inheritedClosesAtRejectedResult =
+      inherited.length === 0 ||
+      inherited.at(-1)?.newHead === gateRejectedClaim.resultCommit ||
+      (correctionTransition !== undefined &&
+        correctionTransition.receiptPrefixLength === inherited.length &&
+        correctionTransition.rebasedStartCommit === gateRejectedClaim.resultCommit);
     if (
       !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(gateRejectedClaim.fenceRef) ||
       gateRejectedClaim.source.attestationId !== reprepareOf.attestationId ||
@@ -2900,13 +2924,15 @@ function claimStagedRebaseSuccessor(
         gateRejectedClaim.gitReceiptLineageDigest ||
       priorBridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
       bridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+      !sameReceiptTransition ||
+      !sameReceiptTransitions ||
       input?.["startingCommit"] !== gateRejectedClaim.resultCommit ||
       sourceInherited.length > inherited.length ||
       dispatchPayloadDigest(sourceInherited as unknown as DispatchJSONValue) !==
         dispatchPayloadDigest(
           inherited.slice(0, sourceInherited.length) as unknown as DispatchJSONValue,
         ) ||
-      (inherited.length > 0 && inherited.at(-1)?.newHead !== gateRejectedClaim.resultCommit)
+      !inheritedClosesAtRejectedResult
     ) {
       throw new AttestationBindingError(
         "gateRejectedCorrectionClaim",

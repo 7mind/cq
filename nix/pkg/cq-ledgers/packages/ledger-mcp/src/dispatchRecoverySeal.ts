@@ -1232,8 +1232,22 @@ async function journalGuardedRecoverySuccessorEdge(
         guardedJournalSuccessorDiagnostic(mismatchCause, claim),
     );
   }
+  if (sourceBinding === undefined || inherited === undefined) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "journal recovery cancellation does not authenticate its exact guarded successor; " +
+        guardedJournalSuccessorDiagnostic("evidence-missing", claim),
+    );
+  }
   let receipts = inherited;
   if (claim === undefined) {
+    if (sourceClaim === undefined || sourceRequest === undefined) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery cancellation does not authenticate its exact guarded successor; " +
+          guardedJournalSuccessorDiagnostic("retained-seed-evidence-missing", claim),
+      );
+    }
     const seed = journal.seal.seed;
     const sealedSource =
       journal.seal.version === 1
@@ -1244,7 +1258,7 @@ async function journalGuardedRecoverySuccessorEdge(
           }
         : journal.seal.seed.source;
     const seedMismatchCause: GuardedJournalSuccessorCause | undefined =
-      journal.fence === undefined || sourceClaim === undefined || sourceRequest === undefined
+      journal.fence === undefined
         ? "retained-seed-evidence-missing"
         : sourceClaim.fenceRef !== journal.fence.fenceRef ||
             sourceClaim.sealReference !== journal.seal.sealReference ||

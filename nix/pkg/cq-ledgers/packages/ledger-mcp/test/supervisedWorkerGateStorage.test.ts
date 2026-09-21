@@ -5601,7 +5601,13 @@ throw new Error("unexpected controlled cq invocation");
           ...subject.output,
           resultCommit: recoveredReceipt.newHead,
           filesTouched: [...recoveredReceipt.paths],
-          gitReceipts: [recoveredReceipt],
+          gitReceipts: [
+            {
+              ...recoveredReceipt,
+              objectOids: [...recoveredReceipt.objectOids],
+              paths: [...recoveredReceipt.paths],
+            },
+          ],
           checkSummary: "current-recovered candidate awaits protected-head comparison",
           baseVerification: {
             status: "verified",
@@ -5667,7 +5673,7 @@ throw new Error("unexpected controlled cq invocation");
     }
     expect(guardedBase).toBe(ontoCommit);
     let redTip = guardedStart;
-    let redReceipts: readonly GitChangeBrokerReceipt[] = [];
+    let redReceipts: readonly DispatchJSONValue[] = [];
     if (freshGuardedReceipt) {
       if (guarded.prepared.gitChangeCapability === undefined) {
         throw new Error("fresh guarded red worker lacks Git authority");
@@ -5689,7 +5695,13 @@ throw new Error("unexpected controlled cq invocation");
         ],
       });
       redTip = receipt.newHead;
-      redReceipts = [receipt];
+      redReceipts = [
+        {
+          ...receipt,
+          objectOids: [...receipt.objectOids],
+          paths: [...receipt.paths],
+        },
+      ];
     } else {
       expect(exactTip).toBe(true);
     }
@@ -5892,6 +5904,18 @@ throw new Error("unexpected controlled cq invocation");
     const correctionLineage = correctionRecord["guardedRebaseLineage"] as Readonly<
       Record<string, DispatchJSONValue>
     >;
+    const correctionGuardedRebase = correctionLineage["guardedRebase"];
+    const correctionOntoCommit = correctionLineage["ontoCommit"];
+    const correctionRebasedStartCommit = correctionLineage["rebasedStartCommit"];
+    const correctionExactTip = correctionLineage["exactTip"];
+    if (
+      typeof correctionGuardedRebase !== "string" ||
+      typeof correctionOntoCommit !== "string" ||
+      typeof correctionRebasedStartCommit !== "string" ||
+      typeof correctionExactTip !== "boolean"
+    ) {
+      throw new Error("recovered guarded correction lineage is incomplete");
+    }
     const correctionBody = `correct recovered guarded red ${attestationBackend}\n`;
     await fs.writeFile(
       path.join(subject.managed.handle.absolutePath, "recovered-guarded-correction.txt"),
@@ -5931,13 +5955,19 @@ throw new Error("unexpected controlled cq invocation");
           branch: subject.managed.handle.branch,
           actualWorktreePath: subject.managed.handle.absolutePath,
           filesTouched: correctionFiles,
-          gitReceipts: [correctionReceipt],
+          gitReceipts: [
+            {
+              ...correctionReceipt,
+              objectOids: [...correctionReceipt.objectOids],
+              paths: [...correctionReceipt.paths],
+            },
+          ],
           gitLineage: {
             kind: "guarded-rebase",
-            guardedRebase: correctionLineage["guardedRebase"],
-            ontoCommit: correctionLineage["ontoCommit"],
-            rebasedStartCommit: correctionLineage["rebasedStartCommit"],
-            exactTip: correctionLineage["exactTip"],
+            guardedRebase: correctionGuardedRebase,
+            ontoCommit: correctionOntoCommit,
+            rebasedStartCommit: correctionRebasedStartCommit,
+            exactTip: correctionExactTip,
           },
           checkSummary: "changed recovered-red correction awaits its ordinary gate",
           baseVerification: {
@@ -8238,6 +8268,128 @@ throw new Error("unexpected controlled cq invocation");
         expectedChild: correctionChild,
         reprepareOf: recovered.handle,
       };
+      const rowsBeforeCorrectionControls = await reopenedBackend.transact(
+        { kind: "namespace" },
+        (store) => store.rows().length,
+      );
+      const rejectCorrectionMutation = async (
+        handle: typeof recovered.handle,
+        name: string,
+        mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+      ) => {
+        const retained = await reopenedBackend.transact({ kind: "handle", handle }, (store) => {
+          const row = store.read(handle);
+          if (row === undefined || isAttestationTombstone(row)) {
+            throw new Error("cancelled recovery correction evidence disappeared");
+          }
+          return row;
+        });
+        await reopenedBackend.transact({ kind: "handle", handle }, (store) => {
+          const current = store.read(handle);
+          if (current === undefined) {
+            throw new Error("cancelled recovery correction mutation lost its row");
+          }
+          store.replace(current, mutate(retained));
+        });
+        try {
+          expect(
+            await activeCapability.prepare({
+              ...correctionRequest,
+              idempotencyKey: `${correctionRequest.idempotencyKey}-${name}`,
+            }),
+          ).toMatchObject({ accepted: false, reason: "journal-recovery-required" });
+          expect(
+            await reopenedBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+          ).toBe(rowsBeforeCorrectionControls);
+          expect(runner.requests).toHaveLength(4);
+        } finally {
+          await reopenedBackend.transact({ kind: "handle", handle }, (store) => {
+            const current = store.read(handle);
+            if (current === undefined) {
+              throw new Error("cancelled recovery correction restore lost its row");
+            }
+            store.replace(current, retained);
+          });
+        }
+      };
+      await rejectCorrectionMutation(recovered.handle, "claim", (row) => ({
+        ...row,
+        dispatchJournalRecoveryClaim: {
+          ...row.dispatchJournalRecoveryClaim!,
+          selectedSource: {
+            ...row.dispatchJournalRecoveryClaim!.selectedSource,
+            generation: row.dispatchJournalRecoveryClaim!.selectedSource.generation - 1,
+          },
+        },
+      }));
+      await rejectCorrectionMutation(recovered.handle, "task", (row) => ({
+        ...row,
+        input: {
+          ...(row.input as Readonly<Record<string, DispatchJSONValue>>),
+          taskId: "T9999",
+        },
+      }));
+      await rejectCorrectionMutation(recovered.handle, "manifest", (row) => ({
+        ...row,
+        implementationQueue: {
+          ...row.implementationQueue!,
+          enrollment: {
+            ...row.implementationQueue!.enrollment,
+            finalizedManifestDigest: "0".repeat(64),
+          },
+        },
+      }));
+      await rejectCorrectionMutation(recovered.handle, "manager", (row) => ({
+        ...row,
+        gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+      }));
+      await rejectCorrectionMutation(recovered.handle, "prepare", (row) => ({
+        ...row,
+        prepareRequestDigest: "0".repeat(64),
+      }));
+      await rejectCorrectionMutation(recovered.handle, "receipt", (row) => ({
+        ...row,
+        gitEffectBinding: {
+          ...row.gitEffectBinding!,
+          inheritedGitReceipts: [...row.gitEffectBinding!.inheritedGitReceipts!].reverse(),
+        },
+      }));
+      await rejectCorrectionMutation(next.handle, "bridge", (row) => ({
+        ...row,
+        gitEffectBinding: {
+          ...row.gitEffectBinding!,
+          guardedRebaseBridge: {
+            ...row.gitEffectBinding!.guardedRebaseBridge!,
+            requestDigest: "0".repeat(64),
+            guardedRebase: `cq-guarded-rebase:v1:${"0".repeat(64)}`,
+          },
+        },
+      }));
+      await rejectCorrectionMutation(recovered.handle, "epoch", (row) => ({
+        ...row,
+        dispatchJournalRecoveryClaim: {
+          ...row.dispatchJournalRecoveryClaim!,
+          lineageMaximumGeneration: row.dispatchJournalRecoveryClaim!.lineageMaximumGeneration + 1,
+        },
+      }));
+      expect(
+        await activeCapability.prepare({
+          ...correctionRequest,
+          input: { ...correctionRequest.input, startingCommit: "0".repeat(40) },
+          idempotencyKey: `${correctionRequest.idempotencyKey}-stale-tip`,
+        }),
+      ).toMatchObject({ accepted: false });
+      expect(
+        await activeCapability.prepare({
+          ...correctionRequest,
+          idempotencyKey: `${correctionRequest.idempotencyKey}-substituted-source`,
+          reprepareOf: ordinary.handle,
+        }),
+      ).toMatchObject({ accepted: false, reason: "journal-recovery-required" });
+      expect(
+        await reopenedBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+      ).toBe(rowsBeforeCorrectionControls);
+      expect(runner.requests).toHaveLength(4);
       const correction = await activeCapability.prepare(correctionRequest);
       if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
         throw new Error(
@@ -8289,7 +8441,13 @@ throw new Error("unexpected controlled cq invocation");
             branch: subject.managed.handle.branch,
             actualWorktreePath: subject.managed.handle.absolutePath,
             filesTouched: correctionFiles,
-            gitReceipts: [correctionReceipt],
+            gitReceipts: [
+              {
+                ...correctionReceipt,
+                objectOids: [...correctionReceipt.objectOids],
+                paths: [...correctionReceipt.paths],
+              },
+            ],
             checkSummary: "changed cancelled-recovery correction awaits its gate",
             baseVerification: {
               status: "verified",

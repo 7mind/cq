@@ -1069,7 +1069,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     }
     const taskSpecificationDigest = await recoveryFenceTaskSpecificationDigest(fence, binding);
     if (taskSpecificationDigest === undefined) return undefined;
-    const sealedBridge = currentRecoveryGuardedRebaseBridge(journal, rows, binding);
+    const sealedTransitions = dispatchReceiptChainTransitions(journal.seal.seed);
+    const sealedTransition = sealedTransitions.at(-1);
+    const sealedBridge =
+      sealedTransition === undefined
+        ? currentRecoveryGuardedRebaseBridge(journal, rows, binding)
+        : undefined;
     const candidates = rows.filter((row): row is AttestationEnvelope => {
       if (isAttestationTombstone(row)) return false;
       if (
@@ -1084,7 +1089,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const input = row.input;
       const rowBinding = row.gitEffectBinding!;
       const rowBridge = rowBinding.guardedRebaseBridge;
-      const logicalBase = sealedBridge?.ontoCommit ?? binding.baseCommit;
+      const logicalBase =
+        sealedTransition?.ontoCommit ?? sealedBridge?.ontoCommit ?? binding.baseCommit;
       return (
         input["taskId"] === binding.taskId &&
         input["worktreePath"] === binding.worktreePath &&
@@ -1100,7 +1106,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           ? rowBridge === undefined
           : rowBridge !== undefined &&
             dispatchPayloadDigest(rowBridge as unknown as DispatchJSONValue) ===
-              dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue))
+              dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue)) &&
+        (sealedTransition === undefined
+          ? rowBinding.receiptChainTransition === undefined
+          : rowBinding.receiptChainTransition !== undefined &&
+            dispatchPayloadDigest(
+              rowBinding.receiptChainTransition as unknown as DispatchJSONValue,
+            ) === dispatchPayloadDigest(sealedTransition as unknown as DispatchJSONValue)) &&
+        (sealedTransitions.length < 2
+          ? rowBinding.receiptChainTransitions === undefined
+          : dispatchPayloadDigest(
+              rowBinding.receiptChainTransitions as unknown as DispatchJSONValue,
+            ) === dispatchPayloadDigest(sealedTransitions as unknown as DispatchJSONValue))
       );
     });
     return candidates.length === 1 ? candidates[0] : undefined;
@@ -1254,11 +1271,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const visit = async (
       row: AttestationEnvelope,
       authenticatedStagedPredecessor = false,
+      authenticatedRecoveryPredecessor = false,
     ): Promise<boolean> => {
       const key = `${row.attestationId}:${String(row.generation)}`;
       if (visited.has(key)) return false;
       visited.add(key);
-      if (row === anchor) return true;
+      if (row === anchor && row.dispatchJournalRecoveryClaim === undefined) return true;
       if (!rowMatchesTask(row)) return false;
       const continuation = row.dispatchContinuationBinding;
       if (row.state === "consumed") {
@@ -1274,9 +1292,20 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       } else if (
         row.state !== "aborted" ||
         (row.abortReason !== "gate-rejected" &&
-          (!authenticatedStagedPredecessor || row.abortReason !== "staged-rebase"))
+          (!authenticatedStagedPredecessor || row.abortReason !== "staged-rebase") &&
+          !authenticatedRecoveryPredecessor)
       ) {
         return false;
+      }
+      if (
+        authenticatedRecoveryPredecessor &&
+        row.attestationId === fence.sourceAttestationId &&
+        row.generation <= fence.lineageMaximumGeneration &&
+        row.dispatchJournalRecoveryClaim === undefined &&
+        row.dispatchContinuationClaim === undefined &&
+        row.gateRejectedCorrectionClaim === undefined
+      ) {
+        return true;
       }
       const gateRejectedClaim = row.gateRejectedCorrectionClaim ?? legacyGateRejectedClaim(row);
       if (gateRejectedClaim !== undefined) {
@@ -1333,6 +1362,103 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         return await visit(predecessor);
       }
+      const recoveryClaim = row.dispatchJournalRecoveryClaim;
+      if (recoveryClaim !== undefined) {
+        const predecessor = rowFor(recoveryClaim.selectedSource);
+        const rowBinding = row.gitEffectBinding;
+        const inherited = rowBinding?.inheritedGitReceipts ?? [];
+        const timeoutMs =
+          attestationInstantMs(row.deadlines.childCancelAt, "deadlines.childCancelAt") -
+          attestationInstantMs(row.createdAt, "createdAt");
+        const sealedSource =
+          journal.seal.version === 1
+            ? {
+                kind: "aborted" as const,
+                version: 1 as const,
+                abortReason: journal.seal.seed.sourceAbortReason,
+              }
+            : journal.seal.seed.source;
+        const prepareRequest: PrepareDispatchRequest | undefined =
+          rowBinding === undefined || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0
+            ? undefined
+            : {
+                namespace: row.namespace,
+                roleId: row.promptProvenance.roleId,
+                surface: row.promptProvenance.surface,
+                input: row.input,
+                idempotencyKey: row.idempotencyKey,
+                timeoutMs,
+                overlays: row.overlays,
+                registry: DISPATCH_OVERLAY_REGISTRY,
+                promptDigest: row.promptProvenance.promptDigest,
+                catalogHash: row.promptProvenance.catalogHash,
+                expectedChild: row.expectedChild,
+                reprepareOf: recoveryClaim.selectedSource,
+                gitEffectBinding: rowBinding,
+                journalRecoveryReservation: {
+                  fenceRef: recoveryClaim.fenceRef,
+                  sourceAttestationId: recoveryClaim.selectedSource.attestationId,
+                  selectedSourceGeneration: recoveryClaim.selectedSource.generation,
+                  lineageMaximumGeneration: recoveryClaim.lineageMaximumGeneration,
+                },
+                journalRecoveryClaim: recoveryClaim,
+                ...(row.implementationEvidenceBootstrapRef === undefined
+                  ? {}
+                  : {
+                      implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef,
+                    }),
+              };
+        const predecessorTerminalMatches =
+          predecessor !== undefined &&
+          predecessor.terminalDigest === recoveryClaim.sourceTerminalDigest &&
+          (recoveryClaim.source.kind === "aborted"
+            ? predecessor.state === "aborted" &&
+              predecessor.abortReason === recoveryClaim.source.abortReason
+            : predecessor.state === "consumed" &&
+              predecessor.dispatchContinuationBinding?.currentRecoverySource?.kind ===
+                "consumed-fail");
+        const currentAnchorAuthorityMatches =
+          row !== anchor ||
+          (recoveryClaim.fenceRef === fence.fenceRef &&
+            recoveryClaim.sealReference === journal.seal.sealReference &&
+            recoveryClaim.sealDigest === journal.seal.sealDigest &&
+            recoveryClaim.selectedSource.generation === fence.selectedSourceGeneration &&
+            recoveryClaim.lineageMaximumGeneration === fence.lineageMaximumGeneration &&
+            recoveryClaim.sourceTerminalDigest === journal.seal.seed.sourceTerminalDigest &&
+            dispatchPayloadDigest(recoveryClaim.source as unknown as DispatchJSONValue) ===
+              dispatchPayloadDigest(sealedSource as unknown as DispatchJSONValue) &&
+            recoveryClaim.liveTip === journal.seal.seed.liveTip &&
+            recoveryClaim.gitReceiptsDigest === journal.seal.seed.gitReceiptsDigest);
+        if (
+          predecessor === undefined ||
+          rowBinding === undefined ||
+          prepareRequest === undefined ||
+          goalRef === undefined ||
+          recoveryClaim.selectedSource.attestationId !== fence.sourceAttestationId ||
+          recoveryClaim.selectedSource.generation > recoveryClaim.lineageMaximumGeneration ||
+          row.attestationId !== fence.sourceAttestationId ||
+          row.generation !== recoveryClaim.lineageMaximumGeneration + 1 ||
+          recoveryClaim.taskId !== binding.taskId ||
+          recoveryClaim.taskId !== journal.seal.seed.taskId ||
+          recoveryClaim.goalRef !== goalRef ||
+          recoveryClaim.taskDigest !== journal.seal.seed.taskDigest ||
+          recoveryClaim.finalizedManifestDigest !== journal.seal.seed.finalizedManifestDigest ||
+          recoveryClaim.managedFingerprint !== binding.handleFingerprint ||
+          recoveryClaim.managedFingerprint !== journal.seal.seed.managedFingerprint ||
+          recoveryClaim.gitReceiptsDigest !==
+            dispatchPayloadDigest(inherited as unknown as DispatchJSONValue) ||
+          row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input) ||
+          prepareDispatchRequestDigest(prepareRequest) !== row.prepareRequestDigest ||
+          !dispatchObject(row.input) ||
+          row.input["startingCommit"] !== recoveryClaim.liveTip ||
+          row.input["priorResultCommit"] !== recoveryClaim.liveTip ||
+          !currentAnchorAuthorityMatches ||
+          !predecessorTerminalMatches
+        ) {
+          return false;
+        }
+        return await visit(predecessor, false, true);
+      }
       const claim = row.dispatchContinuationClaim;
       if (claim !== undefined) {
         const predecessor = rowFor(claim.source);
@@ -1368,8 +1494,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const control = candidate.implementationQueue;
         const staged = candidate.stagedRebaseSourceBinding ?? control?.stagedRebaseSource;
         return (
-          candidate.state === "aborted" &&
-          candidate.abortReason === "staged-rebase" &&
+          ((candidate.state === "aborted" && candidate.abortReason === "staged-rebase") ||
+            candidate.state === "consumed") &&
           control?.state === "staged-rebase-retired" &&
           control.terminal?.reason === "staged-rebase" &&
           staged?.successor?.attestationId === row.attestationId &&
@@ -1455,7 +1581,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (row.state !== "consumed") return false;
 
       const bridge = row.gitEffectBinding?.guardedRebaseBridge;
-      if (bridge === undefined || !(await verifyGuardedRow(row))) return false;
+      const guardedRowVerified = bridge !== undefined && (await verifyGuardedRow(row));
+      if (bridge === undefined || !guardedRowVerified) return false;
       const predecessor = rowFor({
         attestationId: row.attestationId,
         generation: row.generation - 1,
@@ -2757,7 +2884,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const transitions =
           recoveryJournalState?.state === "committed"
             ? dispatchReceiptChainTransitions(recoveryJournalState.seal.seed)
-            : [];
+            : (binding.receiptChainTransitions ??
+              (binding.receiptChainTransition === undefined
+                ? []
+                : [binding.receiptChainTransition]));
         const transition = transitions.at(-1);
         const gitReceipts = await resolveInheritedGitChangeReceipts(
           { ...binding, ...input.lease },
@@ -4499,9 +4629,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   generation: resolvedReprepareOf.generation,
                 },
                 startingCommit,
-                options.worktreeStateDir === undefined
-                  ? {}
-                  : { stateDir: options.worktreeStateDir },
+                {
+                  ...(options.worktreeStateDir === undefined
+                    ? {}
+                    : { stateDir: options.worktreeStateDir }),
+                  ...(priorBinding.receiptChainTransition === undefined
+                    ? {}
+                    : { receiptChainTransition: priorBinding.receiptChainTransition }),
+                  ...(priorBinding.receiptChainTransitions === undefined
+                    ? {}
+                    : { receiptChainTransitions: priorBinding.receiptChainTransitions }),
+                },
               );
             } catch (error) {
               return rejectLaunch(
@@ -4510,10 +4648,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               );
             }
             if (priorBinding.guardedRebaseBridge === undefined) {
-              gitEffectBinding =
-                inheritedGitReceipts.length === 0
-                  ? resolvedGitEffectBinding
-                  : { ...resolvedGitEffectBinding, inheritedGitReceipts };
+              gitEffectBinding = {
+                ...resolvedGitEffectBinding,
+                ...(inheritedGitReceipts.length === 0 ? {} : { inheritedGitReceipts }),
+                ...(priorBinding.receiptChainTransition === undefined
+                  ? {}
+                  : { receiptChainTransition: priorBinding.receiptChainTransition }),
+                ...(priorBinding.receiptChainTransitions === undefined
+                  ? {}
+                  : { receiptChainTransitions: priorBinding.receiptChainTransitions }),
+              };
             } else {
               // Later correction on a guarded lineage: the verified bridge is
               // carried from the prior generation's persisted binding and
@@ -4805,7 +4949,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   readonly rebasedStartCommit: string;
                   readonly receiptPrefixLength: number;
                 }
-              | undefined;
+              | undefined =
+              binding.receiptChainTransition === undefined
+                ? undefined
+                : {
+                    oldResultCommit: binding.receiptChainTransition.oldResultCommit,
+                    ontoCommit: binding.receiptChainTransition.ontoCommit,
+                    rebasedStartCommit: binding.receiptChainTransition.rebasedStartCommit,
+                    receiptPrefixLength: binding.receiptChainTransition.receiptPrefixLength,
+                  };
             let receiptChainTransitions:
               | readonly {
                   readonly oldResultCommit: string;
@@ -4813,7 +4965,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   readonly rebasedStartCommit: string;
                   readonly receiptPrefixLength: number;
                 }[]
-              | undefined;
+              | undefined = binding.receiptChainTransitions?.map((entry) => ({
+              oldResultCommit: entry.oldResultCommit,
+              ontoCommit: entry.ontoCommit,
+              rebasedStartCommit: entry.rebasedStartCommit,
+              receiptPrefixLength: entry.receiptPrefixLength,
+            }));
             if (recoveryClaim !== undefined) {
               const journal = await recoveryJournal?.read(binding.taskId);
               if (
@@ -5210,7 +5367,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
           },
           observedBaseCommit:
-            binding.guardedRebaseBridge?.ontoCommit ?? recoveryOntoCommit ?? binding.baseCommit,
+            binding.guardedRebaseBridge?.ontoCommit ??
+            binding.receiptChainTransition?.ontoCommit ??
+            recoveryOntoCommit ??
+            binding.baseCommit,
           resultCommit,
           resultTree,
           gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -5846,7 +6006,10 @@ async function resolveLegacyImplementationQueueRow(
           goalRef: exactGoalRef(ledgerStore, binding.taskId),
           finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
         },
-        observedBaseCommit: binding.guardedRebaseBridge?.ontoCommit ?? binding.baseCommit,
+        observedBaseCommit:
+          binding.guardedRebaseBridge?.ontoCommit ??
+          binding.receiptChainTransition?.ontoCommit ??
+          binding.baseCommit,
         resultCommit,
         resultTree,
         gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,

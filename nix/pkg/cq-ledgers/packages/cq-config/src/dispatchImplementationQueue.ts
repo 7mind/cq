@@ -726,6 +726,18 @@ function isGateRejectedCorrectionAncestor(
       ? successorBinding.guardedRebaseBridge === undefined
       : successorBinding.guardedRebaseBridge !== undefined &&
         digest(sourceBinding.guardedRebaseBridge) === digest(successorBinding.guardedRebaseBridge);
+  const sameReceiptTransition =
+    sourceBinding?.receiptChainTransition === undefined
+      ? successorBinding.receiptChainTransition === undefined
+      : successorBinding.receiptChainTransition !== undefined &&
+        digest(sourceBinding.receiptChainTransition) ===
+          digest(successorBinding.receiptChainTransition);
+  const sameReceiptTransitions =
+    sourceBinding?.receiptChainTransitions === undefined
+      ? successorBinding.receiptChainTransitions === undefined
+      : successorBinding.receiptChainTransitions !== undefined &&
+        digest(sourceBinding.receiptChainTransitions) ===
+          digest(successorBinding.receiptChainTransitions);
   if (
     control === undefined ||
     sourceBinding === undefined ||
@@ -754,6 +766,8 @@ function isGateRejectedCorrectionAncestor(
     control.attempt.worktreePath !== successorBinding.worktreePath ||
     !sameManagerBinding ||
     !sameLineageBridge ||
+    !sameReceiptTransition ||
+    !sameReceiptTransitions ||
     successorResultCommit === control.attempt.resultCommit
   ) {
     return false;
@@ -762,6 +776,12 @@ function isGateRejectedCorrectionAncestor(
   const sourceInherited = sourceBinding.inheritedGitReceipts ?? [];
   const successorClosure = successorReceipts;
   const successorInherited = successorBinding.inheritedGitReceipts ?? [];
+  const sourceClosureEndsAtResult =
+    sourceClosure.length === 0 ||
+    sourceClosure.at(-1)?.newHead === control.attempt.resultCommit ||
+    (sourceBinding.receiptChainTransition !== undefined &&
+      sourceBinding.receiptChainTransition.receiptPrefixLength === sourceClosure.length &&
+      sourceBinding.receiptChainTransition.rebasedStartCommit === control.attempt.resultCommit);
   if (
     sourceInherited.length > sourceClosure.length ||
     digest(sourceInherited) !== digest(sourceClosure.slice(0, sourceInherited.length)) ||
@@ -769,8 +789,7 @@ function isGateRejectedCorrectionAncestor(
     digest(successorInherited) !== digest(successorClosure.slice(0, successorInherited.length)) ||
     sourceClosure.length >= successorClosure.length ||
     digest(sourceClosure) !== digest(successorClosure.slice(0, sourceClosure.length)) ||
-    (sourceClosure.length > 0 &&
-      sourceClosure[sourceClosure.length - 1]?.newHead !== control.attempt.resultCommit)
+    !sourceClosureEndsAtResult
   ) {
     return false;
   }
