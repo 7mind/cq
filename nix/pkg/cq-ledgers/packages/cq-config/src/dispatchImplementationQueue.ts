@@ -14,6 +14,7 @@ import {
   formatAttestationNamespace,
   isAttestationTombstone,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   type AttestationEnvelope,
   type AttestationNamespace,
   type AttestationRow,
@@ -1457,7 +1458,10 @@ function isUnenrolledCancelledRecoveryIntermediate(
     input["taskId"] !== authority.taskId ||
     input["branch"] !== intermediateBinding.branch ||
     intermediate.promptProvenance.inputDigest !== digest(intermediate.input) ||
-    prepareDispatchRequestDigest(prepareRequest) !== intermediate.prepareRequestDigest
+    !prepareDispatchRequestDigestMatchesKnownFormat(
+      prepareRequest,
+      intermediate.prepareRequestDigest,
+    )
   ) {
     return false;
   }
@@ -1583,7 +1587,10 @@ function isUnenrolledCancelledContinuationIntermediate(
     input["startingCommit"] !== retained.liveTip ||
     input["priorResultCommit"] !== retained.liveTip ||
     intermediate.promptProvenance.inputDigest !== digest(intermediate.input) ||
-    prepareDispatchRequestDigest(prepareRequest) !== intermediate.prepareRequestDigest
+    !prepareDispatchRequestDigestMatchesKnownFormat(
+      prepareRequest,
+      intermediate.prepareRequestDigest,
+    )
   ) {
     return false;
   }

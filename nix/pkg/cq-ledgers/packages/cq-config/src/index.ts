@@ -819,6 +819,7 @@ export {
   assertDispatchHandle,
   prepareDispatch,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   fetchDispatchInput,
   authorizeDispatchGitEffect,
   authorizeDispatchGitConflict,

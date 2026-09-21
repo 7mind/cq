@@ -10,6 +10,7 @@ import {
   isAttestationTombstone,
   loadConfig,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   validateAgainstSchema,
   type AttestationBackend,
   type AttestationEnvelope,
@@ -1219,7 +1220,10 @@ async function journalGuardedRecoverySuccessorEdge(
                   input["startingCommit"] !== bridge.rebasedStartCommit ||
                   input["priorResultCommit"] !== bridge.oldResultCommit
                 ? "successor-input-mismatch"
-                : prepareDispatchRequestDigest(request) !== successor.prepareRequestDigest
+                : !prepareDispatchRequestDigestMatchesKnownFormat(
+                      request,
+                      successor.prepareRequestDigest,
+                    )
                   ? "successor-prepare-digest-mismatch"
                   : !bindingMatches(sourceBinding, binding) ||
                       !bindingMatches(successorBinding, binding)
@@ -1276,7 +1280,10 @@ async function journalGuardedRecoverySuccessorEdge(
               ? "retained-seed-task-mismatch"
               : sourceClaim.liveTip !== seed.liveTip
                 ? "retained-seed-live-tip-mismatch"
-                : prepareDispatchRequestDigest(sourceRequest) !== sourceRow.prepareRequestDigest
+                : !prepareDispatchRequestDigestMatchesKnownFormat(
+                      sourceRequest,
+                      sourceRow.prepareRequestDigest,
+                    )
                   ? "retained-source-prepare-digest-mismatch"
                   : undefined;
     if (seedMismatchCause !== undefined) {

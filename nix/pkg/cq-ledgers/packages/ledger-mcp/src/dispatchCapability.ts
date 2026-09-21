@@ -42,6 +42,7 @@ import {
   parentGateCapabilityMatches,
   prepareDispatchOn,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   qualifyDispatchStagedCompletionOn,
   requestParentGateCancellationOn,
   releaseImplementationCompletionLease,
@@ -1454,7 +1455,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           recoveryClaim.gitReceiptsDigest !==
             dispatchPayloadDigest(inherited as unknown as DispatchJSONValue) ||
           row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input) ||
-          prepareDispatchRequestDigest(prepareRequest) !== row.prepareRequestDigest ||
+          !prepareDispatchRequestDigestMatchesKnownFormat(
+            prepareRequest,
+            row.prepareRequestDigest,
+          ) ||
           !dispatchObject(row.input) ||
           row.input["startingCommit"] !== recoveryClaim.liveTip ||
           row.input["priorResultCommit"] !== recoveryClaim.liveTip ||
@@ -1575,7 +1579,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           staged.guardedRebase !== bridge.guardedRebase ||
           staged.guardedRebaseJournalDigest !== bridge.requestDigest ||
           prepareRequest === undefined ||
-          prepareDispatchRequestDigest(prepareRequest) !== row.prepareRequestDigest ||
+          !prepareDispatchRequestDigestMatchesKnownFormat(
+            prepareRequest,
+            row.prepareRequestDigest,
+          ) ||
           !(await verifyGuardedRow(row))
         ) {
           return false;

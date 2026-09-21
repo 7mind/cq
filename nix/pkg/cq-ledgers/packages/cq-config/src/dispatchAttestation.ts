@@ -1551,8 +1551,11 @@ export interface DispatchGateRejectedCorrectionClaim {
  * dispatch. The executable overlay registry is excluded; validated overlay ids
  * and data are included.
  */
-export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): string {
-  return dispatchPayloadDigest({
+function prepareDispatchRequestDigestPayload(
+  request: PrepareDispatchRequest,
+  includeGateRejectedCorrectionClaim: boolean,
+): DispatchJSONValue {
+  return {
     roleId: request.roleId,
     surface: request.surface,
     input: request.input,
@@ -1597,26 +1600,46 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
-    gateRejectedCorrectionClaim:
-      request.gateRejectedCorrectionClaim === undefined
-        ? null
-        : {
-            fenceRef: request.gateRejectedCorrectionClaim.fenceRef,
-            source: {
-              attestationId: request.gateRejectedCorrectionClaim.source.attestationId,
-              generation: request.gateRejectedCorrectionClaim.source.generation,
-            },
-            resultCommit: request.gateRejectedCorrectionClaim.resultCommit,
-            gitReceiptLineageDigest: request.gateRejectedCorrectionClaim.gitReceiptLineageDigest,
-            guardedRebaseBridgeDigest:
-              request.gateRejectedCorrectionClaim.guardedRebaseBridgeDigest,
-          },
+    ...(includeGateRejectedCorrectionClaim
+      ? {
+          gateRejectedCorrectionClaim:
+            request.gateRejectedCorrectionClaim === undefined
+              ? null
+              : {
+                  fenceRef: request.gateRejectedCorrectionClaim.fenceRef,
+                  source: {
+                    attestationId: request.gateRejectedCorrectionClaim.source.attestationId,
+                    generation: request.gateRejectedCorrectionClaim.source.generation,
+                  },
+                  resultCommit: request.gateRejectedCorrectionClaim.resultCommit,
+                  gitReceiptLineageDigest:
+                    request.gateRejectedCorrectionClaim.gitReceiptLineageDigest,
+                  guardedRebaseBridgeDigest:
+                    request.gateRejectedCorrectionClaim.guardedRebaseBridgeDigest,
+                },
+        }
+      : {}),
     journalRecoveryClaim:
       request.journalRecoveryClaim === undefined
         ? null
         : (request.journalRecoveryClaim as unknown as DispatchJSONValue),
     implementationEvidenceBootstrapRef: request.implementationEvidenceBootstrapRef ?? null,
-  });
+  };
+}
+
+export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): string {
+  return dispatchPayloadDigest(prepareDispatchRequestDigestPayload(request, true));
+}
+
+export function prepareDispatchRequestDigestMatchesKnownFormat(
+  request: PrepareDispatchRequest,
+  persistedDigest: string,
+): boolean {
+  if (prepareDispatchRequestDigest(request) === persistedDigest) return true;
+  if (request.gateRejectedCorrectionClaim !== undefined) return false;
+  return (
+    dispatchPayloadDigest(prepareDispatchRequestDigestPayload(request, false)) === persistedDigest
+  );
 }
 
 /**

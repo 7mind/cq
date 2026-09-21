@@ -953,6 +953,193 @@ test("real SQLite reopens and replays one consumed intentional failure", async (
   }
 });
 
+for (const attestationBackend of ["memory", "sqlite"] as const) {
+  test(`cancelled focused recovery composes through a consumed failure into an ordinary continuation (${attestationBackend})`, async () => {
+    const runner = new GateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      attestationBackend,
+      "focused-only",
+    );
+    if (
+      subject.capability.resolveRecovery === undefined ||
+      subject.capability.resolveContinuation === undefined ||
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("cancelled recovery composition operations are unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("cancelled recovery composition lost its binding");
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    expect(
+      await subject.capability.qualifyImplementationCandidate({
+        attestationId: subject.prepared.attestationId,
+        generation: subject.prepared.generation,
+        roleId: "implement-worker",
+        correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+        childThreadId: `cancelled-focused-thread-${attestationBackend}`,
+        expectedRunId: subject.expectedChild.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: "2026-08-12T20:00:01.000Z",
+        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      }),
+    ).toMatchObject({ state: "queued" });
+    expect(
+      await subject.capability.abort({ ...subject.prepared, reason: "cancelled" }),
+    ).toMatchObject({ state: "aborted", reason: "cancelled" });
+
+    const recovery = await subject.capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (recovery.preparation.kind !== "current") {
+      throw new Error("cancelled focused worker did not produce current recovery authority");
+    }
+    const recoveredChild = {
+      childId: `implement-worker#cancelled-failure-${attestationBackend}-${String(sequence)}`,
+      runId: `cancelled-failure-${attestationBackend}-${String(sequence)}`,
+    };
+    const recovered = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "focused-only",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-cancelled-failure-${attestationBackend}`,
+      timeoutMs: 600_000,
+      expectedChild: recoveredChild,
+      recoveryPreparation: recovery.preparation.recoveryPreparation,
+    });
+    if (!recovered.accepted) throw new Error(recovered.detail);
+    await subject.capability.fetchInput({
+      ...recovered.handle,
+      inputCapability: recovered.prepared.inputCapability,
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: recovered.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          status: "fail",
+          resultCommit: null,
+          gitReceipts: [],
+          checkSummary: "cancelled recovery failed intentionally",
+          summary: "the recovered focused worker reports a controlled failure",
+          blockedReason: "controlled recovered failure",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const recoveredObservation = {
+      attestationId: recovered.handle.attestationId,
+      generation: recovered.handle.generation,
+      roleId: "implement-worker" as const,
+      correlationId: recoveredChild.childId.slice("implement-worker#".length),
+      childThreadId: `cancelled-failure-thread-${attestationBackend}`,
+      expectedRunId: recoveredChild.runId,
+      outcome: "completed" as const,
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: recovered.prepared.promptProvenance.promptDigest,
+    };
+    expect(
+      await subject.capability.qualifyImplementationCandidate(recoveredObservation),
+    ).toMatchObject({ state: "consumed" });
+
+    const continuation = await subject.capability.resolveContinuation(
+      binding,
+      subject.receipt.newHead,
+    );
+    const continuedChild = {
+      childId: `implement-worker#cancelled-continuation-${attestationBackend}-${String(sequence)}`,
+      runId: `cancelled-continuation-${attestationBackend}-${String(sequence)}`,
+    };
+    const continued = await subject.capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "focused-only",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-cancelled-continuation-${attestationBackend}`,
+      timeoutMs: 600_000,
+      expectedChild: continuedChild,
+      continuation: continuation.continuationReference,
+    });
+    if (!continued.accepted) throw new Error(continued.detail);
+    await subject.capability.fetchInput({
+      ...continued.handle,
+      inputCapability: continued.prepared.inputCapability,
+    });
+    expect(
+      await subject.capability.storeResult({
+        resultCapability: continued.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: subject.receipt.newHead,
+          gitReceipts: [],
+          checkSummary: "ordinary continuation after recovered failure checks passed",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: continued.handle.attestationId,
+      generation: continued.handle.generation,
+      roleId: "implement-worker",
+      correlationId: continuedChild.childId.slice("implement-worker#".length),
+      childThreadId: `cancelled-continuation-thread-${attestationBackend}`,
+      expectedRunId: continuedChild.runId,
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:03.000Z",
+      promptDigest: continued.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("ordinary continuation did not qualify");
+    expect(
+      await subject.capability.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: `cancelled-continuation-${attestationBackend}`,
+      }),
+    ).toMatchObject({ state: "completed", handle: continued.handle });
+    expect(runner.requests).toHaveLength(0);
+    await subject.backend.close();
+  });
+}
+
 test("intentional failure receipt and manager substitutions fail closed before consumption", async () => {
   const cases = [
     {
