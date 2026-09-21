@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type DispatchHandle,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   sequentialDispatchRandomBytes,
@@ -21,6 +22,7 @@ import {
   runGuardedRebase,
   type Item,
   type DispatchRecoveryResolution,
+  type ManagedWorktreeHandle,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -28,6 +30,121 @@ import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 const TASK_ID = "T6473";
 const NOW = "2026-09-14T08:00:00.000Z";
 const TEST_TIMEOUT_MS = 30_000;
+const PRE_EEC3_PRODUCER_COMMIT = "853eeae05037de6f8c6710c125fa00d9aa028760";
+
+interface PersistedDigestProduceConfig {
+  readonly action: "produce";
+  readonly caseRoot: string;
+  readonly expected: "digest-mismatch" | "success";
+}
+
+interface PersistedDigestRecoverConfig {
+  readonly action: "recover";
+  readonly caseRoot: string;
+  readonly expected: "digest-mismatch" | "success";
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly sourceHandle: DispatchHandle;
+  readonly sourceTip: string;
+}
+
+interface PersistedDigestProduced {
+  readonly runtimeRoot: string;
+  readonly runtimeSourceDigest: string;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly sourceHandle: DispatchHandle;
+  readonly sourceTip: string;
+  readonly recoverySeedRef: string;
+  readonly rowCount: number;
+  readonly rowDigest: string;
+  readonly journalDigest: string;
+}
+
+interface PersistedDigestRecovered {
+  readonly runtimeRoot: string;
+  readonly runtimeSourceDigest: string;
+  readonly outcome: "rejected" | "resolved";
+  readonly reason?: string;
+  readonly message?: string;
+  readonly status?: string;
+  readonly beforeCount: number;
+  readonly afterCount: number;
+  readonly rowDigest: string;
+  readonly journalDigest?: string;
+  readonly journalDigestBefore?: string;
+  readonly journalDigestAfter?: string;
+  readonly rowsByteIdentical: boolean;
+  readonly journalByteIdentical: boolean;
+}
+
+async function runPersistedDigestProcess<T>(
+  runtimeRoot: string,
+  config: PersistedDigestProduceConfig | PersistedDigestRecoverConfig,
+): Promise<T> {
+  const fixturePath = join(
+    runtimeRoot,
+    "packages/ledger-mcp/test/fixtures/preEec3PersistedPrepareDigestProcess.ts",
+  );
+  const child = Bun.spawn([process.execPath, fixturePath], {
+    cwd: runtimeRoot,
+    env: { ...process.env, CQ_H392_PROCESS_CONFIG: JSON.stringify(config) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (code !== 0) {
+    throw new Error(
+      `persisted digest process failed in ${runtimeRoot}: code=${String(code)} stderr=${stderr} stdout=${stdout}`,
+    );
+  }
+  return JSON.parse(stdout.trim()) as T;
+}
+
+async function materializePersistedDigestRuntime(currentRoot: string): Promise<string> {
+  const runtimeRoot = await fs.mkdtemp(join(tmpdir(), "h392-pre-eec3-runtime-"));
+  const archivePath = join(runtimeRoot, "producer.tar");
+  const repositoryRoot = await fs.realpath(join(currentRoot, "../../.."));
+  const archive = Bun.spawn(
+    [
+      "git",
+      "archive",
+      "--format=tar",
+      `--output=${archivePath}`,
+      `${PRE_EEC3_PRODUCER_COMMIT}:nix/pkg/cq-ledgers`,
+    ],
+    { cwd: repositoryRoot, stdout: "pipe", stderr: "pipe" },
+  );
+  const [archiveCode, archiveError] = await Promise.all([
+    archive.exited,
+    new Response(archive.stderr).text(),
+  ]);
+  if (archiveCode !== 0) throw new Error(`old producer archive failed: ${archiveError}`);
+  const extract = Bun.spawn(["tar", "-xf", archivePath, "-C", runtimeRoot], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [extractCode, extractError] = await Promise.all([
+    extract.exited,
+    new Response(extract.stderr).text(),
+  ]);
+  if (extractCode !== 0) throw new Error(`old producer extraction failed: ${extractError}`);
+  await fs.unlink(archivePath);
+  const fixturePath = "packages/ledger-mcp/test/fixtures/preEec3PersistedPrepareDigestProcess.ts";
+  await fs.mkdir(join(runtimeRoot, "packages/ledger-mcp/test/fixtures"), { recursive: true });
+  await fs.copyFile(join(currentRoot, fixturePath), join(runtimeRoot, fixturePath));
+  await fs.symlink(join(currentRoot, "node_modules"), join(runtimeRoot, "node_modules"), "dir");
+  for (const packageName of ["cq-config", "process-control", "ledger", "ledger-mcp"]) {
+    await fs.cp(
+      join(currentRoot, "packages", packageName, "node_modules"),
+      join(runtimeRoot, "packages", packageName, "node_modules"),
+      { recursive: true, verbatimSymlinks: true },
+    );
+  }
+  return runtimeRoot;
+}
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const child = Bun.spawn(["git", ...args], {
@@ -580,6 +697,79 @@ async function guardedOriginRecovery(): Promise<void> {
 }
 
 describe("manager-bound dispatch recovery", () => {
+  test(
+    "pre-eec3 persisted prepare digest recovers the exact retained guarded successor [Behavioral-Active Effectual-GoodCommunication]",
+    async () => {
+      const currentRoot = process.cwd();
+      const oldRoot = await materializePersistedDigestRuntime(currentRoot);
+      const oldCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-pre-eec3-"));
+      const controlCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-r17-control-"));
+      const oldProduced = await runPersistedDigestProcess<PersistedDigestProduced>(oldRoot, {
+        action: "produce",
+        caseRoot: oldCaseRoot,
+        expected: "digest-mismatch",
+      });
+      const crossRevision = await runPersistedDigestProcess<PersistedDigestRecovered>(
+        currentRoot,
+        {
+          action: "recover",
+          caseRoot: oldCaseRoot,
+          expected: "success",
+          managedHandle: oldProduced.managedHandle,
+          sourceHandle: oldProduced.sourceHandle,
+          sourceTip: oldProduced.sourceTip,
+        },
+      );
+      expect(crossRevision).toMatchObject({
+        outcome: "resolved",
+        status: "dispatch-recovery-resolved",
+        rowsByteIdentical: true,
+      });
+      expect(crossRevision.beforeCount).toBe(crossRevision.afterCount);
+
+      const controlProduced = await runPersistedDigestProcess<PersistedDigestProduced>(
+        currentRoot,
+        {
+          action: "produce",
+          caseRoot: controlCaseRoot,
+          expected: "success",
+        },
+      );
+      const currentControl = await runPersistedDigestProcess<PersistedDigestRecovered>(
+        currentRoot,
+        {
+          action: "recover",
+          caseRoot: controlCaseRoot,
+          expected: "success",
+          managedHandle: controlProduced.managedHandle,
+          sourceHandle: controlProduced.sourceHandle,
+          sourceTip: controlProduced.sourceTip,
+        },
+      );
+      expect(currentControl).toMatchObject({
+        outcome: "resolved",
+        status: "dispatch-recovery-resolved",
+        rowsByteIdentical: true,
+      });
+      expect(oldProduced.runtimeSourceDigest).not.toBe(controlProduced.runtimeSourceDigest);
+      console.log(
+        JSON.stringify({
+          hypothesisId: "H392",
+          oldProducerCommit: "853eeae05037de6f8c6710c125fa00d9aa028760",
+          frozenReaderSource:
+            "/nix/store/cnc2kbg9jhp3mbx0mgk1jsy65n3a33va-cq-verified-fused-recovery-source",
+          oldCaseRoot,
+          controlCaseRoot,
+          oldProduced,
+          crossRevision,
+          controlProduced,
+          currentControl,
+        }),
+      );
+    },
+    60_000,
+  );
+
   test(
     "guarded-origin current recovery preserves its authenticated bridge and logical onto",
     guardedOriginRecovery,
