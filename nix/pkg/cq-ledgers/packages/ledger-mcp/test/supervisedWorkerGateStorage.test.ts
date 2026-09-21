@@ -3262,8 +3262,9 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  test("current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history", async () => {
-    for (const attestationBackend of ["memory", "sqlite"] as const) {
+  test.each(["memory", "sqlite"] as const)(
+    "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history (%s)",
+    async (attestationBackend) => {
       const runner = new GateRejectedThenParentLossThenGreenGateDummy();
       const subject = await fixtureWithDispatchBase(
         runner,
@@ -3949,8 +3950,8 @@ throw new Error("unexpected controlled cq invocation");
         await qualify(resumed.prepared, resumedChild, "2026-08-12T20:00:14.000Z"),
       ).toMatchObject({ state: "queued" });
       await reopenedBackend.close();
-    }
-  });
+    },
+  );
 
   async function exerciseCancelledRecoveryContinuation(
     continuationKind: "ordinary" | "guarded-rebase",
