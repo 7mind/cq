@@ -91,6 +91,7 @@ import {
   prepareDispatch,
   prepareDispatchOn,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   provenanceBindingOf,
   resultCapabilityAuthorizes,
   resultCapabilityHash,
@@ -1079,6 +1080,55 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       p.resultCapability.token,
     );
     expect(JSON.stringify(h.store.snapshot())).not.toContain(p.resultCapability.token);
+  });
+
+  test("prepare digest compatibility admits only the exact pre-correction-claim format", () => {
+    const request = prepareRequest();
+    const legacyDigest = dispatchPayloadDigest({
+      roleId: request.roleId,
+      surface: request.surface,
+      input: request.input,
+      idempotencyKey: request.idempotencyKey,
+      timeoutMs: request.timeoutMs,
+      overlays: [],
+      promptDigest: request.promptDigest,
+      catalogHash: request.catalogHash,
+      expectedChild: {
+        childId: request.expectedChild.childId,
+        runId: request.expectedChild.runId,
+      },
+      reprepareOf: null,
+      gitEffectBinding: null,
+      continuationClaim: null,
+      journalRecoveryReservation: null,
+      journalRecoveryClaim: null,
+      implementationEvidenceBootstrapRef: null,
+    });
+    const currentDigest = prepareDispatchRequestDigest(request);
+    expect(legacyDigest).not.toBe(currentDigest);
+    expect(prepareDispatchRequestDigestMatchesKnownFormat(request, currentDigest)).toBe(true);
+    expect(prepareDispatchRequestDigestMatchesKnownFormat(request, legacyDigest)).toBe(true);
+    expect(
+      prepareDispatchRequestDigestMatchesKnownFormat(
+        { ...request, idempotencyKey: "changed-persisted-request" },
+        legacyDigest,
+      ),
+    ).toBe(false);
+    expect(
+      prepareDispatchRequestDigestMatchesKnownFormat(
+        {
+          ...request,
+          gateRejectedCorrectionClaim: {
+            fenceRef: `cq-dispatch-lineage-cutover-fence:v1:${"1".repeat(64)}`,
+            source: { attestationId: "att_legacy", generation: 1 },
+            resultCommit: "2".repeat(40),
+            gitReceiptLineageDigest: "3".repeat(64),
+            guardedRebaseBridgeDigest: null,
+          },
+        },
+        legacyDigest,
+      ),
+    ).toBe(false);
   });
 
   test("binds the worker-only Git capability to a materialized live generation and revokes it on result store", () => {

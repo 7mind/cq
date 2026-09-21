@@ -144,7 +144,9 @@ function journalPath(caseRoot: string): string {
 }
 
 async function sourceDigest(): Promise<string> {
-  return digest(await fs.readFile(join(process.cwd(), "packages/cq-config/src/dispatchAttestation.ts")));
+  return digest(
+    await fs.readFile(join(process.cwd(), "packages/cq-config/src/dispatchAttestation.ts")),
+  );
 }
 
 async function produce(caseRoot: string): Promise<ProducedFixture> {
@@ -460,15 +462,20 @@ const output =
     ? await produce(config.caseRoot)
     : await recover(
         config.caseRoot,
-        config.managedHandle ?? (() => {
-          throw new Error("managedHandle is required for recovery");
-        })(),
-        config.sourceHandle ?? (() => {
-          throw new Error("sourceHandle is required for recovery");
-        })(),
-        config.sourceTip ?? (() => {
-          throw new Error("sourceTip is required for recovery");
-        })(),
+        config.managedHandle ??
+          (() => {
+            throw new Error("managedHandle is required for recovery");
+          })(),
+        config.sourceHandle ??
+          (() => {
+            throw new Error("sourceHandle is required for recovery");
+          })(),
+        config.sourceTip ??
+          (() => {
+            throw new Error("sourceTip is required for recovery");
+          })(),
         config.expected,
       );
-process.stdout.write(`${JSON.stringify({ runtimeRoot: process.cwd(), runtimeSourceDigest, ...output })}\n`);
+process.stdout.write(
+  `${JSON.stringify({ runtimeRoot: process.cwd(), runtimeSourceDigest, ...output })}\n`,
+);

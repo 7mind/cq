@@ -1116,18 +1116,82 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         },
       }),
     ).toMatchObject({ state: "gate-pending" });
-    const qualified = await subject.capability.qualifyImplementationCandidate({
+    const continuedObservation = {
       attestationId: continued.handle.attestationId,
       generation: continued.handle.generation,
-      roleId: "implement-worker",
+      roleId: "implement-worker" as const,
       correlationId: continuedChild.childId.slice("implement-worker#".length),
       childThreadId: `cancelled-continuation-thread-${attestationBackend}`,
       expectedRunId: continuedChild.runId,
-      outcome: "completed",
+      outcome: "completed" as const,
       exitStatus: 0,
       observedAt: "2026-08-12T20:00:03.000Z",
       promptDigest: continued.prepared.promptProvenance.promptDigest,
-    });
+    };
+    const rejectLineageMutation = async (
+      handle: { readonly attestationId: string; readonly generation: number },
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+    ): Promise<void> => {
+      const retained = await subject.backend.transact({ kind: "handle", handle }, (store) => {
+        const row = store.read(handle);
+        if (row === undefined || isAttestationTombstone(row)) {
+          throw new Error("cancelled recovery composition row disappeared");
+        }
+        return row;
+      });
+      const rowCount = subject.backend.storedRows().length;
+      await subject.backend.transact({ kind: "handle", handle }, (store) => {
+        const current = store.read(handle);
+        if (current === undefined) throw new Error("cancelled recovery mutation lost its row");
+        store.replace(current, mutate(retained));
+      });
+      try {
+        await expect(
+          subject.capability.qualifyImplementationCandidate!(continuedObservation),
+        ).rejects.toThrow("cannot be resurrected");
+        expect(subject.backend.storedRows()).toHaveLength(rowCount);
+        expect(runner.requests).toHaveLength(0);
+      } finally {
+        await subject.backend.transact({ kind: "handle", handle }, (store) => {
+          const current = store.read(handle);
+          if (current === undefined) throw new Error("cancelled recovery restore lost its row");
+          store.replace(current, retained);
+        });
+      }
+    };
+    await rejectLineageMutation(subject.prepared, (row) => ({
+      ...row,
+      terminalDigest: "0".repeat(64),
+    }));
+    await rejectLineageMutation(subject.prepared, (row) => ({
+      ...row,
+      implementationQueue: {
+        ...row.implementationQueue!,
+        terminal: { ...row.implementationQueue!.terminal!, detailsDigest: "0".repeat(64) },
+      },
+    }));
+    await rejectLineageMutation(recovered.handle, (row) => ({
+      ...row,
+      dispatchJournalRecoveryClaim: {
+        ...row.dispatchJournalRecoveryClaim!,
+        sourceTerminalDigest: "0".repeat(64),
+      },
+    }));
+    await rejectLineageMutation(recovered.handle, (row) => ({
+      ...row,
+      terminalDigest: "0".repeat(64),
+    }));
+    await rejectLineageMutation(continued.handle, (row) => ({
+      ...row,
+      dispatchContinuationClaim: {
+        ...row.dispatchContinuationClaim!,
+        source: {
+          ...row.dispatchContinuationClaim!.source,
+          generation: continued.handle.generation,
+        },
+      },
+    }));
+    const qualified = await subject.capability.qualifyImplementationCandidate(continuedObservation);
     if (qualified.state !== "queued") throw new Error("ordinary continuation did not qualify");
     expect(
       await subject.capability.coordinateImplementationCandidate({

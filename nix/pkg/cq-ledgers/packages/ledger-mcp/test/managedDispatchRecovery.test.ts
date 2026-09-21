@@ -697,78 +697,65 @@ async function guardedOriginRecovery(): Promise<void> {
 }
 
 describe("manager-bound dispatch recovery", () => {
-  test(
-    "pre-eec3 persisted prepare digest recovers the exact retained guarded successor [Behavioral-Active Effectual-GoodCommunication]",
-    async () => {
-      const currentRoot = process.cwd();
-      const oldRoot = await materializePersistedDigestRuntime(currentRoot);
-      const oldCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-pre-eec3-"));
-      const controlCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-r17-control-"));
-      const oldProduced = await runPersistedDigestProcess<PersistedDigestProduced>(oldRoot, {
-        action: "produce",
-        caseRoot: oldCaseRoot,
-        expected: "digest-mismatch",
-      });
-      const crossRevision = await runPersistedDigestProcess<PersistedDigestRecovered>(
-        currentRoot,
-        {
-          action: "recover",
-          caseRoot: oldCaseRoot,
-          expected: "success",
-          managedHandle: oldProduced.managedHandle,
-          sourceHandle: oldProduced.sourceHandle,
-          sourceTip: oldProduced.sourceTip,
-        },
-      );
-      expect(crossRevision).toMatchObject({
-        outcome: "resolved",
-        status: "dispatch-recovery-resolved",
-        rowsByteIdentical: true,
-      });
-      expect(crossRevision.beforeCount).toBe(crossRevision.afterCount);
+  test("pre-eec3 persisted prepare digest recovers the exact retained guarded successor [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const currentRoot = process.cwd();
+    const oldRoot = await materializePersistedDigestRuntime(currentRoot);
+    const oldCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-pre-eec3-"));
+    const controlCaseRoot = await fs.mkdtemp(join(tmpdir(), "h392-r17-control-"));
+    const oldProduced = await runPersistedDigestProcess<PersistedDigestProduced>(oldRoot, {
+      action: "produce",
+      caseRoot: oldCaseRoot,
+      expected: "digest-mismatch",
+    });
+    const crossRevision = await runPersistedDigestProcess<PersistedDigestRecovered>(currentRoot, {
+      action: "recover",
+      caseRoot: oldCaseRoot,
+      expected: "success",
+      managedHandle: oldProduced.managedHandle,
+      sourceHandle: oldProduced.sourceHandle,
+      sourceTip: oldProduced.sourceTip,
+    });
+    expect(crossRevision).toMatchObject({
+      outcome: "resolved",
+      status: "dispatch-recovery-resolved",
+      rowsByteIdentical: true,
+    });
+    expect(crossRevision.beforeCount).toBe(crossRevision.afterCount);
 
-      const controlProduced = await runPersistedDigestProcess<PersistedDigestProduced>(
-        currentRoot,
-        {
-          action: "produce",
-          caseRoot: controlCaseRoot,
-          expected: "success",
-        },
-      );
-      const currentControl = await runPersistedDigestProcess<PersistedDigestRecovered>(
-        currentRoot,
-        {
-          action: "recover",
-          caseRoot: controlCaseRoot,
-          expected: "success",
-          managedHandle: controlProduced.managedHandle,
-          sourceHandle: controlProduced.sourceHandle,
-          sourceTip: controlProduced.sourceTip,
-        },
-      );
-      expect(currentControl).toMatchObject({
-        outcome: "resolved",
-        status: "dispatch-recovery-resolved",
-        rowsByteIdentical: true,
-      });
-      expect(oldProduced.runtimeSourceDigest).not.toBe(controlProduced.runtimeSourceDigest);
-      console.log(
-        JSON.stringify({
-          hypothesisId: "H392",
-          oldProducerCommit: "853eeae05037de6f8c6710c125fa00d9aa028760",
-          frozenReaderSource:
-            "/nix/store/cnc2kbg9jhp3mbx0mgk1jsy65n3a33va-cq-verified-fused-recovery-source",
-          oldCaseRoot,
-          controlCaseRoot,
-          oldProduced,
-          crossRevision,
-          controlProduced,
-          currentControl,
-        }),
-      );
-    },
-    60_000,
-  );
+    const controlProduced = await runPersistedDigestProcess<PersistedDigestProduced>(currentRoot, {
+      action: "produce",
+      caseRoot: controlCaseRoot,
+      expected: "success",
+    });
+    const currentControl = await runPersistedDigestProcess<PersistedDigestRecovered>(currentRoot, {
+      action: "recover",
+      caseRoot: controlCaseRoot,
+      expected: "success",
+      managedHandle: controlProduced.managedHandle,
+      sourceHandle: controlProduced.sourceHandle,
+      sourceTip: controlProduced.sourceTip,
+    });
+    expect(currentControl).toMatchObject({
+      outcome: "resolved",
+      status: "dispatch-recovery-resolved",
+      rowsByteIdentical: true,
+    });
+    expect(oldProduced.runtimeSourceDigest).not.toBe(controlProduced.runtimeSourceDigest);
+    console.log(
+      JSON.stringify({
+        hypothesisId: "H392",
+        oldProducerCommit: "853eeae05037de6f8c6710c125fa00d9aa028760",
+        frozenReaderSource:
+          "/nix/store/cnc2kbg9jhp3mbx0mgk1jsy65n3a33va-cq-verified-fused-recovery-source",
+        oldCaseRoot,
+        controlCaseRoot,
+        oldProduced,
+        crossRevision,
+        controlProduced,
+        currentControl,
+      }),
+    );
+  }, 60_000);
 
   test(
     "guarded-origin current recovery preserves its authenticated bridge and logical onto",

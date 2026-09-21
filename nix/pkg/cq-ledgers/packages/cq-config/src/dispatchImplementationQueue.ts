@@ -6,6 +6,7 @@ import {
   DispatchAuthorizationError,
   DispatchAttestationExtensionError,
   DispatchStateConflictError,
+  assertDispatchContinuationBinding,
   assertDispatchHandle,
   attestationRowDigest,
   attestationInstantMs,
@@ -690,6 +691,169 @@ function isConsumedOrdinaryContinuationAncestor(
   );
 }
 
+interface AuthenticatedUnenrolledConsumedFailure {
+  readonly binding: DispatchGitEffectBinding;
+  readonly continuation: NonNullable<AttestationEnvelope["dispatchContinuationBinding"]>;
+}
+
+function authenticatedUnenrolledConsumedFailure(
+  row: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): AuthenticatedUnenrolledConsumedFailure | undefined {
+  if (isAttestationTombstone(row)) return undefined;
+  const binding = row.gitEffectBinding;
+  const continuation = row.dispatchContinuationBinding;
+  const proof = row.nativeCompletion;
+  const input =
+    row.input !== null && typeof row.input === "object" && !Array.isArray(row.input)
+      ? (row.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const output =
+    row.output !== null && typeof row.output === "object" && !Array.isArray(row.output)
+      ? (row.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (
+    binding === undefined ||
+    continuation === undefined ||
+    proof === undefined ||
+    input === undefined ||
+    output === undefined ||
+    row.state !== "consumed" ||
+    row.consumedAt !== row.terminalAt ||
+    row.implementationQueue !== undefined ||
+    row.stagedCompletionQualification !== undefined ||
+    row.outputDigest === undefined ||
+    row.gateSubmittedOutputDigest !== row.outputDigest ||
+    row.outputDigest !== digest(row.output) ||
+    output["status"] !== "fail" ||
+    output["taskId"] !== authority.taskId ||
+    output["resultCommit"] !== null ||
+    continuation.currentRecoverySource?.kind !== "consumed-fail" ||
+    continuation.currentRecoverySource.status !== "fail" ||
+    continuation.attestationId !== row.attestationId ||
+    continuation.generation !== row.generation ||
+    continuation.terminalAt !== row.terminalAt ||
+    continuation.terminalDigest !== row.terminalDigest ||
+    continuation.callerLineage.actor !== proof.actor ||
+    continuation.callerLineage.childId !== proof.childId ||
+    continuation.callerLineage.runId !== proof.runId ||
+    row.terminalDigest !==
+      digest({
+        terminalKind: "consumed",
+        outputDigest: row.outputDigest,
+        childId: proof.childId,
+        runId: proof.runId,
+        completedAt: proof.completedAt,
+      }) ||
+    binding.taskId !== authority.taskId ||
+    binding.guardedRebaseBridge !== undefined ||
+    digest(continuation.gitEffectBinding) !== digest(binding)
+  ) {
+    return undefined;
+  }
+  try {
+    assertDispatchContinuationBinding(continuation);
+  } catch {
+    return undefined;
+  }
+  const inherited = binding.inheritedGitReceipts ?? [];
+  const receipts = continuation.gitReceipts;
+  if (
+    inherited.length > receipts.length ||
+    digest(inherited) !== digest(receipts.slice(0, inherited.length))
+  ) {
+    return undefined;
+  }
+  const suffix = receipts.slice(inherited.length);
+  const startingCommit = input["startingCommit"];
+  if (
+    typeof startingCommit !== "string" ||
+    digest(output["gitReceipts"] ?? []) !== digest(suffix) ||
+    !suffix.every((receipt, index) => {
+      const previousHead = index === 0 ? startingCommit : suffix[index - 1]?.newHead;
+      return (
+        receipt.attestationId === row.attestationId &&
+        receipt.generation === row.generation &&
+        receipt.taskId === authority.taskId &&
+        receipt.oldHead === previousHead
+      );
+    }) ||
+    continuation.liveTip !== (suffix.at(-1)?.newHead ?? startingCommit)
+  ) {
+    return undefined;
+  }
+  return { binding, continuation };
+}
+
+function isUnenrolledConsumedFailureContinuationAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  authority: ImplementationQueueAuthority,
+): boolean {
+  const authenticated = authenticatedUnenrolledConsumedFailure(candidate, authority);
+  const claim = successor.dispatchContinuationClaim;
+  const successorInput =
+    successor.input !== null &&
+    typeof successor.input === "object" &&
+    !Array.isArray(successor.input)
+      ? (successor.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (authenticated === undefined || claim === undefined || successorInput === undefined) {
+    return false;
+  }
+  const { binding, continuation } = authenticated;
+  const timeoutMs =
+    attestationInstantMs(successor.deadlines.childCancelAt, "deadlines.childCancelAt") -
+    attestationInstantMs(successor.createdAt, "createdAt");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return false;
+  const prepareRequest: PrepareDispatchRequest = {
+    namespace: successor.namespace,
+    roleId: successor.promptProvenance.roleId,
+    surface: successor.promptProvenance.surface,
+    input: successor.input,
+    idempotencyKey: successor.idempotencyKey,
+    timeoutMs,
+    overlays: successor.overlays,
+    registry: DISPATCH_OVERLAY_REGISTRY,
+    promptDigest: successor.promptProvenance.promptDigest,
+    catalogHash: successor.promptProvenance.catalogHash,
+    expectedChild: successor.expectedChild,
+    reprepareOf: claim.source,
+    gitEffectBinding: successorBinding,
+    continuationClaim: {
+      continuationReference: claim.continuationReference,
+      actor: "trusted-parent",
+      liveTip: continuation.liveTip,
+    },
+    ...(successor.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: successor.implementationEvidenceBootstrapRef }),
+  };
+  return (
+    successorBinding.guardedRebaseBridge === undefined &&
+    candidate.attestationId === successor.attestationId &&
+    candidate.generation + 1 === successor.generation &&
+    claim.source.attestationId === candidate.attestationId &&
+    claim.source.generation === candidate.generation &&
+    claim.continuationReference === continuation.continuationReference &&
+    successorBinding.taskId === authority.taskId &&
+    binding.handleFingerprint === successorBinding.handleFingerprint &&
+    binding.repositoryId === successorBinding.repositoryId &&
+    binding.worktreePath === successorBinding.worktreePath &&
+    binding.branch === successorBinding.branch &&
+    binding.ref === successorBinding.ref &&
+    binding.baseCommit === successorBinding.baseCommit &&
+    successorInput["taskId"] === authority.taskId &&
+    successorInput["branch"] === successorBinding.branch &&
+    successorInput["startingCommit"] === continuation.liveTip &&
+    successorInput["priorResultCommit"] === continuation.liveTip &&
+    successor.promptProvenance.inputDigest === digest(successor.input) &&
+    digest(continuation.gitReceipts) === digest(successorBinding.inheritedGitReceipts ?? []) &&
+    prepareDispatchRequestDigestMatchesKnownFormat(prepareRequest, successor.prepareRequestDigest)
+  );
+}
+
 function isGateRejectedCorrectionAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -1362,6 +1526,13 @@ function isUnenrolledCancelledRecoveryIntermediate(
   const claim = intermediate.dispatchJournalRecoveryClaim;
   const candidateClaim = candidate.dispatchJournalRecoveryClaim;
   const bridge = intermediateBinding?.guardedRebaseBridge;
+  const candidateControl = candidate.implementationQueue;
+  const candidateOutput =
+    candidate.output !== null &&
+    typeof candidate.output === "object" &&
+    !Array.isArray(candidate.output)
+      ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
   const input =
     intermediate.input !== null &&
     typeof intermediate.input === "object" &&
@@ -1385,7 +1556,7 @@ function isUnenrolledCancelledRecoveryIntermediate(
         "baseCommit",
       ] as const
     ).every((field) => candidateBinding[field] === intermediateBinding[field]);
-  const terminalAuthentic = (row: AttestationEnvelope): boolean => {
+  const abortedTerminalAuthentic = (row: AttestationEnvelope): boolean => {
     const detailsDigest = row.abortDetails === undefined ? null : digest(row.abortDetails);
     return (
       row.state === "aborted" &&
@@ -1400,6 +1571,35 @@ function isUnenrolledCancelledRecoveryIntermediate(
         })
     );
   };
+  const candidateTerminal = candidateControl?.terminal;
+  const candidateQueueTerminalAuthentic =
+    candidateControl !== undefined &&
+    candidateBinding !== undefined &&
+    candidateOutput !== undefined &&
+    candidateControl.state === "terminal" &&
+    candidateTerminal !== undefined &&
+    candidateTerminal.reason === candidate.abortReason &&
+    candidateTerminal.terminalAt === candidate.terminalAt &&
+    candidateTerminal.detailsDigest === digest(candidate.abortDetails ?? null) &&
+    candidateControl.qualification !== undefined &&
+    candidate.stagedCompletionQualification?.qualificationDigest ===
+      candidateControl.qualification.qualificationDigest &&
+    candidateControl.enrollment.taskId === authority.taskId &&
+    candidateControl.enrollment.goalRef === authority.goalRef &&
+    candidateControl.enrollment.finalizedManifestDigest === authority.finalizedManifestDigest &&
+    candidateControl.attempt.taskId === authority.taskId &&
+    candidateControl.attempt.repositoryId === candidateBinding.repositoryId &&
+    candidateControl.attempt.worktreePath === candidateBinding.worktreePath &&
+    candidateOutput["status"] === "pass" &&
+    candidateOutput["taskId"] === candidateControl.attempt.taskId &&
+    candidateOutput["resultCommit"] === candidateControl.attempt.resultCommit &&
+    digest(candidateOutput["gitReceipts"] ?? []) ===
+      candidateControl.attempt.gitReceiptLineageDigest &&
+    digest(candidateControl.attempt.gitReceipts) ===
+      candidateControl.attempt.gitReceiptLineageDigest;
+  const consumedFailure = authenticatedUnenrolledConsumedFailure(intermediate, authority);
+  const consumedFailureAuthentic =
+    claim !== undefined && consumedFailure?.continuation.liveTip === claim.liveTip;
   const timeoutMs =
     attestationInstantMs(intermediate.deadlines.childCancelAt, "deadlines.childCancelAt") -
     attestationInstantMs(intermediate.createdAt, "createdAt");
@@ -1448,10 +1648,12 @@ function isUnenrolledCancelledRecoveryIntermediate(
     intermediate.implementationQueue !== undefined ||
     candidate.attestationId !== intermediate.attestationId ||
     candidate.generation + 1 !== intermediate.generation ||
-    !terminalAuthentic(candidate) ||
-    !terminalAuthentic(intermediate) ||
+    !abortedTerminalAuthentic(candidate) ||
+    !(
+      (abortedTerminalAuthentic(intermediate) && intermediate.abortReason === "cancelled") ||
+      (candidateQueueTerminalAuthentic && consumedFailureAuthentic)
+    ) ||
     (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") ||
-    intermediate.abortReason !== "cancelled" ||
     !sameManagerBinding ||
     candidateBinding.taskId !== authority.taskId ||
     intermediateBinding.taskId !== authority.taskId ||
@@ -1659,6 +1861,12 @@ function isComposedTerminalAncestor(
   if (visited.has(candidateKey)) return false;
   const nextVisited = new Set(visited).add(candidateKey);
   if (
+    isUnenrolledConsumedFailureContinuationAncestor(
+      candidate,
+      successor,
+      successorBinding,
+      authority,
+    ) ||
     isConsumedGuardedContinuationAncestor(candidate, successor, successorBinding) ||
     isConsumedOrdinaryContinuationAncestor(candidate, successor, successorBinding) ||
     isRetiredGuardedRebaseAncestor(candidate, successor, successorBinding) ||
