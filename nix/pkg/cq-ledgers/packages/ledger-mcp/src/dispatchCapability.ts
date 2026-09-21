@@ -1173,7 +1173,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             generation: input.generation,
           },
           liveTip,
-          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          {
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+            ...recoveryLineageEvidenceDeps(binding),
+          },
         );
         recoveryContext = { liveTip, gitReceipts };
       }

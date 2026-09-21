@@ -4019,8 +4019,7 @@ throw new Error("unexpected controlled cq invocation");
     },
   );
 
-  // expected-failure: tasks:T6580
-  test.failing(
+  test(
     "parent-lost ordinary continuation retains authenticated repeated guarded transitions",
     async () => {
       for (const attestationBackend of ["memory", "sqlite"] as const) {
