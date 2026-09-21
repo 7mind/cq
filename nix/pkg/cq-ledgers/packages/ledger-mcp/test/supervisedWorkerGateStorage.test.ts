@@ -3262,9 +3262,10 @@ throw new Error("unexpected controlled cq invocation");
     expect(runner.requests).toHaveLength(3);
   });
 
-  test.each(["memory", "sqlite"] as const)(
-    "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history (%s)",
-    async (attestationBackend) => {
+  async function exerciseCurrentRecoveredStagedRetirement(
+    attestationBackend: "memory" | "sqlite",
+    abortOrdinaryContinuation: boolean,
+  ): Promise<void> {
       const runner = new GateRejectedThenParentLossThenGreenGateDummy();
       const subject = await fixtureWithDispatchBase(
         runner,
@@ -3946,11 +3947,87 @@ throw new Error("unexpected controlled cq invocation");
           },
         }),
       ).toMatchObject({ state: "gate-pending" });
-      expect(
-        await qualify(resumed.prepared, resumedChild, "2026-08-12T20:00:14.000Z"),
-      ).toMatchObject({ state: "queued" });
+      const resumedQualified = await qualify(
+        resumed.prepared,
+        resumedChild,
+        "2026-08-12T20:00:14.000Z",
+      );
+      expect(resumedQualified).toMatchObject({ state: "queued" });
+      if (abortOrdinaryContinuation) {
+        if (resumedQualified.state !== "queued") {
+          throw new Error("resumed repeated-guarded worker did not qualify");
+        }
+        expect(
+          await capability.coordinateImplementationCandidate({
+            partitionKey: resumedQualified.partitionKey,
+            holderId: `t6580-consume-repeated-resumed-${attestationBackend}`,
+          }),
+        ).toMatchObject({ state: "completed" });
+        if (capability.resolveContinuation === undefined) {
+          throw new Error("repeated-guarded worker omitted continuation authority");
+        }
+        const continuation = await capability.resolveContinuation(
+          binding,
+          resumedReceipt.newHead,
+        );
+        const ordinary = await capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2081",
+            headline: "supervise exact tip",
+            description: "run the full gate outside the workspace-write sandbox",
+            acceptance: "only a green exact tip becomes consumable",
+            worktreePath: subject.managed.handle.absolutePath,
+            branch: subject.managed.handle.branch,
+            baseCommit: secondBaseCommit,
+            round: 6,
+            startingCommit: resumedReceipt.newHead,
+            validationIntent: "final",
+            priorResultCommit: resumedReceipt.newHead,
+          },
+          idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-ordinary-after-repeated-guarded`,
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: `implement-worker#t6580-ordinary-${attestationBackend}-${String(sequence)}`,
+            runId: `t6580-ordinary-${attestationBackend}-run-${String(sequence)}`,
+          },
+          continuation: continuation.continuationReference,
+        });
+        if (!ordinary.accepted) throw new Error(ordinary.detail);
+        await capability.fetchInput({
+          ...ordinary.handle,
+          inputCapability: ordinary.prepared.inputCapability,
+        });
+        expect(
+          await capability.abort({ ...ordinary.handle, reason: "parent-lost" }),
+        ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+        expect(
+          await capability.resolveRecovery(binding, resumedReceipt.newHead),
+        ).toMatchObject({
+          status: "dispatch-recovery-resolved",
+          liveTip: resumedReceipt.newHead,
+          preparation: { kind: "current" },
+        });
+      }
       await reopenedBackend.close();
+  }
+
+  test.each(["memory", "sqlite"] as const)(
+    "current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history (%s)",
+    async (attestationBackend) => {
+      await exerciseCurrentRecoveredStagedRetirement(attestationBackend, false);
     },
+  );
+
+  // expected-failure: tasks:T6580
+  test.failing(
+    "parent-lost ordinary continuation retains authenticated repeated guarded transitions",
+    async () => {
+      for (const attestationBackend of ["memory", "sqlite"] as const) {
+        await exerciseCurrentRecoveredStagedRetirement(attestationBackend, true);
+      }
+    },
+    30_000,
   );
 
   async function exerciseCancelledRecoveryContinuation(
