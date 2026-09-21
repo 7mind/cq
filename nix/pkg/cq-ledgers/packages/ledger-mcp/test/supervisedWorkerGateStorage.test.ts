@@ -259,6 +259,35 @@ class ParentLossThenGreenGateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
+class ParentLossThenRedThenGreenGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    if (this.requests.length === 1) {
+      throw new Error("controlled parent loss after qualification");
+    }
+    if (this.requests.length === 2) {
+      return {
+        gateExitCode: 1,
+        passCount: 61,
+        failCount: 1,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:09.000Z",
+        outputTail: "(fail) recovered guarded candidate\n61 pass\n1 fail",
+      };
+    }
+    return {
+      gateExitCode: 0,
+      passCount: 62,
+      failCount: 0,
+      gateDurationMs: 1,
+      capturedAt: "2026-08-12T20:00:12.000Z",
+      outputTail: "62 pass\n0 fail",
+    };
+  }
+}
+
 class GateRejectedThenParentLossThenGreenGateDummy implements SupervisedWorkerGateRunner {
   readonly requests: SupervisedWorkerGateRunRequest[] = [];
 
@@ -5362,6 +5391,442 @@ throw new Error("unexpected controlled cq invocation");
     ).toMatchObject({ state: "completed" });
     expect(runner.requests).toHaveLength(3);
   });
+
+  async function exerciseRecoveredGuardedRedCorrection(
+    attestationBackend: "memory" | "sqlite",
+    freshGuardedReceipt: boolean,
+  ): Promise<void> {
+    const runner = new ParentLossThenRedThenGreenGateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      attestationBackend,
+    );
+    const recoveryJournal = new InMemoryCurrentRecoverySealJournalStore();
+    type LaunchedSuccessor = Parameters<
+      NonNullable<Parameters<typeof createDispatchCapability>[0]["implementationSuccessorLauncher"]>
+    >[0];
+    let launchedSuccessor: LaunchedSuccessor | undefined;
+    const capability = createDispatchCapability({
+      ...subject.capabilityOptions,
+      recoveryJournal,
+      implementationSuccessorLauncher: async (input) => {
+        launchedSuccessor = input;
+      },
+    });
+    if (
+      capability.qualifyImplementationCandidate === undefined ||
+      capability.coordinateImplementationCandidate === undefined ||
+      capability.resolveRecovery === undefined ||
+      capability.gitCommit === undefined
+    ) {
+      throw new Error("recovered guarded correction runtime is unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("recovered guarded correction binding disappeared");
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      child: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: child.childId.slice("implement-worker#".length),
+        childThreadId: `recovered-guarded-red-${String(prepared.generation)}`,
+        expectedRunId: child.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+
+    expect(
+      await capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const sourceQualified = await qualify(
+      subject.prepared,
+      subject.expectedChild,
+      "2026-08-12T20:00:02.000Z",
+    );
+    if (sourceQualified.state !== "queued") throw new Error("recovery source did not qualify");
+    await expect(
+      capability.coordinateImplementationCandidate({
+        partitionKey: sourceQualified.partitionKey,
+        holderId: `recovered-source-${attestationBackend}`,
+      }),
+    ).rejects.toThrow("controlled parent loss after qualification");
+
+    const recovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (recovery.preparation.kind !== "current") {
+      throw new Error("parent-lost source did not produce current recovery authority");
+    }
+    const recoveredChild = {
+      childId: `implement-worker#recovered-source-${attestationBackend}-${String(sequence)}`,
+      runId: `recovered-source-${attestationBackend}-run-${String(sequence)}`,
+    };
+    const recovered = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-recovered-source`,
+      timeoutMs: 600_000,
+      expectedChild: recoveredChild,
+      recoveryPreparation: recovery.preparation.recoveryPreparation,
+    });
+    if (!recovered.accepted || recovered.prepared.gitChangeCapability === undefined) {
+      throw new Error(
+        recovered.accepted ? "recovered source lacks Git authority" : recovered.detail,
+      );
+    }
+    await capability.fetchInput({
+      ...recovered.handle,
+      inputCapability: recovered.prepared.inputCapability,
+    });
+    const recoveredBytes = `current recovered source ${attestationBackend}\n`;
+    await fs.writeFile(path.join(subject.managed.handle.absolutePath, "file.txt"), recoveredBytes);
+    const recoveredReceipt = await capability.gitCommit({
+      ...recovered.handle,
+      gitChangeCapability: recovered.prepared.gitChangeCapability,
+      operationId: `T2081-${String(sequence)}-${attestationBackend}-recovered-source`,
+      expectedHead: subject.receipt.newHead,
+      message: "advance current recovered source",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("after\n") },
+          newState: { mode: "100644", digest: sha256(recoveredBytes) },
+        },
+      ],
+    });
+    expect(
+      await capability.storeResult({
+        resultCapability: recovered.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: recoveredReceipt.newHead,
+          filesTouched: [...recoveredReceipt.paths],
+          gitReceipts: [recoveredReceipt],
+          checkSummary: "current-recovered candidate awaits protected-head comparison",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: subject.dispatchBaseCommit,
+            headCommit: recoveredReceipt.newHead,
+          },
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const recoveredQualified = await qualify(
+      recovered.prepared,
+      recoveredChild,
+      "2026-08-12T20:00:05.000Z",
+    );
+    if (recoveredQualified.state !== "queued") {
+      throw new Error("current-recovered source did not qualify");
+    }
+
+    await fs.writeFile(path.join(subject.repositoryRoot, "integration.txt"), "advanced\n");
+    await git(subject.repositoryRoot, ["add", "integration.txt"]);
+    await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance protected head"]);
+    await git(subject.repositoryRoot, ["config", "user.name", "T2081"]);
+    await git(subject.repositoryRoot, ["config", "user.email", "t2081@example.invalid"]);
+    const ontoCommit = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+    expect(
+      await capability.coordinateImplementationCandidate({
+        partitionKey: recoveredQualified.partitionKey,
+        holderId: `retire-recovered-source-${attestationBackend}`,
+      }),
+    ).toMatchObject({
+      state: "successor-queued",
+      source: recovered.handle,
+      successor: {
+        attestationId: recovered.handle.attestationId,
+        generation: recovered.handle.generation + 1,
+      },
+    });
+    const guarded = launchedSuccessor;
+    if (guarded === undefined) throw new Error("recovered retirement did not launch a successor");
+    const guardedInput = await capability.fetchInput({
+      ...guarded.prepared,
+      inputCapability: guarded.prepared.inputCapability,
+    });
+    if (guardedInput.state !== "input-materialized") {
+      throw new Error("recovered guarded input did not materialize");
+    }
+    const guardedRecord = guardedInput.input as Readonly<Record<string, DispatchJSONValue>>;
+    const guardedLineage = guardedRecord["guardedRebaseLineage"] as Readonly<
+      Record<string, DispatchJSONValue>
+    >;
+    const guardedStart = guardedRecord["startingCommit"];
+    const guardedBase = guardedRecord["baseCommit"];
+    const guardedRebase = guardedLineage["guardedRebase"];
+    const exactTip = guardedLineage["exactTip"];
+    if (
+      typeof guardedStart !== "string" ||
+      typeof guardedBase !== "string" ||
+      typeof guardedRebase !== "string" ||
+      typeof exactTip !== "boolean"
+    ) {
+      throw new Error("recovered guarded lineage is incomplete");
+    }
+    expect(guardedBase).toBe(ontoCommit);
+    let redTip = guardedStart;
+    let redReceipts: readonly GitChangeBrokerReceipt[] = [];
+    if (freshGuardedReceipt) {
+      if (guarded.prepared.gitChangeCapability === undefined) {
+        throw new Error("fresh guarded red worker lacks Git authority");
+      }
+      const bytes = `fresh recovered guarded red ${attestationBackend}\n`;
+      await fs.writeFile(path.join(subject.managed.handle.absolutePath, "guarded-red.txt"), bytes);
+      const receipt = await capability.gitCommit({
+        ...guarded.prepared,
+        gitChangeCapability: guarded.prepared.gitChangeCapability,
+        operationId: `T2081-${String(sequence)}-${attestationBackend}-guarded-red`,
+        expectedHead: guardedStart,
+        message: "persist recovered guarded red candidate",
+        changes: [
+          {
+            kind: "add",
+            path: "guarded-red.txt",
+            newState: { mode: "100644", digest: sha256(bytes) },
+          },
+        ],
+      });
+      redTip = receipt.newHead;
+      redReceipts = [receipt];
+    } else {
+      expect(exactTip).toBe(true);
+    }
+    const redFiles = (
+      await git(subject.managed.handle.absolutePath, [
+        "diff",
+        "--name-only",
+        `${guardedBase}..${redTip}`,
+      ])
+    )
+      .split("\n")
+      .filter((entry) => entry !== "")
+      .sort();
+    expect(
+      await capability.storeResult({
+        resultCapability: guarded.prepared.resultCapability,
+        output: {
+          taskId: "T2081",
+          status: "pass",
+          resultCommit: redTip,
+          branch: subject.managed.handle.branch,
+          actualWorktreePath: subject.managed.handle.absolutePath,
+          filesTouched: redFiles,
+          gitReceipts: redReceipts,
+          gitLineage: {
+            kind: "guarded-rebase",
+            guardedRebase,
+            ontoCommit,
+            rebasedStartCommit: guardedStart,
+            exactTip,
+          },
+          checkSummary: "recovered guarded candidate awaits its controlled red gate",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: guardedBase,
+            headCommit: redTip,
+          },
+          mutationTable: [
+            {
+              mutation: "remove the recovered guarded ancestry edge",
+              observed: "the changed correction is rejected before any new gate",
+              restored: "the exact correction reaches its ordinary gate",
+            },
+          ],
+          summary: "guarded successor retains the journal-recovered staged source",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const redQualified = await qualify(
+      guarded.prepared,
+      guarded.expectedChild,
+      "2026-08-12T20:00:08.000Z",
+    );
+    if (redQualified.state !== "queued") throw new Error("recovered guarded row did not qualify");
+    await expect(
+      capability.coordinateImplementationCandidate({
+        partitionKey: redQualified.partitionKey,
+        holderId: `recovered-guarded-red-${attestationBackend}`,
+      }),
+    ).rejects.toThrow();
+    expect(runner.requests).toHaveLength(2);
+
+    const correctionChild = {
+      childId: `implement-worker#recovered-guarded-correction-${attestationBackend}-${String(sequence)}`,
+      runId: `recovered-guarded-correction-${attestationBackend}-run-${String(sequence)}`,
+    };
+    const correction = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: guardedBase,
+        round: 3,
+        startingCommit: redTip,
+        validationIntent: "final",
+        priorResultCommit: redTip,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-${attestationBackend}-${freshGuardedReceipt ? "fresh" : "zero"}-red-correction`,
+      timeoutMs: 600_000,
+      expectedChild: correctionChild,
+      reprepareOf: guarded.prepared,
+    });
+    if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
+      throw new Error(
+        `recovered guarded red correction refused: ${
+          correction.accepted ? "missing Git authority" : correction.detail
+        }`,
+      );
+    }
+    const correctionInput = await capability.fetchInput({
+      ...correction.handle,
+      inputCapability: correction.prepared.inputCapability,
+    });
+    if (correctionInput.state !== "input-materialized") {
+      throw new Error("recovered guarded correction input did not materialize");
+    }
+    const correctionRecord = correctionInput.input as Readonly<Record<string, DispatchJSONValue>>;
+    const correctionLineage = correctionRecord["guardedRebaseLineage"] as Readonly<
+      Record<string, DispatchJSONValue>
+    >;
+    const correctionBody = `correct recovered guarded red ${attestationBackend}\n`;
+    await fs.writeFile(
+      path.join(subject.managed.handle.absolutePath, "recovered-guarded-correction.txt"),
+      correctionBody,
+    );
+    const correctionReceipt = await capability.gitCommit({
+      ...correction.handle,
+      gitChangeCapability: correction.prepared.gitChangeCapability,
+      operationId: `T2081-${String(sequence)}-${attestationBackend}-recovered-red-correction`,
+      expectedHead: redTip,
+      message: "correct recovered guarded rejection",
+      changes: [
+        {
+          kind: "add",
+          path: "recovered-guarded-correction.txt",
+          newState: { mode: "100644", digest: sha256(correctionBody) },
+        },
+      ],
+    });
+    const correctionFiles = (
+      await git(subject.managed.handle.absolutePath, [
+        "diff",
+        "--name-only",
+        `${guardedBase}..${correctionReceipt.newHead}`,
+      ])
+    )
+      .split("\n")
+      .filter((entry) => entry !== "")
+      .sort();
+    expect(
+      await capability.storeResult({
+        resultCapability: correction.prepared.resultCapability,
+        output: {
+          taskId: "T2081",
+          status: "pass",
+          resultCommit: correctionReceipt.newHead,
+          branch: subject.managed.handle.branch,
+          actualWorktreePath: subject.managed.handle.absolutePath,
+          filesTouched: correctionFiles,
+          gitReceipts: [correctionReceipt],
+          gitLineage: {
+            kind: "guarded-rebase",
+            guardedRebase: correctionLineage["guardedRebase"],
+            ontoCommit: correctionLineage["ontoCommit"],
+            rebasedStartCommit: correctionLineage["rebasedStartCommit"],
+            exactTip: correctionLineage["exactTip"],
+          },
+          checkSummary: "changed recovered-red correction awaits its ordinary gate",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: guardedBase,
+            headCommit: correctionReceipt.newHead,
+          },
+          mutationTable: [
+            {
+              mutation: "remove the recovered guarded ancestry edge",
+              observed: "the changed correction is rejected before any new gate",
+              restored: "the exact correction reaches its ordinary gate",
+            },
+          ],
+          summary: "changed correction retains the recovered guarded rejection",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const correctionQualified = await qualify(
+      correction.prepared,
+      correctionChild,
+      "2026-08-12T20:00:11.000Z",
+    );
+    if (correctionQualified.state !== "queued") {
+      throw new Error("changed recovered guarded correction did not qualify");
+    }
+    expect(
+      await capability.coordinateImplementationCandidate({
+        partitionKey: correctionQualified.partitionKey,
+        holderId: `recovered-guarded-correction-${attestationBackend}`,
+      }),
+    ).toMatchObject({ state: "completed", handle: correction.handle });
+    expect(await capability.fetch(correction.handle)).toMatchObject({
+      state: "consumed",
+      output: { resultCommit: correctionReceipt.newHead },
+    });
+    expect(runner.requests).toHaveLength(3);
+    await subject.backend.close();
+  }
+
+  test("a recovered zero-fresh guarded red worker admits its exact changed correction", async () => {
+    for (const attestationBackend of ["memory", "sqlite"] as const) {
+      await exerciseRecoveredGuardedRedCorrection(attestationBackend, false);
+    }
+  }, 30_000);
+
+  test("a recovered fresh guarded red worker admits its exact changed correction", async () => {
+    for (const attestationBackend of ["memory", "sqlite"] as const) {
+      await exerciseRecoveredGuardedRedCorrection(attestationBackend, true);
+    }
+  }, 30_000);
 
   test("current-recovered staged retirement admits its exact guarded successor despite older terminal enrollment history", async () => {
     for (const attestationBackend of ["memory", "sqlite"] as const) {
