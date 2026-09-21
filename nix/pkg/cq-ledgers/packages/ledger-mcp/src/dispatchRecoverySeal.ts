@@ -424,6 +424,7 @@ interface ResolvedRecoveryReceiptClosureInput {
   readonly resultCommit: string;
   readonly resolvedReceipts: readonly GitChangeBrokerReceipt[];
   readonly componentPrefix?: readonly GitChangeBrokerReceipt[];
+  readonly componentBindingAuthenticated: boolean;
 }
 
 export interface AuthenticatedResolvedRecoveryReceiptClosure {
@@ -442,6 +443,7 @@ export function authenticateResolvedRecoveryReceiptClosureWithForm(
     );
   const componentPrefixMatches =
     !completePrefixMatches &&
+    input.componentBindingAuthenticated &&
     input.componentPrefix !== undefined &&
     input.resolvedReceipts.length >= input.componentPrefix.length &&
     receiptClosuresEqual(
@@ -1389,6 +1391,7 @@ async function journalSuccessorSource(
       inheritedTip,
       resultCommit: continuation.liveTip,
       resolvedReceipts: closure,
+      componentBindingAuthenticated: componentPrefix !== undefined,
       ...(componentPrefix === undefined ? {} : { componentPrefix }),
     });
     if (authenticatedClosure === undefined) {

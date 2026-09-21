@@ -232,6 +232,7 @@ describe("protected current dispatch-recovery capture", () => {
       inheritedReceipts: RECOVERY_RECEIPTS,
       inheritedTip: RECOVERY_TIP,
       componentPrefix: [] as const,
+      componentBindingAuthenticated: true,
     };
 
     expect(
@@ -293,6 +294,25 @@ describe("protected current dispatch-recovery capture", () => {
       form: "post-guarded-component",
       receipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
     });
+    expect(
+      authenticateResolvedRecoveryReceiptClosureWithForm({
+        ...base,
+        componentBindingAuthenticated: false,
+        resultCommit,
+        resolvedReceipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+      }),
+    ).toEqual({
+      form: "complete",
+      receipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+    });
+    expect(
+      authenticateResolvedRecoveryReceiptClosureWithForm({
+        ...base,
+        componentBindingAuthenticated: false,
+        resultCommit,
+        resolvedReceipts: [firstCorrection, secondCorrection],
+      }),
+    ).toBeUndefined();
   });
 
   test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
