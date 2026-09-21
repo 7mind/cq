@@ -17,6 +17,7 @@ import {
   type DispatchGitEffectBinding,
   type DispatchGuardedRebaseBridge,
   type DispatchGateRejectedCorrectionClaim,
+  type DispatchJournalRecoveryClaim,
   type DispatchJSONValue,
   type PrepareDispatchRequest,
 } from "@cq/config";
@@ -1083,6 +1084,29 @@ function recoveredSourceRequest(
   };
 }
 
+type GuardedJournalSuccessorCause =
+  | "evidence-missing"
+  | "source-successor-identity-mismatch"
+  | "source-terminal-mismatch"
+  | "successor-claim-mismatch"
+  | "retained-claim-binding-mismatch"
+  | "successor-input-mismatch"
+  | "successor-prepare-digest-mismatch"
+  | "managed-binding-mismatch"
+  | "retained-seed-evidence-missing"
+  | "retained-seed-authority-mismatch"
+  | "retained-seed-source-mismatch"
+  | "retained-seed-task-mismatch"
+  | "retained-seed-live-tip-mismatch"
+  | "retained-source-prepare-digest-mismatch";
+
+function guardedJournalSuccessorDiagnostic(
+  cause: GuardedJournalSuccessorCause,
+  claim: DispatchJournalRecoveryClaim | undefined,
+): string {
+  return `cause=${cause}; claim=${claim === undefined ? "retained" : "successor"}`;
+}
+
 async function journalGuardedRecoverySuccessorEdge(
   sourceRow: AttestationEnvelope,
   successor: AttestationEnvelope,
@@ -1154,48 +1178,58 @@ async function journalGuardedRecoverySuccessorEdge(
                 implementationEvidenceBootstrapRef: successor.implementationEvidenceBootstrapRef,
               }),
         };
-  if (
+  const mismatchCause: GuardedJournalSuccessorCause | undefined =
     sourceBinding === undefined ||
     successorBinding === undefined ||
     input === undefined ||
     inherited === undefined ||
-    request === undefined ||
-    sourceRow.attestationId !== successor.attestationId ||
-    sourceRow.generation + 1 !== successor.generation ||
-    sourceRow.state !== "aborted" ||
-    sourceRow.abortReason === undefined ||
-    !ELIGIBLE_ABORT_REASONS.has(sourceRow.abortReason) ||
-    sourceRow.abortedAt !== sourceRow.terminalAt ||
-    (sourceRow.abortDetailsDigest !== undefined &&
-      sourceRow.abortDetailsDigest !== detailsDigest) ||
-    sourceRow.terminalDigest !== terminalDigest ||
-    (claim !== undefined &&
-      (claim.selectedSource.attestationId !== sourceRow.attestationId ||
-        claim.selectedSource.generation !== sourceRow.generation ||
-        claim.lineageMaximumGeneration !== sourceRow.generation ||
-        claim.sourceTerminalDigest !== terminalDigest ||
-        claim.source.kind !== "aborted" ||
-        claim.source.abortReason !== sourceRow.abortReason ||
-        claim.taskId !== binding.taskId ||
-        claim.managedFingerprint !== binding.handleFingerprint ||
-        claim.liveTip !== bridge.oldResultCommit ||
-        claim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))) ||
-    (claim === undefined &&
-      (sourceClaim?.taskId !== binding.taskId ||
-        sourceClaim.managedFingerprint !== binding.handleFingerprint ||
-        sourceClaim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))) ||
-    input["taskId"] !== binding.taskId ||
-    input["branch"] !== binding.branch ||
-    input["baseCommit"] !== bridge.ontoCommit ||
-    input["startingCommit"] !== bridge.rebasedStartCommit ||
-    input["priorResultCommit"] !== bridge.oldResultCommit ||
-    prepareDispatchRequestDigest(request) !== successor.prepareRequestDigest ||
-    !bindingMatches(sourceBinding, binding) ||
-    !bindingMatches(successorBinding, binding)
-  ) {
+    request === undefined
+      ? "evidence-missing"
+      : sourceRow.attestationId !== successor.attestationId ||
+          sourceRow.generation + 1 !== successor.generation
+        ? "source-successor-identity-mismatch"
+        : sourceRow.state !== "aborted" ||
+            sourceRow.abortReason === undefined ||
+            !ELIGIBLE_ABORT_REASONS.has(sourceRow.abortReason) ||
+            sourceRow.abortedAt !== sourceRow.terminalAt ||
+            (sourceRow.abortDetailsDigest !== undefined &&
+              sourceRow.abortDetailsDigest !== detailsDigest) ||
+            sourceRow.terminalDigest !== terminalDigest
+          ? "source-terminal-mismatch"
+          : claim !== undefined &&
+              (claim.selectedSource.attestationId !== sourceRow.attestationId ||
+                claim.selectedSource.generation !== sourceRow.generation ||
+                claim.lineageMaximumGeneration !== sourceRow.generation ||
+                claim.sourceTerminalDigest !== terminalDigest ||
+                claim.source.kind !== "aborted" ||
+                claim.source.abortReason !== sourceRow.abortReason ||
+                claim.taskId !== binding.taskId ||
+                claim.managedFingerprint !== binding.handleFingerprint ||
+                claim.liveTip !== bridge.oldResultCommit ||
+                claim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))
+            ? "successor-claim-mismatch"
+            : claim === undefined &&
+                (sourceClaim?.taskId !== binding.taskId ||
+                  sourceClaim.managedFingerprint !== binding.handleFingerprint ||
+                  sourceClaim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))
+              ? "retained-claim-binding-mismatch"
+              : input["taskId"] !== binding.taskId ||
+                  input["branch"] !== binding.branch ||
+                  input["baseCommit"] !== bridge.ontoCommit ||
+                  input["startingCommit"] !== bridge.rebasedStartCommit ||
+                  input["priorResultCommit"] !== bridge.oldResultCommit
+                ? "successor-input-mismatch"
+                : prepareDispatchRequestDigest(request) !== successor.prepareRequestDigest
+                  ? "successor-prepare-digest-mismatch"
+                  : !bindingMatches(sourceBinding, binding) ||
+                      !bindingMatches(successorBinding, binding)
+                    ? "managed-binding-mismatch"
+                    : undefined;
+  if (mismatchCause !== undefined) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
-      "journal recovery cancellation does not authenticate its exact guarded successor",
+      "journal recovery cancellation does not authenticate its exact guarded successor; " +
+        guardedJournalSuccessorDiagnostic(mismatchCause, claim),
     );
   }
   let receipts = inherited;
@@ -1209,27 +1243,33 @@ async function journalGuardedRecoverySuccessorEdge(
             abortReason: journal.seal.seed.sourceAbortReason,
           }
         : journal.seal.seed.source;
-    if (
-      journal.fence === undefined ||
-      sourceClaim === undefined ||
-      sourceRequest === undefined ||
-      sourceClaim.fenceRef !== journal.fence.fenceRef ||
-      sourceClaim.sealReference !== journal.seal.sealReference ||
-      sourceClaim.sealDigest !== journal.seal.sealDigest ||
-      sourceClaim.selectedSource.attestationId !== seed.selectedSourceHandle.attestationId ||
-      sourceClaim.selectedSource.generation !== seed.selectedSourceHandle.generation ||
-      sourceClaim.lineageMaximumGeneration !== seed.lineageMaximumGeneration ||
-      sourceClaim.sourceTerminalDigest !== seed.sourceTerminalDigest ||
-      dispatchPayloadDigest(sourceClaim.source as unknown as DispatchJSONValue) !==
-        dispatchPayloadDigest(sealedSource as unknown as DispatchJSONValue) ||
-      sourceClaim.taskDigest !== seed.taskDigest ||
-      sourceClaim.finalizedManifestDigest !== seed.finalizedManifestDigest ||
-      sourceClaim.liveTip !== seed.liveTip ||
-      prepareDispatchRequestDigest(sourceRequest) !== sourceRow.prepareRequestDigest
-    ) {
+    const seedMismatchCause: GuardedJournalSuccessorCause | undefined =
+      journal.fence === undefined || sourceClaim === undefined || sourceRequest === undefined
+        ? "retained-seed-evidence-missing"
+        : sourceClaim.fenceRef !== journal.fence.fenceRef ||
+            sourceClaim.sealReference !== journal.seal.sealReference ||
+            sourceClaim.sealDigest !== journal.seal.sealDigest
+          ? "retained-seed-authority-mismatch"
+          : sourceClaim.selectedSource.attestationId !== seed.selectedSourceHandle.attestationId ||
+              sourceClaim.selectedSource.generation !== seed.selectedSourceHandle.generation ||
+              sourceClaim.lineageMaximumGeneration !== seed.lineageMaximumGeneration ||
+              sourceClaim.sourceTerminalDigest !== seed.sourceTerminalDigest ||
+              dispatchPayloadDigest(sourceClaim.source as unknown as DispatchJSONValue) !==
+                dispatchPayloadDigest(sealedSource as unknown as DispatchJSONValue)
+            ? "retained-seed-source-mismatch"
+            : sourceClaim.taskDigest !== seed.taskDigest ||
+                sourceClaim.finalizedManifestDigest !== seed.finalizedManifestDigest
+              ? "retained-seed-task-mismatch"
+              : sourceClaim.liveTip !== seed.liveTip
+                ? "retained-seed-live-tip-mismatch"
+                : prepareDispatchRequestDigest(sourceRequest) !== sourceRow.prepareRequestDigest
+                  ? "retained-source-prepare-digest-mismatch"
+                  : undefined;
+    if (seedMismatchCause !== undefined) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
-        "journal recovery cancellation does not authenticate its exact guarded successor",
+        "journal recovery cancellation does not authenticate its exact guarded successor; " +
+          guardedJournalSuccessorDiagnostic(seedMismatchCause, claim),
       );
     }
     try {

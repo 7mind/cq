@@ -1462,6 +1462,63 @@ function assertStoredGuardedRebaseBridge(value: unknown): void {
   }
 }
 
+const STORED_RECEIPT_CHAIN_TRANSITION_FIELDS = [
+  "kind",
+  "version",
+  "source",
+  "successor",
+  "guardedRebase",
+  "requestDigest",
+  "oldResultCommit",
+  "ontoCommit",
+  "rebasedStartCommit",
+  "receiptPrefixLength",
+] as const;
+
+function assertStoredReceiptChainTransition(value: unknown): void {
+  const malformed = (): AttestationStorageError =>
+    new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding"');
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw malformed();
+  const transition = value as Readonly<Record<string, unknown>>;
+  const isHandle = (handle: unknown): boolean => {
+    if (typeof handle !== "object" || handle === null || Array.isArray(handle)) return false;
+    const record = handle as Readonly<Record<string, unknown>>;
+    return (
+      Object.keys(record).sort().join(",") === "attestationId,generation" &&
+      typeof record["attestationId"] === "string" &&
+      record["attestationId"].length > 0 &&
+      Number.isSafeInteger(record["generation"]) &&
+      Number(record["generation"]) >= 1
+    );
+  };
+  const source = transition["source"] as Readonly<Record<string, unknown>> | undefined;
+  const successor = transition["successor"] as Readonly<Record<string, unknown>> | undefined;
+  if (
+    Object.keys(transition).sort().join(",") !==
+      [...STORED_RECEIPT_CHAIN_TRANSITION_FIELDS].sort().join(",") ||
+    transition["kind"] !== "cq-dispatch-receipt-chain-transition" ||
+    transition["version"] !== 1 ||
+    !isHandle(source) ||
+    !isHandle(successor) ||
+    source?.["attestationId"] !== successor?.["attestationId"] ||
+    Number(source?.["generation"]) + 1 !== Number(successor?.["generation"]) ||
+    typeof transition["requestDigest"] !== "string" ||
+    !STORED_SHA256_HEX.test(transition["requestDigest"]) ||
+    transition["guardedRebase"] !==
+      `cq-guarded-rebase:v1:${String(transition["requestDigest"])}` ||
+    typeof transition["oldResultCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(transition["oldResultCommit"]) ||
+    typeof transition["ontoCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(transition["ontoCommit"]) ||
+    typeof transition["rebasedStartCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(transition["rebasedStartCommit"]) ||
+    !Number.isSafeInteger(transition["receiptPrefixLength"]) ||
+    Number(transition["receiptPrefixLength"]) < 1
+  ) {
+    throw malformed();
+  }
+}
+
 /**
  * Field names a stored body may NEVER carry as an OWN property. `JSON.parse`
  * materialises `"__proto__"` as an own, enumerable property rather than walking
@@ -1619,12 +1676,16 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       ] as const;
       const hasInheritedGitReceipts = Object.hasOwn(bindingRecord, "inheritedGitReceipts");
       const hasGuardedRebaseBridge = Object.hasOwn(bindingRecord, "guardedRebaseBridge");
+      const hasReceiptChainTransition = Object.hasOwn(bindingRecord, "receiptChainTransition");
+      const hasReceiptChainTransitions = Object.hasOwn(bindingRecord, "receiptChainTransitions");
       const expectedFields = hasGitConflictHash
         ? [...fields, "conflictStateDigest"]
         : [
             ...fields,
             ...(hasInheritedGitReceipts ? ["inheritedGitReceipts"] : []),
             ...(hasGuardedRebaseBridge ? ["guardedRebaseBridge"] : []),
+            ...(hasReceiptChainTransition ? ["receiptChainTransition"] : []),
+            ...(hasReceiptChainTransitions ? ["receiptChainTransitions"] : []),
           ];
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
@@ -1635,7 +1696,11 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"])) ||
         (hasGitConflictHash &&
           !STORED_SHA256_HEX.test(String(bindingRecord["conflictStateDigest"]))) ||
-        (hasGitConflictHash && (hasInheritedGitReceipts || hasGuardedRebaseBridge))
+        (hasGitConflictHash &&
+          (hasInheritedGitReceipts ||
+            hasGuardedRebaseBridge ||
+            hasReceiptChainTransition ||
+            hasReceiptChainTransitions))
       ) {
         throw new AttestationStorageError(
           'stored attestation envelope has malformed "gitEffectBinding"',
@@ -1646,6 +1711,24 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       }
       if (hasGuardedRebaseBridge) {
         assertStoredGuardedRebaseBridge(bindingRecord["guardedRebaseBridge"]);
+      }
+      if (hasReceiptChainTransition) {
+        assertStoredReceiptChainTransition(bindingRecord["receiptChainTransition"]);
+      }
+      if (hasReceiptChainTransitions) {
+        const transitions = bindingRecord["receiptChainTransitions"];
+        if (
+          !Array.isArray(transitions) ||
+          transitions.length < 2 ||
+          !hasReceiptChainTransition ||
+          JSON.stringify(transitions.at(-1)) !==
+            JSON.stringify(bindingRecord["receiptChainTransition"])
+        ) {
+          throw new AttestationStorageError(
+            'stored attestation envelope has malformed "gitEffectBinding"',
+          );
+        }
+        for (const transition of transitions) assertStoredReceiptChainTransition(transition);
       }
     }
   }

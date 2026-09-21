@@ -1268,6 +1268,130 @@ function orderReceiptChain(
   return Object.freeze(ordered);
 }
 
+function assertDurableReceiptMatchesJournal(
+  receipt: GitConflictContinuationReceipt,
+  journal: ConflictJournal,
+): void {
+  if (
+    receipt.kind !== "cq-git-conflict-continuation-receipt" ||
+    receipt.version !== 1 ||
+    typeof receipt.attestationId !== "string" ||
+    receipt.attestationId.length === 0 ||
+    !Number.isSafeInteger(receipt.generation) ||
+    receipt.generation < 1 ||
+    !/^T[0-9]+$/u.test(receipt.taskId) ||
+    !OPERATION_ID.test(receipt.operationId) ||
+    receipt.requestDigest !== journal.requestDigest ||
+    receipt.continuedAt !== journal.createdAt ||
+    !FULL_OID.test(receipt.oldHead) ||
+    !FULL_OID.test(receipt.newHead) ||
+    receipt.oldHead === receipt.newHead ||
+    !Array.isArray(receipt.objectOids) ||
+    receipt.objectOids.some((oid) => !FULL_OID.test(oid)) ||
+    canonical(receipt.objectOids) !== canonical([...new Set(receipt.objectOids)].sort()) ||
+    !Array.isArray(receipt.paths) ||
+    canonical(receipt.paths) !== canonical([...new Set(receipt.paths)].sort()) ||
+    receipt.paths.some((entryPath) => assertPath(entryPath, "receipt path") !== entryPath) ||
+    (receipt.outcome.kind !== "terminal" && receipt.outcome.kind !== "conflict") ||
+    receipt.outcome.tip !== receipt.newHead ||
+    (receipt.outcome.kind === "conflict" &&
+      receipt.outcome.state.currentHead !== receipt.newHead)
+  ) {
+    throw new Error(`durable continuation receipt ${receipt.operationId} does not match its journal`);
+  }
+}
+
+function receiptComponents(
+  receipts: readonly GitConflictContinuationReceipt[],
+): readonly (readonly GitConflictContinuationReceipt[])[] {
+  const byHead = new Map<string, number[]>();
+  for (const [index, receipt] of receipts.entries()) {
+    for (const head of [receipt.oldHead, receipt.newHead]) {
+      const indexes = byHead.get(head) ?? [];
+      indexes.push(index);
+      byHead.set(head, indexes);
+    }
+  }
+  const unseen = new Set(receipts.keys());
+  const components: GitConflictContinuationReceipt[][] = [];
+  while (unseen.size > 0) {
+    const first = unseen.values().next().value as number;
+    const pending = [first];
+    const component: GitConflictContinuationReceipt[] = [];
+    unseen.delete(first);
+    while (pending.length > 0) {
+      const index = pending.pop()!;
+      const receipt = receipts[index]!;
+      component.push(receipt);
+      for (const head of [receipt.oldHead, receipt.newHead]) {
+        for (const neighbour of byHead.get(head) ?? []) {
+          if (!unseen.delete(neighbour)) continue;
+          pending.push(neighbour);
+        }
+      }
+    }
+    components.push(component);
+  }
+  return Object.freeze(components.map((component) => Object.freeze(component)));
+}
+
+export interface GuardedRebaseReceiptTransaction {
+  readonly headName: string;
+  readonly originalTip: string;
+  readonly onto: string;
+  readonly liveTip: string;
+  readonly conflictHead?: string;
+  readonly conflictIdentity?: string;
+}
+
+function stateBelongsToTransaction(
+  state: GitRebaseConflictState,
+  transaction: GuardedRebaseReceiptTransaction,
+): boolean {
+  return (
+    state.sequencer.headName === transaction.headName &&
+    state.sequencer.originalTip === transaction.originalTip &&
+    state.sequencer.onto === transaction.onto &&
+    (transaction.conflictIdentity === undefined ||
+      state.sequencer.identity === transaction.conflictIdentity)
+  );
+}
+
+function selectGuardedRebaseReceiptComponent(
+  receipts: readonly GitConflictContinuationReceipt[],
+  transaction: GuardedRebaseReceiptTransaction,
+): readonly GitConflictContinuationReceipt[] {
+  const matching = receiptComponents(receipts).filter((component) =>
+    component.some(
+      (receipt) =>
+        (transaction.conflictHead !== undefined && receipt.oldHead === transaction.conflictHead) ||
+        receipt.newHead === transaction.liveTip ||
+        (receipt.outcome.kind === "conflict" &&
+          stateBelongsToTransaction(receipt.outcome.state, transaction)),
+    ),
+  );
+  if (matching.length === 0) return Object.freeze([]);
+  if (matching.length !== 1) {
+    throw new Error("durable continuation receipts do not resolve to one guarded-rebase transaction");
+  }
+  const ordered = orderReceiptChain(matching[0]!);
+  if (
+    transaction.conflictHead !== undefined &&
+    ordered[0]?.oldHead !== transaction.conflictHead
+  ) {
+    throw new Error("guarded rebase continuation chain does not start at the journaled conflict");
+  }
+  for (const receipt of ordered) {
+    if (
+      receipt.outcome.kind === "conflict" &&
+      !stateBelongsToTransaction(receipt.outcome.state, transaction)
+    ) {
+      throw new Error("guarded rebase continuation belongs to a foreign rebase");
+    }
+  }
+  return ordered;
+}
+
 async function collectDurableReceipts(
   binding: ManagedWorktreeDispatchBinding,
   deps: GitConflictContinuationEvidenceDeps,
@@ -1294,25 +1418,25 @@ async function collectDurableReceipts(
     if (entry.name !== expectedDirectory) {
       throw new Error(`durable continuation receipt ${receipt.operationId} has a substituted operationId`);
     }
-    if (receipt.requestDigest !== journal.requestDigest || receipt.continuedAt !== journal.createdAt) {
-      throw new Error(`durable continuation receipt ${receipt.operationId} does not match its journal`);
-    }
+    assertDurableReceiptMatchesJournal(receipt, journal);
     receipts.push(receipt);
   }
-  return orderReceiptChain(receipts);
+  return Object.freeze(receipts);
 }
 
 async function durableReceipts(
   authorization: DispatchBoundGitAuthorization,
   deps: GitConflictContinuationEvidenceDeps,
 ): Promise<readonly GitConflictContinuationReceipt[]> {
-  return await collectDurableReceipts(
-    authorization,
-    deps,
-    (receipt) =>
-      receipt.attestationId === authorization.attestationId &&
-      receipt.generation === authorization.generation &&
-      receipt.taskId === authorization.taskId,
+  return orderReceiptChain(
+    await collectDurableReceipts(
+      authorization,
+      deps,
+      (receipt) =>
+        receipt.attestationId === authorization.attestationId &&
+        receipt.generation === authorization.generation &&
+        receipt.taskId === authorization.taskId,
+    ),
   );
 }
 
@@ -1324,8 +1448,16 @@ async function durableReceipts(
 export async function durableHandleConflictContinuationReceipts(
   binding: ManagedWorktreeDispatchBinding,
   deps: GitConflictContinuationEvidenceDeps,
+  transaction?: GuardedRebaseReceiptTransaction,
 ): Promise<readonly GitConflictContinuationReceipt[]> {
-  return await collectDurableReceipts(binding, deps, (receipt) => receipt.taskId === binding.taskId);
+  const receipts = await collectDurableReceipts(
+    binding,
+    deps,
+    (receipt) => receipt.taskId === binding.taskId,
+  );
+  return transaction === undefined
+    ? orderReceiptChain(receipts)
+    : selectGuardedRebaseReceiptComponent(receipts, transaction);
 }
 
 /** Trusted-parent validation of resolver continuation receipts before result storage. */

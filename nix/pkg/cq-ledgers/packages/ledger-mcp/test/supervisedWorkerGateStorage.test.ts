@@ -7949,7 +7949,7 @@ throw new Error("unexpected controlled cq invocation");
             throw new Error("reopened manual guarded recovery resolver is unavailable");
           }
         };
-        const bridgeRounds = freshReceiptCount === 2 ? 2 : 1;
+        const bridgeRounds = 2;
         for (let bridgeRound = 0; bridgeRound < bridgeRounds; bridgeRound += 1) {
           const source = await activeCapability.prepare({
             roleId: "implement-worker",
@@ -8098,11 +8098,17 @@ throw new Error("unexpected controlled cq invocation");
               { kind: "handle", handle: source.handle },
               (store) => store.read(source.handle),
             );
+            const exactSuccessor = await activeBackend.transact(
+              { kind: "handle", handle: guarded.handle },
+              (store) => store.read(guarded.handle),
+            );
             if (
               exactSource === undefined ||
               isAttestationTombstone(exactSource) ||
               exactSource.gitEffectBinding === undefined ||
-              exactSource.dispatchJournalRecoveryClaim === undefined
+              exactSource.dispatchJournalRecoveryClaim === undefined ||
+              exactSuccessor === undefined ||
+              isAttestationTombstone(exactSuccessor)
             ) {
               throw new Error("manual recovery source lost its authenticated context");
             }
@@ -8112,6 +8118,7 @@ throw new Error("unexpected controlled cq invocation");
               (store) => store.rows().length,
             );
             const rejectSourceMutation = async (
+              cause: string,
               mutate: (row: AttestationEnvelope) => AttestationEnvelope,
             ): Promise<void> => {
               await activeBackend.transact({ kind: "handle", handle: source.handle }, (store) => {
@@ -8119,9 +8126,9 @@ throw new Error("unexpected controlled cq invocation");
                 if (current === undefined) throw new Error("manual recovery source disappeared");
                 store.replace(current, mutate(exactSource));
               });
-              await expect(
-                activeCapability.resolveRecovery!(binding, guardedTip),
-              ).rejects.toThrow();
+              await expect(activeCapability.resolveRecovery!(binding, guardedTip)).rejects.toThrow(
+                cause,
+              );
               expect(await recoveryJournal.read("T2081")).toEqual(journalBeforeControls);
               await activeBackend.transact({ kind: "handle", handle: source.handle }, (store) => {
                 const current = store.read(source.handle);
@@ -8132,50 +8139,91 @@ throw new Error("unexpected controlled cq invocation");
                 await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
               ).toBe(rowsBeforeControls);
             };
-            for (const mutate of [
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                prepareRequestDigest: "0".repeat(64),
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                terminalDigest: "0".repeat(64),
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                dispatchJournalRecoveryClaim: {
-                  ...row.dispatchJournalRecoveryClaim!,
-                  taskId: "T9999",
-                },
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                dispatchJournalRecoveryClaim: {
-                  ...row.dispatchJournalRecoveryClaim!,
-                  goalRef: "goals:G9999",
-                },
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                dispatchJournalRecoveryClaim: {
-                  ...row.dispatchJournalRecoveryClaim!,
-                  finalizedManifestDigest: "0".repeat(64),
-                },
-              }),
-              (row: AttestationEnvelope): AttestationEnvelope => ({
-                ...row,
-                dispatchJournalRecoveryClaim: {
-                  ...row.dispatchJournalRecoveryClaim!,
-                  gitReceiptsDigest: "0".repeat(64),
-                },
-              }),
-            ]) {
-              await rejectSourceMutation(mutate);
+            for (const [cause, mutate] of [
+              [
+                "cause=retained-source-prepare-digest-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  prepareRequestDigest: "0".repeat(64),
+                }),
+              ],
+              [
+                "cause=source-terminal-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  terminalDigest: "0".repeat(64),
+                }),
+              ],
+              [
+                "journal recovery successor carries a foreign or stale managed binding",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+                }),
+              ],
+              [
+                "cause=retained-claim-binding-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  dispatchJournalRecoveryClaim: {
+                    ...row.dispatchJournalRecoveryClaim!,
+                    taskId: "T9999",
+                  },
+                }),
+              ],
+              [
+                "cause=retained-source-prepare-digest-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  dispatchJournalRecoveryClaim: {
+                    ...row.dispatchJournalRecoveryClaim!,
+                    goalRef: "goals:G9999",
+                  },
+                }),
+              ],
+              [
+                "cause=retained-seed-task-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  dispatchJournalRecoveryClaim: {
+                    ...row.dispatchJournalRecoveryClaim!,
+                    finalizedManifestDigest: "0".repeat(64),
+                  },
+                }),
+              ],
+              [
+                "cause=retained-claim-binding-mismatch",
+                (row: AttestationEnvelope): AttestationEnvelope => ({
+                  ...row,
+                  dispatchJournalRecoveryClaim: {
+                    ...row.dispatchJournalRecoveryClaim!,
+                    gitReceiptsDigest: "0".repeat(64),
+                  },
+                }),
+              ],
+            ] as const) {
+              await rejectSourceMutation(cause, mutate);
             }
+            await activeBackend.transact({ kind: "handle", handle: guarded.handle }, (store) => {
+              const current = store.read(guarded.handle);
+              if (current === undefined) throw new Error("manual guarded successor disappeared");
+              store.replace(current, {
+                ...exactSuccessor,
+                prepareRequestDigest: "0".repeat(64),
+              });
+            });
+            await expect(activeCapability.resolveRecovery!(binding, guardedTip)).rejects.toThrow(
+              "cause=successor-prepare-digest-mismatch",
+            );
+            expect(await recoveryJournal.read("T2081")).toEqual(journalBeforeControls);
+            await activeBackend.transact({ kind: "handle", handle: guarded.handle }, (store) => {
+              const current = store.read(guarded.handle);
+              if (current === undefined) throw new Error("mutated guarded successor disappeared");
+              store.replace(current, exactSuccessor);
+            });
+            expect(
+              await activeBackend.transact({ kind: "namespace" }, (store) => store.rows().length),
+            ).toBe(rowsBeforeControls);
           }
           recovery = await activeCapability.resolveRecovery!(binding, guardedTip);
           expect(recovery).toMatchObject({
