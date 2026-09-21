@@ -9,6 +9,7 @@ import {
   resolveActiveHarness,
   routeDispatchTransport,
   validateAgainstSchema,
+  type DispatchHandle,
   type DispatchJSONValue,
 } from "@cq/config";
 import {
@@ -987,6 +988,14 @@ export function createProductionImplementationEvidenceService(
         authenticatedLineage,
       );
     },
+    ...(options.dispatchCapability.verifyImplementationLineage === undefined
+      ? {}
+      : {
+          verifyImplementationLineage: async (input: {
+            readonly workerDispatch: DispatchHandle;
+            readonly resultCommit: string;
+          }) => await options.dispatchCapability.verifyImplementationLineage!(input),
+        }),
     recordLedgerCompletion: async ({ task, completion, author, session }) =>
       await recordProtectedImplementationCompletion(store, task, completion, {
         author,

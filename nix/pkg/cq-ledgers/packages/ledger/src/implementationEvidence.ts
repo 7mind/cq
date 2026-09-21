@@ -1629,6 +1629,18 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly worker: ImplementationWorkerObservation;
     readonly attempts: readonly ImplementationReviewAttemptRecord[];
   }) => Promise<ImplementationVerificationObservation>;
+  readonly verifyImplementationLineage?: (input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly resultCommit: string;
+  }) => Promise<{
+    readonly kind: "cq-authenticated-implementation-lineage-verification";
+    readonly version: 1;
+    readonly taskId: string;
+    readonly resultCommit: string;
+    readonly receiptAttestationId: string;
+    readonly latestReceiptGeneration: number;
+    readonly receiptCount: number;
+  }>;
   readonly recordLedgerCompletion: (input: {
     readonly task: ImplementationTaskAuthority;
     readonly completion: ImplementationCompletionRecord;
@@ -4047,9 +4059,29 @@ export class ImplementationEvidenceService {
         completion.startingCommit !== repositoryHead)
     )
       throw new Error("protected completion lacks a result receipt chain");
+    const authenticatedLineage =
+      this.deps.verifyImplementationLineage === undefined
+        ? undefined
+        : await this.deps.verifyImplementationLineage({
+            workerDispatch: completion.workerDispatch,
+            resultCommit: repositoryHead,
+          });
+    if (
+      authenticatedLineage !== undefined &&
+      (authenticatedLineage.kind !==
+        "cq-authenticated-implementation-lineage-verification" ||
+        authenticatedLineage.version !== 1 ||
+        authenticatedLineage.taskId !== taskIdFromRef(input.completedTaskRef) ||
+        authenticatedLineage.resultCommit !== repositoryHead ||
+        authenticatedLineage.receiptCount !== receipts.length ||
+        authenticatedLineage.receiptAttestationId !== gate["attestationId"] ||
+        typeof gate["generation"] !== "number" ||
+        authenticatedLineage.latestReceiptGeneration > gate["generation"])
+    )
+      throw new Error("protected completion authenticated receipt lineage is invalid");
     let receiptHead = guarded ? completion.startingCommit : input.expectedFromHead;
     const receiptLineage = new Set([receiptHead]);
-    for (const value of receipts) {
+    for (const value of authenticatedLineage === undefined ? receipts : []) {
       if (
         !object(value) ||
         value["kind"] !== "cq-git-change-receipt" ||
@@ -4062,9 +4094,13 @@ export class ImplementationEvidenceService {
       receiptHead = value["newHead"];
       receiptLineage.add(receiptHead);
     }
-    if (receiptHead !== repositoryHead)
+    if (authenticatedLineage === undefined && receiptHead !== repositoryHead)
       throw new Error("protected completion result receipt chain skips the repository head");
-    if (!guarded && !receiptLineage.has(completion.startingCommit))
+    if (
+      authenticatedLineage === undefined &&
+      !guarded &&
+      !receiptLineage.has(completion.startingCommit)
+    )
       throw new Error(
         "protected completion starting commit is absent from the result receipt lineage",
       );

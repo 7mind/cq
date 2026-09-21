@@ -659,8 +659,7 @@ const request = {
 } as const;
 
 describe("implementation evidence activation continuation [BG]", () => {
-  // expected-failure: tasks:T6580
-  test.failing("continues activation through an authenticated recovered receipt origin and guarded transition", async () => {
+  test("continues activation through an authenticated recovered receipt origin and guarded transition", async () => {
     const recovered = mutableSnapshot();
     const workerResult = recoveredOrdinaryWorkerResult();
     recovered.completions[COMPLETION_REF] = {
@@ -668,9 +667,79 @@ describe("implementation evidence activation continuation [BG]", () => {
       startingCommit: GUARDED_REBASED_START,
       workerResult,
     };
+    const state = fixture(
+      recovered,
+      undefined,
+      undefined,
+      undefined,
+      {
+        state: "consumed",
+        input: { startingCommit: GUARDED_REBASED_START },
+        output: workerResult,
+      },
+      undefined,
+      async ({ workerDispatch, resultCommit }) => {
+        expect(workerDispatch).toEqual(recovered.completions[COMPLETION_REF]!.workerDispatch);
+        expect(resultCommit).toBe(REPOSITORY_HEAD);
+        return {
+          kind: "cq-authenticated-implementation-lineage-verification",
+          version: 1,
+          taskId: "T3003",
+          resultCommit: REPOSITORY_HEAD,
+          receiptAttestationId: `att_${"r".repeat(32)}`,
+          latestReceiptGeneration: 1,
+          receiptCount: 2,
+        };
+      },
+    );
     let observed: string | undefined;
     try {
-      await fixture(
+      const first = await state.service.continueEvidenceActivation(request);
+      expect(first).toMatchObject({
+        status: "continued",
+        completionRef: COMPLETION_REF,
+        fromHead: FROM_HEAD,
+        repositoryHead: REPOSITORY_HEAD,
+      });
+      await expect(state.restart().continueEvidenceActivation(request)).resolves.toEqual({
+        ...first,
+        status: "existing",
+      });
+    } catch (error) {
+      observed = error instanceof Error ? error.message : String(error);
+    }
+    if (observed !== undefined) {
+      expect(observed).toBe("protected completion result receipt chain is not contiguous");
+      throw new Error(observed);
+    }
+    expect(observed).toBeUndefined();
+  });
+
+  test("rejects substituted authenticated recovered receipt lineage before activation append", async () => {
+    const recovered = mutableSnapshot();
+    const workerResult = recoveredOrdinaryWorkerResult();
+    recovered.completions[COMPLETION_REF] = {
+      ...recovered.completions[COMPLETION_REF]!,
+      startingCommit: GUARDED_REBASED_START,
+      workerResult,
+    };
+    const valid = {
+      kind: "cq-authenticated-implementation-lineage-verification" as const,
+      version: 1 as const,
+      taskId: "T3003",
+      resultCommit: REPOSITORY_HEAD,
+      receiptAttestationId: `att_${"r".repeat(32)}`,
+      latestReceiptGeneration: 1,
+      receiptCount: 2,
+    };
+    for (const substituted of [
+      { ...valid, taskId: "T3999" },
+      { ...valid, resultCommit: FROM_HEAD },
+      { ...valid, receiptAttestationId: `att_${"x".repeat(32)}` },
+      { ...valid, latestReceiptGeneration: 2 },
+      { ...valid, receiptCount: 1 },
+    ]) {
+      const state = fixture(
         recovered,
         undefined,
         undefined,
@@ -681,25 +750,13 @@ describe("implementation evidence activation continuation [BG]", () => {
           output: workerResult,
         },
         undefined,
-        async ({ workerDispatch, resultCommit }) => {
-          expect(workerDispatch).toEqual(recovered.completions[COMPLETION_REF]!.workerDispatch);
-          expect(resultCommit).toBe(REPOSITORY_HEAD);
-          return {
-            kind: "cq-authenticated-implementation-lineage-verification",
-            version: 1,
-            taskId: "T3003",
-            resultCommit: REPOSITORY_HEAD,
-            receiptAttestationId: `att_${"r".repeat(32)}`,
-            latestReceiptGeneration: 1,
-            receiptCount: 2,
-          };
-        },
-      ).service.continueEvidenceActivation(request);
-    } catch (error) {
-      observed = error instanceof Error ? error.message : String(error);
+        async () => substituted,
+      );
+      await expect(state.service.continueEvidenceActivation(request)).rejects.toThrow(
+        "protected completion authenticated receipt lineage is invalid",
+      );
+      expect(Object.keys((await state.store.snapshot()).activationContinuations)).toHaveLength(0);
     }
-    expect(observed).toBe("protected completion result receipt chain is not contiguous");
-    if (observed !== undefined) throw new Error(observed);
   });
 
   test("appends and restart-replays one fulfilled requirement at the protected merged head", async () => {
