@@ -1276,7 +1276,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const key = `${row.attestationId}:${String(row.generation)}`;
       if (visited.has(key)) return false;
       visited.add(key);
-      if (row === anchor && row.dispatchJournalRecoveryClaim === undefined) return true;
+      if (
+        row === anchor &&
+        (row.dispatchJournalRecoveryClaim === undefined ||
+          !(row.state === "aborted" && row.abortReason === "gate-rejected"))
+      ) {
+        return true;
+      }
       if (!rowMatchesTask(row)) return false;
       const continuation = row.dispatchContinuationBinding;
       if (row.state === "consumed") {
@@ -1614,16 +1620,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const inherited = row.gitEffectBinding.inheritedGitReceipts ?? [];
     const bindingTransition = row.gitEffectBinding.receiptChainTransition;
     const guardedBridge = row.gitEffectBinding.guardedRebaseBridge;
-    const receiptChainTransition =
-      bindingTransition ??
-      (guardedBridge === undefined || inherited.length === 0
-        ? undefined
-        : {
+    const bridgeTransition =
+      guardedBridge !== undefined &&
+      inherited.length > 0 &&
+      inherited.at(-1)?.newHead === guardedBridge.oldResultCommit
+        ? {
             oldResultCommit: guardedBridge.oldResultCommit,
             ontoCommit: guardedBridge.ontoCommit,
             rebasedStartCommit: guardedBridge.rebasedStartCommit,
             receiptPrefixLength: inherited.length,
-          });
+          }
+        : undefined;
+    const receiptChainTransition = bindingTransition ?? bridgeTransition;
     try {
       const receipts = await resolveInheritedGitChangeReceipts(
         {
