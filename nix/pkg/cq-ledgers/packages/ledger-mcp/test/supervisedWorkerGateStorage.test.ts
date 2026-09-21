@@ -288,6 +288,35 @@ class ParentLossThenRedThenGreenGateDummy implements SupervisedWorkerGateRunner 
   }
 }
 
+class ParentLossThenTwoGreenThenRedThenGreenGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    if (this.requests.length === 1) {
+      throw new Error("controlled parent loss after qualification");
+    }
+    if (this.requests.length === 4) {
+      return {
+        gateExitCode: 1,
+        passCount: 61,
+        failCount: 1,
+        gateDurationMs: 1,
+        capturedAt: "2026-08-12T20:00:13.000Z",
+        outputTail: "(fail) recovered cancelled continuation\n61 pass\n1 fail",
+      };
+    }
+    return {
+      gateExitCode: 0,
+      passCount: 62,
+      failCount: 0,
+      gateDurationMs: 1,
+      capturedAt: "2026-08-12T20:00:14.000Z",
+      outputTail: "62 pass\n0 fail",
+    };
+  }
+}
+
 class GateRejectedThenParentLossThenGreenGateDummy implements SupervisedWorkerGateRunner {
   readonly requests: SupervisedWorkerGateRunRequest[] = [];
 
@@ -6664,7 +6693,10 @@ throw new Error("unexpected controlled cq invocation");
       | "zero-fresh-failure"
       | "guarded-ordinary-empty-cancel" = "none",
   ): Promise<void> {
-    const runner = new ParentLossThenGreenGateDummy();
+    const runner =
+      reproduction === "guarded-ordinary-empty-cancel"
+        ? new ParentLossThenTwoGreenThenRedThenGreenGateDummy()
+        : new ParentLossThenGreenGateDummy();
     const subject = await fixtureWithDispatchBase(
       runner,
       "managed",
@@ -8162,13 +8194,132 @@ throw new Error("unexpected controlled cq invocation");
       if (recoveredQualified.state !== "queued") {
         throw new Error("recovered empty ordinary continuation did not qualify");
       }
-      expect(
-        await activeCapability.coordinateImplementationCandidate!({
+      await expect(
+        activeCapability.coordinateImplementationCandidate!({
           partitionKey: recoveredQualified.partitionKey,
           holderId: "sealed-empty-ordinary-recovered",
         }),
-      ).toMatchObject({ state: "completed", handle: recovered.handle });
+      ).rejects.toThrow();
       expect(runner.requests).toHaveLength(4);
+      expect(
+        await reopenedBackend.transact({ kind: "handle", handle: recovered.handle }, (store) =>
+          store.read(recovered.handle),
+        ),
+      ).toMatchObject({
+        state: "aborted",
+        abortReason: "gate-rejected",
+        implementationQueue: {
+          state: "terminal",
+          terminal: { reason: "gate-rejected" },
+        },
+      });
+
+      const correctionChild = {
+        childId: `implement-worker#sealed-empty-ordinary-correction-${String(sequence)}`,
+        runId: `sealed-empty-ordinary-correction-run-${String(sequence)}`,
+      };
+      const correctionRequest = {
+        roleId: "implement-worker" as const,
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: guardedRecoveryBase,
+          round: 6,
+          startingCommit: guardedSuccessorTip,
+          validationIntent: "final" as const,
+          priorResultCommit: guardedSuccessorTip,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-guarded-empty-ordinary-correction`,
+        timeoutMs: 600_000,
+        expectedChild: correctionChild,
+        reprepareOf: recovered.handle,
+      };
+      const correction = await activeCapability.prepare(correctionRequest);
+      if (!correction.accepted || correction.prepared.gitChangeCapability === undefined) {
+        throw new Error(
+          correction.accepted
+            ? "recovered correction lacks Git authority"
+            : `recovered correction refused: ${correction.detail}`,
+        );
+      }
+      await activeCapability.fetchInput({
+        ...correction.handle,
+        inputCapability: correction.prepared.inputCapability,
+      });
+      const correctionBytes = `correct recovered cancelled continuation ${attestationBackend}\n`;
+      await fs.writeFile(
+        path.join(subject.managed.handle.absolutePath, "cancelled-recovery-correction.txt"),
+        correctionBytes,
+      );
+      const correctionReceipt = await activeCapability.gitCommit!({
+        ...correction.handle,
+        gitChangeCapability: correction.prepared.gitChangeCapability,
+        operationId: `T2081-${String(sequence)}-${attestationBackend}-cancelled-recovery-correction`,
+        expectedHead: guardedSuccessorTip,
+        message: "correct recovered cancelled continuation",
+        changes: [
+          {
+            kind: "add",
+            path: "cancelled-recovery-correction.txt",
+            newState: { mode: "100644", digest: sha256(correctionBytes) },
+          },
+        ],
+      });
+      const correctionFiles = (
+        await git(subject.managed.handle.absolutePath, [
+          "diff",
+          "--name-only",
+          `${guardedRecoveryBase}..${correctionReceipt.newHead}`,
+        ])
+      )
+        .split("\n")
+        .filter((entry) => entry !== "")
+        .sort();
+      expect(
+        await activeCapability.storeResult({
+          resultCapability: correction.prepared.resultCapability,
+          output: {
+            taskId: "T2081",
+            status: "pass",
+            resultCommit: correctionReceipt.newHead,
+            branch: subject.managed.handle.branch,
+            actualWorktreePath: subject.managed.handle.absolutePath,
+            filesTouched: correctionFiles,
+            gitReceipts: [correctionReceipt],
+            checkSummary: "changed cancelled-recovery correction awaits its gate",
+            baseVerification: {
+              status: "verified",
+              relation: "descendant",
+              baseCommit: guardedRecoveryBase,
+              headCommit: correctionReceipt.newHead,
+            },
+            summary: "changed correction retains the cancelled recovery ancestry",
+          },
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      const correctionQualified = await qualify(
+        correction.prepared,
+        correctionChild,
+        "2026-08-12T20:00:14.000Z",
+      );
+      if (correctionQualified.state !== "queued") {
+        throw new Error("changed cancelled-recovery correction did not qualify");
+      }
+      expect(
+        await activeCapability.coordinateImplementationCandidate!({
+          partitionKey: correctionQualified.partitionKey,
+          holderId: "sealed-empty-ordinary-correction",
+        }),
+      ).toMatchObject({ state: "completed", handle: correction.handle });
+      expect(await activeCapability.fetch(correction.handle)).toMatchObject({
+        state: "consumed",
+        output: { resultCommit: correctionReceipt.newHead },
+      });
+      expect(runner.requests).toHaveLength(5);
     }
     await reopenedBackend.close();
   }
@@ -8473,8 +8624,8 @@ throw new Error("unexpected controlled cq invocation");
     }
   }, 30_000);
 
-  test("ordinary zero-change cancellation after a guarded continuation retains its empty component", async () => {
-    for (const attestationBackend of ["memory", "sqlite"] as const) {
+  for (const attestationBackend of ["memory", "sqlite"] as const) {
+    test(`ordinary zero-change cancellation after a guarded continuation retains its empty component (${attestationBackend})`, async () => {
       await exerciseCancelledRecoveryContinuation(
         "guarded-rebase",
         false,
@@ -8483,8 +8634,8 @@ throw new Error("unexpected controlled cq invocation");
         false,
         "guarded-ordinary-empty-cancel",
       );
-    }
-  }, 30_000);
+    }, 30_000);
+  }
 
   test("cancelled unenrolled recovery workers retain fresh receipts across exact manual guarded successors", async () => {
     for (const attestationBackend of ["memory", "sqlite"] as const) {
