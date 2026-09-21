@@ -415,7 +415,7 @@ function bindingMatchesGuardedTransition(
   );
 }
 
-export function authenticateResolvedRecoveryReceiptClosure(input: {
+interface ResolvedRecoveryReceiptClosureInput {
   readonly taskId: string;
   readonly attestationId: string;
   readonly generation: number;
@@ -424,7 +424,16 @@ export function authenticateResolvedRecoveryReceiptClosure(input: {
   readonly resultCommit: string;
   readonly resolvedReceipts: readonly GitChangeBrokerReceipt[];
   readonly componentPrefix?: readonly GitChangeBrokerReceipt[];
-}): readonly GitChangeBrokerReceipt[] | undefined {
+}
+
+export interface AuthenticatedResolvedRecoveryReceiptClosure {
+  readonly form: "complete" | "post-guarded-component";
+  readonly receipts: readonly GitChangeBrokerReceipt[];
+}
+
+export function authenticateResolvedRecoveryReceiptClosureWithForm(
+  input: ResolvedRecoveryReceiptClosureInput,
+): AuthenticatedResolvedRecoveryReceiptClosure | undefined {
   const completePrefixMatches =
     input.resolvedReceipts.length >= input.inheritedReceipts.length &&
     receiptClosuresEqual(
@@ -457,7 +466,16 @@ export function authenticateResolvedRecoveryReceiptClosure(input: {
     tip = receipt.newHead;
   }
   if (tip !== input.resultCommit) return undefined;
-  return Object.freeze([...input.inheritedReceipts, ...suffix]);
+  return Object.freeze({
+    form: completePrefixMatches ? "complete" : "post-guarded-component",
+    receipts: Object.freeze([...input.inheritedReceipts, ...suffix]),
+  });
+}
+
+export function authenticateResolvedRecoveryReceiptClosure(
+  input: ResolvedRecoveryReceiptClosureInput,
+): readonly GitChangeBrokerReceipt[] | undefined {
+  return authenticateResolvedRecoveryReceiptClosureWithForm(input)?.receipts;
 }
 
 export function currentRecoveryTaskSpecificationDigest(input: unknown): string {

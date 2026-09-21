@@ -29,6 +29,7 @@ import {
 } from "@cq/ledger";
 import {
   authenticateResolvedRecoveryReceiptClosure,
+  authenticateResolvedRecoveryReceiptClosureWithForm,
   captureCurrentRecoverySeal,
   currentRecoveryTaskSpecificationDigest,
   currentRecoveryTaskEvidence,
@@ -272,6 +273,26 @@ describe("protected current dispatch-recovery capture", () => {
         ],
       }),
     ).toBeUndefined();
+    expect(
+      authenticateResolvedRecoveryReceiptClosureWithForm({
+        ...base,
+        resultCommit,
+        resolvedReceipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+      }),
+    ).toEqual({
+      form: "complete",
+      receipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+    });
+    expect(
+      authenticateResolvedRecoveryReceiptClosureWithForm({
+        ...base,
+        resultCommit,
+        resolvedReceipts: [firstCorrection, secondCorrection],
+      }),
+    ).toEqual({
+      form: "post-guarded-component",
+      receipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+    });
   });
 
   test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
