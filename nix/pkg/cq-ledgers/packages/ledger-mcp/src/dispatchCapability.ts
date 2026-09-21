@@ -1407,7 +1407,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         predecessor.stagedRebaseSourceBinding !== undefined ||
         predecessor.implementationQueue?.state === "staged-rebase-retired" ||
         !rowMatchesTask(predecessor) ||
-        sourceTip(predecessor) !== bridge.oldResultCommit ||
+        !(await dispatchReceiptClosureMatches(predecessor, bridge.oldResultCommit)) ||
         !dispatchObject(row.input) ||
         row.input["priorResultCommit"] !== bridge.oldResultCommit
       ) {
