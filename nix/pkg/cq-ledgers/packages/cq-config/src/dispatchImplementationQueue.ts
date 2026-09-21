@@ -1599,6 +1599,13 @@ function isUnenrolledCancelledRecoveryIntermediate(
   const consumedFailure = authenticatedUnenrolledConsumedFailure(intermediate, authority);
   const consumedFailureAuthentic =
     claim !== undefined && consumedFailure?.continuation.liveTip === claim.liveTip;
+  const consumedFailureSourceAuthentic =
+    consumedFailureAuthentic &&
+    (candidateQueueTerminalAuthentic ||
+      (candidateControl === undefined &&
+        (candidate.dispatchContinuationClaim !== undefined ||
+          candidate.dispatchJournalRecoveryClaim !== undefined ||
+          candidateBinding?.guardedRebaseBridge !== undefined)));
   const timeoutMs =
     attestationInstantMs(intermediate.deadlines.childCancelAt, "deadlines.childCancelAt") -
     attestationInstantMs(intermediate.createdAt, "createdAt");
@@ -1650,7 +1657,7 @@ function isUnenrolledCancelledRecoveryIntermediate(
     !abortedTerminalAuthentic(candidate) ||
     !(
       (abortedTerminalAuthentic(intermediate) && intermediate.abortReason === "cancelled") ||
-      (candidateQueueTerminalAuthentic && consumedFailureAuthentic)
+      consumedFailureSourceAuthentic
     ) ||
     (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") ||
     !sameManagerBinding ||
@@ -1756,6 +1763,14 @@ function isUnenrolledCancelledContinuationIntermediate(
         };
   const detailsDigest =
     intermediate.abortDetails === undefined ? null : digest(intermediate.abortDetails);
+  const candidateQueueAuthorityAuthentic =
+    candidate.implementationQueue !== undefined &&
+    candidate.implementationQueue.enrollment.taskId === authority.taskId &&
+    candidate.implementationQueue.enrollment.goalRef === authority.goalRef &&
+    candidate.implementationQueue.enrollment.finalizedManifestDigest ===
+      authority.finalizedManifestDigest;
+  const candidateConsumedFailureAuthentic =
+    authenticatedUnenrolledConsumedFailure(candidate, authority) !== undefined;
   if (
     candidateBinding === undefined ||
     intermediateBinding === undefined ||
@@ -1779,10 +1794,7 @@ function isUnenrolledCancelledContinuationIntermediate(
       }) ||
     candidateBinding.taskId !== authority.taskId ||
     intermediateBinding.taskId !== authority.taskId ||
-    candidate.implementationQueue?.enrollment.taskId !== authority.taskId ||
-    candidate.implementationQueue.enrollment.goalRef !== authority.goalRef ||
-    candidate.implementationQueue.enrollment.finalizedManifestDigest !==
-      authority.finalizedManifestDigest ||
+    !(candidateQueueAuthorityAuthentic || candidateConsumedFailureAuthentic) ||
     input["taskId"] !== authority.taskId ||
     input["branch"] !== intermediateBinding.branch ||
     input["startingCommit"] !== retained.liveTip ||
@@ -1795,7 +1807,15 @@ function isUnenrolledCancelledContinuationIntermediate(
   ) {
     return false;
   }
-  return isConsumedOrdinaryContinuationAncestor(candidate, intermediate, intermediateBinding);
+  return (
+    isConsumedOrdinaryContinuationAncestor(candidate, intermediate, intermediateBinding) ||
+    isUnenrolledConsumedFailureContinuationAncestor(
+      candidate,
+      intermediate,
+      intermediateBinding,
+      authority,
+    )
+  );
 }
 
 function isComposedTerminalIntermediate(
@@ -2230,6 +2250,16 @@ export function enqueueImplementationCandidate(
     );
   }
   const preparedInput = row.input as Readonly<Record<string, DispatchJSONValue>>;
+  if (
+    preparedInput["taskId"] !== authority.taskId ||
+    preparedInput["branch"] !== binding.branch ||
+    row.promptProvenance.inputDigest !== digest(row.input)
+  ) {
+    throw new AttestationBindingError(
+      "input",
+      "queue enrollment does not match the authenticated dispatch input",
+    );
+  }
   if (preparedInput["baseCommit"] !== request.observedBaseCommit) {
     throw new AttestationBindingError(
       "observedBaseCommit",

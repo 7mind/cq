@@ -1204,6 +1204,380 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
   });
 }
 
+for (const attestationBackend of ["memory", "sqlite"] as const) {
+  test(`terminal generation 3 composes through authenticated cancellations and failures into generation 27 (${attestationBackend})`, async () => {
+    const runner = new ParentLossThenGreenGateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      false,
+      true,
+      undefined,
+      artifactStore(),
+      attestationBackend,
+    );
+    const capability = createDispatchCapability({
+      ...subject.capabilityOptions,
+      recoveryJournal: new InMemoryCurrentRecoverySealJournalStore(),
+    });
+    if (
+      capability.resolveRecovery === undefined ||
+      capability.resolveContinuation === undefined ||
+      capability.qualifyImplementationCandidate === undefined ||
+      capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("long authenticated recovery composition operations are unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("long recovery composition lost its binding");
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      child: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: child.childId.slice("implement-worker#".length),
+        childThreadId: `long-recovery-${attestationBackend}-${String(prepared.generation)}`,
+        expectedRunId: child.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+
+    expect(
+      await capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const sourceQualified = await qualify(
+      subject.prepared,
+      subject.expectedChild,
+      "2026-08-12T20:00:02.000Z",
+    );
+    if (sourceQualified.state !== "queued") throw new Error("long recovery source did not queue");
+    await expect(
+      capability.coordinateImplementationCandidate({
+        partitionKey: sourceQualified.partitionKey,
+        holderId: `long-recovery-source-${attestationBackend}`,
+      }),
+    ).rejects.toThrow("controlled parent loss after qualification");
+
+    const firstRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (firstRecovery.preparation.kind !== "current") {
+      throw new Error("parent-lost source did not produce current recovery authority");
+    }
+    const cancelledChild = {
+      childId: `implement-worker#long-cancelled-${attestationBackend}-${String(sequence)}`,
+      runId: `long-cancelled-${attestationBackend}-${String(sequence)}`,
+    };
+    const cancelled = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 1,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-long-cancelled-${attestationBackend}`,
+      timeoutMs: 600_000,
+      expectedChild: cancelledChild,
+      recoveryPreparation: firstRecovery.preparation.recoveryPreparation,
+    });
+    if (!cancelled.accepted) throw new Error(cancelled.detail);
+    expect(cancelled.handle.generation).toBe(2);
+    await capability.fetchInput({
+      ...cancelled.handle,
+      inputCapability: cancelled.prepared.inputCapability,
+    });
+    expect(await capability.abort({ ...cancelled.handle, reason: "cancelled" })).toMatchObject({
+      state: "aborted",
+      reason: "cancelled",
+    });
+
+    const secondRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (secondRecovery.preparation.kind !== "current") {
+      throw new Error("cancelled successor did not promote current recovery authority");
+    }
+    const terminalChild = {
+      childId: `implement-worker#long-terminal-${attestationBackend}-${String(sequence)}`,
+      runId: `long-terminal-${attestationBackend}-${String(sequence)}`,
+    };
+    const terminal = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: subject.dispatchBaseCommit,
+        round: 2,
+        startingCommit: subject.receipt.newHead,
+        validationIntent: "final",
+        priorResultCommit: subject.receipt.newHead,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-long-terminal-${attestationBackend}`,
+      timeoutMs: 600_000,
+      expectedChild: terminalChild,
+      recoveryPreparation: secondRecovery.preparation.recoveryPreparation,
+    });
+    if (!terminal.accepted) throw new Error(terminal.detail);
+    expect(terminal.handle.generation).toBe(3);
+    await capability.fetchInput({
+      ...terminal.handle,
+      inputCapability: terminal.prepared.inputCapability,
+    });
+    expect(
+      await capability.storeResult({
+        resultCapability: terminal.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          resultCommit: subject.receipt.newHead,
+          gitReceipts: [],
+          checkSummary: "terminal generation 3 checks passed",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const terminalQualified = await qualify(
+      terminal.prepared,
+      terminalChild,
+      "2026-08-12T20:00:03.000Z",
+    );
+    if (terminalQualified.state !== "queued") {
+      throw new Error("terminal generation 3 did not qualify");
+    }
+    expect(
+      await capability.coordinateImplementationCandidate({
+        partitionKey: terminalQualified.partitionKey,
+        holderId: `long-terminal-${attestationBackend}`,
+      }),
+    ).toMatchObject({ state: "completed", handle: terminal.handle });
+
+    let firstRepeatedCancelledHandle:
+      { readonly attestationId: string; readonly generation: number } | undefined;
+    let firstRepeatedFailureHandle:
+      { readonly attestationId: string; readonly generation: number } | undefined;
+    let lastRepeatedCancelledHandle:
+      { readonly attestationId: string; readonly generation: number } | undefined;
+    for (let cancelledGeneration = 4; cancelledGeneration <= 26; cancelledGeneration += 2) {
+      const continuation = await capability.resolveContinuation(binding, subject.receipt.newHead);
+      const repeatedCancelledChild = {
+        childId: `implement-worker#long-cancelled-${attestationBackend}-${String(cancelledGeneration)}-${String(sequence)}`,
+        runId: `long-cancelled-${attestationBackend}-${String(cancelledGeneration)}-${String(sequence)}`,
+      };
+      const repeatedCancelled = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          round: cancelledGeneration - 1,
+          startingCommit: subject.receipt.newHead,
+          validationIntent: "final",
+          priorResultCommit: subject.receipt.newHead,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-long-cancelled-${attestationBackend}-${String(cancelledGeneration)}`,
+        timeoutMs: 600_000,
+        expectedChild: repeatedCancelledChild,
+        continuation: continuation.continuationReference,
+      });
+      if (!repeatedCancelled.accepted) throw new Error(repeatedCancelled.detail);
+      expect(repeatedCancelled.handle.generation).toBe(cancelledGeneration);
+      firstRepeatedCancelledHandle ??= repeatedCancelled.handle;
+      lastRepeatedCancelledHandle = repeatedCancelled.handle;
+      await capability.fetchInput({
+        ...repeatedCancelled.handle,
+        inputCapability: repeatedCancelled.prepared.inputCapability,
+      });
+      expect(
+        await capability.abort({ ...repeatedCancelled.handle, reason: "cancelled" }),
+      ).toMatchObject({ state: "aborted", reason: "cancelled" });
+
+      const recovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+      if (recovery.preparation.kind !== "current") {
+        throw new Error("repeated cancellation did not produce current recovery authority");
+      }
+      const recoveryGeneration = cancelledGeneration + 1;
+      const recoveredChild = {
+        childId: `implement-worker#long-recovered-${attestationBackend}-${String(recoveryGeneration)}-${String(sequence)}`,
+        runId: `long-recovered-${attestationBackend}-${String(recoveryGeneration)}-${String(sequence)}`,
+      };
+      const recovered = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: subject.dispatchBaseCommit,
+          round: recoveryGeneration - 1,
+          startingCommit: subject.receipt.newHead,
+          validationIntent: "final",
+          priorResultCommit: subject.receipt.newHead,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-long-recovered-${attestationBackend}-${String(recoveryGeneration)}`,
+        timeoutMs: 600_000,
+        expectedChild: recoveredChild,
+        recoveryPreparation: recovery.preparation.recoveryPreparation,
+      });
+      if (!recovered.accepted) throw new Error(recovered.detail);
+      expect(recovered.handle.generation).toBe(recoveryGeneration);
+      if (recoveryGeneration === 5) firstRepeatedFailureHandle = recovered.handle;
+      await capability.fetchInput({
+        ...recovered.handle,
+        inputCapability: recovered.prepared.inputCapability,
+      });
+      const finalRecovery = recoveryGeneration === 27;
+      expect(
+        await capability.storeResult({
+          resultCapability: recovered.prepared.resultCapability,
+          output: finalRecovery
+            ? {
+                ...subject.output,
+                resultCommit: subject.receipt.newHead,
+                gitReceipts: [],
+                checkSummary: "generation 27 recovery checks passed",
+              }
+            : {
+                ...subject.output,
+                status: "fail",
+                resultCommit: null,
+                gitReceipts: [],
+                checkSummary: "repeated recovery failed intentionally",
+                summary: "the repeated recovery reports a controlled failure",
+                blockedReason: "controlled repeated recovery failure",
+              },
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      const observedAt = `2026-08-12T20:00:${String(recoveryGeneration + 10).padStart(2, "0")}.000Z`;
+      if (finalRecovery) {
+        if (
+          firstRepeatedCancelledHandle === undefined ||
+          firstRepeatedFailureHandle === undefined ||
+          lastRepeatedCancelledHandle === undefined
+        ) {
+          throw new Error("long recovery mutation handles are unavailable");
+        }
+        const rejectLineageMutation = async (
+          handle: { readonly attestationId: string; readonly generation: number },
+          mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+        ): Promise<void> => {
+          const retained = await subject.backend.transact({ kind: "handle", handle }, (store) => {
+            const row = store.read(handle);
+            if (row === undefined || isAttestationTombstone(row)) {
+              throw new Error("long recovery composition row disappeared");
+            }
+            return row;
+          });
+          const rowCount = subject.backend.storedRows().length;
+          await subject.backend.transact({ kind: "handle", handle }, (store) => {
+            const current = store.read(handle);
+            if (current === undefined) throw new Error("long recovery mutation lost its row");
+            store.replace(current, mutate(retained));
+          });
+          try {
+            await expect(qualify(recovered.prepared, recoveredChild, observedAt)).rejects.toThrow();
+            expect(subject.backend.storedRows()).toHaveLength(rowCount);
+            expect(runner.requests).toHaveLength(2);
+            expect(
+              await subject.backend.transact(
+                { kind: "handle", handle: recovered.handle },
+                (store) => store.read(recovered.handle),
+              ),
+            ).not.toHaveProperty("implementationQueue");
+          } finally {
+            await subject.backend.transact({ kind: "handle", handle }, (store) => {
+              const current = store.read(handle);
+              if (current === undefined) throw new Error("long recovery restore lost its row");
+              store.replace(current, retained);
+            });
+          }
+        };
+        await rejectLineageMutation(firstRepeatedCancelledHandle, (row) => {
+          const { dispatchContinuationClaim: _claim, ...withoutClaim } = row;
+          return withoutClaim;
+        });
+        await rejectLineageMutation(firstRepeatedFailureHandle, (row) => ({
+          ...row,
+          dispatchJournalRecoveryClaim: {
+            ...row.dispatchJournalRecoveryClaim!,
+            sourceTerminalDigest: "0".repeat(64),
+          },
+        }));
+        await rejectLineageMutation(firstRepeatedFailureHandle, (row) => ({
+          ...row,
+          gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+        }));
+        await rejectLineageMutation(lastRepeatedCancelledHandle, (row) => ({
+          ...row,
+          terminalDigest: "0".repeat(64),
+        }));
+        await rejectLineageMutation(recovered.handle, (row) => ({
+          ...row,
+          input: {
+            ...(row.input as Readonly<Record<string, DispatchJSONValue>>),
+            taskId: "T9999",
+          },
+        }));
+        await rejectLineageMutation(recovered.handle, (row) => ({
+          ...row,
+          gitEffectBinding: {
+            ...row.gitEffectBinding!,
+            inheritedGitReceipts: row.gitEffectBinding!.inheritedGitReceipts!.map(
+              (receipt, index) =>
+                index === 0 ? { ...receipt, requestDigest: "0".repeat(64) } : receipt,
+            ),
+          },
+        }));
+      }
+      const recoveredQualified = await qualify(recovered.prepared, recoveredChild, observedAt);
+      if (!finalRecovery) {
+        expect(recoveredQualified).toMatchObject({ state: "consumed" });
+        continue;
+      }
+      if (recoveredQualified.state !== "queued") {
+        throw new Error("generation 27 recovery did not qualify");
+      }
+      expect(
+        await capability.coordinateImplementationCandidate({
+          partitionKey: recoveredQualified.partitionKey,
+          holderId: `long-recovered-${attestationBackend}-${String(recoveryGeneration)}`,
+        }),
+      ).toMatchObject({ state: "completed", handle: recovered.handle });
+    }
+    expect(runner.requests).toHaveLength(3);
+    await subject.backend.close();
+  }, 30_000);
+}
+
 test("intentional failure receipt and manager substitutions fail closed before consumption", async () => {
   const cases = [
     {
