@@ -4408,7 +4408,33 @@ throw new Error("unexpected controlled cq invocation");
         },
         recoveryPreparation: currentRecovery.preparation.recoveryPreparation,
       });
-      if (!cancelled.accepted) throw new Error(`sealed successor refused: ${cancelled.detail}`);
+      if (!cancelled.accepted || cancelled.prepared.gitChangeCapability === undefined) {
+        throw new Error(
+          `sealed successor refused: ${cancelled.accepted ? "missing Git authority" : cancelled.detail}`,
+        );
+      }
+      await subject.capability.fetchInput({
+        ...cancelled.handle,
+        inputCapability: cancelled.prepared.inputCapability,
+      });
+      const sourcePath = "manual-guarded-source.txt";
+      const sourceBytes = "manual guarded source\n";
+      await fs.writeFile(path.join(subject.managed.handle.absolutePath, sourcePath), sourceBytes);
+      if (subject.capability.gitCommit === undefined) throw new Error("git_commit unavailable");
+      const cancelledReceipt = await subject.capability.gitCommit({
+        ...cancelled.handle,
+        gitChangeCapability: cancelled.prepared.gitChangeCapability,
+        operationId: `T2081-${String(sequence)}-manual-guarded-source`,
+        expectedHead: subject.receipt.newHead,
+        message: "persist manual guarded source",
+        changes: [
+          {
+            kind: "add",
+            path: sourcePath,
+            newState: { mode: "100644", digest: sha256(sourceBytes) },
+          },
+        ],
+      });
       expect(
         await subject.capability.abort({ ...cancelled.handle, reason: "cancelled" }),
       ).toMatchObject({ state: "aborted", reason: "cancelled" });
@@ -4482,6 +4508,7 @@ throw new Error("unexpected controlled cq invocation");
           baseCommit: protectedHead,
           round: 2,
           startingCommit: rebase.bridge.rebasedStartCommit,
+          priorResultCommit: cancelledReceipt.newHead,
         },
         idempotencyKey: `T2081-${String(sequence)}-manual-guarded-successor`,
         timeoutMs: 600_000,
@@ -4541,6 +4568,13 @@ throw new Error("unexpected controlled cq invocation");
               baseCommit: protectedHead,
               headCommit: rebase.bridge.rebasedStartCommit,
             },
+            mutationTable: [
+              {
+                mutation: "omit the predecessor's durable receipt closure",
+                observed: "the recovery fence rejects the manual guarded continuation",
+                restored: "the exact receipt closure admits the continuation",
+              },
+            ],
             summary: "completed the authenticated manual guarded successor",
           } as unknown as DispatchJSONValue,
         }),
