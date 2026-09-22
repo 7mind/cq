@@ -93,13 +93,21 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-command.test.ts",
-      "sha256": "6bb117ac4cc2c294cc06fce7e40a03a8fe88d5280e59153a27563ad3316447ba",
+      "sha256": "95f38c6fab1675ac42f406ae905ff6786d4c953e3dbf39bbcc0bb6ab313f2351",
       "targets": []
     },
     {
       "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-command.test.ts",
+      "sha256": "95f38c6fab1675ac42f406ae905ff6786d4c953e3dbf39bbcc0bb6ab313f2351",
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredCommand.ts"
+      ]
+    },
+    {
+      "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/bench/postgresRequiredCommand.ts",
-      "sha256": "c82302fb5d1b78e5a88a4a5da31e4942f1c52710ff7241f2cdbb0223e690db37",
+      "sha256": "2b2ab97c0c4a924d38e21488d6103afe11955763cdd33b053b9e779144323fd8",
       "targets": [
         "nix/pkg/cq-ledgers/packages/ledger/bench/checkPostgresLifecycleBounds.ts"
       ]
@@ -684,13 +692,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "d7ec27f349883626366b2ffa3e082ad609f4cf6071f07ad731824242a66e98cf",
+      "sha256": "3b110f185ca4a3edf7a63669ed7b6f8838baf0c5272a5a4d51fb07883b9c4aac",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "d7ec27f349883626366b2ffa3e082ad609f4cf6071f07ad731824242a66e98cf",
+      "sha256": "3b110f185ca4a3edf7a63669ed7b6f8838baf0c5272a5a4d51fb07883b9c4aac",
       "targets": []
     },
     {

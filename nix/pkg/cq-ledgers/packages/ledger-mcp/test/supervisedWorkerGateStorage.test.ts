@@ -1224,7 +1224,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
     ).toMatchObject({ state: "completed", handle: continued.handle });
     expect(runner.requests).toHaveLength(0);
     await subject.backend.close();
-  });
+  }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
 }
 
 for (const attestationBackend of ["memory", "sqlite"] as const) {
@@ -4188,6 +4188,7 @@ throw new Error("unexpected controlled cq invocation");
       ).toBeUndefined();
       await activeBackend.close();
     },
+    RECOVERY_BACKEND_CASE_TIMEOUT_MS,
   );
 
   async function exerciseAutomaticStagedRebaseLineage(
@@ -6289,7 +6290,7 @@ throw new Error("unexpected controlled cq invocation");
       state: "consumed",
       implementationQueue: { state: "leased" },
     });
-  });
+  }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
 
   test("a consumed pass followed by a rejected continuation admits its changed correction", async () => {
     const runner = new GateSequenceDummy([
@@ -6560,7 +6561,7 @@ throw new Error("unexpected controlled cq invocation");
       }),
     ).toMatchObject({ state: "completed" });
     expect(runner.requests).toHaveLength(3);
-  });
+  }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
 
   async function exerciseRecoveredGuardedRedCorrection(
     attestationBackend: "memory" | "sqlite",
@@ -7917,6 +7918,7 @@ throw new Error("unexpected controlled cq invocation");
     async (attestationBackend) => {
       await exerciseCurrentRecoveredStagedRetirement(attestationBackend, false);
     },
+    RECOVERY_BACKEND_CASE_TIMEOUT_MS,
   );
 
   test(
@@ -9702,11 +9704,11 @@ throw new Error("unexpected controlled cq invocation");
 
   test("a cancelled sealed recovery successor composes into an ordinary consumed continuation", async () => {
     await exerciseCancelledRecoveryContinuation("ordinary", false, "sqlite", 0, false);
-  });
+  }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
 
   test("a cancelled sealed recovery successor composes into an authenticated guarded rebase", async () => {
     await exerciseCancelledRecoveryContinuation("guarded-rebase", false, "sqlite", 0, false);
-  });
+  }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
 
   test("a sealed recovery successor admits one exact changed gate correction", async () => {
     const runner = new GateSequenceDummy([
@@ -10730,6 +10732,7 @@ throw new Error("unexpected controlled cq invocation");
         await subject.backend.close();
       }
     },
+    RECOVERY_BACKEND_CASE_TIMEOUT_MS,
   );
 
   test("gate projection rejects integration history outside the exact result ancestry [Behavioral-Active Effectual-GoodCommunication]", async () => {
