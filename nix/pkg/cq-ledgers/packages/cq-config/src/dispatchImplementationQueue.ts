@@ -1049,7 +1049,7 @@ function isJournalRecoveryAncestor(
     !isAttestationTombstone(selected) &&
     directGuardedBridge !== undefined &&
     receiptChainTransition !== undefined &&
-    isUnenrolledCancelledRecoveryIntermediate(directGuardedSource, selected, authority) &&
+    isUnenrolledAbortedRecoveryIntermediate(directGuardedSource, selected, authority) &&
     claim?.liveTip === directGuardedBridge.rebasedStartCommit &&
     receiptChainTransition.source.attestationId === directGuardedSource.attestationId &&
     receiptChainTransition.source.generation === directGuardedSource.generation &&
@@ -1508,7 +1508,7 @@ function isRetiredGuardedRebaseAncestor(
   );
 }
 
-function isUnenrolledCancelledRecoveryIntermediate(
+function isUnenrolledAbortedRecoveryIntermediate(
   candidate: AttestationRow,
   intermediate: AttestationRow,
   authority: ImplementationQueueAuthority,
@@ -1656,7 +1656,9 @@ function isUnenrolledCancelledRecoveryIntermediate(
     candidate.generation + 1 !== intermediate.generation ||
     !abortedTerminalAuthentic(candidate) ||
     !(
-      (abortedTerminalAuthentic(intermediate) && intermediate.abortReason === "cancelled") ||
+      (abortedTerminalAuthentic(intermediate) &&
+        (intermediate.abortReason === "cancelled" ||
+          intermediate.abortReason === "parent-lost")) ||
       consumedFailureSourceAuthentic
     ) ||
     (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") ||
@@ -1837,7 +1839,7 @@ function isComposedTerminalIntermediate(
     return false;
   }
   return (
-    isUnenrolledCancelledRecoveryIntermediate(candidate, intermediate, authority) ||
+    isUnenrolledAbortedRecoveryIntermediate(candidate, intermediate, authority) ||
     isUnenrolledCancelledContinuationIntermediate(candidate, intermediate, authority) ||
     isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) ||
     isLegacyRetiredJournalRecoveryIntermediate(

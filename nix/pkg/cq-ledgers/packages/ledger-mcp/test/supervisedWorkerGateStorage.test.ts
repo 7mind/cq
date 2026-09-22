@@ -2014,7 +2014,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
           qualify(twentyNinth.prepared, twentyNinth.child, observedAt),
         ).rejects.toThrow("cannot be resurrected");
         expect(subject.backend.storedRows()).toHaveLength(rowCount);
-        expect(runner.requests).toHaveLength(3);
+        expect(runner.requests).toHaveLength(2);
       } finally {
         await subject.backend.transact({ kind: "handle", handle }, (store) => {
           const current = store.read(handle);
@@ -2066,7 +2066,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         holderId: `consecutive-parent-loss-target-${attestationBackend}`,
       }),
     ).toMatchObject({ state: "completed", handle: twentyNinth.handle });
-    expect(runner.requests).toHaveLength(4);
+    expect(runner.requests).toHaveLength(3);
     await subject.backend.close();
   }, 60_000);
 }
