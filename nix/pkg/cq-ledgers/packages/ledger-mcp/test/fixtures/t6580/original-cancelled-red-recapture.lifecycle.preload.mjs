@@ -1,9 +1,12 @@
-import assert from"node:assert/strict";import{readFileSync}from"node:fs";import path from"node:path";import{plugin}from"bun";
+import assert from"node:assert/strict";import{createHash}from"node:crypto";import{readFileSync}from"node:fs";import path from"node:path";import{plugin}from"bun";
 const root=process.env["CQ_T6580_RUNTIME_ROOT"];
-const source=process.env["CQ_T6580_SOURCE_ROOT"]??root;
+const source=process.env["CQ_T6580_SOURCE_ROOT"];
 assert.ok(root,"CQ_T6580_RUNTIME_ROOT is required");
 assert.ok(source,"CQ_T6580_SOURCE_ROOT is required");
-const target=root+"/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts";let contents=readFileSync("/nix/store/j8nbq9rvdrynj97xjz0rkjznshc4kq48-cq-verified-fused-recovery-source/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts","utf8");
+const target=root+"/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts";
+const fixtureInput=source+"/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts";
+let contents=readFileSync(fixtureInput,"utf8");
+assert.equal(createHash("sha256").update(contents).digest("hex"),"c87e29ac11305196a220872760511a6f12042c4d6da7be96d27fd24fdf1be228","unexpected R22 supervised-storage fixture input");
 const pos=contents.indexOf('      const guardedTip = guardedRecord["startingCommit"];');
 const start=contents.indexOf('      expect(\n        await activeCapability.abort({',pos);
 const endMarker='      await reopenedBackend.close();\n      return;';
