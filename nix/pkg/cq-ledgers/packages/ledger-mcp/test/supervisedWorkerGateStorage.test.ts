@@ -1677,9 +1677,10 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
       return { ...prepared, child };
     };
 
-    expect(
-      await capability.abort({ ...subject.prepared, reason: "parent-lost" }),
-    ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+    expect(await capability.abort({ ...subject.prepared, reason: "parent-lost" })).toMatchObject({
+      state: "aborted",
+      reason: "parent-lost",
+    });
     const secondRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
     if (secondRecovery.preparation.kind !== "current") {
       throw new Error("generation 1 did not produce current recovery authority");
@@ -1706,11 +1707,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         },
       }),
     ).toMatchObject({ state: "gate-pending" });
-    const sourceQualified = await qualify(
-      third.prepared,
-      third.child,
-      "2026-08-12T20:00:03.000Z",
-    );
+    const sourceQualified = await qualify(third.prepared, third.child, "2026-08-12T20:00:03.000Z");
     if (sourceQualified.state !== "queued") {
       throw new Error("generation 3 parent-loss source did not qualify");
     }
@@ -1893,11 +1890,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
     expect(runner.requests).toHaveLength(2);
 
     const ninthContinuation = await capability.resolveContinuation(binding, liveTip);
-    const ninth = await prepareContinuation(
-      9,
-      liveTip,
-      ninthContinuation.continuationReference,
-    );
+    const ninth = await prepareContinuation(9, liveTip, ninthContinuation.continuationReference);
     expect(await capability.abort({ ...ninth.handle, reason: "cancelled" })).toMatchObject({
       state: "aborted",
       reason: "cancelled",
@@ -1980,9 +1973,9 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
       throw new Error("generation 27 did not preserve current recovery");
     }
     const twentyEighth = await prepareRecovery(28, liveTip, twentyEighthRecovery);
-    expect(
-      await capability.abort({ ...twentyEighth.handle, reason: "parent-lost" }),
-    ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+    expect(await capability.abort({ ...twentyEighth.handle, reason: "parent-lost" })).toMatchObject(
+      { state: "aborted", reason: "parent-lost" },
+    );
 
     const twentyNinthRecovery = await capability.resolveRecovery(binding, liveTip);
     if (twentyNinthRecovery.preparation.kind !== "current") {
@@ -2010,9 +2003,9 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         store.replace(current, mutate(retained));
       });
       try {
-        await expect(
-          qualify(twentyNinth.prepared, twentyNinth.child, observedAt),
-        ).rejects.toThrow("cannot be resurrected");
+        await expect(qualify(twentyNinth.prepared, twentyNinth.child, observedAt)).rejects.toThrow(
+          "cannot be resurrected",
+        );
         expect(subject.backend.storedRows()).toHaveLength(rowCount);
         expect(runner.requests).toHaveLength(2);
       } finally {

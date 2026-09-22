@@ -8,6 +8,7 @@ import {
   DispatchStateConflictError,
   assertDispatchContinuationBinding,
   assertDispatchHandle,
+  assertDispatchRecoveryBinding,
   attestationRowDigest,
   attestationInstantMs,
   attestationNamespacesEqual,
@@ -1033,6 +1034,8 @@ function isJournalRecoveryAncestor(
   const receiptChainTransition = successorBinding.receiptChainTransition;
   const directGuardedSource =
     receiptChainTransition === undefined ? undefined : store.read(receiptChainTransition.source);
+  const directGuardedSuccessor =
+    receiptChainTransition === undefined ? undefined : store.read(receiptChainTransition.successor);
   const directContinuationSource =
     selected === undefined ||
     isAttestationTombstone(selected) ||
@@ -1040,8 +1043,8 @@ function isJournalRecoveryAncestor(
       ? undefined
       : store.read(selected.dispatchContinuationClaim.source);
   const directGuardedBridge =
-    selected !== undefined && !isAttestationTombstone(selected)
-      ? selected.gitEffectBinding?.guardedRebaseBridge
+    directGuardedSuccessor !== undefined && !isAttestationTombstone(directGuardedSuccessor)
+      ? directGuardedSuccessor.gitEffectBinding?.guardedRebaseBridge
       : undefined;
   const directGuardedRecoveryTipMatches =
     directGuardedSource !== undefined &&
@@ -1049,12 +1052,13 @@ function isJournalRecoveryAncestor(
     !isAttestationTombstone(selected) &&
     directGuardedBridge !== undefined &&
     receiptChainTransition !== undefined &&
-    isUnenrolledAbortedRecoveryIntermediate(directGuardedSource, selected, authority) &&
+    isComposedUnenrolledAbortedRecoveryAncestor(directGuardedSource, selected, authority, store) &&
     claim?.liveTip === directGuardedBridge.rebasedStartCommit &&
     receiptChainTransition.source.attestationId === directGuardedSource.attestationId &&
     receiptChainTransition.source.generation === directGuardedSource.generation &&
-    receiptChainTransition.successor.attestationId === selected.attestationId &&
-    receiptChainTransition.successor.generation === selected.generation &&
+    directGuardedSuccessor !== undefined &&
+    receiptChainTransition.successor.attestationId === directGuardedSuccessor.attestationId &&
+    receiptChainTransition.successor.generation === directGuardedSuccessor.generation &&
     receiptChainTransition.guardedRebase === directGuardedBridge.guardedRebase &&
     receiptChainTransition.requestDigest === directGuardedBridge.requestDigest &&
     receiptChainTransition.oldResultCommit === directGuardedBridge.oldResultCommit &&
@@ -1509,8 +1513,7 @@ function isRetiredGuardedRebaseAncestor(
 }
 
 type UnenrolledAbortedRecoveryInspection =
-  | { readonly accepted: true }
-  | { readonly accepted: false; readonly rejection: string };
+  { readonly accepted: true } | { readonly accepted: false; readonly rejection: string };
 
 function inspectUnenrolledAbortedRecoveryIntermediate(
   candidate: AttestationRow,
@@ -1537,6 +1540,12 @@ function inspectUnenrolledAbortedRecoveryIntermediate(
     typeof candidate.output === "object" &&
     !Array.isArray(candidate.output)
       ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const candidateInput =
+    candidate.input !== null &&
+    typeof candidate.input === "object" &&
+    !Array.isArray(candidate.input)
+      ? (candidate.input as Readonly<Record<string, DispatchJSONValue>>)
       : undefined;
   const input =
     intermediate.input !== null &&
@@ -1666,14 +1675,11 @@ function inspectUnenrolledAbortedRecoveryIntermediate(
   if (!abortedTerminalAuthentic(candidate)) {
     return { accepted: false, rejection: "source-terminal-inauthentic" };
   }
-  if (
-    !(
-      (abortedTerminalAuthentic(intermediate) &&
-        (intermediate.abortReason === "cancelled" ||
-          intermediate.abortReason === "parent-lost")) ||
-      consumedFailureSourceAuthentic
-    )
-  ) {
+  if (!(
+    (abortedTerminalAuthentic(intermediate) &&
+      (intermediate.abortReason === "cancelled" || intermediate.abortReason === "parent-lost")) ||
+    consumedFailureSourceAuthentic
+  )) {
     return { accepted: false, rejection: "target-terminal-inauthentic" };
   }
   if (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") {
@@ -1741,8 +1747,95 @@ function inspectUnenrolledAbortedRecoveryIntermediate(
   if (recoveryClaim.gitReceiptsDigest !== digest(sourceInherited)) {
     return { accepted: false, rejection: "guarded-receipt-closure-mismatch" };
   }
-  if (recoveryClaim.liveTip !== bridge.oldResultCommit) {
-    return { accepted: false, rejection: "guarded-old-tip-mismatch" };
+  const sourceRecovery = candidate.dispatchRecoveryBinding;
+  let sourceRecoveryBindingAuthentic = false;
+  if (sourceRecovery !== undefined) {
+    try {
+      assertDispatchRecoveryBinding(sourceRecovery);
+      sourceRecoveryBindingAuthentic = true;
+    } catch {
+      sourceRecoveryBindingAuthentic = false;
+    }
+  }
+  const sourceRecoveryClosure = sourceRecovery?.gitReceipts ?? [];
+  const sourceFreshReceipts = sourceRecoveryClosure.slice(sourceInherited.length);
+  const sourceOutputReceipts = candidateOutput?.["gitReceipts"];
+  const advancedSourceTipRejection = (() => {
+    if (candidate.abortReason !== "parent-lost") return "source-not-parent-lost";
+    if (candidateInput === undefined || candidateOutput === undefined) {
+      return "source-input-or-output-missing";
+    }
+    if (sourceRecovery === undefined || !sourceRecoveryBindingAuthentic) {
+      return "source-recovery-binding-missing-or-inauthentic";
+    }
+    if (
+      sourceRecovery.attestationId !== candidate.attestationId ||
+      sourceRecovery.generation !== candidate.generation ||
+      sourceRecovery.terminalDigest !== candidate.terminalDigest ||
+      sourceRecovery.terminalAt !== candidate.terminalAt
+    ) {
+      return "source-recovery-terminal-mismatch";
+    }
+    if (digest(sourceRecovery.gitEffectBinding) !== digest(candidateBinding)) {
+      return "source-recovery-manager-mismatch";
+    }
+    if (sourceRecovery.liveTip !== bridge.oldResultCommit) {
+      return "source-recovery-live-tip-mismatch";
+    }
+    if (
+      sourceFreshReceipts.length === 0 ||
+      sourceInherited.length >= sourceRecoveryClosure.length ||
+      digest(sourceInherited) !== digest(sourceRecoveryClosure.slice(0, sourceInherited.length))
+    ) {
+      return "source-recovery-prefix-mismatch";
+    }
+    const freshReceiptsAuthentic = sourceFreshReceipts.every((receipt, index) => {
+      const previousHead =
+        index === 0 ? recoveryClaim.liveTip : sourceFreshReceipts[index - 1]?.newHead;
+      return (
+        receipt.attestationId === candidate.attestationId &&
+        receipt.generation === candidate.generation &&
+        receipt.taskId === authority.taskId &&
+        receipt.oldHead === previousHead
+      );
+    });
+    if (!freshReceiptsAuthentic || sourceFreshReceipts.at(-1)?.newHead !== bridge.oldResultCommit) {
+      return "source-fresh-receipts-inauthentic";
+    }
+    if (
+      candidate.promptProvenance.inputDigest !== digest(candidate.input) ||
+      candidateInput["taskId"] !== authority.taskId ||
+      candidateInput["branch"] !== candidateBinding.branch ||
+      candidateInput["startingCommit"] !== recoveryClaim.liveTip
+    ) {
+      return "source-input-lineage-mismatch";
+    }
+    if (
+      candidate.outputDigest === undefined ||
+      candidate.outputDigest !== digest(candidate.output)
+    ) {
+      return "source-output-digest-mismatch";
+    }
+    if (
+      candidateOutput["status"] !== "pass" ||
+      candidateOutput["taskId"] !== authority.taskId ||
+      candidateOutput["resultCommit"] !== bridge.oldResultCommit
+    ) {
+      return "source-output-identity-mismatch";
+    }
+    if (!Array.isArray(sourceOutputReceipts)) {
+      return "source-output-receipts-missing";
+    }
+    if (digest(sourceOutputReceipts) !== digest(sourceRecoveryClosure)) {
+      return "source-output-receipts-mismatch";
+    }
+    return undefined;
+  })();
+  if (
+    recoveryClaim.liveTip !== bridge.oldResultCommit &&
+    advancedSourceTipRejection !== undefined
+  ) {
+    return { accepted: false, rejection: advancedSourceTipRejection };
   }
   if (
     input["baseCommit"] !== bridge.ontoCommit ||
@@ -1760,6 +1853,42 @@ function isUnenrolledAbortedRecoveryIntermediate(
   authority: ImplementationQueueAuthority,
 ): boolean {
   return inspectUnenrolledAbortedRecoveryIntermediate(candidate, intermediate, authority).accepted;
+}
+
+function isComposedUnenrolledAbortedRecoveryAncestor(
+  candidate: AttestationRow,
+  successor: AttestationRow,
+  authority: ImplementationQueueAuthority,
+  store: AttestationStore,
+): boolean {
+  if (
+    isAttestationTombstone(candidate) ||
+    isAttestationTombstone(successor) ||
+    candidate.attestationId !== successor.attestationId ||
+    candidate.generation >= successor.generation
+  ) {
+    return false;
+  }
+  let source: AttestationRow = candidate;
+  for (
+    let generation = candidate.generation + 1;
+    generation <= successor.generation;
+    generation += 1
+  ) {
+    const matches = store
+      .rows()
+      .filter(
+        (row) => row.attestationId === candidate.attestationId && row.generation === generation,
+      );
+    if (
+      matches.length !== 1 ||
+      !isUnenrolledAbortedRecoveryIntermediate(source, matches[0]!, authority)
+    ) {
+      return false;
+    }
+    source = matches[0]!;
+  }
+  return true;
 }
 
 function isUnenrolledCancelledContinuationIntermediate(
@@ -2060,8 +2189,7 @@ function qualificationRefusalDiagnostic(
       firstUnreachable ??= {
         generation: intermediate.generation,
         predecessor: boundIntermediates.find(
-          (candidatePredecessor) =>
-            candidatePredecessor.generation === intermediate.generation - 1,
+          (candidatePredecessor) => candidatePredecessor.generation === intermediate.generation - 1,
         ),
         row: intermediate,
       };
