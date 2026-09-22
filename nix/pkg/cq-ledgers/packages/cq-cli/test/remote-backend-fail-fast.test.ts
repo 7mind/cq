@@ -108,7 +108,7 @@ describe("backend='remote' fails before local persistence (T723/R823)", () => {
     expect(await exists(path.join(root, ".cq"))).toBe(false);
   });
 
-  it("runLogPut refuses before reading input or writing an fs log", async () => {
+  it("runLogPut without remote credentials refuses without local persistence", async () => {
     const root = await makeRemoteRoot("log-fail-fast");
     let readCount = 0;
     const io: LogPutIo = {
@@ -126,10 +126,15 @@ describe("backend='remote' fails before local persistence (T723/R823)", () => {
     ]);
 
     let error: unknown;
+    const remoteToken = process.env["CQ_LEDGER_REMOTE_TOKEN"];
+    delete process.env["CQ_LEDGER_REMOTE_TOKEN"];
     try {
       await runLogPut(args, io);
     } catch (caught) {
       error = caught;
+    } finally {
+      if (remoteToken === undefined) delete process.env["CQ_LEDGER_REMOTE_TOKEN"];
+      else process.env["CQ_LEDGER_REMOTE_TOKEN"] = remoteToken;
     }
 
     expect(error).toBeInstanceOf(Error);

@@ -293,14 +293,18 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
     expect(body).toContain("passCount > 0");
   });
 
-  test("implement/advance pins trusted evidence reuse and the parent-attested fallback [BG]", () => {
+  test("implement/advance pins trusted evidence reuse without a parent-authored fallback [BG]", () => {
     const body = readFileSync(IMPLEMENT_ADVANCE, "utf8");
-    expect(body).toContain("parentGateAttestation");
     expect(body).toContain("supervisedGateEvidence");
-    expect(body).toContain("gate primitives denied");
     expect(body).toContain("Do not escalate the child sandbox");
     expect(body).toMatch(
-      /Every reviewer\s+reruns the gate only when exact trusted evidence is absent or invalid/m,
+      /validate its exact bindings and green counts without rerunning\s+the gate/m,
+    );
+    expect(body).toMatch(
+      /Missing or invalid evidence returns to the trusted candidate\s+coordinator/m,
+    );
+    expect(body).toMatch(
+      /neither a reviewer nor this parent manufactures a fallback gate\s+attestation/m,
     );
   });
 

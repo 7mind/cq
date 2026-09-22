@@ -509,6 +509,7 @@ describe("packaged Pi prompt root", () => {
       "src/promptCatalog.ts",
       "src/promptRenderer.ts",
       "src/roleToolProfiles.ts",
+      "src/schemas/cohortContract.ts",
       // The schema sidecars stamp the per-role contract versions into the
       // attested surface manifest (T683).
       "src/schemas/implement-conflict-resolver.ts",

@@ -278,8 +278,7 @@ describe("T1266/D190: attested-schema path enforces the T694 enum/pattern exhibi
     expect(result.mode).toBe("attested-schema");
     expect(result.ok).toBe(false);
     const keywords = result.errors.map((error) => error.keyword).filter(Boolean).sort();
-    expect(keywords).toContain("enum");
-    expect(keywords).toContain("pattern");
+    expect(keywords).toEqual(["oneOf"]);
     // Direct schema check (same bytes the surface ships) agrees.
     const sidecar = DISPATCHED_ROLE_SIDECARS["implement-worker"]!;
     const direct = ext.validateAgainstAttestedSchema(
@@ -287,7 +286,14 @@ describe("T1266/D190: attested-schema path enforces the T694 enum/pattern exhibi
       ext.T694_ENUM_PATTERN_EXHIBIT,
     );
     expect(direct.length).toBeGreaterThan(0);
-    expect(direct.map((error) => error.keyword).sort()).toEqual(
+    expect(direct.map((error) => error.keyword).sort()).toEqual(keywords);
+    const branches = sidecar.outputSchema["oneOf"] as readonly JSONSchemaLike[];
+    const taskArm = branches.find((branch) =>
+      (branch["required"] as readonly string[]).includes("taskId"),
+    );
+    if (taskArm === undefined) throw new Error("implement-worker task output arm is absent");
+    const taskViolations = ext.validateAgainstAttestedSchema(taskArm, ext.T694_ENUM_PATTERN_EXHIBIT);
+    expect(taskViolations.map((error) => error.keyword).sort()).toEqual(
       expect.arrayContaining(["enum", "pattern", "pattern"]),
     );
   });
