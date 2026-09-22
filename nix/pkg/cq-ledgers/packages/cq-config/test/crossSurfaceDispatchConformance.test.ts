@@ -597,7 +597,10 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     expect(codexAdvance).toContain("parentGateAttestation");
     expect(codexAdvance).toContain("danger-full-access");
     expect(codexAdvance).toContain(
-      "Every reviewer reruns the gate only when exact trusted evidence is absent or invalid",
+      "Missing or invalid evidence returns to the trusted candidate coordinator",
+    );
+    expect(codexAdvance).toContain(
+      "neither a reviewer nor this parent manufactures a fallback gate attestation",
     );
   });
 

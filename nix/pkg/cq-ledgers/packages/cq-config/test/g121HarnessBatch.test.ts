@@ -205,7 +205,7 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
   });
 
   test("sidecar version includes the validation-intent contract", () => {
-    expect(implementWorkerSidecar.version).toBe(12);
+    expect(implementWorkerSidecar.version).toBe(13);
   });
 });
 
@@ -337,7 +337,7 @@ describe("T1308 implement-reviewer resultCommit + baseAncestry [BA]", () => {
   });
 
   test("sidecar version advanced for the T1308 contract mutation", () => {
-    expect(implementReviewerSidecar.version).toBe(7);
+    expect(implementReviewerSidecar.version).toBe(8);
   });
 });
 
@@ -369,7 +369,7 @@ describe("T1309 orchestrator managed prepare/release [BG]", () => {
     expect(body).not.toContain("git worktree add ");
     expect(body).not.toContain("git worktree remove");
     expect(body).not.toContain("git worktree prune");
-    expect(body).toContain("never raw git worktree lifecycle");
+    expect(body).toContain("Never raw git worktree lifecycle");
   });
 
   test("T1310: main-advance requires rebase+re-gate; forged/stale results never merge", () => {
@@ -439,6 +439,6 @@ describe("T1307/T1308/T1309 real-body mutation control [BG]", () => {
     const after = createHash("sha256").update(restored).digest("hex");
     expect(after).toBe(before);
     expect(restored).not.toContain("git worktree add .claude/worktrees/<taskId>");
-    expect(restored).toContain("never raw git worktree lifecycle");
+    expect(restored).toContain("Never raw git worktree lifecycle");
   });
 });

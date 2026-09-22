@@ -187,13 +187,19 @@ export type RefAssembledRoleId = (typeof REF_ASSEMBLED_ROLES)[number];
 const REF_ASSEMBLED_ROLE_SET: ReadonlySet<string> = new Set(REF_ASSEMBLED_ROLES);
 
 function narrativeFieldsOf(roleId: RefAssembledRoleId): readonly string[] {
-  const schema = DISPATCHED_ROLE_SIDECARS[roleId].inputSchema as {
-    readonly properties?: Readonly<Record<string, unknown>>;
-  };
-  const properties = schema.properties;
-  if (properties === undefined) {
-    return [];
+  const schema = DISPATCHED_ROLE_SIDECARS[roleId].inputSchema;
+  if (schema.oneOf === undefined) {
+    throw new DispatchRefAssemblyError(roleId, "ref-assembled role requires a task/cohort schema union");
   }
+  const taskArms = schema.oneOf.filter((arm) =>
+    arm.required !== undefined && arm.required.includes("taskId") &&
+    arm.properties !== undefined && Object.hasOwn(arm.properties, "taskId") &&
+    !Object.hasOwn(arm.properties, "cohort"),
+  );
+  if (taskArms.length !== 1) {
+    throw new DispatchRefAssemblyError(roleId, "ref-assembled role requires exactly one task schema arm");
+  }
+  const properties = taskArms[0]!.properties!;
   return Object.keys(properties).filter((name) => !REFS_SUPPLIED_INPUT_FIELD_SET.has(name));
 }
 

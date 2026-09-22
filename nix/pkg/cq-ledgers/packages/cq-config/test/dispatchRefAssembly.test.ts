@@ -335,11 +335,12 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
   test("it is every ref-assembled role's inputSchema property the refs form does not supply", () => {
     const expected = new Set<string>();
     for (const roleId of REF_ASSEMBLED_ROLES) {
-      const properties = (
-        DISPATCHED_ROLE_SIDECARS[roleId].inputSchema as {
-          readonly properties: Readonly<Record<string, unknown>>;
-        }
-      ).properties;
+      const schema = DISPATCHED_ROLE_SIDECARS[roleId].inputSchema;
+      const taskArms = schema.oneOf!.filter((arm) =>
+        arm.required !== undefined && arm.required.includes("taskId"),
+      );
+      expect(taskArms).toHaveLength(1);
+      const properties = taskArms[0]!.properties!;
       for (const name of Object.keys(properties)) {
         if (!(REFS_SUPPLIED_INPUT_FIELDS as readonly string[]).includes(name)) {
           expected.add(name);
