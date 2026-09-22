@@ -64,20 +64,20 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "99be6cac6e847fbe1e66dd62ded37beab7890f5963930fa4053da3efb7325b22"
   },
   "implement-worker": {
-    "version": 12,
-    "digest": "6a34b94d431558106f0a699711b4ce6b042b7c27bae95701636862882be1ed81"
+    "version": 13,
+    "digest": "c35f445e4127c58febf2e12b1f7146e87420c1d582f3b8eb7d867845552fb1d9"
   },
   "implement-reviewer": {
-    "version": 7,
-    "digest": "fdc47a55f6da749ba854dac1e8b69a382f8ec339a33a67e0a845fad40e2334a9"
+    "version": 8,
+    "digest": "e71e12aef3f49d300156d251683b8f632bb45544be67ac6313ffdddcd39c857d"
   },
   "implementation-auditor": {
     "version": 1,
     "digest": "f85170dad0c1fe3b2a8262d9b3d80c61f4235f04e0984d47e24285cad921e6fa"
   },
   "implement-conflict-resolver": {
-    "version": 6,
-    "digest": "b6c1279aafdca29b73202b149677a5dfc3467dc4e93fe87170df6e3c642f16a0"
+    "version": 7,
+    "digest": "06698dc85b1ae3678b26b93d3eba7bfa4453e7b0fce799a554d558f53b812178"
   },
   "investigate-explorer": {
     "version": 2,
@@ -629,8 +629,8 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([]);
   });
 
-  test.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])(
-    "rejects reintroduction at version %i when the last historical version is 12",
+  test.each(Array.from({ length: SCHEMA_PINS["implement-worker"]!.version }, (_, index) => index + 1))(
+    `rejects reintroduction at version %i when the last historical version is ${SCHEMA_PINS["implement-worker"]!.version}`,
     (version) => {
       const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
       const deletedPins = { ...SCHEMA_PINS };
@@ -644,7 +644,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       };
 
       expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
-        "reintroduced schema pin must advance beyond version 12 for implement-worker",
+        `reintroduced schema pin must advance beyond version ${implementWorkerPin.version} for implement-worker`,
       ]);
     },
   );
