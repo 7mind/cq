@@ -1508,17 +1508,23 @@ function isRetiredGuardedRebaseAncestor(
   );
 }
 
-function isUnenrolledAbortedRecoveryIntermediate(
+type UnenrolledAbortedRecoveryInspection =
+  | { readonly accepted: true }
+  | { readonly accepted: false; readonly rejection: string };
+
+function inspectUnenrolledAbortedRecoveryIntermediate(
   candidate: AttestationRow,
   intermediate: AttestationRow,
   authority: ImplementationQueueAuthority,
-): boolean {
-  if (isAttestationTombstone(candidate) || isAttestationTombstone(intermediate)) return false;
+): UnenrolledAbortedRecoveryInspection {
+  if (isAttestationTombstone(candidate) || isAttestationTombstone(intermediate)) {
+    return { accepted: false, rejection: "tombstone" };
+  }
   if (
     candidate.attestationId !== intermediate.attestationId ||
     candidate.generation + 1 !== intermediate.generation
   ) {
-    return false;
+    return { accepted: false, rejection: "nonconsecutive-handle" };
   }
   const candidateBinding = candidate.gitEffectBinding;
   const intermediateBinding = intermediate.gitEffectBinding;
@@ -1650,34 +1656,54 @@ function isUnenrolledAbortedRecoveryIntermediate(
     candidateBinding === undefined ||
     intermediateBinding === undefined ||
     input === undefined ||
-    prepareRequest === undefined ||
-    intermediate.implementationQueue !== undefined ||
-    candidate.attestationId !== intermediate.attestationId ||
-    candidate.generation + 1 !== intermediate.generation ||
-    !abortedTerminalAuthentic(candidate) ||
+    prepareRequest === undefined
+  ) {
+    return { accepted: false, rejection: "missing-binding-input-or-prepare" };
+  }
+  if (intermediate.implementationQueue !== undefined) {
+    return { accepted: false, rejection: "target-enrolled" };
+  }
+  if (!abortedTerminalAuthentic(candidate)) {
+    return { accepted: false, rejection: "source-terminal-inauthentic" };
+  }
+  if (
     !(
       (abortedTerminalAuthentic(intermediate) &&
         (intermediate.abortReason === "cancelled" ||
           intermediate.abortReason === "parent-lost")) ||
       consumedFailureSourceAuthentic
-    ) ||
-    (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") ||
-    !sameManagerBinding ||
+    )
+  ) {
+    return { accepted: false, rejection: "target-terminal-inauthentic" };
+  }
+  if (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") {
+    return { accepted: false, rejection: "source-terminal-ineligible" };
+  }
+  if (!sameManagerBinding) {
+    return { accepted: false, rejection: "manager-binding-mismatch" };
+  }
+  if (
     candidateBinding.taskId !== authority.taskId ||
     intermediateBinding.taskId !== authority.taskId ||
     input["taskId"] !== authority.taskId ||
-    input["branch"] !== intermediateBinding.branch ||
-    intermediate.promptProvenance.inputDigest !== digest(intermediate.input) ||
+    input["branch"] !== intermediateBinding.branch
+  ) {
+    return { accepted: false, rejection: "task-or-branch-mismatch" };
+  }
+  if (intermediate.promptProvenance.inputDigest !== digest(intermediate.input)) {
+    return { accepted: false, rejection: "input-digest-mismatch" };
+  }
+  if (
     !prepareDispatchRequestDigestMatchesKnownFormat(
       prepareRequest,
       intermediate.prepareRequestDigest,
     )
   ) {
-    return false;
+    return { accepted: false, rejection: "prepare-request-digest-mismatch" };
   }
   if (bridge === undefined) {
     const inherited = intermediateBinding.inheritedGitReceipts;
-    return (
+    const accepted =
       claim !== undefined &&
       inherited !== undefined &&
       claim.selectedSource.attestationId === candidate.attestationId &&
@@ -1692,24 +1718,48 @@ function isUnenrolledAbortedRecoveryIntermediate(
       claim.managedFingerprint === intermediateBinding.handleFingerprint &&
       claim.gitReceiptsDigest === digest(inherited) &&
       input["startingCommit"] === claim.liveTip &&
-      input["priorResultCommit"] === claim.liveTip
-    );
+      input["priorResultCommit"] === claim.liveTip;
+    return accepted
+      ? { accepted: true }
+      : { accepted: false, rejection: "ordinary-recovery-claim-mismatch" };
   }
   const recoveryClaim = claim ?? candidateClaim;
   const sourceInherited = candidateBinding.inheritedGitReceipts;
-  return (
-    recoveryClaim !== undefined &&
-    sourceInherited !== undefined &&
-    recoveryClaim.taskId === authority.taskId &&
-    recoveryClaim.goalRef === authority.goalRef &&
-    recoveryClaim.finalizedManifestDigest === authority.finalizedManifestDigest &&
-    recoveryClaim.managedFingerprint === intermediateBinding.handleFingerprint &&
-    recoveryClaim.gitReceiptsDigest === digest(sourceInherited) &&
-    recoveryClaim.liveTip === bridge.oldResultCommit &&
-    input["baseCommit"] === bridge.ontoCommit &&
-    input["startingCommit"] === bridge.rebasedStartCommit &&
-    input["priorResultCommit"] === bridge.oldResultCommit
-  );
+  if (recoveryClaim === undefined || sourceInherited === undefined) {
+    return { accepted: false, rejection: "guarded-source-claim-or-receipts-missing" };
+  }
+  if (
+    recoveryClaim.taskId !== authority.taskId ||
+    recoveryClaim.goalRef !== authority.goalRef ||
+    recoveryClaim.finalizedManifestDigest !== authority.finalizedManifestDigest
+  ) {
+    return { accepted: false, rejection: "guarded-source-authority-mismatch" };
+  }
+  if (recoveryClaim.managedFingerprint !== intermediateBinding.handleFingerprint) {
+    return { accepted: false, rejection: "guarded-manager-fingerprint-mismatch" };
+  }
+  if (recoveryClaim.gitReceiptsDigest !== digest(sourceInherited)) {
+    return { accepted: false, rejection: "guarded-receipt-closure-mismatch" };
+  }
+  if (recoveryClaim.liveTip !== bridge.oldResultCommit) {
+    return { accepted: false, rejection: "guarded-old-tip-mismatch" };
+  }
+  if (
+    input["baseCommit"] !== bridge.ontoCommit ||
+    input["startingCommit"] !== bridge.rebasedStartCommit ||
+    input["priorResultCommit"] !== bridge.oldResultCommit
+  ) {
+    return { accepted: false, rejection: "guarded-input-lineage-mismatch" };
+  }
+  return { accepted: true };
+}
+
+function isUnenrolledAbortedRecoveryIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): boolean {
+  return inspectUnenrolledAbortedRecoveryIntermediate(candidate, intermediate, authority).accepted;
 }
 
 function isUnenrolledCancelledContinuationIntermediate(
@@ -1955,7 +2005,7 @@ function qualificationRefusalDiagnostic(
     )
     .sort((left, right) => left.generation - right.generation);
   const boundIntermediates = intermediates.filter(
-    (intermediate) =>
+    (intermediate): intermediate is AttestationEnvelope =>
       !isAttestationTombstone(intermediate) && intermediate.gitEffectBinding !== undefined,
   );
   const admittedFirstHops = boundIntermediates.filter((intermediate) =>
@@ -1979,6 +2029,54 @@ function qualificationRefusalDiagnostic(
           : "downstream-rejected";
   const firstIntermediate = intermediates[0];
   const firstAdmitted = admittedFirstHops[0];
+  const reachable: AttestationRow[] = [candidate];
+  let firstUnreachable:
+    | {
+        readonly generation: number;
+        readonly predecessor: AttestationRow | undefined;
+        readonly row: AttestationEnvelope;
+      }
+    | undefined;
+  for (const intermediate of boundIntermediates) {
+    let ingress: AttestationRow | undefined;
+    for (let index = reachable.length - 1; index >= 0; index -= 1) {
+      const source = reachable[index]!;
+      if (
+        isComposedTerminalIntermediate(
+          source,
+          intermediate,
+          successor,
+          successorBinding,
+          authority,
+          priorEnrollment,
+          store,
+        )
+      ) {
+        ingress = source;
+        break;
+      }
+    }
+    if (ingress === undefined) {
+      firstUnreachable ??= {
+        generation: intermediate.generation,
+        predecessor: boundIntermediates.find(
+          (candidatePredecessor) =>
+            candidatePredecessor.generation === intermediate.generation - 1,
+        ),
+        row: intermediate,
+      };
+    } else {
+      reachable.push(intermediate);
+    }
+  }
+  const firstUnreachableRecoveryInspection =
+    firstUnreachable?.predecessor === undefined
+      ? undefined
+      : inspectUnenrolledAbortedRecoveryIntermediate(
+          firstUnreachable.predecessor,
+          firstUnreachable.row,
+          authority,
+        );
   return (
     `[qualification-refusal:v1 reason=${reason} ` +
     `scope=${candidate.attestationId === successor.attestationId ? "same-attestation" : "different-attestation"} ` +
@@ -1992,7 +2090,14 @@ function qualificationRefusalDiagnostic(
     `first-intermediate-generation=${firstIntermediate === undefined ? "none" : String(firstIntermediate.generation)} ` +
     `first-intermediate-state=${firstIntermediate?.implementationQueue?.state ?? "none"} ` +
     `first-intermediate-terminal=${firstIntermediate?.implementationQueue?.terminal?.reason ?? "none"} ` +
-    `first-admitted-generation=${firstAdmitted === undefined ? "none" : String(firstAdmitted.generation)}]`
+    `first-admitted-generation=${firstAdmitted === undefined ? "none" : String(firstAdmitted.generation)} ` +
+    `first-unreachable-generation=${firstUnreachable === undefined ? "none" : String(firstUnreachable.generation)} ` +
+    `first-unreachable-predecessor-generation=${firstUnreachable?.predecessor === undefined ? "none" : String(firstUnreachable.predecessor.generation)} ` +
+    `first-unreachable-source-recovery-claim=${firstUnreachable?.predecessor?.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
+    `first-unreachable-target-recovery-claim=${firstUnreachable?.row.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
+    `first-unreachable-target-guarded-bridge=${firstUnreachable?.row.gitEffectBinding?.guardedRebaseBridge === undefined ? "none" : "present"} ` +
+    `first-unreachable-manager-base-match=${firstUnreachable?.predecessor?.gitEffectBinding?.baseCommit === firstUnreachable?.row.gitEffectBinding?.baseCommit ? "yes" : "no"} ` +
+    `first-unreachable-recovery-rejection=${firstUnreachableRecoveryInspection === undefined || firstUnreachableRecoveryInspection.accepted ? "none" : firstUnreachableRecoveryInspection.rejection}]`
   );
 }
 
