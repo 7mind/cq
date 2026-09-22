@@ -17,6 +17,7 @@ import {
   TEST_GUARD_GLOBS,
   validateAgainstSchema,
 } from "@cq/config";
+import { cohortRoleEnvelope } from "./workCohortRoleFixture.js";
 
 const SHA = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -54,14 +55,33 @@ describe("T894 implement-worker outputSchema", () => {
   });
 
   test("the mutationTable classification rule is stated in the schema description", () => {
-    const mutationTableSchema = (
-      implementWorkerSidecar.outputSchema.properties as Record<string, { description?: string }>
-    ).mutationTable;
-    expect(mutationTableSchema?.description).toBeDefined();
-    const description = mutationTableSchema?.description ?? "";
-    for (const glob of TEST_GUARD_GLOBS) {
-      expect(description).toContain(glob);
+    const branches = implementWorkerSidecar.outputSchema.oneOf as readonly {
+      readonly required: readonly string[];
+      readonly properties: Readonly<Record<string, { readonly description?: string }>>;
+    }[];
+    expect(branches).toHaveLength(2);
+    expect(branches[0]!.required).toContain("taskId");
+    expect(branches[1]!.required).toContain("cohort");
+    for (const branch of branches) {
+      const description = branch.properties.mutationTable!.description;
+      expect(description).toBeDefined();
+      for (const glob of TEST_GUARD_GLOBS) expect(description).toContain(glob);
     }
+  });
+
+  test("cohort staged output retains conditional mutation evidence [Behavioral-Active Blackbox-Atomic]", () => {
+    const cohort = cohortRoleEnvelope();
+    const payload = basePassPayload({ cohort, branch: `implement/cohort-${cohort.intent.intentDigest}`,
+      memberObservations: cohort.definition.members.map((member) => ({ memberRef: member.memberRef,
+        observation: "Member acceptance inspected" })) });
+    delete payload.taskId;
+    delete payload.gateDurationMs;
+    expect(validateAgainstSchema(implementWorkerStagedOutputSchema, payload).ok).toBe(true);
+    const guarded = { ...payload, filesTouched: ["packages/cq-config/test/implementWorkerOutputSchema.test.ts"] };
+    expect(validateAgainstSchema(implementWorkerStagedOutputSchema, guarded).ok).toBe(false);
+    expect(validateAgainstSchema(implementWorkerStagedOutputSchema, { ...guarded,
+      mutationTable: [{ mutation: "Removed conditional evidence requirement", observed: "Missing evidence accepted",
+        restored: "Restored conditional requirement" }] }).ok).toBe(true);
   });
 
   // --- (a) resultCommit sha-pattern rejection --------------------------------

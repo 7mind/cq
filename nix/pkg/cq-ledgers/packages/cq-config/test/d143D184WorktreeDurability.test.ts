@@ -136,10 +136,19 @@ describe("D143 implement-role worktreePath contract [BA]", () => {
   test("protocol constants name the input/output path properties", () => {
     expect(CLAUDE_WORKTREE_INPUT_PROPERTY).toBe("worktreePath");
     expect(CLAUDE_WORKTREE_OUTPUT_PROPERTY).toBe("actualWorktreePath");
-    const required = implementWorkerSidecar.inputSchema.required as readonly string[];
-    expect(required).not.toContain("worktreePath");
-    const outRequired = implementWorkerSidecar.outputSchema.required as readonly string[];
-    expect(outRequired).toContain("actualWorktreePath");
+    for (const [schema, property, required] of [
+      [implementWorkerSidecar.inputSchema, CLAUDE_WORKTREE_INPUT_PROPERTY, false],
+      [implementWorkerSidecar.outputSchema, CLAUDE_WORKTREE_OUTPUT_PROPERTY, true],
+    ] as const) {
+      const arms = schema.oneOf!;
+      expect(arms).toHaveLength(2);
+      expect(arms[0]!.required).toContain("taskId");
+      expect(arms[1]!.required).toContain("cohort");
+      for (const arm of arms) {
+        expect(arm.properties).toHaveProperty(property);
+        expect(arm.required!.includes(property)).toBe(required);
+      }
+    }
   });
 });
 

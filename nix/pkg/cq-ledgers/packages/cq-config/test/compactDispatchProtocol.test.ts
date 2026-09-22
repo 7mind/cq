@@ -10,6 +10,7 @@ import {
   DISPATCH_PREPARED_SCHEMA,
   DISPATCH_PROTOCOL_OPERATIONS,
   FETCH_DISPATCH_RESULT_SCHEMA,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   STORE_DISPATCH_RESULT_SCHEMA,
   validateAgainstSchema,
   type AbortDispatch,
@@ -26,6 +27,7 @@ import {
   type StoreDispatchResult,
 } from "@cq/config";
 import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
+import { cohortRoleEnvelope, cohortRoleMembers, sealedCohortRoleEnvelope } from "./workCohortRoleFixture.js";
 
 const SHA256 = "a".repeat(64);
 const HANDLE: DispatchHandle = {
@@ -170,6 +172,26 @@ function rejects(schema: Parameters<typeof validateAgainstSchema>[0], value: unk
   expect(validateAgainstSchema(schema, value).ok).toBe(false);
 }
 
+function cohortRoleInput(roleId: "implement-worker" | "implement-reviewer" | "implement-conflict-resolver") {
+  const cohort = roleId === "implement-reviewer" ? sealedCohortRoleEnvelope() : cohortRoleEnvelope();
+  const branch = `implement/cohort-${cohort.intent.intentDigest}`;
+  const taskInput: Record<string, unknown> = { ...ROLE_INPUTS[roleId] };
+  delete taskInput.taskId;
+  delete taskInput.acceptance;
+  return { ...taskInput, cohort, members: cohortRoleMembers(cohort), branch,
+    ...(cohort.state === "sealed" ? { supervisedGateEvidence: {
+      kind: "cq-supervised-gate-evidence", version: 2, ...HANDLE,
+      roleId: "implement-worker", roleVersion: 13, surface: "codex", promptDigest: SHA256,
+      catalogHash: SHA256, inputDigest: SHA256, evidenceSubject: cohort.evidenceSubject,
+      worktreePath: taskInput.worktreePath, branch, baseCommit: taskInput.baseCommit,
+      startingCommit: "9".repeat(40), resultCommit: ROLE_INPUTS["implement-reviewer"].workerResult.resultCommit,
+      clean: true, command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND, gateExitCode: 0,
+      passCount: 1, failCount: 0, gateDurationMs: 1, capturedAt: "2026-07-25T09:29:00.000Z",
+      filesTouchedDigest: SHA256, gitReceiptsDigest: SHA256, mutationTableDigest: SHA256,
+    } } : {}),
+  };
+}
+
 describe("compact dispatched-subagent launch contract", () => {
   test("accepts every dispatched-role sidecar through roleId plus structured input", () => {
     expect(Object.keys(ROLE_INPUTS)).toHaveLength(10);
@@ -185,6 +207,29 @@ describe("compact dispatched-subagent launch contract", () => {
       };
       accepts(COMPACT_DISPATCH_LAUNCH_SCHEMA, launch);
     }
+  });
+
+  test("accepts all three closed cohort role arms and rejects a task anchor [Behavioral-Active Blackbox-Atomic]", () => {
+    for (const roleId of ["implement-worker", "implement-reviewer", "implement-conflict-resolver"] as const) {
+      const input = cohortRoleInput(roleId);
+      const launch = { roleId, input, idempotencyKey: `dispatch-cohort-${roleId}`, timeoutMs: 120_000 };
+      accepts(COMPACT_DISPATCH_LAUNCH_SCHEMA, launch);
+      rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, { ...launch, input: { ...input, taskId: "T701" } });
+      if (roleId === "implement-reviewer") {
+        for (const [field, value] of Object.entries({ responseStoreNow: "2026-07-25T09:31:00.000Z",
+          gateCompleteBy: "2026-07-25T09:30:00.000Z", synthesisStoreReserveMs: 60_000 })) {
+          rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, { ...launch, input: { ...input, [field]: value } });
+        }
+      }
+    }
+  });
+
+  test.each(["task", "cohort"] as const)("rejects all server-owned reviewer timings in the %s arm [Behavioral-Active Blackbox-Atomic]", (arm) => {
+    const input = arm === "task" ? ROLE_INPUTS["implement-reviewer"] : cohortRoleInput("implement-reviewer");
+    rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, { roleId: "implement-reviewer",
+      input: { ...input, responseStoreNow: "2026-07-25T09:31:00.000Z",
+        gateCompleteBy: "2026-07-25T09:30:00.000Z", synthesisStoreReserveMs: 60_000 },
+      idempotencyKey: `injected-reviewer-timing-${arm}`, timeoutMs: 150_000 });
   });
 
   test("rejects command roles, legacy bodies, materialized prompts/schemas, and negotiation", () => {
@@ -221,15 +266,15 @@ describe("compact dispatched-subagent launch contract", () => {
       ...valid,
       input: { goalId: "not-a-goal" },
     });
-    rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, {
-      roleId: "implement-reviewer",
-      input: {
-        ...ROLE_INPUTS["implement-reviewer"],
-        responseStoreNow: "2026-07-25T09:31:00.000Z",
-      },
-      idempotencyKey: "dispatch-implement-reviewer",
-      timeoutMs: 150_000,
-    });
+    for (const [field, value] of Object.entries({ responseStoreNow: "2026-07-25T09:31:00.000Z",
+      gateCompleteBy: "2026-07-25T09:30:00.000Z", synthesisStoreReserveMs: 60_000 })) {
+      rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, {
+        roleId: "implement-reviewer",
+        input: { ...ROLE_INPUTS["implement-reviewer"], [field]: value },
+        idempotencyKey: "dispatch-implement-reviewer",
+        timeoutMs: 150_000,
+      });
+    }
   });
 
   test("requires the owning defect or research ref beside a child hypothesis", () => {

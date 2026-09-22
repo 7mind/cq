@@ -385,6 +385,9 @@ function launchBranch(
 
 function callerInputSchema(roleId: string, inputSchema: JSONSchema): JSONSchema {
   if (roleId !== "implement-reviewer") return inputSchema;
+  if (inputSchema.oneOf !== undefined) {
+    return { ...inputSchema, oneOf: inputSchema.oneOf.map((arm) => callerInputSchema(roleId, arm)) };
+  }
 
   const properties = { ...(inputSchema.properties ?? {}) };
   for (const field of IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS) delete properties[field];
