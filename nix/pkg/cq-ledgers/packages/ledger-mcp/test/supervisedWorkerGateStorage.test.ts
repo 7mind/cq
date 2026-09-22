@@ -73,6 +73,7 @@ const T6576_LEGACY_QUEUE_FIXTURE_PROVENANCE = Object.freeze({
   source: "cq-0.0.1/share/cq/packages/cq-config/src/dispatchImplementationQueue.ts",
   sha256: "e4efc3a417084f447d5dbe43fee059c247645ade0c30f8479745f5d85717f51f",
 });
+const RECOVERY_BACKEND_CASE_TIMEOUT_MS = 30_000;
 const roots: string[] = [];
 let sequence = 0;
 
@@ -9947,8 +9948,8 @@ throw new Error("unexpected controlled cq invocation");
       abortReason: "gate-rejected",
     });
   }, 30_000);
-  test("a staged-retired recovery source and its cancelled guarded successor advance the current seal", async () => {
-    for (const attestationBackend of ["memory", "sqlite"] as const) {
+  for (const attestationBackend of ["memory", "sqlite"] as const) {
+    test(`a staged-retired recovery source and its cancelled guarded successor advance the current seal (${attestationBackend})`, async () => {
       await exerciseCancelledRecoveryContinuation(
         "guarded-rebase",
         true,
@@ -9956,8 +9957,8 @@ throw new Error("unexpected controlled cq invocation");
         0,
         false,
       );
-    }
-  });
+    }, RECOVERY_BACKEND_CASE_TIMEOUT_MS);
+  }
 
   test("cancelled guarded recovery workers retain zero one or multiple fresh receipt components after reopen", async () => {
     for (const attestationBackend of ["memory", "sqlite"] as const) {
