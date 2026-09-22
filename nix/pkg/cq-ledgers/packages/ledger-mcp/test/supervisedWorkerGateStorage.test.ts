@@ -495,7 +495,10 @@ async function fixtureWithDispatchBase(
   roots.push(repositoryRoot);
   await git(repositoryRoot, ["init", "-q"]);
   await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
-  await git(repositoryRoot, ["add", "file.txt"]);
+  const commandWorkspace = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
+  await fs.mkdir(commandWorkspace, { recursive: true });
+  await fs.writeFile(path.join(commandWorkspace, "package.json"), '{"private":true}\n');
+  await git(repositoryRoot, ["add", "file.txt", "nix/pkg/cq-ledgers/package.json"]);
   await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
   let baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   if ((await git(repositoryRoot, ["show", `${baseCommit}:file.txt`])) !== "before") {
