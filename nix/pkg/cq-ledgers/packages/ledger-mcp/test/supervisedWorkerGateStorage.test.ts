@@ -1578,6 +1578,499 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
   }, 30_000);
 }
 
+for (const attestationBackend of ["memory", "sqlite"] as const) {
+  // regression: tasks:T6573 — retained parent-lost attempts must compose without a private-store repair.
+  test(`qualified generation 3 composes through consecutive unenrolled parent losses into generation 29 (${attestationBackend})`, async () => {
+    const runner = new ParentLossThenGreenGateDummy();
+    const subject = await fixtureWithDispatchBase(
+      runner,
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "exact",
+      true,
+      undefined,
+      artifactStore(),
+      attestationBackend,
+    );
+    const capability = createDispatchCapability({
+      ...subject.capabilityOptions,
+      recoveryJournal: new InMemoryCurrentRecoverySealJournalStore(),
+    });
+    if (
+      capability.resolveRecovery === undefined ||
+      capability.resolveContinuation === undefined ||
+      capability.qualifyImplementationCandidate === undefined ||
+      capability.coordinateImplementationCandidate === undefined ||
+      capability.gitCommit === undefined
+    ) {
+      throw new Error("consecutive parent-loss recovery operations are unavailable");
+    }
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("consecutive parent-loss binding disappeared");
+    const qualify = async (
+      prepared: typeof subject.prepared,
+      child: typeof subject.expectedChild,
+      observedAt: string,
+    ) =>
+      await capability.qualifyImplementationCandidate!({
+        attestationId: prepared.attestationId,
+        generation: prepared.generation,
+        roleId: "implement-worker",
+        correlationId: child.childId.slice("implement-worker#".length),
+        childThreadId: `consecutive-parent-loss-${attestationBackend}-${String(prepared.generation)}`,
+        expectedRunId: child.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt,
+        promptDigest: prepared.promptProvenance.promptDigest,
+      });
+    let lineageBaseCommit = subject.dispatchBaseCommit;
+    const prepareRecovery = async (
+      generation: number,
+      liveTip: string,
+      recovery: DispatchRecoveryResolution & {
+        readonly preparation: { readonly kind: "current" };
+      },
+    ) => {
+      const child = {
+        childId: `implement-worker#consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
+        runId: `consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
+      };
+      const prepared = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: lineageBaseCommit,
+          round: generation - 1,
+          startingCommit: liveTip,
+          validationIntent: "final",
+          priorResultCommit: liveTip,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-consecutive-parent-loss-${attestationBackend}-${String(generation)}`,
+        timeoutMs: 600_000,
+        expectedChild: child,
+        recoveryPreparation: recovery.preparation.recoveryPreparation,
+      });
+      if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+        throw new Error(
+          `generation ${String(generation)} recovery refused: ${prepared.accepted ? "missing Git authority" : prepared.detail}`,
+        );
+      }
+      expect(prepared.handle.generation).toBe(generation);
+      await capability.fetchInput({
+        ...prepared.handle,
+        inputCapability: prepared.prepared.inputCapability,
+      });
+      return { ...prepared, child };
+    };
+
+    expect(
+      await capability.abort({ ...subject.prepared, reason: "parent-lost" }),
+    ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+    const secondRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (secondRecovery.preparation.kind !== "current") {
+      throw new Error("generation 1 did not produce current recovery authority");
+    }
+    const second = await prepareRecovery(2, subject.receipt.newHead, secondRecovery);
+    expect(await capability.abort({ ...second.handle, reason: "parent-lost" })).toMatchObject({
+      state: "aborted",
+      reason: "parent-lost",
+    });
+
+    const thirdRecovery = await capability.resolveRecovery(binding, subject.receipt.newHead);
+    if (thirdRecovery.preparation.kind !== "current") {
+      throw new Error("generation 2 did not produce current recovery authority");
+    }
+    const third = await prepareRecovery(3, subject.receipt.newHead, thirdRecovery);
+    expect(
+      await capability.storeResult({
+        resultCapability: third.prepared.resultCapability,
+        output: {
+          ...subject.output,
+          gitReceipts: [],
+          checkSummary: "generation 3 awaits its first ordinary gate",
+          summary: "generation 3 establishes the qualified parent-loss source",
+        },
+      }),
+    ).toMatchObject({ state: "gate-pending" });
+    const sourceQualified = await qualify(
+      third.prepared,
+      third.child,
+      "2026-08-12T20:00:03.000Z",
+    );
+    if (sourceQualified.state !== "queued") {
+      throw new Error("generation 3 parent-loss source did not qualify");
+    }
+    await expect(
+      capability.coordinateImplementationCandidate({
+        partitionKey: sourceQualified.partitionKey,
+        holderId: `consecutive-parent-loss-source-${attestationBackend}`,
+      }),
+    ).rejects.toThrow("controlled parent loss after qualification");
+    expect(runner.requests).toHaveLength(1);
+    expect(
+      await subject.backend.transact({ kind: "handle", handle: third.handle }, (store) =>
+        store.read(third.handle),
+      ),
+    ).toMatchObject({
+      state: "aborted",
+      abortReason: "parent-lost",
+      implementationQueue: { state: "terminal", terminal: { reason: "parent-lost" } },
+    });
+
+    const prepareContinuation = async (
+      generation: number,
+      liveTip: string,
+      continuation: Awaited<
+        ReturnType<NonNullable<typeof capability.resolveContinuation>>
+      >["continuationReference"],
+    ) => {
+      const child = {
+        childId: `implement-worker#consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
+        runId: `consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
+      };
+      const prepared = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2081",
+          headline: "supervise exact tip",
+          description: "run the full gate outside the workspace-write sandbox",
+          acceptance: "only a green exact tip becomes consumable",
+          worktreePath: subject.managed.handle.absolutePath,
+          branch: subject.managed.handle.branch,
+          baseCommit: lineageBaseCommit,
+          round: generation - 1,
+          startingCommit: liveTip,
+          validationIntent: "final",
+          priorResultCommit: liveTip,
+        },
+        idempotencyKey: `T2081-${String(sequence)}-consecutive-parent-loss-${attestationBackend}-${String(generation)}`,
+        timeoutMs: 600_000,
+        expectedChild: child,
+        continuation,
+      });
+      if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+        throw new Error(
+          `generation ${String(generation)} continuation refused: ${prepared.accepted ? "missing Git authority" : prepared.detail}`,
+        );
+      }
+      expect(prepared.handle.generation).toBe(generation);
+      await capability.fetchInput({
+        ...prepared.handle,
+        inputCapability: prepared.prepared.inputCapability,
+      });
+      return { ...prepared, child };
+    };
+    const persistPassingWip = async (
+      resumed: Awaited<ReturnType<typeof prepareRecovery>>,
+      generation: number,
+      liveTip: string,
+    ) => {
+      const wipPath = `WIP-${subject.managed.handle.taskId}.md`;
+      const oldWip = await fs.readFile(
+        path.join(subject.managed.handle.absolutePath, wipPath),
+        "utf8",
+      );
+      const newWip = wipFixtureBody(
+        subject.managed.handle.taskId,
+        subject.dispatchBaseCommit,
+        `Resumed generation ${String(generation)} after authenticated parent loss.\n`,
+      );
+      await fs.writeFile(path.join(subject.managed.handle.absolutePath, wipPath), newWip);
+      const receipt = await capability.gitCommit({
+        ...resumed.handle,
+        gitChangeCapability: resumed.prepared.gitChangeCapability,
+        operationId: `T2081-${String(sequence)}-consecutive-parent-loss-${attestationBackend}-${String(generation)}-commit`,
+        expectedHead: liveTip,
+        message: `resume parent-lost generation ${String(generation)}`,
+        changes: [
+          {
+            kind: "modify",
+            path: wipPath,
+            oldState: { mode: "100644", digest: sha256(oldWip) },
+            newState: { mode: "100644", digest: sha256(newWip) },
+          },
+        ],
+      });
+      expect(
+        await capability.storeResult({
+          resultCapability: resumed.prepared.resultCapability,
+          output: {
+            ...subject.output,
+            resultCommit: receipt.newHead,
+            gitReceipts: [
+              {
+                ...receipt,
+                objectOids: [...receipt.objectOids],
+                paths: [...receipt.paths],
+              },
+            ],
+            checkSummary: `generation ${String(generation)} resumed WIP checks passed`,
+            summary: "the resumed worker preserves its authenticated recovery lineage",
+            baseVerification: {
+              status: "verified",
+              relation: "descendant",
+              baseCommit: lineageBaseCommit,
+              headCommit: receipt.newHead,
+            },
+          },
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+      return receipt.newHead;
+    };
+    const storePassingExactTip = async (
+      resumed: Awaited<ReturnType<typeof prepareRecovery>>,
+      generation: number,
+      liveTip: string,
+    ): Promise<void> => {
+      expect(
+        await capability.storeResult({
+          resultCapability: resumed.prepared.resultCapability,
+          output: {
+            ...subject.output,
+            resultCommit: liveTip,
+            gitReceipts: [],
+            checkSummary: `generation ${String(generation)} exact-tip checks passed`,
+            summary: "the resumed worker preserves its authenticated recovery lineage",
+            baseVerification: {
+              status: "verified",
+              relation: "descendant",
+              baseCommit: lineageBaseCommit,
+              headCommit: liveTip,
+            },
+          },
+        }),
+      ).toMatchObject({ state: "gate-pending" });
+    };
+
+    let liveTip = subject.receipt.newHead;
+    for (let generation = 4; generation <= 7; generation += 1) {
+      const recovery = await capability.resolveRecovery(binding, liveTip);
+      if (recovery.preparation.kind !== "current") {
+        throw new Error(`generation ${String(generation - 1)} did not preserve current recovery`);
+      }
+      const resumed = await prepareRecovery(generation, liveTip, recovery);
+      liveTip = await persistPassingWip(resumed, generation, liveTip);
+      expect(await capability.abort({ ...resumed.handle, reason: "parent-lost" })).toMatchObject({
+        state: "aborted",
+        reason: "parent-lost",
+      });
+    }
+
+    const eighthRecovery = await capability.resolveRecovery(binding, liveTip);
+    if (eighthRecovery.preparation.kind !== "current") {
+      throw new Error("generation 7 did not preserve current recovery");
+    }
+    const eighth = await prepareRecovery(8, liveTip, eighthRecovery);
+    liveTip = await persistPassingWip(eighth, 8, liveTip);
+    const eighthQualified = await qualify(
+      eighth.prepared,
+      eighth.child,
+      "2026-08-12T20:00:08.000Z",
+    );
+    if (eighthQualified.state !== "queued") {
+      throw new Error("generation 8 recovery did not qualify");
+    }
+    expect(
+      await capability.coordinateImplementationCandidate({
+        partitionKey: eighthQualified.partitionKey,
+        holderId: `consecutive-parent-loss-eighth-${attestationBackend}`,
+      }),
+    ).toMatchObject({ state: "completed", handle: eighth.handle });
+    expect(runner.requests).toHaveLength(2);
+
+    const ninthContinuation = await capability.resolveContinuation(binding, liveTip);
+    const ninth = await prepareContinuation(
+      9,
+      liveTip,
+      ninthContinuation.continuationReference,
+    );
+    expect(await capability.abort({ ...ninth.handle, reason: "cancelled" })).toMatchObject({
+      state: "aborted",
+      reason: "cancelled",
+    });
+
+    let twentySixth: Awaited<ReturnType<typeof prepareRecovery>> | undefined;
+    for (let generation = 10; generation <= 26; generation += 1) {
+      const recovery = await capability.resolveRecovery(binding, liveTip);
+      if (recovery.preparation.kind !== "current") {
+        throw new Error(`generation ${String(generation - 1)} did not preserve current recovery`);
+      }
+      const resumed = await prepareRecovery(generation, liveTip, recovery);
+      liveTip = await persistPassingWip(resumed, generation, liveTip);
+      expect(await capability.abort({ ...resumed.handle, reason: "parent-lost" })).toMatchObject({
+        state: "aborted",
+        reason: "parent-lost",
+      });
+      if (generation === 26) twentySixth = resumed;
+    }
+    if (twentySixth === undefined) {
+      throw new Error("generation 26 parent-loss handle is unavailable");
+    }
+
+    await fs.writeFile(path.join(subject.repositoryRoot, "parent-loss-integration.txt"), "onto\n");
+    await git(subject.repositoryRoot, ["add", "parent-loss-integration.txt"]);
+    await git(subject.repositoryRoot, ["commit", "-q", "-m", "advance parent-loss integration"]);
+    const ontoCommit = await git(subject.repositoryRoot, ["rev-parse", "HEAD"]);
+    const rebase = await runGuardedRebase({
+      binding,
+      operationId: `t2081-consecutive-parent-loss-${attestationBackend}-${String(sequence)}`,
+      ontoCommit,
+      stateDir: subject.stateDir,
+      runEffect: async () => {
+        await git(subject.managed.handle.absolutePath, ["rebase", ontoCommit]);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    if (rebase.kind !== "finalized") {
+      throw new Error("generation 26 guarded transition did not finalize");
+    }
+    const twentySeventhChild = {
+      childId: `implement-worker#consecutive-parent-loss-${attestationBackend}-27-${String(sequence)}`,
+      runId: `consecutive-parent-loss-${attestationBackend}-27-${String(sequence)}`,
+    };
+    const twentySeventh = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "supervise exact tip",
+        description: "run the full gate outside the workspace-write sandbox",
+        acceptance: "only a green exact tip becomes consumable",
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+        baseCommit: rebase.bridge.ontoCommit,
+        round: 26,
+        startingCommit: rebase.bridge.rebasedStartCommit,
+        validationIntent: "final",
+        priorResultCommit: liveTip,
+      },
+      idempotencyKey: `T2081-${String(sequence)}-consecutive-parent-loss-${attestationBackend}-27`,
+      timeoutMs: 600_000,
+      expectedChild: twentySeventhChild,
+      reprepareOf: twentySixth.handle,
+      guardedRebase: rebase.reference,
+    });
+    if (!twentySeventh.accepted) throw new Error(twentySeventh.detail);
+    expect(twentySeventh.handle.generation).toBe(27);
+    await capability.fetchInput({
+      ...twentySeventh.handle,
+      inputCapability: twentySeventh.prepared.inputCapability,
+    });
+    expect(
+      await capability.abort({ ...twentySeventh.handle, reason: "parent-lost" }),
+    ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+    lineageBaseCommit = rebase.bridge.ontoCommit;
+    liveTip = rebase.bridge.rebasedStartCommit;
+
+    const twentyEighthRecovery = await capability.resolveRecovery(binding, liveTip);
+    if (twentyEighthRecovery.preparation.kind !== "current") {
+      throw new Error("generation 27 did not preserve current recovery");
+    }
+    const twentyEighth = await prepareRecovery(28, liveTip, twentyEighthRecovery);
+    expect(
+      await capability.abort({ ...twentyEighth.handle, reason: "parent-lost" }),
+    ).toMatchObject({ state: "aborted", reason: "parent-lost" });
+
+    const twentyNinthRecovery = await capability.resolveRecovery(binding, liveTip);
+    if (twentyNinthRecovery.preparation.kind !== "current") {
+      throw new Error("generation 28 did not preserve current recovery");
+    }
+    const twentyNinth = await prepareRecovery(29, liveTip, twentyNinthRecovery);
+    await storePassingExactTip(twentyNinth, 29, liveTip);
+
+    const rejectLineageMutation = async (
+      handle: { readonly attestationId: string; readonly generation: number },
+      mutate: (row: AttestationEnvelope) => AttestationEnvelope,
+      observedAt: string,
+    ): Promise<void> => {
+      const retained = await subject.backend.transact({ kind: "handle", handle }, (store) => {
+        const row = store.read(handle);
+        if (row === undefined || isAttestationTombstone(row)) {
+          throw new Error("consecutive parent-loss evidence disappeared");
+        }
+        return row;
+      });
+      const rowCount = subject.backend.storedRows().length;
+      await subject.backend.transact({ kind: "handle", handle }, (store) => {
+        const current = store.read(handle);
+        if (current === undefined) throw new Error("parent-loss mutation lost its row");
+        store.replace(current, mutate(retained));
+      });
+      try {
+        await expect(
+          qualify(twentyNinth.prepared, twentyNinth.child, observedAt),
+        ).rejects.toThrow("cannot be resurrected");
+        expect(subject.backend.storedRows()).toHaveLength(rowCount);
+        expect(runner.requests).toHaveLength(3);
+      } finally {
+        await subject.backend.transact({ kind: "handle", handle }, (store) => {
+          const current = store.read(handle);
+          if (current === undefined) throw new Error("parent-loss restore lost its row");
+          store.replace(current, retained);
+        });
+      }
+    };
+    await rejectLineageMutation(
+      twentyEighth.handle,
+      (row) => ({ ...row, terminalDigest: "0".repeat(64) }),
+      "2026-08-12T20:01:29.100Z",
+    );
+    await rejectLineageMutation(
+      twentyEighth.handle,
+      (row) => ({
+        ...row,
+        dispatchJournalRecoveryClaim: {
+          ...row.dispatchJournalRecoveryClaim!,
+          sourceTerminalDigest: "0".repeat(64),
+        },
+      }),
+      "2026-08-12T20:01:29.200Z",
+    );
+    await rejectLineageMutation(
+      twentyEighth.handle,
+      (row) => ({
+        ...row,
+        gitEffectBinding: { ...row.gitEffectBinding!, repositoryId: "0".repeat(64) },
+      }),
+      "2026-08-12T20:01:29.300Z",
+    );
+    await rejectLineageMutation(
+      twentySeventh.handle,
+      (row) => ({ ...row, abortDetailsDigest: "0".repeat(64) }),
+      "2026-08-12T20:01:29.400Z",
+    );
+    const qualified = await qualify(
+      twentyNinth.prepared,
+      twentyNinth.child,
+      "2026-08-12T20:01:29.500Z",
+    );
+    if (qualified.state !== "queued") {
+      throw new Error("generation 29 recovery did not qualify");
+    }
+    expect(
+      await capability.coordinateImplementationCandidate({
+        partitionKey: qualified.partitionKey,
+        holderId: `consecutive-parent-loss-target-${attestationBackend}`,
+      }),
+    ).toMatchObject({ state: "completed", handle: twentyNinth.handle });
+    expect(runner.requests).toHaveLength(4);
+    await subject.backend.close();
+  }, 60_000);
+}
+
 test("intentional failure receipt and manager substitutions fail closed before consumption", async () => {
   const cases = [
     {
