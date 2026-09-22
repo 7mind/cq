@@ -142,7 +142,7 @@ async function waitForFile(file: string): Promise<void> {
 
 async function blockingGit(
   repositoryRoot: string,
-  trigger: "second-top" | "third-top" | "fifth-top" | "index" | "update-ref",
+  trigger: "second-top" | "third-top" | "index" | "update-ref",
 ): Promise<{
   readonly environment: Readonly<Record<string, string>>;
   readonly ready: string;
@@ -171,7 +171,6 @@ async function blockingGit(
       '  count=$((count + 1)); printf "%s\\n" "$count" > "$CQ_PEER_GIT_COUNTER"',
       '  if [ "$CQ_PEER_GIT_TRIGGER" = "second-top" ] && [ "$count" -eq 2 ]; then matched=yes; fi',
       '  if [ "$CQ_PEER_GIT_TRIGGER" = "third-top" ] && [ "$count" -eq 3 ]; then matched=yes; fi',
-      '  if [ "$CQ_PEER_GIT_TRIGGER" = "fifth-top" ] && [ "$count" -eq 5 ]; then matched=yes; fi',
       "fi",
       'if [ "$matched" = yes ]; then',
       '  : > "$CQ_PEER_GIT_READY"',
@@ -3696,7 +3695,7 @@ describe("dispatch-bound Git change capability", () => {
     for (const boundary of [
       { trigger: "third-top", state: "intent" },
       { crashBoundary: "after-constructed", state: "constructed" },
-      { trigger: "fifth-top", state: "objects-installed" },
+      { trigger: "update-ref", state: "objects-installed" },
       { trigger: "index", state: "ref-advanced" },
       {
         crashBoundary: "after-index-install",
