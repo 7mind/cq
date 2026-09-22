@@ -28,7 +28,7 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function handle(overrides: Partial<PiNativeManagedWorktreeHandle> = {}): PiNativeManagedWorktreeHandle {
+function handle(overrides: Partial<Extract<PiNativeManagedWorktreeHandle, { version: 1 }>> = {}): Extract<PiNativeManagedWorktreeHandle, { version: 1 }> {
   return {
     kind: "cq-managed-worktree-handle",
     version: 1,
@@ -46,7 +46,7 @@ function handle(overrides: Partial<PiNativeManagedWorktreeHandle> = {}): PiNativ
 }
 
 function adoptedHandle(
-  overrides: Partial<PiNativeManagedWorktreeHandle> = {},
+  overrides: Partial<Extract<PiNativeManagedWorktreeHandle, { version: 2 }>> = {},
 ): PiNativeManagedWorktreeHandle {
   return {
     ...handle(),

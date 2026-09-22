@@ -737,12 +737,45 @@ export interface FinalizeOps {
 }
 
 /** One server-executable Finalize mutation in already-validated execution order. */
-export interface FinalizeBatchOperation {
+interface LegacyFinalizeBatchOperation {
   readonly id: string;
   readonly targetId: string;
   readonly action: FinalizeAction;
   readonly targetStatus?: string;
   readonly summary?: string;
+}
+
+export interface ExactTerminalItemArchiveV1 {
+  readonly id: string;
+  readonly action: "archive-terminal-item";
+  readonly version: 1;
+  readonly targetId: string;
+  readonly expectedMilestoneId: string;
+  readonly expectedUpdatedAt: string;
+  readonly expectedItemDigest: string;
+  readonly summary: string;
+  readonly targetStatus?: never;
+}
+
+export type FinalizeBatchOperation = LegacyFinalizeBatchOperation | ExactTerminalItemArchiveV1;
+
+export function finalizeBatchOperationWire(operation: FinalizeBatchOperation) {
+  const common = { id: operation.id, target_id: operation.targetId, action: operation.action };
+  if (operation.action === "archive-terminal-item") {
+    return {
+      ...common,
+      version: operation.version,
+      expected_milestone_id: operation.expectedMilestoneId,
+      expected_updated_at: operation.expectedUpdatedAt,
+      expected_item_digest: operation.expectedItemDigest,
+      summary: operation.summary,
+    };
+  }
+  return {
+    ...common,
+    ...(operation.targetStatus === undefined ? {} : { target_status: operation.targetStatus }),
+    ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+  };
 }
 
 /**

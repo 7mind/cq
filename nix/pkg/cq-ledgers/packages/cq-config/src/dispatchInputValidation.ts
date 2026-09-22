@@ -56,6 +56,7 @@
  */
 
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
+import { assertCohortDispatchInput } from "./cohortDispatchContract.js";
 import { PROMPT_SURFACES, type PromptSurface } from "./promptCatalog.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import {
@@ -602,6 +603,11 @@ export function validateDispatchInput(
       "input",
       `invalid role input: ${describeErrors(inputResult.errors)}`,
     );
+  }
+  try {
+    assertCohortDispatchInput(request.input);
+  } catch (error) {
+    return reject("invalid-role-input", "input.cohort", error instanceof Error ? error.message : String(error));
   }
   let appliedOverlayIds: readonly string[];
   try {

@@ -117,7 +117,7 @@ function asPort(
     async prepare(input) {
       const taskId =
         input.taskId ??
-        (input.handle !== undefined ? input.handle.taskId : undefined);
+        (input.handle !== undefined && input.handle.version !== 3 ? input.handle.taskId : undefined);
       if (taskId === undefined) {
         return {
           status: "refused" as const,

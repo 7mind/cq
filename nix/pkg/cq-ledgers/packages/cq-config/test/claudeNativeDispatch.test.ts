@@ -16,7 +16,7 @@ const CWD = `/tmp/project/.claude/worktrees/${WORKTREE_ID}`;
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
 
-function handle(overrides: Partial<ClaudeNativeManagedWorktreeHandle> = {}): ClaudeNativeManagedWorktreeHandle {
+function handle(overrides: Partial<Extract<ClaudeNativeManagedWorktreeHandle, { version: 1 }>> = {}): ClaudeNativeManagedWorktreeHandle {
   return {
     kind: "cq-managed-worktree-handle",
     version: 1,

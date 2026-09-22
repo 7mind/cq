@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
-import type { DispatchGuardedRebaseBridge } from "@cq/config";
+import type { CohortEffectEnvelopeV1, DispatchGitChangeReceipt, DispatchGuardedRebaseBridge } from "@cq/config";
+import { assertCohortEffectEnvelopeV1 } from "@cq/process-control";
 import {
+  assertManagedCohortWorktreeDispatchBindingLive,
+  assertManagedWorktreeConflictDispatchBindingLive,
   assertManagedWorktreeDispatchBindingLive,
   withManagedWorktreeEffectLock,
   type ManagedWorktreeDispatchBinding,
   type ManagedWorktreeDeps,
+  type ManagedCohortWorktreeAuthority,
+  type ManagedCohortWorktreeDispatchBinding,
 } from "./managedWorktree.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -49,7 +54,13 @@ export type GitChangeManifestEntry =
     };
 
 /** Server-held authorization persisted on one prepared dispatch envelope. */
-export interface DispatchBoundGitAuthorization extends ManagedWorktreeDispatchBinding {
+export type GitBrokerSubject =
+  | { readonly taskId: string; readonly cohort?: never }
+  | { readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never };
+export type GitBrokerManagedBinding =
+  | (ManagedWorktreeDispatchBinding & { readonly cohort?: never })
+  | (ManagedCohortWorktreeDispatchBinding & { readonly taskId?: never });
+export type DispatchBoundGitAuthorization = GitBrokerManagedBinding & {
   readonly attestationId: string;
   readonly generation: number;
   readonly roleId: "implement-worker" | "implement-conflict-resolver";
@@ -78,24 +89,9 @@ export interface GitChangeBrokerRequest {
   readonly changes: readonly GitChangeManifestEntry[];
 }
 
-export interface GitChangeBrokerReceipt {
-  readonly kind: "cq-git-change-receipt";
-  readonly version: 1;
-  readonly attestationId: string;
-  readonly generation: number;
-  readonly taskId: string;
-  readonly operationId: string;
-  readonly requestDigest: string;
-  readonly oldHead: string;
-  readonly newHead: string;
-  readonly tree: string;
-  readonly objectOids: readonly string[];
-  readonly paths: readonly string[];
-  readonly committedAt: string;
-}
+export type GitChangeBrokerReceipt = DispatchGitChangeReceipt;
 
-export interface GitChangeBrokerResultEvidence {
-  readonly taskId: string;
+export type GitChangeBrokerResultEvidence = GitBrokerSubject & {
   readonly resultCommit: string | null;
   readonly branch: string;
   readonly actualWorktreePath: string;
@@ -105,6 +101,7 @@ export interface GitChangeBrokerResultEvidence {
 }
 
 export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir" | "lockfile"> {
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
   /** Revalidates the dispatch envelope. It must fail unless it remains prepared and materialized. */
   readonly authorize: (authorization: DispatchBoundGitAuthorization) => void | Promise<void>;
   readonly now?: () => Date;
@@ -197,17 +194,74 @@ function assertEvidenceDeadline(deadlineMs: number | undefined): void {
   }
 }
 
-export type GitChangeReceiptLineageBinding = Omit<
-  DispatchBoundGitAuthorization,
-  "roleId" | "surface" | "childCancelAt"
-> & {
+export type GitChangeReceiptLineageBinding = GitBrokerManagedBinding & {
+  readonly attestationId: string;
+  readonly generation: number;
   readonly inheritedGitReceipts?: readonly GitChangeBrokerReceipt[];
+  readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
 };
+
+export function assertGitBrokerSubject(subject: GitBrokerSubject): void {
+  if (subject.cohort === undefined) {
+    if (Object.hasOwn(subject, "cohort") || !/^T\d+$/u.test(subject.taskId)) throw new Error("Git broker requires one closed task or cohort subject");
+  } else {
+    if (Object.hasOwn(subject, "taskId")) throw new Error("Git broker cohort cannot carry anchor task authority");
+    assertCohortEffectEnvelopeV1(subject.cohort);
+  }
+}
+
+export function gitBrokerSubjectsMatch(left: GitBrokerSubject, right: GitBrokerSubject, historical: boolean): boolean {
+  assertGitBrokerSubject(left); assertGitBrokerSubject(right);
+  if (left.cohort === undefined || right.cohort === undefined) return left.cohort === undefined && right.cohort === undefined && left.taskId === right.taskId;
+  if (!historical) return canonical(left.cohort) === canonical(right.cohort);
+  const stable = (envelope: CohortEffectEnvelopeV1) => ({ definition: envelope.definition, intent: envelope.intent,
+    memberAuthorities: envelope.memberAuthorities, memberSetDigest: envelope.memberSetDigest });
+  if (canonical(stable(left.cohort)) !== canonical(stable(right.cohort))) return false;
+  return left.cohort.state === "pre-seal" || (right.cohort.state === "sealed" &&
+    canonical(left.cohort.evidenceSubject) === canonical(right.cohort.evidenceSubject));
+}
+
+export type GitBrokerReceiptSubject =
+  | { readonly version: 1; readonly taskId: string; readonly cohort?: never }
+  | { readonly version: 2; readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never };
+export function gitBrokerReceiptSubject(subject: GitBrokerSubject): GitBrokerReceiptSubject {
+  assertGitBrokerSubject(subject);
+  return subject.cohort === undefined ? { version: 1, taskId: subject.taskId } : { version: 2, cohort: structuredClone(subject.cohort) };
+}
+
+export function assertGitBrokerReceiptSubject(receipt: GitBrokerSubject & { readonly version: number }): void {
+  assertGitBrokerSubject(receipt);
+  if (receipt.version !== (receipt.cohort === undefined ? 1 : 2)) throw new Error("Git broker receipt has an unsupported subject version");
+}
+export function gitBrokerJournalSubject(subject: GitBrokerSubject): { readonly cohortEnvelopeDigest?: string } {
+  assertGitBrokerSubject(subject);
+  return subject.cohort === undefined ? {} : { cohortEnvelopeDigest: subject.cohort.envelopeDigest };
+}
+export function assertGitBrokerJournalSubject(receipt: GitBrokerSubject & { readonly version: number }, cohortEnvelopeDigest: string | undefined): void {
+  assertGitBrokerReceiptSubject(receipt);
+  if (receipt.cohort === undefined ? cohortEnvelopeDigest !== undefined : cohortEnvelopeDigest !== receipt.cohort.envelopeDigest) {
+    throw new Error("durable Git receipt substituted its journal-bound producing envelope");
+  }
+}
+
+export async function assertGitBrokerBindingLive(binding: GitBrokerManagedBinding,
+  deps: Pick<ManagedWorktreeDeps, "stateDir" | "git"> & { readonly cohortAuthority?: ManagedCohortWorktreeAuthority },
+  allowDetachedRebase: boolean): Promise<void> {
+  assertGitBrokerSubject(binding);
+  if (binding.cohort === undefined) {
+    if (deps.cohortAuthority !== undefined) throw new Error("task Git broker cannot consume cohort authority");
+    return allowDetachedRebase ? assertManagedWorktreeConflictDispatchBindingLive(binding, deps) : assertManagedWorktreeDispatchBindingLive(binding, deps);
+  }
+  if (deps.cohortAuthority === undefined) throw new Error("cohort Git broker requires current all-member authority");
+  await assertManagedCohortWorktreeDispatchBindingLive(binding, deps.cohortAuthority, deps, allowDetachedRebase);
+}
 
 interface BrokerJournal {
   readonly version: 1;
   readonly requestDigest: string;
   readonly createdAt: string;
+  readonly cohortEnvelopeDigest?: string;
+  readonly reconciledBy?: readonly CohortEffectEnvelopeV1[];
   readonly state: "intent" | "constructed" | "objects-installed" | "ref-advanced" | "completed";
   readonly receipt?: GitChangeBrokerReceipt;
   readonly privateIndex?: string;
@@ -344,7 +398,7 @@ function manifestPaths(changes: readonly GitChangeManifestEntry[]): readonly str
   return Object.freeze([...new Set(all)].sort());
 }
 
-function brokerRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
+function brokerRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
   return stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
 }
 
@@ -391,10 +445,11 @@ async function committedDispatchReceipts(
     const journal = await readJournal(join(root, operationDirectory.name, "journal.json"));
     if (journal?.receipt === undefined || journal.state === "intent") continue;
     const receipt = journal.receipt;
+    assertGitBrokerJournalSubject(receipt, journal.cohortEnvelopeDigest);
     if (
       receipt.attestationId !== authorization.attestationId ||
       receipt.generation !== authorization.generation ||
-      receipt.taskId !== authorization.taskId
+      !gitBrokerSubjectsMatch(receipt, authorization, true)
     ) {
       continue;
     }
@@ -484,8 +539,9 @@ export async function resolveInheritedGitChangeReceipts(
     throw new Error("inherited receipt-chain transition exceeds its authenticated prefix");
   }
   for (const [index, receipt] of combined.entries()) {
-    if (receipt.taskId !== authorization.taskId) {
-      throw new Error(`inherited receipt chain entry ${index} has a foreign task identity`);
+    assertGitBrokerReceiptSubject(receipt);
+    if (!gitBrokerSubjectsMatch(receipt, authorization, true)) {
+      throw new Error(`inherited receipt chain entry ${index} has a foreign task or cohort identity`);
     }
   }
   if (authenticatedReceiptChainTip(combined, transitions, "inherited") !== resultCommit) {
@@ -1014,10 +1070,9 @@ async function constructPrivateCommit(
   }
   const receipt: GitChangeBrokerReceipt = Object.freeze({
     kind: "cq-git-change-receipt" as const,
-    version: 1 as const,
+    ...gitBrokerReceiptSubject(request.authorization),
     attestationId: request.authorization.attestationId,
     generation: request.authorization.generation,
-    taskId: request.authorization.taskId,
     operationId: request.operationId,
     requestDigest: digest,
     oldHead: request.expectedHead,
@@ -1033,6 +1088,7 @@ async function constructPrivateCommit(
       version: 1,
       requestDigest: digest,
       createdAt: committedAt,
+      ...gitBrokerJournalSubject(request.authorization),
       state: "constructed",
       receipt,
       privateIndex,
@@ -1122,23 +1178,39 @@ async function completeConstructed(
   if (receipt === undefined || privateIndex === undefined || quarantine === undefined) {
     throw new Error("constructed Git broker journal is incomplete");
   }
+  assertReceiptMatchesRequest(receipt, journal, request);
   let state = journal.state;
   if (state === "constructed") {
+    await deps.authorize(request.authorization);
+    await assertGitBrokerBindingLive(request.authorization, deps, false);
     await installObjects(request.authorization, quarantine, receipt.objectOids);
     state = "objects-installed";
     await writeJournal(journalFile, { ...journal, state });
   }
   if (state === "objects-installed") {
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, false);
     const observed = await currentHead(request.authorization);
     if (observed === receipt.oldHead) {
-      await checkedGit(request.authorization.worktreePath, [
+      const command = [
         "update-ref",
         request.authorization.ref,
         receipt.newHead,
         receipt.oldHead,
-      ]);
+      ];
+      if (request.authorization.cohort === undefined) {
+        await checkedGit(request.authorization.worktreePath, command);
+      } else {
+        const authority = deps.cohortAuthority;
+        if (authority === undefined) throw new Error("cohort Git publication lost its live authority");
+        await authority.store.publishLiveCohortEffect(authority.lease, request.authorization.cohort, () => {
+          const result = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...command], {
+            cwd: request.authorization.worktreePath, env: trustedGitEnvironment(), stdin: "ignore", stdout: "pipe", stderr: "pipe",
+          });
+          if (result.exitCode !== 0) throw new Error(`cohort Git ref CAS failed (${result.exitCode}): ${result.stderr.toString().trim()}`);
+          return undefined;
+        });
+      }
     } else if (observed !== receipt.newHead) {
       throw new Error(`manager-bound ref moved to ${observed}, expected ${receipt.oldHead}`);
     }
@@ -1146,10 +1218,36 @@ async function completeConstructed(
     await writeJournal(journalFile, { ...journal, state });
   }
   if (state === "ref-advanced") {
+    await deps.authorize(request.authorization);
+    await assertGitBrokerBindingLive(request.authorization, deps, false);
+    if (await currentHead(request.authorization) !== receipt.newHead) throw new Error("published Git broker ref changed before index reconciliation");
     await installIndex(request.authorization, privateIndex);
     await writeJournal(journalFile, { ...journal, state: "completed" });
   }
   return receipt;
+}
+
+function assertReceiptMatchesRequest(receipt: GitChangeBrokerReceipt, journal: BrokerJournal,
+  request: GitChangeBrokerRequest): void {
+  assertGitBrokerJournalSubject(receipt, journal.cohortEnvelopeDigest);
+  if (receipt.kind !== "cq-git-change-receipt" || !gitBrokerSubjectsMatch(receipt, request.authorization, true) ||
+      receipt.attestationId !== request.authorization.attestationId || receipt.generation !== request.authorization.generation ||
+      receipt.operationId !== request.operationId || receipt.requestDigest !== journal.requestDigest ||
+      receipt.oldHead !== request.expectedHead || receipt.committedAt !== journal.createdAt ||
+      canonical(receipt.paths) !== canonical(manifestPaths(request.changes))) {
+    throw new Error("durable Git broker receipt differs from its exact request journal");
+  }
+}
+
+function isRenewedPublishedRequest(request: GitChangeBrokerRequest, journal: BrokerJournal): boolean {
+  const receipt = journal.receipt;
+  const authorization = request.authorization;
+  if (receipt?.cohort === undefined || authorization.cohort === undefined ||
+      !["objects-installed", "ref-advanced", "completed"].includes(journal.state) ||
+      receipt.cohort.semanticSubject !== authorization.cohort.semanticSubject ||
+      !gitBrokerSubjectsMatch(receipt, authorization, true)) return false;
+  assertGitBrokerJournalSubject(receipt, journal.cohortEnvelopeDigest);
+  return requestDigest({ ...request, authorization: { ...authorization, cohort: receipt.cohort } }) === journal.requestDigest;
 }
 
 /**
@@ -1185,15 +1283,26 @@ export async function commitManagedWorktreeChanges(
   const journalFile = join(root, "journal.json");
   return await withManagedWorktreeEffectLock(request.authorization, deps, async () => {
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, false);
     let journal = await readJournal(journalFile);
     if (journal !== null) {
       if (journal.requestDigest !== digest) {
-        throw new Error(`operationId ${request.operationId} was reused with a different request`);
+        if (!isRenewedPublishedRequest(request, journal) || journal.receipt === undefined ||
+            await currentHead(request.authorization) !== journal.receipt.newHead) {
+          throw new Error(`operationId ${request.operationId} was reused with a different request`);
+        }
+        const envelope = request.authorization.cohort;
+        if (envelope === undefined) throw new Error("published cohort reconciliation lost its live envelope");
+        const prior = journal.reconciledBy ?? [];
+        if (!prior.some((value) => value.envelopeDigest === envelope.envelopeDigest)) {
+          journal = { ...journal, reconciledBy: [...prior, structuredClone(envelope)] };
+          await writeJournal(journalFile, journal);
+        }
       }
       if (journal.state === "completed") {
         if (journal.receipt === undefined)
           throw new Error("completed broker journal lacks receipt");
+        assertReceiptMatchesRequest(journal.receipt, journal, request);
         return journal.receipt;
       }
       if (journal.state !== "intent") {
@@ -1204,12 +1313,13 @@ export async function commitManagedWorktreeChanges(
         version: 1,
         requestDigest: digest,
         createdAt: now.toISOString(),
+        ...gitBrokerJournalSubject(request.authorization),
         state: "intent",
       };
       await writeJournal(journalFile, journal);
     }
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, false);
     const snapshots = await validateAndSnapshot(request, paths);
     const constructed = await constructPrivateCommit(
       request,
@@ -1233,8 +1343,8 @@ export async function validateGitChangeBrokerResultEvidence(
   if (evidence.resultCommit === null || !FULL_OID.test(evidence.resultCommit)) {
     throw new Error("broker receipt chain requires a full resultCommit oid");
   }
-  if (evidence.taskId !== authorization.taskId) {
-    throw new Error("broker receipt taskId does not match the dispatch binding");
+  if (!gitBrokerSubjectsMatch(evidence, authorization, false)) {
+    throw new Error("broker receipt task/cohort subject does not match the dispatch binding");
   }
   if (evidence.branch !== authorization.branch) {
     throw new Error("broker receipt branch does not match the dispatch binding");
@@ -1323,7 +1433,8 @@ export async function validateGitChangeBrokerResultEvidence(
   }
 
   for (const [index, receipt] of durableReceipts.entries()) {
-    if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
+    assertGitBrokerReceiptSubject(receipt);
+    if (receipt.kind !== "cq-git-change-receipt") {
       throw new Error(`broker receipt chain entry ${index} has an unsupported kind or version`);
     }
     const inherited = inheritedReceipts[index];
@@ -1331,7 +1442,7 @@ export async function validateGitChangeBrokerResultEvidence(
       inherited === undefined &&
       (receipt.attestationId !== authorization.attestationId ||
         receipt.generation !== authorization.generation ||
-        receipt.taskId !== authorization.taskId)
+        !gitBrokerSubjectsMatch(receipt, authorization, true))
     ) {
       throw new Error(`broker receipt chain entry ${index} does not match the dispatch identity`);
     }

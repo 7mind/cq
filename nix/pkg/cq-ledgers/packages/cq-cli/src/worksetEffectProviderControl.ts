@@ -1,18 +1,30 @@
 import { once } from "node:events";
 import { createInterface } from "node:readline";
+import { createInvestigationNativeProviderHostV1, assertInvestigationNativeSingletonDispatchV1, type InvestigationNativeProviderHostV1 } from "@cq/ledger-mcp";
 import {
   WORKSET_EXTERNAL_EFFECT_KINDS,
   WorksetAdmissionError,
   createLedgerStore,
   requireWorksetStore,
   worksetEffectAdmissionProviderFromStore,
-  type WorksetExternalEffectAdmission,
+  resolveRetainedManagedCohortAuthority,
+  createCohortWorksetEffectAdmissionProvider,
+  observeManagedWorktreeConflictState,
+  gitRebaseConflictStateDigest,
+  resolveUniquePendingGuardedRebaseConflict,
   type WorksetExternalEffectKind,
 } from "@cq/ledger";
 import {
   isRegisteredProcessGroupAlive,
   readProcessIdentity,
   settleProcessGroups,
+  assertCohortEffectEnvelopeV1,
+  assertInvestigationCohortLaunchBindingV1,
+  assertInvestigationNativeDispatchIdentityV1,
+  investigationCohortEffectTargetRefV1,
+  type CohortEffectEnvelopeV1,
+  type WorksetBrokerAdmissionHandle,
+  type WorksetEffectAdmissionProvider,
   type ProcessGroupRegistration,
 } from "@cq/process-control";
 
@@ -76,7 +88,7 @@ async function writeResponse(
 }
 
 async function closeAfterControllerLoss(
-  admission: WorksetExternalEffectAdmission | null,
+  admission: WorksetBrokerAdmissionHandle | null,
   registration: ProcessGroupRegistration | null,
   settled: boolean,
 ): Promise<void> {
@@ -105,11 +117,12 @@ export async function runWorksetEffectProviderControl(
   options: WorksetEffectProviderControlOptions,
 ): Promise<void> {
   const resolved = await createLedgerStore(options.cwd);
-  const provider = worksetEffectAdmissionProviderFromStore(requireWorksetStore(resolved.store));
-  let admission: WorksetExternalEffectAdmission | null = null;
+  const provider: WorksetEffectAdmissionProvider = worksetEffectAdmissionProviderFromStore(requireWorksetStore(resolved.store));
+  let admission: WorksetBrokerAdmissionHandle | null = null;
   let registration: ProcessGroupRegistration | null = null;
   let settled = false;
   let closed = false;
+  let investigationHost: InvestigationNativeProviderHostV1 | null = null;
   try {
     const lines = createInterface({ input: options.input, crlfDelay: Infinity });
     for await (const line of lines) {
@@ -132,7 +145,10 @@ export async function runWorksetEffectProviderControl(
         if (op === "acquire") {
           if (
             admission !== null ||
-            !exactKeys(parsed, ["op", "kind", "targetRef"]) ||
+            !exactKeys(parsed, ["op", "kind", "targetRef", ...(Object.hasOwn(parsed, "cohort") ? ["cohort"] : []),
+              ...(Object.hasOwn(parsed, "investigationCohort") ? ["investigationCohort"] : []),
+              ...(Object.hasOwn(parsed, "investigationDispatch") ? ["investigationDispatch"] : []),
+              ...(Object.hasOwn(parsed, "cohortConflictStateDigest") ? ["cohortConflictStateDigest", "cohortRoleId"] : [])]) ||
             typeof parsed["kind"] !== "string" ||
             !WORKSET_EXTERNAL_EFFECT_KINDS.includes(
               parsed["kind"] as WorksetExternalEffectKind,
@@ -142,7 +158,48 @@ export async function runWorksetEffectProviderControl(
           ) {
             throw protocolError("acquire must be the first valid typed operation");
           }
-          admission = await provider.acquire({
+          let exactProvider = provider;
+          if (Object.hasOwn(parsed, "investigationDispatch")) {
+            const identity = parsed["investigationDispatch"];
+            assertInvestigationNativeDispatchIdentityV1(identity);
+            if (Object.hasOwn(parsed, "cohort") || Object.hasOwn(parsed, "investigationCohort") || parsed["kind"] !== "child-dispatch") {
+              throw protocolError("ordinary investigation dispatch requires its exclusive native role identity");
+            }
+            assertInvestigationNativeSingletonDispatchV1(resolved, identity);
+          }
+          if (Object.hasOwn(parsed, "investigationCohort")) {
+            const binding = parsed["investigationCohort"];
+            assertInvestigationCohortLaunchBindingV1(binding);
+            if (Object.hasOwn(parsed, "cohort") || Object.hasOwn(parsed, "cohortConflictStateDigest") ||
+                parsed["kind"] !== "child-dispatch" || parsed["targetRef"] !== investigationCohortEffectTargetRefV1(binding)) {
+              throw protocolError("investigation admission requires its exclusive complete child-dispatch binding");
+            }
+            investigationHost = await createInvestigationNativeProviderHostV1({ resolved, environment: process.env });
+            exactProvider = await investigationHost.resolve(binding);
+          }
+          const conflictDigest = parsed["cohortConflictStateDigest"];
+          if (conflictDigest !== undefined && (!Object.hasOwn(parsed, "cohort") ||
+              parsed["kind"] !== "child-dispatch" || parsed["cohortRoleId"] !== "implement-conflict-resolver" ||
+              typeof conflictDigest !== "string" || !/^[0-9a-f]{64}$/u.test(conflictDigest))) {
+            throw protocolError("detached admission requires the exact cohort conflict-resolver binding");
+          }
+          if (Object.hasOwn(parsed, "cohort")) {
+            const envelope = parsed["cohort"] as CohortEffectEnvelopeV1;
+            assertCohortEffectEnvelopeV1(envelope);
+            if (resolved.backend !== "xdg" || resolved.store.workCohortStore === undefined) {
+              throw protocolError("cohort process admission requires its local durable authority store");
+            }
+            const retained = await resolveRetainedManagedCohortAuthority(resolved.configRoot,
+              resolved.store.workCohortStore(), envelope, {}, conflictDigest !== undefined);
+            if (conflictDigest !== undefined) {
+              const deps = { cohortAuthority: retained.authority };
+              const observed = await observeManagedWorktreeConflictState(retained.binding, deps);
+              if (gitRebaseConflictStateDigest(observed) !== conflictDigest) throw protocolError("cohort resolver conflict state differs from its bound digest");
+              await resolveUniquePendingGuardedRebaseConflict(retained.binding, observed, deps);
+            }
+            exactProvider = createCohortWorksetEffectAdmissionProvider(retained.authority, requireWorksetStore(resolved.store));
+          }
+          admission = await exactProvider.acquire({
             kind: parsed["kind"] as WorksetExternalEffectKind,
             targetRef: parsed["targetRef"],
           });
@@ -219,7 +276,8 @@ export async function runWorksetEffectProviderControl(
     try {
       if (!closed) await closeAfterControllerLoss(admission, registration, settled);
     } finally {
-      await resolved.store.dispose();
+      try { if (investigationHost !== null) await investigationHost.close(); }
+      finally { await resolved.store.dispose(); }
     }
   }
 }

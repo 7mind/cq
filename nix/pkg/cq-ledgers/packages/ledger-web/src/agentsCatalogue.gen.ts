@@ -1159,712 +1159,1203 @@ export const AGENT_ROLES: AgentRole[] = [
     name: "implement-worker",
     kind: "agent-subagent",
     source: "agents/implement-worker.md",
-    description: "Implement exactly one task in an isolated worktree, prove its guards and full gate, commit it, and store a structured result.",
+    description: "Implement one task or one admitted complete cohort in an isolated worktree and stage exact candidate evidence for the parent-owned gate.",
     inputs: [
   "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, parent-owned validationIntent, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage"
 ],
     outputs: [
-  "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
+  "one verified task or complete-cohort commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, task-arm gate evidence or cohort stage-only member observations, stored structured result, and handle-only final reply"
 ],
     ioSchema: [
   "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)",
-  "pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered process dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence",
+  "task-arm pass requires a green full gate; cohort-arm pass stages focused-tested evidence for the parent-owned gate, not completed acceptance; both require verified commit/clean tree/ancestry, actualWorktreePath, verified full-SHA baseVerification, and required mutation evidence",
   "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, parent-owned validationIntent, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage\"\noutputs:\n  - \"one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered process dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence\"\n  - \"fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved\"\n```\n\nImplement exactly one task. Never mutate the ledger, merge, push, rebase, or\nspawn a child. Work only inside the supplied worktree and task branch. Do not\noperate on another checkout or alter its refs. Report a stale or unusable base\ninstead of improvising cross-checkout repair.\n\nThe orchestrator owns install, worktree create/remove, reset, rebase, symlink,\nand cleanup through its managed prepare/release path. Do not install workspace\ndependencies, create or remove worktrees, symlink `node_modules`, hard-reset,\nrebase, or run worktree lifecycle commands yourself.\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries only\n`{ attestationId, generation, inputCapability }`. Before reading or changing\nthe repository, call the ledger MCP `fetch_dispatch_input` tool exactly once\nwith those three fields. Treat its returned `input` as the task specification\ndescribed below. A missing capability, failed retrieval, or second retrieval is\na protocol failure: stop and return `status: \"fail\"` rather than reading task\nnarrative from the ledger or improvising it from the compact launch reference.\n\n\nTreat the resolved task headline, description, and acceptance as the\nspecification. Address every supplied prior criticism. `round` is required on\nevery dispatch (zero-based). Never invent a round; never reset or rebase away\nprior-round commits when `round > 0`.\nRequire `validationIntent` to be `final` for an implementation deliverable. A\n`focused-only` dispatch reports non-empty typed green `focusedChecks` and never\nruns or requests the canonical full gate; the trusted host enforces this scope.\n\nThe protected inherited receipt prefix is never placed in fetched input. Report\nin `gitReceipts` only the fresh receipts returned by this generation's\n`git_commit` calls. The server reconstructs and validates the complete durable\nchain. Do not replay or synthesize a Git effect merely to reproduce a prior\ngeneration's receipt. `filesTouched` must equal the sorted\n`git diff --name-only <baseCommit>..<resultCommit>` set.\n\nWhen fetched input carries `guardedRebaseLineage`, the dispatch is a\nguarded-rebase continuation: the server resolved the opaque\n`guardedRebase` reference against a terminal durable journal and verified the\nbridge. The lineage binds `oldResultCommit` (the exact terminal pre-rebase\nworker result), `ontoCommit`, `rebasedStartCommit`, and the server-resolved\n`exactTip` mode. On this arm `baseCommit` equals `ontoCommit`. For the initial\nguarded bridge, `startingCommit` equals `rebasedStartCommit`. For a later\nguarded correction, the server-owned inherited receipt suffix begins at\n`rebasedStartCommit` and `startingCommit` is that suffix's current tip.\n`gitLineage` contains exactly `kind: \"guarded-rebase\"`, `guardedRebase`,\n`ontoCommit`, `rebasedStartCommit`, and `exactTip`; it omits the input-only\n`oldResultCommit`. `gitReceipts` carries ONLY this generation's fresh\npost-rebase suffix (never a pre-rebase receipt), and `filesTouched` equals the\nsorted `git diff --name-only <ontoCommit>..<resultCommit>` set rather than a\nreceipt path union.\n\n## Procedure\n\n1. **Step 0 — verify prepared evidence only (no install, no lifecycle).**\n   Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)\n   first. When the input carries advisory `worktreePath`, prefer that path when\n   it is reachable and is a git worktree of this repository. On a surface with\n   native worktree confinement the only enterable placement is under\n   `.claude/worktrees/` of the session repository. If the supplied path is\n   outside that root, or every attempt to enter it is refused, STOP and return\n   `fail` with a precise `blockedReason` containing the literal diagnosis\n   `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`\n   plus the supplied path and the resolved toplevel — do not rediscover the\n   confinement by trial-and-error across sibling checkouts. When the surface\n   adapter already pinned a harness-minted worktree and the advisory path is\n   absent or unusable for that reason, continue in the pinned tree and still\n   report its absolute toplevel as `actualWorktreePath`. Always include\n   `actualWorktreePath` in the stored result.\n\n   Verify placement evidence:\n   - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);\n   - `git rev-parse HEAD` equals `startingCommit` (full SHA);\n   - `git cat-file -t <baseCommit>` returns `commit` and `baseCommit` is a full\n     40-hex SHA;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n\n   When `round > 0`, also verify `priorResultCommit` when supplied (non-null):\n   require it to be a full SHA commit object equal to or an ancestor of `HEAD`.\n   Never hard-reset or rebase away from prior criticism commits.\n\n   On a guarded-rebase continuation (the fetched input carries\n   `guardedRebaseLineage`) Step 0 instead requires `baseCommit` to equal the\n   lineage `ontoCommit` and `HEAD` to equal `startingCommit`. When\n   `startingCommit` equals the lineage `rebasedStartCommit`, this is the initial\n   bridge round: `priorResultCommit` must equal the bound `oldResultCommit`\n   exactly. That equality is the ONLY ancestry exemption — the pre-rebase\n   result does not descend from the rewritten `HEAD` and must not be claimed\n   to. When `startingCommit` is beyond `rebasedStartCommit`, this is a later\n   correction whose server-owned inherited suffix already binds that ancestry;\n   `priorResultCommit` is again equal to or an ancestor of `HEAD`. Record\n   `baseVerification` with `baseCommit` set to `ontoCommit`.\n\n   On any mismatch STOP immediately with `status: \"fail\"`, a precise\n   `blockedReason`, and `baseVerification` set to the matching unresolvable arm\n   (`path-mismatch` | `branch-mismatch` | `starting-commit-mismatch` |\n   `prior-result-commit-mismatch` | `base-missing` | `base-not-commit` |\n   `head-missing` | `head-not-commit` | `unrelated-histories` |\n   `ancestry-unobserved`) with full SHAs or `null` — never a fabricated SHA.\n   On success record\n   `baseVerification: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, headCommit }` using full object SHAs only. These checks apply to\n   every initial and criticism round. Never reset away prior task commits.\n\n2. **Implement surgically.**\n   When the private launch supplies `gitChangeCapability`, all Git mutations go\n   through the dispatch-bound `git_commit` broker. On that path, never run\n   `git add`, `git commit`, `git update-index`, `git update-ref`, or write a Git\n   directory, common directory, ref, index, or object yourself. Read-only Git\n   inspection remains permitted. A surface still on the documented held\n   dispatch protocol follows its existing confined commit path and omits\n   `gitReceipts`; it never invents or requests a capability. For each brokered\n   checkpoint choose a stable\n   `operationId` that survives a lost response, set `expectedHead` to the\n   currently verified task head, and submit the closed manifest of add,\n   modify, delete, or explicit rename entries. Every old/new state contains the\n   authoritative repository-relative path, regular mode `100644` or `100755`,\n   and lowercase SHA-256 digest of the file bytes. Do not submit symlinks,\n   gitlinks, undeclared paths, inferred renames, or a manifest assembled before\n   the final byte/mode measurement. Retry a lost response with the exact same\n   operation id and request; retain the returned receipt verbatim in\n   `gitReceipts`. A broker-capable passing result reports this generation's\n   fresh receipt suffix in commit order; it may be empty when this generation\n   performed no Git effect and protected prior receipts already form the\n   complete chain. A changed request requires a new\n   operation id.\n\n   **Early skeleton write (load-bearing durability).** The first substantive\n   action after grounding and base verification MUST be to create a durable\n   partial artifact and persist it through the applicable commit path, even\n   when nearly empty.Prefer\n   `WIP-<taskId>.md` in the worktree root using the existing WIP partial format\n   (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a\n   non-empty `checkpoints[]` of `{name,status}` where status is\n   `done | todo | unmeasured`, followed by\n   `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work\n   `todo` or `unmeasured` rather than omitting it so a harvested partial is\n   self-describing. For the parent-owned supervised full gate, use the exact\n   task-local checkpoint name `trusted full gate` with status `unmeasured`.\n   Preserve that checkpoint's status `unmeasured` until trusted finalization;\n   synonyms such as `full-gate` do not qualify. A committed partial is worth\n   more than an uncommitted complete deliverable. Do not defer the first write\n   until the end of the turn.\n   The early WIP-skeleton commit and non-empty new-receipt requirement have two\n   no-effect exemptions. First, a correction round (`round > 0`) with no\n   repository change remaining reports `resultCommit === startingCommit` and\n   an empty fresh suffix; the server accepts it only when a protected prior\n   receipt chain already reaches that exact tip. Second, the server-resolved\n   exact-tip mode of a guarded-rebase continuation\n   (`guardedRebaseLineage.exactTip === true`) likewise reports\n   `resultCommit === rebasedStartCommit`, an empty fresh suffix, and performs no\n   `git_commit` call. Never synthesize a commit solely to avoid an empty suffix.\n   Any correction that advances the tip keeps early persistence and a\n   non-empty contiguous fresh suffix.\n   **Incremental persistence.** Reproduce a defect before correcting it. Match\n   project conventions and do not repair unrelated faults. At natural\n   checkpoints — after each measurement, probe, acceptance clause, or\n   non-trivial edit batch — update the WIP artifact (or the real deliverable)\n   and persist it through the applicable commit path. Keep checkpoint statuses\n   honest (`done` / `todo` / `unmeasured`).\n   Never couple durability to completion of the whole task.\n\n3. **Prove changed guards.** For every test, assertion, guard, or invariant you\n   add or change, deliberately make it fail, capture the expected failure,\n   restore the intended bytes, and capture the pass. Hash affected files before\n   mutation and after restoration. Report only observations from this run in\n   `mutationTable`; if evidence is unavailable, report the gap rather than\n   claiming success.\n\n4. **Run targeted checks.** Use exact test paths when discovery matters and\n   record nonzero test counts. Check wrapped prose with a multiline-aware\n   operation.\n\n   **Expected-failure tasks.** A task that declares an expected failure follows\n   §6a of the implementation orchestrator. Forms (a) and (b) carry the required\n   annotation, live marker, and inventory entry; form (c) needs no marker. A fix\n   replaces the marker with a same-titled plain test and removes its annotation\n   and inventory entry. Never use a red full gate as expected-failure evidence.\n\n5. **Obtain the parent-selected validation.** A `focused-only` dispatch reports\n   non-empty `focusedChecks` with exact command, exit code, pass count, and fail\n   count; every row must be green and the aggregate pass count nonzero. It never\n   invokes or requests a full gate.\n\n   For `validationIntent: \"final\"`, obtain a green full gate through the\n   dispatch's trusted path. When the\n   private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`\n   inside the sandbox. Finish the commit and verification in Step 6, then\n   call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.\n   A matching `gate-pending` acknowledgement confirms durable handoff to the\n   trusted parent and permits the final response. Do not wait for\n   `result-stored`: the trusted parent starts the gate only after this child\n   exits. If the response is lost, retry only the exact same `store_result`\n   request.\n   The trusted result-storage boundary holds the managed worktree effect lock,\n   verifies the exact clean branch tip and receipt chain, runs the canonical\n   full gate, rechecks the tip and tree, and attaches\n   `supervisedGateEvidence` before the result becomes consumable. A caller must\n   never mint or copy that evidence. A red, zero-test, timed-out, cancelled,\n   dirty, moved-tip, or replayed attempt fails storage and cannot yield\n   `result-stored`.\n\n   On a dispatch without `gitChangeCapability`, run the full gate in the\n   foreground from the worktree root exactly as\n   `cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check`.\n   A yielded command-session handle remains the sole full-gate attempt. Continue\n   to poll that exact session or explicitly terminate it; after termination,\n   continue polling and require terminal settlement before retrying the gate,\n   calling `store_result`, or returning. Never launch a replacement full-gate\n   attempt while the prior session remains live. Capture start/end time and\n   assign its exit status immediately after the command, independent of any\n   pipe or wrapper. Preserve `REAL_CHECK_EXIT=<n>`, the verbatim result tail,\n   and `gateDurationMs`. Iterate until zero. An unrelated-failure claim requires\n   an A/B reproduction of the same selector and signature on this tree and the\n   recorded base; if confinement prevents that proof, return `fail`.\n\n6. **Commit and verify.** Commit all task changes through the applicable path, then require:\n   - `git rev-parse --verify HEAD` succeeds;\n   - `git cat-file -t <head>` returns `commit`;\n   - `git status --porcelain --untracked-files=all` is empty;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n     Immediately before constructing the result, rerun\n     `git rev-parse --verify HEAD` and copy its stdout verbatim into\n     `resultCommit`, then require\n     `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n     Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into\n     `actualWorktreePath`.\n     Keep the Step-0 `baseVerification` verified arm on pass (update\n     `headCommit` to the final tip when it advanced under the same base).\n\n## Result\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<verified head, or null on fail>\",\n  \"branch\": \"implement/<taskId>\",\n  \"actualWorktreePath\": \"<absolute git rev-parse --show-toplevel>\",\n  \"filesTouched\": [\"<path>\"],\n  \"gitReceipts\": [{ \"kind\": \"cq-git-change-receipt\", \"version\": 1, \"attestationId\": \"<id>\", \"generation\": 1, \"taskId\": \"<task id>\", \"operationId\": \"<stable id>\", \"requestDigest\": \"<sha256>\", \"oldHead\": \"<commit>\", \"newHead\": \"<commit>\", \"tree\": \"<tree>\", \"objectOids\": [\"<oid>\"], \"paths\": [\"<path>\"], \"committedAt\": \"<utc timestamp>\" }],\n  \"gitLineage\": \"<guarded-rebase continuations only: kind, guardedRebase, ontoCommit, rebasedStartCommit, and exactTip projected from the server-injected lineage; omit oldResultCommit; omitted by ordinary workers>\",\n  \"checkSummary\": \"<legacy REAL_CHECK_EXIT plus tail, or trusted-gate delegation summary>\",\n  \"gateDurationMs\": \"<legacy dispatches only>\",\n  \"baseVerification\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"headCommit\": \"<40-hex>\"\n  },\n  \"summary\": \"<what changed, how acceptance was met, and residual risk>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nThe stored brokered process result contains runner-owned\n`supervisedGateEvidence` instead of caller-supplied `gateDurationMs`; the child\nomits both fields when calling `store_result`.\n\nOn fail with unresolvable base evidence use:\n`baseVerification: { status: \"unresolvable\", reason: \"<closed reason>\",\nbaseCommit: <40-hex|null>, headCommit: <40-hex|null> }` — never invent a SHA.\n\nThe prompt-catalog schema is authoritative, including any conditional\n`mutationTable` requirement. `pass` requires observed gate success, mutation\nevidence where required, a verified commit object, a clean tree, base\nancestry, a reported `actualWorktreePath`, and verified `baseVerification`.\n\nSubmit the object through the dispatch-scoped `store_result` tool. With\n`gitChangeCapability`, only a matching `gate-pending` acknowledgement permits\nthe final response. Without `gitChangeCapability`, only `result-stored` permits\nthe final response. Retry a lost response only with the exact same request. Then reply with the\nprepared dispatch handle only as the exact one-line JSON\n`{\"attestationId\":\"<prepared attestation id>\",\"generation\":<prepared generation>}`\nand nothing else; never return the result body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, parent-owned validationIntent, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage\"\noutputs:\n  - \"one verified task or complete-cohort commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, task-arm gate evidence or cohort stage-only member observations, stored structured result, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"task-arm pass requires a green full gate; cohort-arm pass stages focused-tested evidence for the parent-owned gate, not completed acceptance; both require verified commit/clean tree/ancestry, actualWorktreePath, verified full-SHA baseVerification, and required mutation evidence\"\n  - \"fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved\"\n```\n\nImplement exactly the supplied closed task or cohort arm. Never mutate the ledger, merge, push, rebase, or\nspawn a child. Work only inside the supplied worktree and bound branch. Do not\noperate on another checkout or alter its refs. Report a stale or unusable base\ninstead of improvising cross-checkout repair.\n\nThe orchestrator owns install, worktree create/remove, reset, rebase, symlink,\nand cleanup through its managed prepare/release path. Do not install workspace\ndependencies, create or remove worktrees, symlink `node_modules`, hard-reset,\nrebase, or run worktree lifecycle commands yourself.\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries only\n`{ attestationId, generation, inputCapability }`. Before reading or changing\nthe repository, call the ledger MCP `fetch_dispatch_input` tool exactly once\nwith those three fields. Treat its returned `input` as the task specification\ndescribed below. A missing capability, failed retrieval, or second retrieval is\na protocol failure: stop and return `status: \"fail\"` rather than reading task\nnarrative from the ledger or improvising it from the compact launch reference.\n\n\n**Full-cohort arm (worker v13).** An input with `cohort` carries one complete\npre-seal envelope and ordered `members`; it has no `taskId`, headline,\ndescription, or acceptance anchor. Implement every member's supplied acceptance\nin the same candidate. Preserve the exact envelope and the branch\n`implement/cohort-<intent.intentDigest>`. Return `cohort` unchanged and one\n`memberObservations: [{ memberRef, observation }]` row for every member, in the\nsame order, on both pass and fail. Never use a representative task, omit a\nmember, invent a subset, or reinterpret the shared correction as proof of\nevery member. If member requirements cannot share this correction, report the\nincompatibility to the parent; do not split or redefine the cohort yourself.\n\nFor a cohort, the child is **stage-only**: require the supplied Git broker,\nrun focused checks, retain its exact version-2 full-cohort receipts, and hand\noff the clean candidate through `store_result`. Never invoke `cq gate run`,\n`bun run check`, or another full gate, even on a native surface. There is no\nlegacy in-child gate fallback for a cohort. Omit `gateDurationMs` and\n`supervisedGateEvidence`; neither is child-owned. A final candidate's matching\n`gate-pending` acknowledgement is the durable handoff, not a claim that full\nacceptance has already passed. The parent seals the complete candidate, runs\nfocused/shared prerequisites and the single queue-front full gate, then\nrequests one whole-cohort review with separate member observations.\n\nFor a task arm, treat its resolved headline, description, and acceptance as the\nspecification; for a cohort, use each supplied member's specification separately.\nAddress every supplied prior criticism. `round` is required on\nevery dispatch (zero-based). Never invent a round; never reset or rebase away\nprior-round commits when `round > 0`.\nRequire `validationIntent` to be `final` for an implementation deliverable. A\n`focused-only` dispatch reports non-empty typed green `focusedChecks` and never\nruns or requests the canonical full gate; the trusted host enforces this scope.\n\nThe protected inherited receipt prefix is never placed in fetched input. Report\nin `gitReceipts` only the fresh receipts returned by this generation's\n`git_commit` calls. The server reconstructs and validates the complete durable\nchain. Do not replay or synthesize a Git effect merely to reproduce a prior\ngeneration's receipt. `filesTouched` must equal the sorted\n`git diff --name-only <baseCommit>..<resultCommit>` set.\n\nWhen fetched input carries `guardedRebaseLineage`, the dispatch is a\nguarded-rebase continuation: the server resolved the opaque\n`guardedRebase` reference against a terminal durable journal and verified the\nbridge. The lineage binds `oldResultCommit` (the exact terminal pre-rebase\nworker result), `ontoCommit`, `rebasedStartCommit`, and the server-resolved\n`exactTip` mode. On this arm `baseCommit` equals `ontoCommit`. For the initial\nguarded bridge, `startingCommit` equals `rebasedStartCommit`. For a later\nguarded correction, the server-owned inherited receipt suffix begins at\n`rebasedStartCommit` and `startingCommit` is that suffix's current tip.\n`gitLineage` contains exactly `kind: \"guarded-rebase\"`, `guardedRebase`,\n`ontoCommit`, `rebasedStartCommit`, and `exactTip`; it omits the input-only\n`oldResultCommit`. `gitReceipts` carries ONLY this generation's fresh\npost-rebase suffix (never a pre-rebase receipt), and `filesTouched` equals the\nsorted `git diff --name-only <ontoCommit>..<resultCommit>` set rather than a\nreceipt path union.\n\n## Procedure\n\n1. **Step 0 — verify prepared evidence only (no install, no lifecycle).**\n   Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)\n   first. When the input carries advisory `worktreePath`, prefer that path when\n   it is reachable and is a git worktree of this repository. On a surface with\n   native worktree confinement the only enterable placement is under\n   `.claude/worktrees/` of the session repository. If the supplied path is\n   outside that root, or every attempt to enter it is refused, STOP and return\n   `fail` with a precise `blockedReason` containing the literal diagnosis\n   `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`\n   plus the supplied path and the resolved toplevel — do not rediscover the\n   confinement by trial-and-error across sibling checkouts. When the surface\n   adapter already pinned a harness-minted worktree and the advisory path is\n   absent or unusable for that reason, continue in the pinned tree and still\n   report its absolute toplevel as `actualWorktreePath`. Always include\n   `actualWorktreePath` in the stored result.\n\n   Verify placement evidence:\n   - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);\n   - `git rev-parse HEAD` equals `startingCommit` (full SHA);\n   - `git cat-file -t <baseCommit>` returns `commit` and `baseCommit` is a full\n     40-hex SHA;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n\n   When `round > 0`, also verify `priorResultCommit` when supplied (non-null):\n   require it to be a full SHA commit object equal to or an ancestor of `HEAD`.\n   Never hard-reset or rebase away from prior criticism commits.\n\n   On a guarded-rebase continuation (the fetched input carries\n   `guardedRebaseLineage`) Step 0 instead requires `baseCommit` to equal the\n   lineage `ontoCommit` and `HEAD` to equal `startingCommit`. When\n   `startingCommit` equals the lineage `rebasedStartCommit`, this is the initial\n   bridge round: `priorResultCommit` must equal the bound `oldResultCommit`\n   exactly. That equality is the ONLY ancestry exemption — the pre-rebase\n   result does not descend from the rewritten `HEAD` and must not be claimed\n   to. When `startingCommit` is beyond `rebasedStartCommit`, this is a later\n   correction whose server-owned inherited suffix already binds that ancestry;\n   `priorResultCommit` is again equal to or an ancestor of `HEAD`. Record\n   `baseVerification` with `baseCommit` set to `ontoCommit`.\n\n   On any mismatch STOP immediately with `status: \"fail\"`, a precise\n   `blockedReason`, and `baseVerification` set to the matching unresolvable arm\n   (`path-mismatch` | `branch-mismatch` | `starting-commit-mismatch` |\n   `prior-result-commit-mismatch` | `base-missing` | `base-not-commit` |\n   `head-missing` | `head-not-commit` | `unrelated-histories` |\n   `ancestry-unobserved`) with full SHAs or `null` — never a fabricated SHA.\n   On success record\n   `baseVerification: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, headCommit }` using full object SHAs only. These checks apply to\n   every initial and criticism round. Never reset away prior task commits.\n\n2. **Implement surgically.**\n   When the private launch supplies `gitChangeCapability`, all Git mutations go\n   through the dispatch-bound `git_commit` broker. On that path, never run\n   `git add`, `git commit`, `git update-index`, `git update-ref`, or write a Git\n   directory, common directory, ref, index, or object yourself. Read-only Git\n   inspection remains permitted. A surface still on the documented held\n   dispatch protocol follows its existing confined commit path and omits\n   `gitReceipts`; it never invents or requests a capability. For each brokered\n   checkpoint choose a stable\n   `operationId` that survives a lost response, set `expectedHead` to the\n   currently verified candidate head, and submit the closed manifest of add,\n   modify, delete, or explicit rename entries. Every old/new state contains the\n   authoritative repository-relative path, regular mode `100644` or `100755`,\n   and lowercase SHA-256 digest of the file bytes. Do not submit symlinks,\n   gitlinks, undeclared paths, inferred renames, or a manifest assembled before\n   the final byte/mode measurement. Retry a lost response with the exact same\n   operation id and request; retain the returned receipt verbatim in\n   `gitReceipts`. A broker-capable passing result reports this generation's\n   fresh receipt suffix in commit order; it may be empty when this generation\n   performed no Git effect and protected prior receipts already form the\n   complete chain. A changed request requires a new\n   operation id.\n\n   **Early skeleton write (load-bearing durability).** The first substantive\n   action after grounding and base verification MUST be to create a durable\n   partial artifact and persist it through the applicable commit path, even\n   when nearly empty. For a cohort, use separate `WIP-<taskId>.md` files in\n   the existing task-scoped format for each member whose checkpoints are tracked;\n   do not invent a cohort header or use one member as the cohort's WIP anchor.\n   The parent checks every member's outstanding checkpoints before its gate.\n   Prefer\n   `WIP-<taskId>.md` in the worktree root using the existing WIP partial format\n   (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a\n   non-empty `checkpoints[]` of `{name,status}` where status is\n   `done | todo | unmeasured`, followed by\n   `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work\n   `todo` or `unmeasured` rather than omitting it so a harvested partial is\n   self-describing. For the parent-owned supervised full gate, use the exact\n   task-local checkpoint name `trusted full gate` with status `unmeasured`.\n   Preserve that checkpoint's status `unmeasured` until trusted finalization;\n   synonyms such as `full-gate` do not qualify. A committed partial is worth\n   more than an uncommitted complete deliverable. Do not defer the first write\n   until the end of the turn.\n   The early WIP-skeleton commit and non-empty new-receipt requirement have two\n   no-effect exemptions. First, a correction round (`round > 0`) with no\n   repository change remaining reports `resultCommit === startingCommit` and\n   an empty fresh suffix; the server accepts it only when a protected prior\n   receipt chain already reaches that exact tip. Second, the server-resolved\n   exact-tip mode of a guarded-rebase continuation\n   (`guardedRebaseLineage.exactTip === true`) likewise reports\n   `resultCommit === rebasedStartCommit`, an empty fresh suffix, and performs no\n   `git_commit` call. Never synthesize a commit solely to avoid an empty suffix.\n   Any correction that advances the tip keeps early persistence and a\n   non-empty contiguous fresh suffix.\n   **Incremental persistence.** Reproduce a defect before correcting it. Match\n   project conventions and do not repair unrelated faults. At natural\n   checkpoints — after each measurement, probe, acceptance clause, or\n   non-trivial edit batch — update the WIP artifact (or the real deliverable)\n   and persist it through the applicable commit path. Keep checkpoint statuses\n   honest (`done` / `todo` / `unmeasured`).\n   Never couple durability to completion of the whole task.\n\n3. **Prove changed guards.** For every test, assertion, guard, or invariant you\n   add or change, deliberately make it fail, capture the expected failure,\n   restore the intended bytes, and capture the pass. Hash affected files before\n   mutation and after restoration. Report only observations from this run in\n   `mutationTable`; if evidence is unavailable, report the gap rather than\n   claiming success.\n\n4. **Run targeted checks.** Use exact test paths when discovery matters and\n   record nonzero test counts. Check wrapped prose with a multiline-aware\n   operation.\n\n   **Expected-failure tasks.** A task that declares an expected failure follows\n   §6a of the implementation orchestrator. Forms (a) and (b) carry the required\n   annotation, live marker, and inventory entry; form (c) needs no marker. A fix\n   replaces the marker with a same-titled plain test and removes its annotation\n   and inventory entry. Never use a red full gate as expected-failure evidence.\n\n5. **Obtain the parent-selected validation.** A `focused-only` dispatch reports\n   non-empty `focusedChecks` with exact command, exit code, pass count, and fail\n   count; every row must be green and the aggregate pass count nonzero. It never\n   invokes or requests a full gate.\n\n   For a task-arm `validationIntent: \"final\"`, obtain a green full gate through the\n   dispatch's trusted path. When the\n   private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`\n   inside the sandbox. Finish the commit and verification in Step 6, then\n   call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.\n   A matching `gate-pending` acknowledgement confirms durable handoff to the\n   trusted parent and permits the final response. Do not wait for\n   `result-stored`: the trusted parent starts the gate only after this child\n   exits. If the response is lost, retry only the exact same `store_result`\n   request.\n   The trusted result-storage boundary holds the managed worktree effect lock,\n   verifies the exact clean branch tip and receipt chain, runs the canonical\n   full gate, rechecks the tip and tree, and attaches\n   `supervisedGateEvidence` before the result becomes consumable. A caller must\n   never mint or copy that evidence. A red, zero-test, timed-out, cancelled,\n   dirty, moved-tip, or replayed attempt fails storage and cannot yield\n   `result-stored`.\n\n   On a task dispatch without `gitChangeCapability`, run the full gate in the\n   foreground from the worktree root exactly as\n   `cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check`.\n   A yielded command-session handle remains the sole full-gate attempt. Continue\n   to poll that exact session or explicitly terminate it; after termination,\n   continue polling and require terminal settlement before retrying the gate,\n   calling `store_result`, or returning. Never launch a replacement full-gate\n   attempt while the prior session remains live. Capture start/end time and\n   assign its exit status immediately after the command, independent of any\n   pipe or wrapper. Preserve `REAL_CHECK_EXIT=<n>`, the verbatim result tail,\n   and `gateDurationMs`. Iterate until zero. An unrelated-failure claim requires\n   an A/B reproduction of the same selector and signature on this tree and the\n   recorded base; if confinement prevents that proof, return `fail`.\n\n6. **Commit and verify.** Commit all task changes through the applicable path, then require:\n   - `git rev-parse --verify HEAD` succeeds;\n   - `git cat-file -t <head>` returns `commit`;\n   - `git status --porcelain --untracked-files=all` is empty;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n     Immediately before constructing the result, rerun\n     `git rev-parse --verify HEAD` and copy its stdout verbatim into\n     `resultCommit`, then require\n     `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n     Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into\n     `actualWorktreePath`.\n     Keep the Step-0 `baseVerification` verified arm on pass (update\n     `headCommit` to the final tip when it advanced under the same base).\n\n## Result\n\nThe following example is the task arm. For a cohort, omit `taskId`, copy the\nexact input `cohort`, add the complete ordered `memberObservations`, use the\nbound cohort branch, and retain version-2 receipts with their full `cohort`\ninstead of task identity. All remaining candidate evidence requirements apply.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<verified head, or null on fail>\",\n  \"branch\": \"implement/<taskId>\",\n  \"actualWorktreePath\": \"<absolute git rev-parse --show-toplevel>\",\n  \"filesTouched\": [\"<path>\"],\n  \"gitReceipts\": [{ \"kind\": \"cq-git-change-receipt\", \"version\": 1, \"attestationId\": \"<id>\", \"generation\": 1, \"taskId\": \"<task id>\", \"operationId\": \"<stable id>\", \"requestDigest\": \"<sha256>\", \"oldHead\": \"<commit>\", \"newHead\": \"<commit>\", \"tree\": \"<tree>\", \"objectOids\": [\"<oid>\"], \"paths\": [\"<path>\"], \"committedAt\": \"<utc timestamp>\" }],\n  \"gitLineage\": \"<guarded-rebase continuations only: kind, guardedRebase, ontoCommit, rebasedStartCommit, and exactTip projected from the server-injected lineage; omit oldResultCommit; omitted by ordinary workers>\",\n  \"checkSummary\": \"<legacy REAL_CHECK_EXIT plus tail, or trusted-gate delegation summary>\",\n  \"gateDurationMs\": \"<legacy dispatches only>\",\n  \"baseVerification\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"headCommit\": \"<40-hex>\"\n  },\n  \"summary\": \"<what changed, how acceptance was met, and residual risk>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nThe stored brokered process result contains runner-owned\n`supervisedGateEvidence` instead of caller-supplied `gateDurationMs`; the child\nomits both fields when calling `store_result`.\n\nOn fail with unresolvable base evidence use:\n`baseVerification: { status: \"unresolvable\", reason: \"<closed reason>\",\nbaseCommit: <40-hex|null>, headCommit: <40-hex|null> }` — never invent a SHA.\n\nThe prompt-catalog schema is authoritative, including any conditional\n`mutationTable` requirement. Task-arm `pass` requires observed gate success;\ncohort-arm `pass` requires the focused-tested stage evidence described above.\nBoth require mutation evidence where required, a verified commit object, a clean tree, base\nancestry, a reported `actualWorktreePath`, and verified `baseVerification`.\n\nSubmit the object through the dispatch-scoped `store_result` tool. With\n`gitChangeCapability`, only a matching `gate-pending` acknowledgement permits\nthe final response. Without `gitChangeCapability`, only `result-stored` permits\nthe final response. Retry a lost response only with the exact same request. Then reply with the\nprepared dispatch handle only as the exact one-line JSON\n`{\"attestationId\":\"<prepared attestation id>\",\"generation\":<prepared generation>}`\nand nothing else; never return the result body or a capability.",
     privilege: "RW",
     exposedTools: "Disallowed: Agent; isolation: worktree",
     inputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-worker/input",
-      "title": "implement-worker input",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "description": "The task id T passed in the dispatch prompt (e.g. T341).",
-          "pattern": "^T[0-9]+$"
-        },
-        "headline": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
-        "acceptance": {
-          "type": "string",
-          "minLength": 1
-        },
-        "worktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional advisory path from worktree_manage prepare. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>."
-        },
-        "branch": {
-          "type": "string",
-          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
-          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
-        },
-        "baseCommit": {
-          "type": "string",
-          "description": "The commit the worktree was prepared from (full 40-hex object SHA).",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "round": {
-          "type": "integer",
-          "description": "The zero-based implementation or correction round. Required end-to-end; a default of 0 is allowed only during refs-form normalization, never by omitting the field from the final worker input.",
-          "minimum": 0
-        },
-        "startingCommit": {
-          "type": "string",
-          "description": "The authoritative worktree tip immediately before this round launches.",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "validationIntent": {
-          "type": "string",
-          "enum": [
-            "focused-only",
-            "final"
-          ],
-          "description": "Parent-owned validation scope. focused-only accepts explicit green focused checks without launching the canonical full gate; final requires the trusted parent gate."
-        },
-        "priorResultCommit": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Prior-round worker resultCommit to revalidate when round > 0 (full SHA or null). Must be equal to or an ancestor of HEAD; the worker must not reset or rebase away from it.",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "priorCriticism": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Prior-round reviewer criticism[] on a re-dispatch after review."
-        },
-        "guardedRebaseLineage": {
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-worker input",
           "type": "object",
-          "description": "Closed server-injected guarded-rebase bridge (D334/T2150). Callers must omit it; the trusted manager injects it only after resolving the opaque guardedRebase reference against a terminal durable journal and the exact terminal prior generation. The guarded round's baseCommit equals ontoCommit and its startingCommit equals rebasedStartCommit.",
           "properties": {
-            "guardedRebase": {
+            "taskId": {
               "type": "string",
-              "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$",
-              "description": "The resolved opaque digest-backed guarded-rebase reference."
+              "description": "The task id T passed in the dispatch prompt (e.g. T341).",
+              "pattern": "^T[0-9]+$"
             },
-            "oldResultCommit": {
+            "headline": {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$",
-              "description": "The exact terminal pre-rebase worker result tip. On the initial bridge round priorResultCommit equals exactly this value — the one exempted ancestry exception."
+              "minLength": 1
             },
-            "ontoCommit": {
+            "description": {
+              "type": "string"
+            },
+            "acceptance": {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$",
-              "description": "The exact rebase target; the guarded dispatch's diff base."
+              "minLength": 1
             },
-            "rebasedStartCommit": {
+            "worktreePath": {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$",
-              "description": "The verified terminal rebased head; the guarded round's startingCommit. The fresh receipt suffix begins here."
+              "minLength": 1,
+              "description": "Optional advisory path from worktree_manage prepare. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>."
             },
-            "exactTip": {
-              "type": "boolean",
-              "description": "Server-resolved permission for the no-new-commit arm: when true the worker may report resultCommit == rebasedStartCommit with an empty fresh suffix; when false a non-empty contiguous suffix is mandatory."
+            "branch": {
+              "type": "string",
+              "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+              "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
+            },
+            "baseCommit": {
+              "type": "string",
+              "description": "The commit the worktree was prepared from (full 40-hex object SHA).",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "round": {
+              "type": "integer",
+              "description": "The zero-based implementation or correction round. Required end-to-end; a default of 0 is allowed only during refs-form normalization, never by omitting the field from the final worker input.",
+              "minimum": 0
+            },
+            "startingCommit": {
+              "type": "string",
+              "description": "The authoritative worktree tip immediately before this round launches.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "validationIntent": {
+              "type": "string",
+              "enum": [
+                "focused-only",
+                "final"
+              ],
+              "description": "Parent-owned validation scope. focused-only accepts explicit green focused checks without launching the canonical full gate; final requires the trusted parent gate."
+            },
+            "priorResultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Prior-round worker resultCommit to revalidate when round > 0 (full SHA or null). Must be equal to or an ancestor of HEAD; the worker must not reset or rebase away from it.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "priorCriticism": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Prior-round reviewer criticism[] on a re-dispatch after review."
+            },
+            "guardedRebaseLineage": {
+              "type": "object",
+              "description": "Closed server-injected guarded-rebase bridge (D334/T2150). Callers must omit it; the trusted manager injects it only after resolving the opaque guardedRebase reference against a terminal durable journal and the exact terminal prior generation. The guarded round's baseCommit equals ontoCommit and its startingCommit equals rebasedStartCommit.",
+              "properties": {
+                "guardedRebase": {
+                  "type": "string",
+                  "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$",
+                  "description": "The resolved opaque digest-backed guarded-rebase reference."
+                },
+                "oldResultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The exact terminal pre-rebase worker result tip. On the initial bridge round priorResultCommit equals exactly this value — the one exempted ancestry exception."
+                },
+                "ontoCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The exact rebase target; the guarded dispatch's diff base."
+                },
+                "rebasedStartCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The verified terminal rebased head; the guarded round's startingCommit. The fresh receipt suffix begins here."
+                },
+                "exactTip": {
+                  "type": "boolean",
+                  "description": "Server-resolved permission for the no-new-commit arm: when true the worker may report resultCommit == rebasedStartCommit with an empty fresh suffix; when false a non-empty contiguous suffix is mandatory."
+                }
+              },
+              "required": [
+                "guardedRebase",
+                "oldResultCommit",
+                "ontoCommit",
+                "rebasedStartCommit",
+                "exactTip"
+              ],
+              "additionalProperties": false
+            },
+            "resolvedModel": {
+              "type": "string",
+              "description": "The resolved model class (informational)."
             }
           },
           "required": [
-            "guardedRebase",
-            "oldResultCommit",
-            "ontoCommit",
-            "rebasedStartCommit",
-            "exactTip"
+            "taskId",
+            "acceptance",
+            "branch",
+            "baseCommit",
+            "round",
+            "startingCommit",
+            "validationIntent"
           ],
           "additionalProperties": false
         },
-        "resolvedModel": {
-          "type": "string",
-          "description": "The resolved model class (informational)."
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-worker input",
+          "type": "object",
+          "properties": {
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional advisory path from worktree_manage prepare. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>."
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^implement/cohort-[0-9a-f]{64}$"
+            },
+            "baseCommit": {
+              "type": "string",
+              "description": "The commit the worktree was prepared from (full 40-hex object SHA).",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "round": {
+              "type": "integer",
+              "description": "The zero-based implementation or correction round. Required end-to-end; a default of 0 is allowed only during refs-form normalization, never by omitting the field from the final worker input.",
+              "minimum": 0
+            },
+            "startingCommit": {
+              "type": "string",
+              "description": "The authoritative worktree tip immediately before this round launches.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "validationIntent": {
+              "type": "string",
+              "enum": [
+                "focused-only",
+                "final"
+              ],
+              "description": "Parent-owned validation scope. focused-only accepts explicit green focused checks without launching the canonical full gate; final requires the trusted parent gate."
+            },
+            "priorResultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Prior-round worker resultCommit to revalidate when round > 0 (full SHA or null). Must be equal to or an ancestor of HEAD; the worker must not reset or rebase away from it.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "priorCriticism": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Prior-round reviewer criticism[] on a re-dispatch after review."
+            },
+            "guardedRebaseLineage": {
+              "type": "object",
+              "description": "Closed server-injected guarded-rebase bridge (D334/T2150). Callers must omit it; the trusted manager injects it only after resolving the opaque guardedRebase reference against a terminal durable journal and the exact terminal prior generation. The guarded round's baseCommit equals ontoCommit and its startingCommit equals rebasedStartCommit.",
+              "properties": {
+                "guardedRebase": {
+                  "type": "string",
+                  "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$",
+                  "description": "The resolved opaque digest-backed guarded-rebase reference."
+                },
+                "oldResultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The exact terminal pre-rebase worker result tip. On the initial bridge round priorResultCommit equals exactly this value — the one exempted ancestry exception."
+                },
+                "ontoCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The exact rebase target; the guarded dispatch's diff base."
+                },
+                "rebasedStartCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The verified terminal rebased head; the guarded round's startingCommit. The fresh receipt suffix begins here."
+                },
+                "exactTip": {
+                  "type": "boolean",
+                  "description": "Server-resolved permission for the no-new-commit arm: when true the worker may report resultCommit == rebasedStartCommit with an empty fresh suffix; when false a non-empty contiguous suffix is mandatory."
+                }
+              },
+              "required": [
+                "guardedRebase",
+                "oldResultCommit",
+                "ontoCommit",
+                "rebasedStartCommit",
+                "exactTip"
+              ],
+              "additionalProperties": false
+            },
+            "resolvedModel": {
+              "type": "string",
+              "description": "The resolved model class (informational)."
+            },
+            "cohort": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cq-cohort-effect-envelope"
+                },
+                "version": {
+                  "const": 1
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-definition-identity"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "cohortId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "definitionGeneration": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "phase": {
+                      "const": "implementation"
+                    },
+                    "members": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "memberRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "memberRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "memberRef",
+                          "memberRevision",
+                          "authorityRef",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "selectedAtomDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "acceptanceMatrixDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "repositoryId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "headCommit": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "treeOid": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        }
+                      },
+                      "required": [
+                        "repositoryId",
+                        "headCommit",
+                        "treeOid"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "environment": {
+                      "type": "object",
+                      "properties": {
+                        "environmentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "environmentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "splitConditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "semanticDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "cohortId",
+                    "definitionGeneration",
+                    "phase",
+                    "members",
+                    "selectedAtomDigest",
+                    "acceptanceMatrixDigest",
+                    "repository",
+                    "environment",
+                    "splitConditions",
+                    "semanticDigest",
+                    "definitionDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "intent": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-candidate-intent"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "operationId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "intentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "operationId",
+                    "intentDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "memberAuthorities": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "taskRef": {
+                        "type": "string",
+                        "pattern": "^tasks:T[0-9]+$"
+                      },
+                      "taskRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "goalRef": {
+                        "type": "string",
+                        "pattern": "^goals:G[0-9]+$"
+                      },
+                      "finalizedManifestDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "authorityRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "taskRef",
+                      "taskRevision",
+                      "goalRef",
+                      "finalizedManifestDigest",
+                      "authorityRevision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "memberSetDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "semanticSubject": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "executionEpoch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "envelopeDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "state": {
+                  "const": "pre-seal"
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "definition",
+                "intent",
+                "memberAuthorities",
+                "memberSetDigest",
+                "semanticSubject",
+                "executionEpoch",
+                "envelopeDigest",
+                "state"
+              ],
+              "additionalProperties": false
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "headline": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "acceptance": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "memberRef",
+                  "headline",
+                  "description",
+                  "acceptance"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "branch",
+            "baseCommit",
+            "round",
+            "startingCommit",
+            "validationIntent",
+            "cohort",
+            "members"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "taskId",
-        "acceptance",
-        "branch",
-        "baseCommit",
-        "round",
-        "startingCommit",
-        "validationIntent"
-      ],
-      "additionalProperties": false
+      ]
     },
     outputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-worker/output",
-      "title": "implement-worker result",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "pattern": "^T[0-9]+$"
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "pass",
-            "fail"
-          ]
-        },
-        "resultCommit": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Full 40-hex commit sha on pass (^[0-9a-f]{40}$); null on fail. The pattern applies only to a string instance, so null still validates.",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "branch": {
-          "type": "string",
-          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
-          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
-        },
-        "actualWorktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Absolute path of the worktree the worker actually operated in (git rev-parse --show-toplevel). Required so the orchestrator learns harness-minted paths (D143)."
-        },
-        "filesTouched": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "gitReceipts": {
-          "type": "array",
-          "description": "Fresh dispatch-bound broker receipts returned to this worker generation. Both ordinary and guarded correction rounds omit the protected inherited prefix; the server reconstructs and validates the complete durable chain. The suffix may be empty when the generation performs no Git effect; the server rejects an empty complete chain.",
-          "items": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "const": "cq-git-change-receipt"
-              },
-              "version": {
-                "type": "integer",
-                "const": 1
-              },
-              "attestationId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "generation": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "taskId": {
-                "type": "string",
-                "pattern": "^T[0-9]+$"
-              },
-              "operationId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "requestDigest": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "oldHead": {
-                "type": "string",
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-              },
-              "newHead": {
-                "type": "string",
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-              },
-              "tree": {
-                "type": "string",
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-              },
-              "objectOids": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-                }
-              },
-              "paths": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "committedAt": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "kind",
-              "version",
-              "attestationId",
-              "generation",
-              "taskId",
-              "operationId",
-              "requestDigest",
-              "oldHead",
-              "newHead",
-              "tree",
-              "objectOids",
-              "paths",
-              "committedAt"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "gitLineage": {
-          "type": "object",
-          "description": "Closed guarded-rebase discriminant (D334/T2150). Omitted by ordinary workers; a guarded worker reports exactly the server-injected lineage coordinates and treats gitReceipts as the fresh post-rebase suffix. A caller can never mint this arm: store_result resolves it against the persisted dispatch Git binding.",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "guarded-rebase"
-            },
-            "guardedRebase": {
-              "type": "string",
-              "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$"
-            },
-            "ontoCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
-            },
-            "rebasedStartCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
-            },
-            "exactTip": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "guardedRebase",
-            "ontoCommit",
-            "rebasedStartCommit",
-            "exactTip"
-          ],
-          "additionalProperties": false
-        },
-        "checkSummary": {
-          "type": "string"
-        },
-        "focusedChecks": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "properties": {
-              "command": {
-                "type": "string",
-                "minLength": 1
-              },
-              "exitCode": {
-                "type": "integer"
-              },
-              "passCount": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "failCount": {
-                "type": "integer",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "command",
-              "exitCode",
-              "passCount",
-              "failCount"
-            ],
-            "additionalProperties": false
-          },
-          "description": "Typed focused-only evidence. The host accepts it only when the prepared input selected focused-only validation and every row is green with a nonzero aggregate pass count."
-        },
-        "summary": {
-          "type": "string"
-        },
-        "baseVerification": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "verified"
-                },
-                "relation": {
-                  "type": "string",
-                  "enum": [
-                    "equal",
-                    "descendant"
-                  ]
-                },
-                "baseCommit": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "headCommit": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "relation",
-                "baseCommit",
-                "headCommit"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "unresolvable"
-                },
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "base-missing",
-                    "base-not-commit",
-                    "head-missing",
-                    "head-not-commit",
-                    "unrelated-histories",
-                    "ancestry-unobserved",
-                    "path-mismatch",
-                    "branch-mismatch",
-                    "starting-commit-mismatch",
-                    "prior-result-commit-mismatch"
-                  ]
-                },
-                "baseCommit": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "headCommit": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "reason",
-                "baseCommit",
-                "headCommit"
-              ],
-              "additionalProperties": false
-            }
-          ],
-          "description": "T1307/G121 Step-0 base evidence. Pass requires the verified full-SHA arm; fail accepts verified or unresolvable with a closed reason and null SHAs where unobserved."
-        },
-        "blockedReason": {
-          "type": "string"
-        },
-        "gateDurationMs": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\"."
-        },
-        "supervisedGateEvidence": {
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-worker result",
           "type": "object",
           "properties": {
-            "kind": {
-              "type": "string",
-              "const": "cq-supervised-gate-evidence"
-            },
-            "version": {
-              "type": "integer",
-              "const": 1
-            },
-            "attestationId": {
-              "type": "string",
-              "pattern": "^att_[A-Za-z0-9_-]{32,}$"
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "roleId": {
-              "type": "string",
-              "const": "implement-worker"
-            },
-            "roleVersion": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "surface": {
-              "type": "string",
-              "const": "codex"
-            },
-            "promptDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "catalogHash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "inputDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
             "taskId": {
               "type": "string",
               "pattern": "^T[0-9]+$"
             },
-            "worktreePath": {
+            "status": {
               "type": "string",
-              "minLength": 1
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "resultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Full 40-hex commit sha on pass (^[0-9a-f]{40}$); null on fail. The pattern applies only to a string instance, so null still validates.",
+              "pattern": "^[0-9a-f]{40}$"
             },
             "branch": {
               "type": "string",
-              "pattern": "^implement/T[0-9]+$"
+              "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+              "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
             },
-            "baseCommit": {
+            "actualWorktreePath": {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
+              "minLength": 1,
+              "description": "Absolute path of the worktree the worker actually operated in (git rev-parse --show-toplevel). Required so the orchestrator learns harness-minted paths (D143)."
             },
-            "startingCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
+            "filesTouched": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
-            "resultCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
+            "gitReceipts": {
+              "type": "array",
+              "description": "Fresh dispatch-bound broker receipts returned to this worker generation. Both ordinary and guarded correction rounds omit the protected inherited prefix; the server reconstructs and validates the complete durable chain. The suffix may be empty when the generation performs no Git effect; the server rejects an empty complete chain.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "cq-git-change-receipt"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "const": 1
+                  },
+                  "attestationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "taskId": {
+                    "type": "string",
+                    "pattern": "^T[0-9]+$"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "requestDigest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "oldHead": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "newHead": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "tree": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "objectOids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    }
+                  },
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "committedAt": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "version",
+                  "attestationId",
+                  "generation",
+                  "taskId",
+                  "operationId",
+                  "requestDigest",
+                  "oldHead",
+                  "newHead",
+                  "tree",
+                  "objectOids",
+                  "paths",
+                  "committedAt"
+                ],
+                "additionalProperties": false
+              }
             },
-            "clean": {
-              "type": "boolean",
-              "const": true
+            "gitLineage": {
+              "type": "object",
+              "description": "Closed guarded-rebase discriminant (D334/T2150). Omitted by ordinary workers; a guarded worker reports exactly the server-injected lineage coordinates and treats gitReceipts as the fresh post-rebase suffix. A caller can never mint this arm: store_result resolves it against the persisted dispatch Git binding.",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "guarded-rebase"
+                },
+                "guardedRebase": {
+                  "type": "string",
+                  "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$"
+                },
+                "ontoCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "rebasedStartCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "exactTip": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "guardedRebase",
+                "ontoCommit",
+                "rebasedStartCommit",
+                "exactTip"
+              ],
+              "additionalProperties": false
             },
-            "command": {
-              "type": "string",
-              "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+            "checkSummary": {
+              "type": "string"
             },
-            "gateExitCode": {
-              "type": "integer",
-              "const": 0
+            "focusedChecks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "passCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "command",
+                  "exitCode",
+                  "passCount",
+                  "failCount"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Typed focused-only evidence. The host accepts it only when the prepared input selected focused-only validation and every row is green with a nonzero aggregate pass count."
             },
-            "passCount": {
-              "type": "integer",
-              "minimum": 1
+            "summary": {
+              "type": "string"
             },
-            "failCount": {
-              "type": "integer",
-              "const": 0
+            "baseVerification": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "relation": {
+                      "type": "string",
+                      "enum": [
+                        "equal",
+                        "descendant"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "headCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "relation",
+                    "baseCommit",
+                    "headCommit"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "base-missing",
+                        "base-not-commit",
+                        "head-missing",
+                        "head-not-commit",
+                        "unrelated-histories",
+                        "ancestry-unobserved",
+                        "path-mismatch",
+                        "branch-mismatch",
+                        "starting-commit-mismatch",
+                        "prior-result-commit-mismatch"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "headCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "baseCommit",
+                    "headCommit"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1307/G121 Step-0 base evidence. Pass requires the verified full-SHA arm; fail accepts verified or unresolvable with a closed reason and null SHAs where unobserved."
+            },
+            "blockedReason": {
+              "type": "string"
             },
             "gateDurationMs": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\"."
             },
-            "capturedAt": {
-              "type": "string",
-              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+            "supervisedGateEvidence": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "cq-supervised-gate-evidence"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "const": 1
+                    },
+                    "attestationId": {
+                      "type": "string",
+                      "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "roleId": {
+                      "type": "string",
+                      "const": "implement-worker"
+                    },
+                    "roleVersion": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "surface": {
+                      "type": "string",
+                      "const": "codex"
+                    },
+                    "promptDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "catalogHash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "inputDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "taskId": {
+                      "type": "string",
+                      "pattern": "^T[0-9]+$"
+                    },
+                    "worktreePath": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "branch": {
+                      "type": "string",
+                      "pattern": "^implement/T[0-9]+$"
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "startingCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "clean": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "command": {
+                      "type": "string",
+                      "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                    },
+                    "gateExitCode": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "passCount": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "failCount": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "gateDurationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "capturedAt": {
+                      "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                    },
+                    "filesTouchedDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "gitReceiptsDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "mutationTableDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "attestationId",
+                    "generation",
+                    "roleId",
+                    "roleVersion",
+                    "surface",
+                    "promptDigest",
+                    "catalogHash",
+                    "inputDigest",
+                    "taskId",
+                    "worktreePath",
+                    "branch",
+                    "baseCommit",
+                    "startingCommit",
+                    "resultCommit",
+                    "clean",
+                    "command",
+                    "gateExitCode",
+                    "passCount",
+                    "failCount",
+                    "gateDurationMs",
+                    "capturedAt",
+                    "filesTouchedDigest",
+                    "gitReceiptsDigest",
+                    "mutationTableDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "cq-supervised-gate-evidence"
+                    },
+                    "version": {
+                      "const": 2
+                    },
+                    "attestationId": {
+                      "type": "string",
+                      "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "roleId": {
+                      "type": "string",
+                      "const": "implement-worker"
+                    },
+                    "roleVersion": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "surface": {
+                      "type": "string",
+                      "const": "codex"
+                    },
+                    "promptDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "catalogHash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "inputDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "worktreePath": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "branch": {
+                      "type": "string",
+                      "pattern": "^implement/cohort-[0-9a-f]{64}$"
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "startingCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "clean": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "command": {
+                      "type": "string",
+                      "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                    },
+                    "gateExitCode": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "passCount": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "failCount": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "gateDurationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "capturedAt": {
+                      "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                    },
+                    "filesTouchedDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "gitReceiptsDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "mutationTableDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubject": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-evidence-subject"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "sealDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "evidenceSubjectDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "sealDigest",
+                        "evidenceSubjectDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "attestationId",
+                    "generation",
+                    "roleId",
+                    "roleVersion",
+                    "surface",
+                    "promptDigest",
+                    "catalogHash",
+                    "inputDigest",
+                    "worktreePath",
+                    "branch",
+                    "baseCommit",
+                    "startingCommit",
+                    "resultCommit",
+                    "clean",
+                    "command",
+                    "gateExitCode",
+                    "passCount",
+                    "failCount",
+                    "gateDurationMs",
+                    "capturedAt",
+                    "filesTouchedDigest",
+                    "gitReceiptsDigest",
+                    "mutationTableDigest",
+                    "evidenceSubject"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "Runner-owned Codex exact-tip gate evidence. This arm is mutually exclusive with the legacy in-child gateDurationMs arm and is accepted only after store_result resolves it against the prepared dispatch."
             },
-            "filesTouchedDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "gitReceiptsDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "mutationTableDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+            "mutationTable": {
+              "type": "array",
+              "description": "Evidence rows for a claimed mutation/guard change: one {mutation, observed, restored} triple per test/guard mutated. REQUIRED iff filesTouched intersects TEST_GUARD_GLOBS = ['**/test/**', '**/*.test.ts', '**/*guard*', '**/*invariant*'] — i.e. at least one filesTouched entry is under a test/ directory, ends in .test.ts, or names a guard or invariant. Omit entirely when no touched file matches (do not send an empty array).",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "mutation": {
+                    "type": "string"
+                  },
+                  "observed": {
+                    "type": "string"
+                  },
+                  "restored": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mutation",
+                  "observed",
+                  "restored"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
-            "kind",
-            "version",
-            "attestationId",
-            "generation",
-            "roleId",
-            "roleVersion",
-            "surface",
-            "promptDigest",
-            "catalogHash",
-            "inputDigest",
             "taskId",
-            "worktreePath",
-            "branch",
-            "baseCommit",
-            "startingCommit",
+            "status",
             "resultCommit",
-            "clean",
-            "command",
-            "gateExitCode",
-            "passCount",
-            "failCount",
-            "gateDurationMs",
-            "capturedAt",
-            "filesTouchedDigest",
-            "gitReceiptsDigest",
-            "mutationTableDigest"
+            "branch",
+            "actualWorktreePath",
+            "filesTouched",
+            "checkSummary",
+            "summary",
+            "baseVerification"
           ],
           "additionalProperties": false,
-          "description": "Runner-owned Codex exact-tip gate evidence. This arm is mutually exclusive with the legacy in-child gateDurationMs arm and is accepted only after store_result resolves it against the prepared dispatch."
-        },
-        "mutationTable": {
-          "type": "array",
-          "description": "Evidence rows for a claimed mutation/guard change: one {mutation, observed, restored} triple per test/guard mutated. REQUIRED iff filesTouched intersects TEST_GUARD_GLOBS = ['**/test/**', '**/*.test.ts', '**/*guard*', '**/*invariant*'] — i.e. at least one filesTouched entry is under a test/ directory, ends in .test.ts, or names a guard or invariant. Omit entirely when no touched file matches (do not send an empty array).",
-          "items": {
-            "type": "object",
-            "properties": {
-              "mutation": {
-                "type": "string"
-              },
-              "observed": {
-                "type": "string"
-              },
-              "restored": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "mutation",
-              "observed",
-              "restored"
-            ],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": [
-        "taskId",
-        "status",
-        "resultCommit",
-        "branch",
-        "actualWorktreePath",
-        "filesTouched",
-        "checkSummary",
-        "summary",
-        "baseVerification"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "pass"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resultCommit": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              }
-            },
-            "not": {
-              "required": [
-                "blockedReason"
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "fail"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resultCommit": {
-                "type": "null"
-              }
-            },
-            "required": [
-              "blockedReason"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "gateDurationMs"
-                  ]
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
                 },
-                {
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "not": {
                   "required": [
-                    "supervisedGateEvidence"
+                    "blockedReason"
                   ]
                 }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "pass"
               }
             },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "oneOf": [
-              {
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "fail"
+                  }
+                },
                 "required": [
-                  "gateDurationMs"
-                ],
-                "not": {
-                  "required": [
-                    "supervisedGateEvidence"
-                  ]
-                }
+                  "status"
+                ]
               },
-              {
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "null"
+                  }
+                },
                 "required": [
-                  "supervisedGateEvidence"
-                ],
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "gateDurationMs"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "focusedChecks"
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "required": [
-                  "focusedChecks"
+                  "blockedReason"
                 ],
                 "not": {
                   "anyOf": [
@@ -1881,91 +2372,1634 @@ export const AGENT_ROLES: AgentRole[] = [
                   ]
                 }
               }
-            ],
-            "properties": {
-              "baseVerification": {
-                "type": "object",
+            },
+            {
+              "if": {
                 "properties": {
                   "status": {
-                    "type": "string",
-                    "const": "verified"
-                  },
-                  "relation": {
-                    "type": "string",
-                    "enum": [
-                      "equal",
-                      "descendant"
-                    ]
-                  },
-                  "baseCommit": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
-                  },
-                  "headCommit": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
+                    "const": "pass"
                   }
                 },
                 "required": [
-                  "status",
-                  "relation",
-                  "baseCommit",
-                  "headCommit"
+                  "status"
+                ]
+              },
+              "then": {
+                "oneOf": [
+                  {
+                    "required": [
+                      "gateDurationMs"
+                    ],
+                    "not": {
+                      "required": [
+                        "supervisedGateEvidence"
+                      ]
+                    }
+                  },
+                  {
+                    "required": [
+                      "supervisedGateEvidence"
+                    ],
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "gateDurationMs"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "focusedChecks"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "required": [
+                      "focusedChecks"
+                    ],
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "gateDurationMs"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "supervisedGateEvidence"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "properties": {
+                  "baseVerification": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "relation": {
+                        "type": "string",
+                        "enum": [
+                          "equal",
+                          "descendant"
+                        ]
+                      },
+                      "baseCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "headCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "relation",
+                      "baseCommit",
+                      "headCommit"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "filesTouched": {
+                    "type": "array",
+                    "contains": {
+                      "type": "string",
+                      "pattern": "(?:^(.*/)?test/.*$)|(?:^(.*/)?[^/]*\\.test\\.ts$)|(?:^(.*/)?[^/]*guard[^/]*$)|(?:^(.*/)?[^/]*invariant[^/]*$)"
+                    }
+                  }
+                },
+                "required": [
+                  "filesTouched"
+                ]
+              },
+              "then": {
+                "required": [
+                  "mutationTable"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "supervisedGateEvidence"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "gitLineage"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gitReceipts"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-worker result",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "resultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Full 40-hex commit sha on pass (^[0-9a-f]{40}$); null on fail. The pattern applies only to a string instance, so null still validates.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^implement/cohort-[0-9a-f]{64}$"
+            },
+            "actualWorktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Absolute path of the worktree the worker actually operated in (git rev-parse --show-toplevel). Required so the orchestrator learns harness-minted paths (D143)."
+            },
+            "filesTouched": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "gitReceipts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "cq-git-change-receipt"
+                  },
+                  "version": {
+                    "const": 2
+                  },
+                  "attestationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "requestDigest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "oldHead": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "newHead": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "tree": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "objectOids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    }
+                  },
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "committedAt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cohort": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "cq-cohort-effect-envelope"
+                          },
+                          "version": {
+                            "const": 1
+                          },
+                          "definition": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "cq-cohort-definition-identity"
+                              },
+                              "version": {
+                                "const": 1
+                              },
+                              "cohortId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "definitionGeneration": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "phase": {
+                                "const": "implementation"
+                              },
+                              "members": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "memberRef": {
+                                      "type": "string",
+                                      "pattern": "^tasks:T[0-9]+$"
+                                    },
+                                    "memberRevision": {
+                                      "type": "string",
+                                      "pattern": "^[0-9a-f]{64}$"
+                                    },
+                                    "authorityRef": {
+                                      "type": "string",
+                                      "pattern": "^goals:G[0-9]+$"
+                                    },
+                                    "authorityRevision": {
+                                      "type": "string",
+                                      "pattern": "^[0-9a-f]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "memberRef",
+                                    "memberRevision",
+                                    "authorityRef",
+                                    "authorityRevision"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "selectedAtomDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "acceptanceMatrixDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "repository": {
+                                "type": "object",
+                                "properties": {
+                                  "repositoryId": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "headCommit": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{40}$"
+                                  },
+                                  "treeOid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{40}$"
+                                  }
+                                },
+                                "required": [
+                                  "repositoryId",
+                                  "headCommit",
+                                  "treeOid"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "environment": {
+                                "type": "object",
+                                "properties": {
+                                  "environmentDigest": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "environmentDigest"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "splitConditions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "semanticDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "definitionDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "version",
+                              "cohortId",
+                              "definitionGeneration",
+                              "phase",
+                              "members",
+                              "selectedAtomDigest",
+                              "acceptanceMatrixDigest",
+                              "repository",
+                              "environment",
+                              "splitConditions",
+                              "semanticDigest",
+                              "definitionDigest"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "intent": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "cq-cohort-candidate-intent"
+                              },
+                              "version": {
+                                "const": 1
+                              },
+                              "definitionDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "operationId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "intentDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "version",
+                              "definitionDigest",
+                              "operationId",
+                              "intentDigest"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "memberAuthorities": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "taskRef": {
+                                  "type": "string",
+                                  "pattern": "^tasks:T[0-9]+$"
+                                },
+                                "taskRevision": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                },
+                                "goalRef": {
+                                  "type": "string",
+                                  "pattern": "^goals:G[0-9]+$"
+                                },
+                                "finalizedManifestDigest": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                },
+                                "authorityRevision": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                }
+                              },
+                              "required": [
+                                "taskRef",
+                                "taskRevision",
+                                "goalRef",
+                                "finalizedManifestDigest",
+                                "authorityRevision"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "memberSetDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "semanticSubject": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "executionEpoch": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "envelopeDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "state": {
+                            "const": "pre-seal"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "version",
+                          "definition",
+                          "intent",
+                          "memberAuthorities",
+                          "memberSetDigest",
+                          "semanticSubject",
+                          "executionEpoch",
+                          "envelopeDigest",
+                          "state"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "cq-cohort-effect-envelope"
+                          },
+                          "version": {
+                            "const": 1
+                          },
+                          "definition": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "cq-cohort-definition-identity"
+                              },
+                              "version": {
+                                "const": 1
+                              },
+                              "cohortId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "definitionGeneration": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "phase": {
+                                "const": "implementation"
+                              },
+                              "members": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "memberRef": {
+                                      "type": "string",
+                                      "pattern": "^tasks:T[0-9]+$"
+                                    },
+                                    "memberRevision": {
+                                      "type": "string",
+                                      "pattern": "^[0-9a-f]{64}$"
+                                    },
+                                    "authorityRef": {
+                                      "type": "string",
+                                      "pattern": "^goals:G[0-9]+$"
+                                    },
+                                    "authorityRevision": {
+                                      "type": "string",
+                                      "pattern": "^[0-9a-f]{64}$"
+                                    }
+                                  },
+                                  "required": [
+                                    "memberRef",
+                                    "memberRevision",
+                                    "authorityRef",
+                                    "authorityRevision"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "selectedAtomDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "acceptanceMatrixDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "repository": {
+                                "type": "object",
+                                "properties": {
+                                  "repositoryId": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "headCommit": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{40}$"
+                                  },
+                                  "treeOid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{40}$"
+                                  }
+                                },
+                                "required": [
+                                  "repositoryId",
+                                  "headCommit",
+                                  "treeOid"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "environment": {
+                                "type": "object",
+                                "properties": {
+                                  "environmentDigest": {
+                                    "type": "string",
+                                    "pattern": "^[0-9a-f]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "environmentDigest"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "splitConditions": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "semanticDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "definitionDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "version",
+                              "cohortId",
+                              "definitionGeneration",
+                              "phase",
+                              "members",
+                              "selectedAtomDigest",
+                              "acceptanceMatrixDigest",
+                              "repository",
+                              "environment",
+                              "splitConditions",
+                              "semanticDigest",
+                              "definitionDigest"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "intent": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "cq-cohort-candidate-intent"
+                              },
+                              "version": {
+                                "const": 1
+                              },
+                              "definitionDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "operationId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "intentDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "version",
+                              "definitionDigest",
+                              "operationId",
+                              "intentDigest"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "memberAuthorities": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "taskRef": {
+                                  "type": "string",
+                                  "pattern": "^tasks:T[0-9]+$"
+                                },
+                                "taskRevision": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                },
+                                "goalRef": {
+                                  "type": "string",
+                                  "pattern": "^goals:G[0-9]+$"
+                                },
+                                "finalizedManifestDigest": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                },
+                                "authorityRevision": {
+                                  "type": "string",
+                                  "pattern": "^[0-9a-f]{64}$"
+                                }
+                              },
+                              "required": [
+                                "taskRef",
+                                "taskRevision",
+                                "goalRef",
+                                "finalizedManifestDigest",
+                                "authorityRevision"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "memberSetDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "semanticSubject": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "executionEpoch": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "envelopeDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "state": {
+                            "const": "sealed"
+                          },
+                          "evidenceSubject": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "const": "cq-cohort-evidence-subject"
+                              },
+                              "version": {
+                                "const": 1
+                              },
+                              "definitionDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "sealDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "evidenceSubjectDigest": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "version",
+                              "definitionDigest",
+                              "sealDigest",
+                              "evidenceSubjectDigest"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "version",
+                          "definition",
+                          "intent",
+                          "memberAuthorities",
+                          "memberSetDigest",
+                          "semanticSubject",
+                          "executionEpoch",
+                          "envelopeDigest",
+                          "state",
+                          "evidenceSubject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "version",
+                  "attestationId",
+                  "generation",
+                  "operationId",
+                  "requestDigest",
+                  "oldHead",
+                  "newHead",
+                  "tree",
+                  "objectOids",
+                  "paths",
+                  "committedAt",
+                  "cohort"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "gitLineage": {
+              "type": "object",
+              "description": "Closed guarded-rebase discriminant (D334/T2150). Omitted by ordinary workers; a guarded worker reports exactly the server-injected lineage coordinates and treats gitReceipts as the fresh post-rebase suffix. A caller can never mint this arm: store_result resolves it against the persisted dispatch Git binding.",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "guarded-rebase"
+                },
+                "guardedRebase": {
+                  "type": "string",
+                  "pattern": "^cq-guarded-rebase:v1:[0-9a-f]{64}$"
+                },
+                "ontoCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "rebasedStartCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "exactTip": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "guardedRebase",
+                "ontoCommit",
+                "rebasedStartCommit",
+                "exactTip"
+              ],
+              "additionalProperties": false
+            },
+            "checkSummary": {
+              "type": "string"
+            },
+            "focusedChecks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "passCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "command",
+                  "exitCode",
+                  "passCount",
+                  "failCount"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Typed focused-only evidence. The host accepts it only when the prepared input selected focused-only validation and every row is green with a nonzero aggregate pass count."
+            },
+            "summary": {
+              "type": "string"
+            },
+            "baseVerification": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "relation": {
+                      "type": "string",
+                      "enum": [
+                        "equal",
+                        "descendant"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "headCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "relation",
+                    "baseCommit",
+                    "headCommit"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "base-missing",
+                        "base-not-commit",
+                        "head-missing",
+                        "head-not-commit",
+                        "unrelated-histories",
+                        "ancestry-unobserved",
+                        "path-mismatch",
+                        "branch-mismatch",
+                        "starting-commit-mismatch",
+                        "prior-result-commit-mismatch"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "headCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "baseCommit",
+                    "headCommit"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1307/G121 Step-0 base evidence. Pass requires the verified full-SHA arm; fail accepts verified or unresolvable with a closed reason and null SHAs where unobserved."
+            },
+            "blockedReason": {
+              "type": "string"
+            },
+            "gateDurationMs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\"."
+            },
+            "supervisedGateEvidence": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "cq-supervised-gate-evidence"
+                },
+                "version": {
+                  "const": 2
+                },
+                "attestationId": {
+                  "type": "string",
+                  "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "roleId": {
+                  "type": "string",
+                  "const": "implement-worker"
+                },
+                "roleVersion": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "surface": {
+                  "type": "string",
+                  "const": "codex"
+                },
+                "promptDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "catalogHash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "inputDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "worktreePath": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "branch": {
+                  "type": "string",
+                  "pattern": "^implement/cohort-[0-9a-f]{64}$"
+                },
+                "baseCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "startingCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "clean": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "command": {
+                  "type": "string",
+                  "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                },
+                "gateExitCode": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "passCount": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failCount": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "gateDurationMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "capturedAt": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                },
+                "filesTouchedDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "gitReceiptsDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "mutationTableDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "evidenceSubject": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-evidence-subject"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "sealDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubjectDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "sealDigest",
+                    "evidenceSubjectDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "attestationId",
+                "generation",
+                "roleId",
+                "roleVersion",
+                "surface",
+                "promptDigest",
+                "catalogHash",
+                "inputDigest",
+                "worktreePath",
+                "branch",
+                "baseCommit",
+                "startingCommit",
+                "resultCommit",
+                "clean",
+                "command",
+                "gateExitCode",
+                "passCount",
+                "failCount",
+                "gateDurationMs",
+                "capturedAt",
+                "filesTouchedDigest",
+                "gitReceiptsDigest",
+                "mutationTableDigest",
+                "evidenceSubject"
+              ],
+              "additionalProperties": false
+            },
+            "mutationTable": {
+              "type": "array",
+              "description": "Evidence rows for a claimed mutation/guard change: one {mutation, observed, restored} triple per test/guard mutated. REQUIRED iff filesTouched intersects TEST_GUARD_GLOBS = ['**/test/**', '**/*.test.ts', '**/*guard*', '**/*invariant*'] — i.e. at least one filesTouched entry is under a test/ directory, ends in .test.ts, or names a guard or invariant. Omit entirely when no touched file matches (do not send an empty array).",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "mutation": {
+                    "type": "string"
+                  },
+                  "observed": {
+                    "type": "string"
+                  },
+                  "restored": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mutation",
+                  "observed",
+                  "restored"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "cohort": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cq-cohort-effect-envelope"
+                },
+                "version": {
+                  "const": 1
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-definition-identity"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "cohortId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "definitionGeneration": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "phase": {
+                      "const": "implementation"
+                    },
+                    "members": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "memberRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "memberRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "memberRef",
+                          "memberRevision",
+                          "authorityRef",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "selectedAtomDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "acceptanceMatrixDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "repositoryId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "headCommit": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "treeOid": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        }
+                      },
+                      "required": [
+                        "repositoryId",
+                        "headCommit",
+                        "treeOid"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "environment": {
+                      "type": "object",
+                      "properties": {
+                        "environmentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "environmentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "splitConditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "semanticDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "cohortId",
+                    "definitionGeneration",
+                    "phase",
+                    "members",
+                    "selectedAtomDigest",
+                    "acceptanceMatrixDigest",
+                    "repository",
+                    "environment",
+                    "splitConditions",
+                    "semanticDigest",
+                    "definitionDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "intent": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-candidate-intent"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "operationId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "intentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "operationId",
+                    "intentDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "memberAuthorities": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "taskRef": {
+                        "type": "string",
+                        "pattern": "^tasks:T[0-9]+$"
+                      },
+                      "taskRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "goalRef": {
+                        "type": "string",
+                        "pattern": "^goals:G[0-9]+$"
+                      },
+                      "finalizedManifestDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "authorityRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "taskRef",
+                      "taskRevision",
+                      "goalRef",
+                      "finalizedManifestDigest",
+                      "authorityRevision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "memberSetDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "semanticSubject": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "executionEpoch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "envelopeDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "state": {
+                  "const": "pre-seal"
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "definition",
+                "intent",
+                "memberAuthorities",
+                "memberSetDigest",
+                "semanticSubject",
+                "executionEpoch",
+                "envelopeDigest",
+                "state"
+              ],
+              "additionalProperties": false
+            },
+            "memberObservations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "observation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "memberRef",
+                  "observation"
                 ],
                 "additionalProperties": false
               }
             }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "filesTouched": {
-                "type": "array",
-                "contains": {
-                  "type": "string",
-                  "pattern": "(?:^(.*/)?test/.*$)|(?:^(.*/)?[^/]*\\.test\\.ts$)|(?:^(.*/)?[^/]*guard[^/]*$)|(?:^(.*/)?[^/]*invariant[^/]*$)"
+          },
+          "required": [
+            "status",
+            "resultCommit",
+            "branch",
+            "actualWorktreePath",
+            "filesTouched",
+            "checkSummary",
+            "summary",
+            "baseVerification",
+            "cohort",
+            "memberObservations"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "not": {
+                  "required": [
+                    "blockedReason"
+                  ]
                 }
               }
             },
-            "required": [
-              "filesTouched"
-            ]
-          },
-          "then": {
-            "required": [
-              "mutationTable"
-            ]
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "supervisedGateEvidence"
-            ]
-          },
-          "then": {
-            "properties": {
-              "status": {
-                "const": "pass"
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "fail"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "blockedReason"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "gateDurationMs"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "supervisedGateEvidence"
+                      ]
+                    }
+                  ]
+                }
               }
             },
-            "required": [
-              "status"
-            ]
-          }
-        },
-        {
-          "if": {
-            "required": [
-              "gitLineage"
-            ]
-          },
-          "then": {
-            "required": [
-              "gitReceipts"
-            ]
-          }
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "oneOf": [
+                  {
+                    "required": [
+                      "gateDurationMs"
+                    ],
+                    "not": {
+                      "required": [
+                        "supervisedGateEvidence"
+                      ]
+                    }
+                  },
+                  {
+                    "required": [
+                      "supervisedGateEvidence"
+                    ],
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "gateDurationMs"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "focusedChecks"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "required": [
+                      "focusedChecks"
+                    ],
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "gateDurationMs"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "supervisedGateEvidence"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "properties": {
+                  "baseVerification": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "relation": {
+                        "type": "string",
+                        "enum": [
+                          "equal",
+                          "descendant"
+                        ]
+                      },
+                      "baseCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "headCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "relation",
+                      "baseCommit",
+                      "headCommit"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "filesTouched": {
+                    "type": "array",
+                    "contains": {
+                      "type": "string",
+                      "pattern": "(?:^(.*/)?test/.*$)|(?:^(.*/)?[^/]*\\.test\\.ts$)|(?:^(.*/)?[^/]*guard[^/]*$)|(?:^(.*/)?[^/]*invariant[^/]*$)"
+                    }
+                  }
+                },
+                "required": [
+                  "filesTouched"
+                ]
+              },
+              "then": {
+                "required": [
+                  "mutationTable"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "supervisedGateEvidence"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "gitLineage"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gitReceipts"
+                ]
+              }
+            },
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "gateDurationMs"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "focusedChecks"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1975,7 +4009,7 @@ export const AGENT_ROLES: AgentRole[] = [
     name: "implement-reviewer",
     kind: "agent-subagent",
     source: "agents/implement-reviewer.md",
-    description: "Adversarial implementation reviewer that verifies one task and stores a structured approve/disapprove verdict without mutating the ledger.",
+    description: "Verify one task or one complete sealed cohort and store a structured approve/disapprove verdict without mutating the ledger.",
     inputs: [
   "task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional trusted supervisedGateEvidence or parentGateAttestation, and prepare-bound absolute phase timing"
 ],
@@ -1987,695 +4021,2176 @@ export const AGENT_ROLES: AgentRole[] = [
   "approve requires empty criticism/questions, green gate (verified supervisedGateEvidence, child re-run, or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)",
   "disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional trusted supervisedGateEvidence or parentGateAttestation, and prepare-bound absolute phase timing\"\noutputs:\n  - \"stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate (verified supervisedGateEvidence, child re-run, or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)\"\n  - \"disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs\"\n```\n\nReview one task against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\nThe fetched input carries `gateCompleteBy`, `responseStoreNow`, and\n`synthesisStoreReserveMs`. These are absolute prepare-bound values. Never\nderive a new phase window from launch, fetch, inspection, verification, or gate\nstart. Launch delay, inspection, result-commit verification, and the canonical\nregistered gate all consume the same window ending at `gateCompleteBy`. Compare\nthe current clock to that instant at each boundary; only `now >=\ngateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is\nreserved exclusively for synthesizing and storing a verdict.\n\n**Result-commit evidence (required).** Independently:\n\n1. Run `git -C <worktree> rev-parse --verify <resultCommit>^{commit}` (or\n   `cat-file -t`) and require object type `commit` with a full 40-hex SHA.\n2. Run `git -C <worktree> rev-parse --verify <branch>` and require its full SHA\n   to equal `resultCommit`.\n3. On success set\n   `resultCommitEvidence: { status: \"verified\", resultCommit, branchTip }` with\n   full SHAs and `resultCommitVerified: true`.\n4. On failure set `resultCommitVerified: false` and\n   `resultCommitEvidence: { status: \"unresolvable\", reason, resultCommit,\n   branchTip }` using a closed reason\n   (`result-commit-missing` | `result-commit-not-commit` |\n   `result-commit-malformed` | `branch-tip-mismatch` | `branch-unresolvable` |\n   `worktree-unresolvable`) and full SHAs or `null` — never invent a SHA.\n\n**Base-ancestry evidence (required).** Independently:\n\n1. Resolve the dispatch `baseCommit` to a full SHA commit object.\n2. Compute `git -C <worktree> merge-base <baseCommit> <resultCommit>`.\n3. Require `git merge-base --is-ancestor <baseCommit> <resultCommit>` to exit\n   zero (base equal to or ancestor of the result).\n4. On success set\n   `baseAncestry: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, resultCommit, mergeBase }` with full SHAs only.\n5. On failure set\n   `baseAncestry: { status: \"unresolvable\", reason, baseCommit, resultCommit,\n   mergeBase }` with a closed reason\n   (`base-missing` | `base-not-commit` | `result-commit-missing` |\n   `result-commit-not-commit` | `merge-base-unobserved` | `not-ancestor` |\n   `unrelated-histories`) and nullable observed values.\n\nDistinguish stale ancestry (`not-ancestor` with both objects present) from\nunresolvable objects (`base-missing`, `*-not-commit`, `merge-base-unobserved`).\nApproval requires both evidence arms verified; never approve with unresolvable\nor missing ancestry.\n\nAlso verify the worktree diff against the claimed `filesTouched` set where\npractical, and verify or re-run the gate as below.\n\n**Gate evidence.** When the fetched input carries `supervisedGateEvidence`,\nrequire its strict versioned schema and verify that its `taskId`,\n`resultCommit`, `branch`, and `worktreePath` exactly match this review input.\nAlso require the canonical command, `gateExitCode === 0`, `failCount === 0`,\n`passCount > 0`, `clean === true`, `roleId === \"implement-worker\"`, and\n`surface === \"codex\"`. Reject caller substitutions or incomplete evidence.\nDo **not** invoke `cq gate run` when this exact evidence is valid. On valid evidence set\n`gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, omit reviewer\n`gateDurationMs`, and cite the runner-owned counts, command, duration, and\ncapture time in the rationale.\n\nOtherwise, when the fetched input carries `parentGateAttestation` (the legacy\nsandboxed path where gate primitives are denied):\n\n1. Do **not** invoke `cq gate run` inside the sandbox.\n2. Verify the attestation against `workerResult.resultCommit`: require exact\n   `resultCommit` match, `gateExitCode === 0`, `failCount === 0`, and\n   `passCount > 0`. Reject (disapprove) when any predicate fails.\n3. On a valid green attestation set `gateReRan=false`,\n   `gateReRanReason=sandbox-denied-primitives`, omit `gateDurationMs`, and\n   include the attested `gateExitCode` / `passCount` / `failCount` /\n   `command` / optional `gateDurationMs` in `rationale` (or `summary`).\n\nWhen both evidence fields are absent, re-run the gate yourself. Use the\nforeground process's real exit status and measure its duration. Invoke that\ngate as\n`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.\nThe deadline path terminates and settles the registered command before it\nreturns; measure `gateDurationMs` through that termination and settlement.\nNon-sandboxed reviewers take the same trusted-evidence path and rerun only when\nthe evidence is absent or invalid.\n\nCheck acceptance, correctness, boundary handling, type safety, surgical scope,\nand defect reproduction.\n\nFor a task that declares an expected failure, apply §6a of the implementation\norchestrator. Forms (a) and (b) require the annotation, live marker, and\ninventory entry; form (c) needs no marker. A completed fix replaces the marker\nwith a same-titled plain test and removes the annotation and inventory entry.\nReject co-deletion of that triple when no same-titled plain test remains, and\nnever approve a red full gate.\n\nIf the phase expires before a complete acceptance verdict can be established,\nstore a disapproval before `responseStoreNow` whose sole criticism is exactly\n`Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`\nUse exactly one of these evidence tuples:\n\n- before result-commit verification completes: `resultCommitVerified=false`,\n  `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to\n  `phase-budget-exhausted-before-result-commit-verification`; carry\n  unresolvable `resultCommitEvidence` / `baseAncestry` with the best observed\n  values;\n- after result-commit verification but before gate start: set\n  `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set\n  `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;\n- when the registered gate overruns `gateCompleteBy`: set\n  `resultCommitVerified=true`, `gateReRan=true`, set `gateDurationMs` to the\n  measured elapsed time through termination and settlement, and omit\n  `gateReRanReason`.\n\nFor every exhaustion fallback set `questions=[]`, `defects=[]`, and use the\nexact exhaustion sentence as `rationale` as well as the sole criticism. A\ndisapproval with both empty `criticism` and empty `questions` violates the\nsidecar and must never be stored.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"resultCommitEvidence\": {\n    \"status\": \"verified\",\n    \"resultCommit\": \"<40-hex>\",\n    \"branchTip\": \"<40-hex>\"\n  },\n  \"baseAncestry\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"resultCommit\": \"<40-hex>\",\n    \"mergeBase\": \"<40-hex>\"\n  },\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and\n`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise\ninclude an optional `gateReRanReason` (use exactly `trusted supervised worker gate`\nfor supervised evidence and `sandbox-denied-primitives` on the legacy parent-attested path). Approval requires empty criticism/questions, a\ngreen gate (child re-run exit 0, or a verified parent attestation with exit 0 /\nfailCount 0 / passCount > 0), `resultCommitVerified=true`, and both evidence\narms verified with full SHAs. Disapproval requires criticism or questions and\nmay carry unresolvable evidence. Defects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional trusted supervisedGateEvidence or parentGateAttestation, and prepare-bound absolute phase timing\"\noutputs:\n  - \"stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate (verified supervisedGateEvidence, child re-run, or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)\"\n  - \"disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs\"\n```\n\nReview the supplied task or complete cohort against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\n**Full-cohort arm (reviewer v8).** A cohort input carries the complete sealed\n`cohort` envelope and ordered `members`, never a representative `taskId`.\nReview the whole candidate once and adjudicate every member's acceptance\nseparately, including interactions between members. Copy `cohort` unchanged\nand return exactly one ordered `memberObservations: [{ memberRef, observation }]`\nrow per member. A shared implementation or green shared gate does not replace\nthese separate observations. Approve only if every member passes; otherwise\ndisapprove the cohort with precise member-specific criticism.\n\nA cohort requires runner-owned version-2 `supervisedGateEvidence` whose\n`evidenceSubject` exactly equals `cohort.evidenceSubject`, plus the exact\ncandidate commit, branch, worktree, canonical command and positive green\ncounts. Never substitute a task's evidence or a different seal. Set\n`gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, and omit\n`gateDurationMs`. Never run another full gate for a cohort. Missing or invalid\nevidence is a disapproval, not permission for the task-arm legacy fallback.\n\nThe fetched input carries `gateCompleteBy`, `responseStoreNow`, and\n`synthesisStoreReserveMs`. These are absolute prepare-bound values. Never\nderive a new phase window from launch, fetch, inspection, verification, or gate\nstart. Launch delay, inspection, result-commit verification, and the canonical\nregistered gate all consume the same window ending at `gateCompleteBy`. Compare\nthe current clock to that instant at each boundary; only `now >=\ngateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is\nreserved exclusively for synthesizing and storing a verdict.\n\n**Result-commit evidence (required).** Independently:\n\n1. Run `git -C <worktree> rev-parse --verify <resultCommit>^{commit}` (or\n   `cat-file -t`) and require object type `commit` with a full 40-hex SHA.\n2. Run `git -C <worktree> rev-parse --verify <branch>` and require its full SHA\n   to equal `resultCommit`.\n3. On success set\n   `resultCommitEvidence: { status: \"verified\", resultCommit, branchTip }` with\n   full SHAs and `resultCommitVerified: true`.\n4. On failure set `resultCommitVerified: false` and\n   `resultCommitEvidence: { status: \"unresolvable\", reason, resultCommit,\n   branchTip }` using a closed reason\n   (`result-commit-missing` | `result-commit-not-commit` |\n   `result-commit-malformed` | `branch-tip-mismatch` | `branch-unresolvable` |\n   `worktree-unresolvable`) and full SHAs or `null` — never invent a SHA.\n\n**Base-ancestry evidence (required).** Independently:\n\n1. Resolve the dispatch `baseCommit` to a full SHA commit object.\n2. Compute `git -C <worktree> merge-base <baseCommit> <resultCommit>`.\n3. Require `git merge-base --is-ancestor <baseCommit> <resultCommit>` to exit\n   zero (base equal to or ancestor of the result).\n4. On success set\n   `baseAncestry: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, resultCommit, mergeBase }` with full SHAs only.\n5. On failure set\n   `baseAncestry: { status: \"unresolvable\", reason, baseCommit, resultCommit,\n   mergeBase }` with a closed reason\n   (`base-missing` | `base-not-commit` | `result-commit-missing` |\n   `result-commit-not-commit` | `merge-base-unobserved` | `not-ancestor` |\n   `unrelated-histories`) and nullable observed values.\n\nDistinguish stale ancestry (`not-ancestor` with both objects present) from\nunresolvable objects (`base-missing`, `*-not-commit`, `merge-base-unobserved`).\nApproval requires both evidence arms verified; never approve with unresolvable\nor missing ancestry.\n\nAlso verify the worktree diff against the claimed `filesTouched` set where\npractical, and verify or re-run the gate as below.\n\n**Gate evidence.** When the fetched input carries `supervisedGateEvidence`,\nrequire its strict versioned schema and verify that its task-arm `taskId` or\ncohort-arm `evidenceSubject`,\n`resultCommit`, `branch`, and `worktreePath` exactly match this review input.\nAlso require the canonical command, `gateExitCode === 0`, `failCount === 0`,\n`passCount > 0`, `clean === true`, `roleId === \"implement-worker\"`, and\n`surface === \"codex\"`. Reject caller substitutions or incomplete evidence.\nDo **not** invoke `cq gate run` when this exact evidence is valid. On valid evidence set\n`gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, omit reviewer\n`gateDurationMs`, and cite the runner-owned counts, command, duration, and\ncapture time in the rationale.\n\nFor a task arm only, when the fetched input carries `parentGateAttestation` (the legacy\nsandboxed path where gate primitives are denied):\n\n1. Do **not** invoke `cq gate run` inside the sandbox.\n2. Verify the attestation against `workerResult.resultCommit`: require exact\n   `resultCommit` match, `gateExitCode === 0`, `failCount === 0`, and\n   `passCount > 0`. Reject (disapprove) when any predicate fails.\n3. On a valid green attestation set `gateReRan=false`,\n   `gateReRanReason=sandbox-denied-primitives`, omit `gateDurationMs`, and\n   include the attested `gateExitCode` / `passCount` / `failCount` /\n   `command` / optional `gateDurationMs` in `rationale` (or `summary`).\n\nFor a task arm only, when both evidence fields are absent, re-run the gate yourself. Use the\nforeground process's real exit status and measure its duration. Invoke that\ngate as\n`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.\nThe deadline path terminates and settles the registered command before it\nreturns; measure `gateDurationMs` through that termination and settlement.\nNon-sandboxed reviewers take the same trusted-evidence path and rerun only when\nthe evidence is absent or invalid.\n\nCheck acceptance, correctness, boundary handling, type safety, surgical scope,\nand defect reproduction.\n\nFor a task that declares an expected failure, apply §6a of the implementation\norchestrator. Forms (a) and (b) require the annotation, live marker, and\ninventory entry; form (c) needs no marker. A completed fix replaces the marker\nwith a same-titled plain test and removes the annotation and inventory entry.\nReject co-deletion of that triple when no same-titled plain test remains, and\nnever approve a red full gate.\n\nIf the phase expires before a complete acceptance verdict can be established,\nstore a disapproval before `responseStoreNow` whose sole criticism is exactly\n`Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`\nUse exactly one of these evidence tuples:\n\n- before result-commit verification completes: `resultCommitVerified=false`,\n  `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to\n  `phase-budget-exhausted-before-result-commit-verification`; carry\n  unresolvable `resultCommitEvidence` / `baseAncestry` with the best observed\n  values;\n- after result-commit verification but before gate start: set\n  `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set\n  `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;\n- when the registered gate overruns `gateCompleteBy`: set\n  `resultCommitVerified=true`, `gateReRan=true`, set `gateDurationMs` to the\n  measured elapsed time through termination and settlement, and omit\n  `gateReRanReason`.\n\nFor every exhaustion fallback set `questions=[]`, `defects=[]`, and use the\nexact exhaustion sentence as `rationale` as well as the sole criticism. A\ndisapproval with both empty `criticism` and empty `questions` violates the\nsidecar and must never be stored.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"resultCommitEvidence\": {\n    \"status\": \"verified\",\n    \"resultCommit\": \"<40-hex>\",\n    \"branchTip\": \"<40-hex>\"\n  },\n  \"baseAncestry\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"resultCommit\": \"<40-hex>\",\n    \"mergeBase\": \"<40-hex>\"\n  },\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nThe example above is the task arm. Cohort verdicts replace `taskId` with the\nunchanged sealed `cohort` and complete ordered `memberObservations`, always\nreport `gateReRan=false`, and omit `gateDurationMs`.\n\nAlways state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and\n`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise\ninclude an optional `gateReRanReason` (use exactly `trusted supervised worker gate`\nfor supervised evidence and `sandbox-denied-primitives` on the legacy parent-attested path). Approval requires empty criticism/questions, a\ngreen gate (child re-run exit 0, or a verified parent attestation with exit 0 /\nfailCount 0 / passCount > 0), `resultCommitVerified=true`, and both evidence\narms verified with full SHAs. Disapproval requires criticism or questions and\nmay carry unresolvable evidence. Defects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
     privilege: "RO",
     exposedTools: "Disallowed: Write, Edit, MultiEdit, NotebookEdit, Agent",
     inputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-reviewer/input",
-      "title": "implement-reviewer input",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "pattern": "^T[0-9]+$"
-        },
-        "headline": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
-        "acceptance": {
-          "type": "string",
-          "minLength": 1
-        },
-        "worktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
-        },
-        "branch": {
-          "type": "string",
-          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
-          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
-        },
-        "baseCommit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$",
-          "description": "Dispatch base commit (full 40-hex object SHA) used for ancestry verification."
-        },
-        "workerResult": {
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-reviewer input",
           "type": "object",
           "properties": {
-            "resultCommit": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "pattern": "^[0-9a-f]{40}$"
-            },
-            "checkSummary": {
-              "type": "string"
-            },
-            "filesTouched": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "resultCommit",
-            "checkSummary",
-            "filesTouched"
-          ],
-          "additionalProperties": true
-        },
-        "round": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "priorCriticism": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "parentGateAttestation": {
-          "type": "object",
-          "properties": {
-            "resultCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$",
-              "description": "The commit SHA the parent gate observed (must equal worker resultCommit)."
-            },
-            "gateExitCode": {
-              "type": "integer",
-              "description": "Exit status of the parent-run full gate (0 = green)."
-            },
-            "passCount": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Number of passing checks observed by the parent gate."
-            },
-            "failCount": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Number of failing checks observed by the parent gate."
-            },
-            "gateDurationMs": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Optional wall-clock milliseconds the parent gate took."
-            },
-            "command": {
-              "type": "string",
-              "minLength": 1,
-              "description": "The exact full-gate command the parent ran."
-            },
-            "capturedAt": {
-              "type": "string",
-              "minLength": 1,
-              "description": "ISO-8601 instant when the parent captured the gate evidence."
-            }
-          },
-          "required": [
-            "resultCommit",
-            "gateExitCode",
-            "passCount",
-            "failCount",
-            "command",
-            "capturedAt"
-          ],
-          "additionalProperties": false
-        },
-        "supervisedGateEvidence": {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "cq-supervised-gate-evidence"
-            },
-            "version": {
-              "type": "integer",
-              "const": 1
-            },
-            "attestationId": {
-              "type": "string",
-              "pattern": "^att_[A-Za-z0-9_-]{32,}$"
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "roleId": {
-              "type": "string",
-              "const": "implement-worker"
-            },
-            "roleVersion": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "surface": {
-              "type": "string",
-              "const": "codex"
-            },
-            "promptDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "catalogHash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "inputDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
             "taskId": {
               "type": "string",
               "pattern": "^T[0-9]+$"
             },
-            "worktreePath": {
+            "headline": {
               "type": "string",
               "minLength": 1
             },
+            "description": {
+              "type": "string"
+            },
+            "acceptance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
+            },
             "branch": {
               "type": "string",
-              "pattern": "^implement/T[0-9]+$"
+              "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+              "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
             },
             "baseCommit": {
               "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
+              "pattern": "^[0-9a-f]{40}$",
+              "description": "Dispatch base commit (full 40-hex object SHA) used for ancestry verification."
             },
-            "startingCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
+            "workerResult": {
+              "type": "object",
+              "properties": {
+                "resultCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "checkSummary": {
+                  "type": "string"
+                },
+                "filesTouched": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "resultCommit",
+                "checkSummary",
+                "filesTouched"
+              ],
+              "additionalProperties": true
             },
-            "resultCommit": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}$"
-            },
-            "clean": {
-              "type": "boolean",
-              "const": true
-            },
-            "command": {
-              "type": "string",
-              "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
-            },
-            "gateExitCode": {
-              "type": "integer",
-              "const": 0
-            },
-            "passCount": {
+            "round": {
               "type": "integer",
               "minimum": 1
             },
-            "failCount": {
-              "type": "integer",
-              "const": 0
+            "priorCriticism": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
-            "gateDurationMs": {
-              "type": "integer",
-              "minimum": 0
+            "parentGateAttestation": {
+              "type": "object",
+              "properties": {
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The commit SHA the parent gate observed (must equal worker resultCommit)."
+                },
+                "gateExitCode": {
+                  "type": "integer",
+                  "description": "Exit status of the parent-run full gate (0 = green)."
+                },
+                "passCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of passing checks observed by the parent gate."
+                },
+                "failCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of failing checks observed by the parent gate."
+                },
+                "gateDurationMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Optional wall-clock milliseconds the parent gate took."
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The exact full-gate command the parent ran."
+                },
+                "capturedAt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "ISO-8601 instant when the parent captured the gate evidence."
+                }
+              },
+              "required": [
+                "resultCommit",
+                "gateExitCode",
+                "passCount",
+                "failCount",
+                "command",
+                "capturedAt"
+              ],
+              "additionalProperties": false
             },
-            "capturedAt": {
+            "supervisedGateEvidence": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "cq-supervised-gate-evidence"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "const": 1
+                    },
+                    "attestationId": {
+                      "type": "string",
+                      "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "roleId": {
+                      "type": "string",
+                      "const": "implement-worker"
+                    },
+                    "roleVersion": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "surface": {
+                      "type": "string",
+                      "const": "codex"
+                    },
+                    "promptDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "catalogHash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "inputDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "taskId": {
+                      "type": "string",
+                      "pattern": "^T[0-9]+$"
+                    },
+                    "worktreePath": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "branch": {
+                      "type": "string",
+                      "pattern": "^implement/T[0-9]+$"
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "startingCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "clean": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "command": {
+                      "type": "string",
+                      "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                    },
+                    "gateExitCode": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "passCount": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "failCount": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "gateDurationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "capturedAt": {
+                      "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                    },
+                    "filesTouchedDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "gitReceiptsDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "mutationTableDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "attestationId",
+                    "generation",
+                    "roleId",
+                    "roleVersion",
+                    "surface",
+                    "promptDigest",
+                    "catalogHash",
+                    "inputDigest",
+                    "taskId",
+                    "worktreePath",
+                    "branch",
+                    "baseCommit",
+                    "startingCommit",
+                    "resultCommit",
+                    "clean",
+                    "command",
+                    "gateExitCode",
+                    "passCount",
+                    "failCount",
+                    "gateDurationMs",
+                    "capturedAt",
+                    "filesTouchedDigest",
+                    "gitReceiptsDigest",
+                    "mutationTableDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "cq-supervised-gate-evidence"
+                    },
+                    "version": {
+                      "const": 2
+                    },
+                    "attestationId": {
+                      "type": "string",
+                      "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "roleId": {
+                      "type": "string",
+                      "const": "implement-worker"
+                    },
+                    "roleVersion": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "surface": {
+                      "type": "string",
+                      "const": "codex"
+                    },
+                    "promptDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "catalogHash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "inputDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "worktreePath": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "branch": {
+                      "type": "string",
+                      "pattern": "^implement/cohort-[0-9a-f]{64}$"
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "startingCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "clean": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "command": {
+                      "type": "string",
+                      "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                    },
+                    "gateExitCode": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "passCount": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "failCount": {
+                      "type": "integer",
+                      "const": 0
+                    },
+                    "gateDurationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "capturedAt": {
+                      "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                    },
+                    "filesTouchedDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "gitReceiptsDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "mutationTableDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubject": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-evidence-subject"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "sealDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "evidenceSubjectDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "sealDigest",
+                        "evidenceSubjectDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "attestationId",
+                    "generation",
+                    "roleId",
+                    "roleVersion",
+                    "surface",
+                    "promptDigest",
+                    "catalogHash",
+                    "inputDigest",
+                    "worktreePath",
+                    "branch",
+                    "baseCommit",
+                    "startingCommit",
+                    "resultCommit",
+                    "clean",
+                    "command",
+                    "gateExitCode",
+                    "passCount",
+                    "failCount",
+                    "gateDurationMs",
+                    "capturedAt",
+                    "filesTouchedDigest",
+                    "gitReceiptsDigest",
+                    "mutationTableDigest",
+                    "evidenceSubject"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "responseStoreNow": {
               "type": "string",
-              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+              "minLength": 1,
+              "description": "Prepare-bound absolute deadline by which the reviewer must store its verdict."
             },
-            "filesTouchedDigest": {
+            "gateCompleteBy": {
               "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+              "minLength": 1,
+              "description": "Prepare-bound absolute deadline for inspection, verification, and gate settlement."
             },
-            "gitReceiptsDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            "mutationTableDigest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+            "synthesisStoreReserveMs": {
+              "const": 60000,
+              "description": "Reserved interval between gateCompleteBy and responseStoreNow."
             }
           },
           "required": [
-            "kind",
-            "version",
-            "attestationId",
-            "generation",
-            "roleId",
-            "roleVersion",
-            "surface",
-            "promptDigest",
-            "catalogHash",
-            "inputDigest",
             "taskId",
-            "worktreePath",
+            "acceptance",
             "branch",
             "baseCommit",
-            "startingCommit",
-            "resultCommit",
-            "clean",
-            "command",
-            "gateExitCode",
-            "passCount",
-            "failCount",
-            "gateDurationMs",
-            "capturedAt",
-            "filesTouchedDigest",
-            "gitReceiptsDigest",
-            "mutationTableDigest"
+            "workerResult",
+            "round",
+            "responseStoreNow",
+            "gateCompleteBy",
+            "synthesisStoreReserveMs"
           ],
           "additionalProperties": false
         },
-        "responseStoreNow": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Prepare-bound absolute deadline by which the reviewer must store its verdict."
-        },
-        "gateCompleteBy": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Prepare-bound absolute deadline for inspection, verification, and gate settlement."
-        },
-        "synthesisStoreReserveMs": {
-          "const": 60000,
-          "description": "Reserved interval between gateCompleteBy and responseStoreNow."
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-reviewer input",
+          "type": "object",
+          "properties": {
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^implement/cohort-[0-9a-f]{64}$"
+            },
+            "baseCommit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$",
+              "description": "Dispatch base commit (full 40-hex object SHA) used for ancestry verification."
+            },
+            "workerResult": {
+              "type": "object",
+              "properties": {
+                "resultCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "checkSummary": {
+                  "type": "string"
+                },
+                "filesTouched": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "resultCommit",
+                "checkSummary",
+                "filesTouched"
+              ],
+              "additionalProperties": true
+            },
+            "round": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "priorCriticism": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parentGateAttestation": {
+              "type": "object",
+              "properties": {
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "The commit SHA the parent gate observed (must equal worker resultCommit)."
+                },
+                "gateExitCode": {
+                  "type": "integer",
+                  "description": "Exit status of the parent-run full gate (0 = green)."
+                },
+                "passCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of passing checks observed by the parent gate."
+                },
+                "failCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Number of failing checks observed by the parent gate."
+                },
+                "gateDurationMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Optional wall-clock milliseconds the parent gate took."
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The exact full-gate command the parent ran."
+                },
+                "capturedAt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "ISO-8601 instant when the parent captured the gate evidence."
+                }
+              },
+              "required": [
+                "resultCommit",
+                "gateExitCode",
+                "passCount",
+                "failCount",
+                "command",
+                "capturedAt"
+              ],
+              "additionalProperties": false
+            },
+            "supervisedGateEvidence": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "cq-supervised-gate-evidence"
+                },
+                "version": {
+                  "const": 2
+                },
+                "attestationId": {
+                  "type": "string",
+                  "pattern": "^att_[A-Za-z0-9_-]{32,}$"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "roleId": {
+                  "type": "string",
+                  "const": "implement-worker"
+                },
+                "roleVersion": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "surface": {
+                  "type": "string",
+                  "const": "codex"
+                },
+                "promptDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "catalogHash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "inputDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "worktreePath": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "branch": {
+                  "type": "string",
+                  "pattern": "^implement/cohort-[0-9a-f]{64}$"
+                },
+                "baseCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "startingCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "clean": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "command": {
+                  "type": "string",
+                  "const": "cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check"
+                },
+                "gateExitCode": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "passCount": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failCount": {
+                  "type": "integer",
+                  "const": 0
+                },
+                "gateDurationMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "capturedAt": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+                },
+                "filesTouchedDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "gitReceiptsDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "mutationTableDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "evidenceSubject": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-evidence-subject"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "sealDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubjectDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "sealDigest",
+                    "evidenceSubjectDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "attestationId",
+                "generation",
+                "roleId",
+                "roleVersion",
+                "surface",
+                "promptDigest",
+                "catalogHash",
+                "inputDigest",
+                "worktreePath",
+                "branch",
+                "baseCommit",
+                "startingCommit",
+                "resultCommit",
+                "clean",
+                "command",
+                "gateExitCode",
+                "passCount",
+                "failCount",
+                "gateDurationMs",
+                "capturedAt",
+                "filesTouchedDigest",
+                "gitReceiptsDigest",
+                "mutationTableDigest",
+                "evidenceSubject"
+              ],
+              "additionalProperties": false
+            },
+            "responseStoreNow": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Prepare-bound absolute deadline by which the reviewer must store its verdict."
+            },
+            "gateCompleteBy": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Prepare-bound absolute deadline for inspection, verification, and gate settlement."
+            },
+            "synthesisStoreReserveMs": {
+              "const": 60000,
+              "description": "Reserved interval between gateCompleteBy and responseStoreNow."
+            },
+            "cohort": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cq-cohort-effect-envelope"
+                },
+                "version": {
+                  "const": 1
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-definition-identity"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "cohortId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "definitionGeneration": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "phase": {
+                      "const": "implementation"
+                    },
+                    "members": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "memberRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "memberRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "memberRef",
+                          "memberRevision",
+                          "authorityRef",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "selectedAtomDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "acceptanceMatrixDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "repositoryId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "headCommit": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "treeOid": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        }
+                      },
+                      "required": [
+                        "repositoryId",
+                        "headCommit",
+                        "treeOid"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "environment": {
+                      "type": "object",
+                      "properties": {
+                        "environmentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "environmentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "splitConditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "semanticDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "cohortId",
+                    "definitionGeneration",
+                    "phase",
+                    "members",
+                    "selectedAtomDigest",
+                    "acceptanceMatrixDigest",
+                    "repository",
+                    "environment",
+                    "splitConditions",
+                    "semanticDigest",
+                    "definitionDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "intent": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-candidate-intent"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "operationId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "intentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "operationId",
+                    "intentDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "memberAuthorities": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "taskRef": {
+                        "type": "string",
+                        "pattern": "^tasks:T[0-9]+$"
+                      },
+                      "taskRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "goalRef": {
+                        "type": "string",
+                        "pattern": "^goals:G[0-9]+$"
+                      },
+                      "finalizedManifestDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "authorityRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "taskRef",
+                      "taskRevision",
+                      "goalRef",
+                      "finalizedManifestDigest",
+                      "authorityRevision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "memberSetDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "semanticSubject": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "executionEpoch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "envelopeDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "state": {
+                  "const": "sealed"
+                },
+                "evidenceSubject": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-evidence-subject"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "sealDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubjectDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "sealDigest",
+                    "evidenceSubjectDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "definition",
+                "intent",
+                "memberAuthorities",
+                "memberSetDigest",
+                "semanticSubject",
+                "executionEpoch",
+                "envelopeDigest",
+                "state",
+                "evidenceSubject"
+              ],
+              "additionalProperties": false
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "headline": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "acceptance": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "memberRef",
+                  "headline",
+                  "description",
+                  "acceptance"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "branch",
+            "baseCommit",
+            "workerResult",
+            "round",
+            "responseStoreNow",
+            "gateCompleteBy",
+            "synthesisStoreReserveMs",
+            "cohort",
+            "members",
+            "supervisedGateEvidence"
+          ],
+          "additionalProperties": false,
+          "not": {
+            "required": [
+              "parentGateAttestation"
+            ]
+          }
         }
-      },
-      "required": [
-        "taskId",
-        "acceptance",
-        "branch",
-        "baseCommit",
-        "workerResult",
-        "round",
-        "responseStoreNow",
-        "gateCompleteBy",
-        "synthesisStoreReserveMs"
-      ],
-      "additionalProperties": false
+      ]
     },
     outputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-reviewer/output",
-      "title": "implement-reviewer verdict",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "pattern": "^T[0-9]+$"
-        },
-        "verdict": {
-          "type": "string",
-          "enum": [
-            "approve",
-            "disapprove"
-          ]
-        },
-        "criticism": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "questions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "defects": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "headline": {
-                "type": "string",
-                "minLength": 1
-              },
-              "description": {
-                "type": "string",
-                "minLength": 1
-              },
-              "severity": {
-                "type": "string",
-                "enum": [
-                  "low",
-                  "medium",
-                  "high",
-                  "critical"
-                ]
-              },
-              "suggestedFix": {
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-reviewer verdict",
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "pattern": "^T[0-9]+$"
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "disapprove"
+              ]
+            },
+            "criticism": {
+              "type": "array",
+              "items": {
                 "type": "string"
               }
             },
-            "required": [
-              "headline",
-              "description",
-              "severity"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "rationale": {
-          "type": "string"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "gateReRan": {
-          "type": "boolean",
-          "description": "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim."
-        },
-        "resultCommitVerified": {
-          "type": "boolean",
-          "description": "Whether the reviewer verified the worker's resultCommit sha (cat-file + tip equality) rather than accepting it unchecked."
-        },
-        "resultCommitEvidence": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "verified"
-                },
-                "resultCommit": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "branchTip": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "resultCommit",
-                "branchTip"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "unresolvable"
-                },
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "result-commit-missing",
-                    "result-commit-not-commit",
-                    "result-commit-malformed",
-                    "branch-tip-mismatch",
-                    "branch-unresolvable",
-                    "worktree-unresolvable"
-                  ]
-                },
-                "resultCommit": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "branchTip": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "reason",
-                "resultCommit",
-                "branchTip"
-              ],
-              "additionalProperties": false
-            }
-          ],
-          "description": "T1308 structured result-commit evidence. Approval requires the verified arm (commit object + branch tip equality, full SHAs)."
-        },
-        "baseAncestry": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "verified"
-                },
-                "relation": {
-                  "type": "string",
-                  "enum": [
-                    "equal",
-                    "descendant"
-                  ]
-                },
-                "baseCommit": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "resultCommit": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "mergeBase": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "relation",
-                "baseCommit",
-                "resultCommit",
-                "mergeBase"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "const": "unresolvable"
-                },
-                "reason": {
-                  "type": "string",
-                  "enum": [
-                    "base-missing",
-                    "base-not-commit",
-                    "result-commit-missing",
-                    "result-commit-not-commit",
-                    "merge-base-unobserved",
-                    "not-ancestor",
-                    "unrelated-histories"
-                  ]
-                },
-                "baseCommit": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "resultCommit": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "mergeBase": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "pattern": "^[0-9a-f]{40}$"
-                }
-              },
-              "required": [
-                "status",
-                "reason",
-                "baseCommit",
-                "resultCommit",
-                "mergeBase"
-              ],
-              "additionalProperties": false
-            }
-          ],
-          "description": "T1308 structured base-ancestry evidence. Approval requires the verified arm (dispatch base ancestor of resultCommit, exact merge-base full SHA)."
-        },
-        "gateDurationMs": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true."
-        },
-        "gateReRanReason": {
-          "type": "string",
-          "description": "Optional free-text explanation for why the gate was not re-run, when gateReRan is false."
-        },
-        "actualWorktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional absolute path of the worktree the reviewer actually inspected (D143)."
-        }
-      },
-      "required": [
-        "taskId",
-        "verdict",
-        "criticism",
-        "questions",
-        "defects",
-        "rationale",
-        "gateReRan",
-        "resultCommitVerified",
-        "resultCommitEvidence",
-        "baseAncestry"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "gateReRan": {
-                "const": true
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "string"
               }
             },
-            "required": [
-              "gateReRan"
-            ]
-          },
-          "then": {
-            "required": [
-              "gateDurationMs"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "verdict": {
-                "const": "disapprove"
-              }
-            },
-            "required": [
-              "verdict"
-            ]
-          },
-          "then": {
-            "anyOf": [
-              {
-                "properties": {
-                  "criticism": {
-                    "minItems": 1
-                  }
-                },
-                "required": [
-                  "criticism"
-                ]
-              },
-              {
-                "properties": {
-                  "questions": {
-                    "minItems": 1
-                  }
-                },
-                "required": [
-                  "questions"
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "verdict": {
-                "const": "approve"
-              }
-            },
-            "required": [
-              "verdict"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resultCommitVerified": {
-                "const": true
-              },
-              "resultCommitEvidence": {
+            "defects": {
+              "type": "array",
+              "items": {
                 "type": "object",
                 "properties": {
-                  "status": {
+                  "headline": {
                     "type": "string",
-                    "const": "verified"
+                    "minLength": 1
                   },
-                  "resultCommit": {
+                  "description": {
                     "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
+                    "minLength": 1
                   },
-                  "branchTip": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
-                  }
-                },
-                "required": [
-                  "status",
-                  "resultCommit",
-                  "branchTip"
-                ],
-                "additionalProperties": false
-              },
-              "baseAncestry": {
-                "type": "object",
-                "properties": {
-                  "status": {
-                    "type": "string",
-                    "const": "verified"
-                  },
-                  "relation": {
+                  "severity": {
                     "type": "string",
                     "enum": [
-                      "equal",
-                      "descendant"
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
                     ]
                   },
-                  "baseCommit": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
-                  },
-                  "resultCommit": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
-                  },
-                  "mergeBase": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}$"
+                  "suggestedFix": {
+                    "type": "string"
                   }
                 },
                 "required": [
-                  "status",
-                  "relation",
-                  "baseCommit",
-                  "resultCommit",
-                  "mergeBase"
+                  "headline",
+                  "description",
+                  "severity"
                 ],
                 "additionalProperties": false
               }
             },
+            "rationale": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "gateReRan": {
+              "type": "boolean",
+              "description": "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim."
+            },
+            "resultCommitVerified": {
+              "type": "boolean",
+              "description": "Whether the reviewer verified the worker's resultCommit sha (cat-file + tip equality) rather than accepting it unchecked."
+            },
+            "resultCommitEvidence": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "branchTip": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "resultCommit",
+                    "branchTip"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "result-commit-missing",
+                        "result-commit-not-commit",
+                        "result-commit-malformed",
+                        "branch-tip-mismatch",
+                        "branch-unresolvable",
+                        "worktree-unresolvable"
+                      ]
+                    },
+                    "resultCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "branchTip": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "resultCommit",
+                    "branchTip"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1308 structured result-commit evidence. Approval requires the verified arm (commit object + branch tip equality, full SHAs)."
+            },
+            "baseAncestry": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "relation": {
+                      "type": "string",
+                      "enum": [
+                        "equal",
+                        "descendant"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "mergeBase": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "relation",
+                    "baseCommit",
+                    "resultCommit",
+                    "mergeBase"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "base-missing",
+                        "base-not-commit",
+                        "result-commit-missing",
+                        "result-commit-not-commit",
+                        "merge-base-unobserved",
+                        "not-ancestor",
+                        "unrelated-histories"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "mergeBase": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "baseCommit",
+                    "resultCommit",
+                    "mergeBase"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1308 structured base-ancestry evidence. Approval requires the verified arm (dispatch base ancestor of resultCommit, exact merge-base full SHA)."
+            },
+            "gateDurationMs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true."
+            },
+            "gateReRanReason": {
+              "type": "string",
+              "description": "Optional free-text explanation for why the gate was not re-run, when gateReRan is false."
+            },
+            "actualWorktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional absolute path of the worktree the reviewer actually inspected (D143)."
+            }
+          },
+          "required": [
+            "taskId",
+            "verdict",
+            "criticism",
+            "questions",
+            "defects",
+            "rationale",
+            "gateReRan",
+            "resultCommitVerified",
+            "resultCommitEvidence",
+            "baseAncestry"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "gateReRan": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "gateReRan"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gateDurationMs"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "const": "disapprove"
+                  }
+                },
+                "required": [
+                  "verdict"
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "criticism": {
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "criticism"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "questions": {
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "questions"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "const": "approve"
+                  }
+                },
+                "required": [
+                  "verdict"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommitVerified": {
+                    "const": true
+                  },
+                  "resultCommitEvidence": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "resultCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "branchTip": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "resultCommit",
+                      "branchTip"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "baseAncestry": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "relation": {
+                        "type": "string",
+                        "enum": [
+                          "equal",
+                          "descendant"
+                        ]
+                      },
+                      "baseCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "resultCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "mergeBase": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "relation",
+                      "baseCommit",
+                      "resultCommit",
+                      "mergeBase"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "resultCommitVerified",
+                  "resultCommitEvidence",
+                  "baseAncestry"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-reviewer verdict",
+          "type": "object",
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "disapprove"
+              ]
+            },
+            "criticism": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "defects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "headline": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "suggestedFix": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "headline",
+                  "description",
+                  "severity"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "rationale": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "gateReRan": {
+              "const": false
+            },
+            "resultCommitVerified": {
+              "type": "boolean",
+              "description": "Whether the reviewer verified the worker's resultCommit sha (cat-file + tip equality) rather than accepting it unchecked."
+            },
+            "resultCommitEvidence": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "branchTip": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "resultCommit",
+                    "branchTip"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "result-commit-missing",
+                        "result-commit-not-commit",
+                        "result-commit-malformed",
+                        "branch-tip-mismatch",
+                        "branch-unresolvable",
+                        "worktree-unresolvable"
+                      ]
+                    },
+                    "resultCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "branchTip": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "resultCommit",
+                    "branchTip"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1308 structured result-commit evidence. Approval requires the verified arm (commit object + branch tip equality, full SHAs)."
+            },
+            "baseAncestry": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "verified"
+                    },
+                    "relation": {
+                      "type": "string",
+                      "enum": [
+                        "equal",
+                        "descendant"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "mergeBase": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "relation",
+                    "baseCommit",
+                    "resultCommit",
+                    "mergeBase"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "unresolvable"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "base-missing",
+                        "base-not-commit",
+                        "result-commit-missing",
+                        "result-commit-not-commit",
+                        "merge-base-unobserved",
+                        "not-ancestor",
+                        "unrelated-histories"
+                      ]
+                    },
+                    "baseCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "resultCommit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    },
+                    "mergeBase": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9a-f]{40}$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason",
+                    "baseCommit",
+                    "resultCommit",
+                    "mergeBase"
+                  ],
+                  "additionalProperties": false
+                }
+              ],
+              "description": "T1308 structured base-ancestry evidence. Approval requires the verified arm (dispatch base ancestor of resultCommit, exact merge-base full SHA)."
+            },
+            "gateDurationMs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true."
+            },
+            "gateReRanReason": {
+              "type": "string",
+              "description": "Optional free-text explanation for why the gate was not re-run, when gateReRan is false."
+            },
+            "actualWorktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional absolute path of the worktree the reviewer actually inspected (D143)."
+            },
+            "cohort": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "cq-cohort-effect-envelope"
+                },
+                "version": {
+                  "const": 1
+                },
+                "definition": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-definition-identity"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "cohortId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "definitionGeneration": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "phase": {
+                      "const": "implementation"
+                    },
+                    "members": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "memberRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "memberRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "memberRef",
+                          "memberRevision",
+                          "authorityRef",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "selectedAtomDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "acceptanceMatrixDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "repositoryId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "headCommit": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        },
+                        "treeOid": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{40}$"
+                        }
+                      },
+                      "required": [
+                        "repositoryId",
+                        "headCommit",
+                        "treeOid"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "environment": {
+                      "type": "object",
+                      "properties": {
+                        "environmentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "environmentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "splitConditions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "semanticDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "cohortId",
+                    "definitionGeneration",
+                    "phase",
+                    "members",
+                    "selectedAtomDigest",
+                    "acceptanceMatrixDigest",
+                    "repository",
+                    "environment",
+                    "splitConditions",
+                    "semanticDigest",
+                    "definitionDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "intent": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-candidate-intent"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "operationId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "intentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "operationId",
+                    "intentDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "memberAuthorities": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "taskRef": {
+                        "type": "string",
+                        "pattern": "^tasks:T[0-9]+$"
+                      },
+                      "taskRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "goalRef": {
+                        "type": "string",
+                        "pattern": "^goals:G[0-9]+$"
+                      },
+                      "finalizedManifestDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "authorityRevision": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "taskRef",
+                      "taskRevision",
+                      "goalRef",
+                      "finalizedManifestDigest",
+                      "authorityRevision"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "memberSetDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "semanticSubject": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "executionEpoch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "envelopeDigest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "state": {
+                  "const": "sealed"
+                },
+                "evidenceSubject": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-evidence-subject"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definitionDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "sealDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidenceSubjectDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definitionDigest",
+                    "sealDigest",
+                    "evidenceSubjectDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "version",
+                "definition",
+                "intent",
+                "memberAuthorities",
+                "memberSetDigest",
+                "semanticSubject",
+                "executionEpoch",
+                "envelopeDigest",
+                "state",
+                "evidenceSubject"
+              ],
+              "additionalProperties": false
+            },
+            "memberObservations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "observation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "memberRef",
+                  "observation"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "verdict",
+            "criticism",
+            "questions",
+            "defects",
+            "rationale",
+            "gateReRan",
+            "resultCommitVerified",
+            "resultCommitEvidence",
+            "baseAncestry",
+            "cohort",
+            "memberObservations"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "gateReRan": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "gateReRan"
+                ]
+              },
+              "then": {
+                "required": [
+                  "gateDurationMs"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "const": "disapprove"
+                  }
+                },
+                "required": [
+                  "verdict"
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "criticism": {
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "criticism"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "questions": {
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "questions"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "const": "approve"
+                  }
+                },
+                "required": [
+                  "verdict"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommitVerified": {
+                    "const": true
+                  },
+                  "resultCommitEvidence": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "resultCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "branchTip": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "resultCommit",
+                      "branchTip"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "baseAncestry": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "const": "verified"
+                      },
+                      "relation": {
+                        "type": "string",
+                        "enum": [
+                          "equal",
+                          "descendant"
+                        ]
+                      },
+                      "baseCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "resultCommit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "mergeBase": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "relation",
+                      "baseCommit",
+                      "resultCommit",
+                      "mergeBase"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "resultCommitVerified",
+                  "resultCommitEvidence",
+                  "baseAncestry"
+                ]
+              }
+            }
+          ],
+          "not": {
             "required": [
-              "resultCommitVerified",
-              "resultCommitEvidence",
-              "baseAncestry"
+              "gateDurationMs"
             ]
           }
         }
@@ -3064,353 +6579,934 @@ export const AGENT_ROLES: AgentRole[] = [
   "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)",
   "pass requires completed rebase and non-empty typed green focused-check evidence; the trusted parent owns the only final full gate"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, `inputCapability`, and\nthe resolver-only `gitConflictCapability` returned by prepare.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete conflict-resolution assignment. A failed or second retrieval is a\nprotocol failure. Retain `gitConflictCapability` only for\n`git_resolve_continue`; never print it or store it in a file or result.\n\n\n## Catalogue\n```yaml\ninputs:\n  - \"task context, conflicted worktree/branch, base commit, validationIntent=focused-only, conflicting files, parent-observed conflictState, and optional base-side note\"\noutputs:\n  - \"stored structured result with durable continuation receipts and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"pass requires completed rebase and non-empty typed green focused-check evidence; the trusted parent owns the only final full gate\"\n```\n\nResolve the supplied rebase conflict inside its worktree. Preserve both the\nalready-merged base behavior and the task's intent. Edit only conflict-related\nfiles. Never run `git add`, `git commit`, `git rebase --continue`, or another\nGit mutation. Declare every resolved path's regular mode and SHA-256 (or\ndeletion) to `git_resolve_continue`, retaining its receipt verbatim. Supply the\nparent's `conflictState` unchanged to the first call. If a receipt returns a\nnext conflict, resolve it and supply only that receipt's exact state to a new\noperation; stop after a terminal receipt. Marker-free resolutions are valid.\nThe parent-supplied `validationIntent` must be exactly `focused-only`.\nThen run the smallest focused checks that cover the resolved paths. Record each\ncommand, exit code, pass count, and fail count in `focusedChecks`; a passing\nresult requires at least one executed test and no failure. Never run `bun run\ncheck` or another repository-wide gate: the trusted parent owns the single\nfinal full-gate invocation after the resolver exits. Never push, mutate the\nledger, operate on another checkout, or spawn a child.\n\nIf the intents require task redesign or focused validation cannot pass through conflict\nresolution alone, leave the worktree for inspection and return `fail` with a\nprecise reason. A failure still reports the bound branch and absolute worktree\npath plus the complete receipt chain (empty only when no continuation occurred);\nafter a durable step the last receipt must describe the live next conflict.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<rebased tip on pass, otherwise null>\",\n  \"branch\": \"<bound task branch>\",\n  \"actualWorktreePath\": \"<absolute bound worktree path>\",\n  \"filesResolved\": [\"<path>\"],\n  \"conflictReceipts\": [\"<each git_resolve_continue receipt object in order>\"],\n  \"checkSummary\": \"<focused-check result and tail>\",\n  \"focusedChecks\": [{\"command\":\"<exact command>\",\"exitCode\":0,\"passCount\":1,\"failCount\":0}],\n  \"summary\": \"<how both intents were preserved>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nStore this object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the result body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, `inputCapability`, and\nthe resolver-only `gitConflictCapability` returned by prepare.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete conflict-resolution assignment. A failed or second retrieval is a\nprotocol failure. Retain `gitConflictCapability` only for\n`git_resolve_continue`; never print it or store it in a file or result.\n\n\n## Catalogue\n```yaml\ninputs:\n  - \"task context, conflicted worktree/branch, base commit, validationIntent=focused-only, conflicting files, parent-observed conflictState, and optional base-side note\"\noutputs:\n  - \"stored structured result with durable continuation receipts and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"pass requires completed rebase and non-empty typed green focused-check evidence; the trusted parent owns the only final full gate\"\n```\n\nResolve the supplied rebase conflict inside its worktree. Preserve both the\nalready-merged base behavior and the task's intent. Edit only conflict-related\nfiles. Never run `git add`, `git commit`, `git rebase --continue`, or another\nGit mutation. Declare every resolved path's regular mode and SHA-256 (or\ndeletion) to `git_resolve_continue`, retaining its receipt verbatim. Supply the\nparent's `conflictState` unchanged to the first call. If a receipt returns a\nnext conflict, resolve it and supply only that receipt's exact state to a new\noperation; stop after a terminal receipt. Marker-free resolutions are valid.\nThe parent-supplied `validationIntent` must be exactly `focused-only`.\nThen run the smallest focused checks that cover the resolved paths. Record each\ncommand, exit code, pass count, and fail count in `focusedChecks`; a passing\nresult requires at least one executed test and no failure. Never run `bun run\ncheck` or another repository-wide gate: the trusted parent owns the single\nfinal full-gate invocation after the resolver exits. Never push, mutate the\nledger, operate on another checkout, or spawn a child.\n\n**Full-cohort arm (resolver v7).** When input carries `cohort`, preserve the\nbase behavior and every ordered member's intent, not a representative task.\nThe complete pre-seal or sealed envelope is authoritative; do not replace it,\nomit members, or use a task/goal anchor. Retain the parent's exact\n`conflictState` digest and every version-2 full-cohort continuation receipt.\nReport `cohort` unchanged and one `memberObservations: [{ memberRef, observation }]`\nrow per member in the supplied order, describing how that member's intent was\npreserved or why it could not be preserved. If the intents are incompatible,\nreturn `fail`; a common correction cannot silently stand in for any member.\nThe cohort remains focused-only here, with no child full gate. The parent owns\nthe final queue-front gate and one whole-cohort review after reconciliation.\n\nIf the intents require task redesign or focused validation cannot pass through conflict\nresolution alone, leave the worktree for inspection and return `fail` with a\nprecise reason. A failure still reports the bound branch and absolute worktree\npath plus the complete receipt chain (empty only when no continuation occurred);\nafter a durable step the last receipt must describe the live next conflict.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<rebased tip on pass, otherwise null>\",\n  \"branch\": \"<bound task branch>\",\n  \"actualWorktreePath\": \"<absolute bound worktree path>\",\n  \"filesResolved\": [\"<path>\"],\n  \"conflictReceipts\": [\"<each git_resolve_continue receipt object in order>\"],\n  \"checkSummary\": \"<focused-check result and tail>\",\n  \"focusedChecks\": [{\"command\":\"<exact command>\",\"exitCode\":0,\"passCount\":1,\"failCount\":0}],\n  \"summary\": \"<how both intents were preserved>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nFor the cohort arm, replace the example's `taskId` with the unchanged `cohort`\nand complete ordered `memberObservations`; use the bound cohort branch and\nretain full version-2 `conflictReceipts` without translating them to task receipts.\n\nStore this object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the result body or a capability.",
     privilege: "RW",
     exposedTools: "Disallowed: Agent",
     inputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-conflict-resolver/input",
-      "title": "implement-conflict-resolver input",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "pattern": "^T[0-9]+$"
-        },
-        "headline": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
-        "worktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
-        },
-        "branch": {
-          "type": "string",
-          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
-          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
-        },
-        "baseCommit": {
-          "type": "string",
-          "minLength": 1
-        },
-        "validationIntent": {
-          "type": "string",
-          "const": "focused-only",
-          "description": "Parent-owned validation scope. Conflict resolution proves focused checks only; the final implement-worker owns the canonical full gate."
-        },
-        "conflictingFiles": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "description": "The conflicting files from git status."
-        },
-        "baseSideNote": {
-          "type": "string",
-          "description": "Optional one-line note on what the base-side change did."
-        },
-        "conflictState": {
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-conflict-resolver input",
           "type": "object",
           "properties": {
+            "taskId": {
+              "type": "string",
+              "pattern": "^T[0-9]+$"
+            },
+            "headline": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "type": "string"
+            },
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
+            },
+            "branch": {
+              "type": "string",
+              "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+              "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
+            },
             "baseCommit": {
               "type": "string",
-              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              "minLength": 1
             },
-            "currentHead": {
+            "validationIntent": {
               "type": "string",
-              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              "const": "focused-only",
+              "description": "Parent-owned validation scope. Conflict resolution proves focused checks only; the final implement-worker owns the canonical full gate."
             },
-            "expectedAncestry": {
+            "conflictingFiles": {
               "type": "array",
               "items": {
-                "type": "object",
-                "properties": {
-                  "ancestor": {
-                    "type": "string",
-                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-                  },
-                  "descendant": {
-                    "type": "string",
-                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-                  }
-                },
-                "required": [
-                  "ancestor",
-                  "descendant"
-                ],
-                "additionalProperties": false
-              }
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "The conflicting files from git status."
             },
-            "sequencer": {
+            "baseSideNote": {
+              "type": "string",
+              "description": "Optional one-line note on what the base-side change did."
+            },
+            "conflictState": {
               "type": "object",
               "properties": {
-                "kind": {
-                  "type": "string",
-                  "const": "rebase-merge"
-                },
-                "identity": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
-                },
-                "headName": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "originalTip": {
+                "baseCommit": {
                   "type": "string",
                   "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
                 },
-                "onto": {
+                "currentHead": {
                   "type": "string",
                   "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
                 },
-                "stoppedCommit": {
-                  "type": "string",
-                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                "expectedAncestry": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "ancestor": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      },
+                      "descendant": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      }
+                    },
+                    "required": [
+                      "ancestor",
+                      "descendant"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
-                "currentCommand": {
-                  "type": "string",
-                  "minLength": 1
+                "sequencer": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "rebase-merge"
+                    },
+                    "identity": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "headName": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "originalTip": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "onto": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "stoppedCommit": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "currentCommand": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "todoDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "doneDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "identity",
+                    "headName",
+                    "originalTip",
+                    "onto",
+                    "stoppedCommit",
+                    "currentCommand",
+                    "todoDigest",
+                    "doneDigest"
+                  ],
+                  "additionalProperties": false
                 },
-                "todoDigest": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
-                },
-                "doneDigest": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
+                "conflicts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "stage": {
+                        "type": "integer",
+                        "enum": [
+                          1,
+                          2,
+                          3
+                        ]
+                      },
+                      "mode": {
+                        "type": "string",
+                        "pattern": "^[0-9]{6}$"
+                      },
+                      "oid": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "stage",
+                      "mode",
+                      "oid"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
-                "kind",
-                "identity",
-                "headName",
-                "originalTip",
-                "onto",
-                "stoppedCommit",
-                "currentCommand",
-                "todoDigest",
-                "doneDigest"
+                "baseCommit",
+                "currentHead",
+                "expectedAncestry",
+                "sequencer",
+                "conflicts"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "description": "Complete parent-observed rebase transaction supplied unchanged to the first git_resolve_continue call."
+            }
+          },
+          "required": [
+            "taskId",
+            "branch",
+            "baseCommit",
+            "validationIntent",
+            "conflictingFiles",
+            "conflictState"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-conflict-resolver input",
+          "type": "object",
+          "properties": {
+            "worktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143)."
             },
-            "conflicts": {
+            "branch": {
+              "type": "string",
+              "pattern": "^implement/cohort-[0-9a-f]{64}$"
+            },
+            "baseCommit": {
+              "type": "string",
+              "minLength": 1
+            },
+            "validationIntent": {
+              "type": "string",
+              "const": "focused-only",
+              "description": "Parent-owned validation scope. Conflict resolution proves focused checks only; the final implement-worker owns the canonical full gate."
+            },
+            "conflictingFiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "The conflicting files from git status."
+            },
+            "baseSideNote": {
+              "type": "string",
+              "description": "Optional one-line note on what the base-side change did."
+            },
+            "conflictState": {
+              "type": "object",
+              "properties": {
+                "baseCommit": {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "currentHead": {
+                  "type": "string",
+                  "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "expectedAncestry": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "ancestor": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      },
+                      "descendant": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      }
+                    },
+                    "required": [
+                      "ancestor",
+                      "descendant"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "sequencer": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "rebase-merge"
+                    },
+                    "identity": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "headName": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "originalTip": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "onto": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "stoppedCommit": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "currentCommand": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "todoDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "doneDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "identity",
+                    "headName",
+                    "originalTip",
+                    "onto",
+                    "stoppedCommit",
+                    "currentCommand",
+                    "todoDigest",
+                    "doneDigest"
+                  ],
+                  "additionalProperties": false
+                },
+                "conflicts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "stage": {
+                        "type": "integer",
+                        "enum": [
+                          1,
+                          2,
+                          3
+                        ]
+                      },
+                      "mode": {
+                        "type": "string",
+                        "pattern": "^[0-9]{6}$"
+                      },
+                      "oid": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "stage",
+                      "mode",
+                      "oid"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "baseCommit",
+                "currentHead",
+                "expectedAncestry",
+                "sequencer",
+                "conflicts"
+              ],
+              "additionalProperties": false,
+              "description": "Complete parent-observed rebase transaction supplied unchanged to the first git_resolve_continue call."
+            },
+            "cohort": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "pre-seal"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "sealed"
+                    },
+                    "evidenceSubject": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-evidence-subject"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "sealDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "evidenceSubjectDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "sealDigest",
+                        "evidenceSubjectDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state",
+                    "evidenceSubject"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "members": {
               "type": "array",
               "minItems": 1,
               "items": {
                 "type": "object",
                 "properties": {
-                  "path": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "headline": {
                     "type": "string",
                     "minLength": 1
                   },
-                  "stage": {
-                    "type": "integer",
-                    "enum": [
-                      1,
-                      2,
-                      3
-                    ]
+                  "description": {
+                    "type": "string"
                   },
-                  "mode": {
+                  "acceptance": {
                     "type": "string",
-                    "pattern": "^[0-9]{6}$"
-                  },
-                  "oid": {
-                    "type": "string",
-                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    "minLength": 1
                   }
                 },
                 "required": [
-                  "path",
-                  "stage",
-                  "mode",
-                  "oid"
+                  "memberRef",
+                  "headline",
+                  "description",
+                  "acceptance"
                 ],
                 "additionalProperties": false
               }
             }
           },
           "required": [
+            "branch",
             "baseCommit",
-            "currentHead",
-            "expectedAncestry",
-            "sequencer",
-            "conflicts"
+            "validationIntent",
+            "conflictingFiles",
+            "conflictState",
+            "cohort",
+            "members"
           ],
-          "additionalProperties": false,
-          "description": "Complete parent-observed rebase transaction supplied unchanged to the first git_resolve_continue call."
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "taskId",
-        "branch",
-        "baseCommit",
-        "validationIntent",
-        "conflictingFiles",
-        "conflictState"
-      ],
-      "additionalProperties": false
+      ]
     },
     outputSchema: {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "cq:prompt-catalog/implement-conflict-resolver/output",
-      "title": "implement-conflict-resolver result",
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "pattern": "^T[0-9]+$"
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "pass",
-            "fail"
-          ]
-        },
-        "resultCommit": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-        },
-        "filesResolved": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "checkSummary": {
-          "type": "string"
-        },
-        "focusedChecks": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "properties": {
-              "command": {
-                "type": "string",
-                "minLength": 1
-              },
-              "exitCode": {
-                "type": "integer"
-              },
-              "passCount": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "failCount": {
-                "type": "integer",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "command",
-              "exitCode",
-              "passCount",
-              "failCount"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "summary": {
-          "type": "string"
-        },
-        "blockedReason": {
-          "type": "string"
-        },
-        "actualWorktreePath": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Absolute path of the worktree the resolver actually operated in (D143)."
-        },
-        "branch": {
-          "type": "string",
-          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
-        },
-        "conflictReceipts": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/conflictReceipt"
-          },
-          "description": "Complete durable git_resolve_continue receipt chain when the dispatch carries the resolver capability."
-        }
-      },
-      "required": [
-        "taskId",
-        "status",
-        "resultCommit",
-        "filesResolved",
-        "checkSummary",
-        "focusedChecks",
-        "summary",
-        "actualWorktreePath",
-        "branch",
-        "conflictReceipts"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "pass"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resultCommit": {
-                "type": "string",
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-              },
-              "conflictReceipts": {
-                "type": "array",
-                "minItems": 1
-              }
-            },
-            "not": {
-              "required": [
-                "blockedReason"
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "fail"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resultCommit": {
-                "type": "null"
-              }
-            },
-            "required": [
-              "blockedReason"
-            ]
-          }
-        }
-      ],
       "$defs": {
         "rebaseState": {
           "type": "object",
@@ -3661,8 +7757,1480 @@ export const AGENT_ROLES: AgentRole[] = [
             "continuedAt"
           ],
           "additionalProperties": false
+        },
+        "cohortConflictReceipt": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cq-git-conflict-continuation-receipt"
+            },
+            "version": {
+              "const": 2
+            },
+            "attestationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "operationId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "requestDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "oldHead": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "newHead": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "objectOids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              }
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "outcome": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "terminal"
+                    },
+                    "tip": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "tip"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "conflict"
+                    },
+                    "tip": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                    },
+                    "state": {
+                      "$ref": "#/$defs/rebaseState"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "tip",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "continuedAt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cohort": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "pre-seal"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "sealed"
+                    },
+                    "evidenceSubject": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-evidence-subject"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "sealDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "evidenceSubjectDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "sealDigest",
+                        "evidenceSubjectDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state",
+                    "evidenceSubject"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "version",
+            "attestationId",
+            "generation",
+            "operationId",
+            "requestDigest",
+            "oldHead",
+            "newHead",
+            "objectOids",
+            "paths",
+            "outcome",
+            "continuedAt",
+            "cohort"
+          ],
+          "additionalProperties": false
         }
-      }
+      },
+      "oneOf": [
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-conflict-resolver result",
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "pattern": "^T[0-9]+$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "resultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "filesResolved": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "checkSummary": {
+              "type": "string"
+            },
+            "focusedChecks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "passCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "command",
+                  "exitCode",
+                  "passCount",
+                  "failCount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "summary": {
+              "type": "string"
+            },
+            "blockedReason": {
+              "type": "string"
+            },
+            "actualWorktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Absolute path of the worktree the resolver actually operated in (D143)."
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
+            },
+            "conflictReceipts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/conflictReceipt"
+              },
+              "description": "Complete durable git_resolve_continue receipt chain when the dispatch carries the resolver capability."
+            }
+          },
+          "required": [
+            "taskId",
+            "status",
+            "resultCommit",
+            "filesResolved",
+            "checkSummary",
+            "focusedChecks",
+            "summary",
+            "actualWorktreePath",
+            "branch",
+            "conflictReceipts"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "conflictReceipts": {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                },
+                "not": {
+                  "required": [
+                    "blockedReason"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "fail"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "blockedReason"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "implement-conflict-resolver result",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            },
+            "resultCommit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "filesResolved": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "checkSummary": {
+              "type": "string"
+            },
+            "focusedChecks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "exitCode": {
+                    "type": "integer"
+                  },
+                  "passCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "failCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "command",
+                  "exitCode",
+                  "passCount",
+                  "failCount"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "summary": {
+              "type": "string"
+            },
+            "blockedReason": {
+              "type": "string"
+            },
+            "actualWorktreePath": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Absolute path of the worktree the resolver actually operated in (D143)."
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^implement/cohort-[0-9a-f]{64}$"
+            },
+            "conflictReceipts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/cohortConflictReceipt"
+              }
+            },
+            "cohort": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "pre-seal"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "cq-cohort-effect-envelope"
+                    },
+                    "version": {
+                      "const": 1
+                    },
+                    "definition": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-definition-identity"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "cohortId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "definitionGeneration": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "phase": {
+                          "const": "implementation"
+                        },
+                        "members": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "memberRef": {
+                                "type": "string",
+                                "pattern": "^tasks:T[0-9]+$"
+                              },
+                              "memberRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              },
+                              "authorityRef": {
+                                "type": "string",
+                                "pattern": "^goals:G[0-9]+$"
+                              },
+                              "authorityRevision": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "memberRef",
+                              "memberRevision",
+                              "authorityRef",
+                              "authorityRevision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectedAtomDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "acceptanceMatrixDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "repository": {
+                          "type": "object",
+                          "properties": {
+                            "repositoryId": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "headCommit": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            },
+                            "treeOid": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{40}$"
+                            }
+                          },
+                          "required": [
+                            "repositoryId",
+                            "headCommit",
+                            "treeOid"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "environment": {
+                          "type": "object",
+                          "properties": {
+                            "environmentDigest": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "environmentDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "splitConditions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "semanticDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "cohortId",
+                        "definitionGeneration",
+                        "phase",
+                        "members",
+                        "selectedAtomDigest",
+                        "acceptanceMatrixDigest",
+                        "repository",
+                        "environment",
+                        "splitConditions",
+                        "semanticDigest",
+                        "definitionDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "intent": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-candidate-intent"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "operationId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "intentDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "operationId",
+                        "intentDigest"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "memberAuthorities": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "taskRef": {
+                            "type": "string",
+                            "pattern": "^tasks:T[0-9]+$"
+                          },
+                          "taskRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "goalRef": {
+                            "type": "string",
+                            "pattern": "^goals:G[0-9]+$"
+                          },
+                          "finalizedManifestDigest": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "authorityRevision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "taskRef",
+                          "taskRevision",
+                          "goalRef",
+                          "finalizedManifestDigest",
+                          "authorityRevision"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "memberSetDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "semanticSubject": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "executionEpoch": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "envelopeDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "state": {
+                      "const": "sealed"
+                    },
+                    "evidenceSubject": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "cq-cohort-evidence-subject"
+                        },
+                        "version": {
+                          "const": 1
+                        },
+                        "definitionDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "sealDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "evidenceSubjectDigest": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "definitionDigest",
+                        "sealDigest",
+                        "evidenceSubjectDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "version",
+                    "definition",
+                    "intent",
+                    "memberAuthorities",
+                    "memberSetDigest",
+                    "semanticSubject",
+                    "executionEpoch",
+                    "envelopeDigest",
+                    "state",
+                    "evidenceSubject"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "memberObservations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberRef": {
+                    "type": "string",
+                    "pattern": "^tasks:T[0-9]+$"
+                  },
+                  "observation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "memberRef",
+                  "observation"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "status",
+            "resultCommit",
+            "filesResolved",
+            "checkSummary",
+            "focusedChecks",
+            "summary",
+            "actualWorktreePath",
+            "branch",
+            "conflictReceipts",
+            "cohort",
+            "memberObservations"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "conflictReceipts": {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                },
+                "not": {
+                  "required": [
+                    "blockedReason"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "fail"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "resultCommit": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "blockedReason"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     },
   },
   {
@@ -4285,7 +9853,7 @@ export const AGENT_ROLES: AgentRole[] = [
   "cycle order: investigate -> seed -> plan -> research -> implement -> investigate re-check",
   "no fixed iteration cap; stop only after a full no-progress cycle"
 ],
-    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n{{cq:fragment:inline-command-recursion}}\n{{cq:fragment:advance-run-guard}}\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"no arguments; current ledger state\"\noutputs:\n  - \"root-caused defects seeded into fix goals\"\n  - \"all actionable investigate, plan, research, and implement work advanced to quiescence\"\n  - \"one run-level handoff and a drained/blocked/mixed report\"\nioSchema:\n  - \"authoritative readiness comes from ledger::derive_predicates\"\n  - \"cycle order: investigate -> seed -> plan -> research -> implement -> investigate re-check\"\n  - \"no fixed iteration cap; stop only after a full no-progress cycle\"\n```\n\nYou are the whole-ledger sequencer. Run the four flow commands INLINE in this\nsession; do not dispatch their agents yourself or duplicate their internal\nlogic. Subcommands suppress standalone handoffs while chained here. Ledger state,\nnot prose output, determines the next action.\n\n## Authoritative state\n\nAt run start and after every stage that may mutate the ledger, call:\n\n```\nledger::derive_predicates()\n```\n\nIt returns:\n\n```json\n{\n  \"pInvestigate\": { \"value\": true, \"items\": [\"<defect-id>\"] },\n  \"pSeed\": { \"value\": true, \"items\": [\"<defect-id>\"] },\n  \"pPlan\": { \"value\": true, \"items\": [\"<goal-id>\"] },\n  \"pResearch\": { \"value\": true, \"items\": [\"<research-id>\"] },\n  \"pImplement\": { \"value\": true, \"items\": [\"<task-id>\"] },\n  \"pOperatorAction\": { \"value\": true, \"items\": [\"<task-id>\"] },\n  \"openQuestionGate\": { \"value\": false, \"items\": [] },\n  \"belowFloor\": { \"value\": false, \"items\": [] },\n  \"planBusy\": { \"value\": false, \"items\": [] },\n  \"goalDrift\": { \"value\": false, \"items\": [] },\n  \"upstreamBlocked\": { \"value\": false, \"items\": [] }\n}\n```\n\nTrust these derived values. `upstreamBlocked` is report-only and never stops\nthe cycle; record third-party package faults on the `upstream` ledger and run\n`CQ::upstream` for filing/recheck. Use `snapshot()` or focused item reads only for\nnarrative needed by the selected action. Never reimplement readiness by scanning\nentire ledgers or parsing a child command's report.\n\n## Cycle\n\nRepeat the following order. Re-read predicates after each numbered stage.\n\n1. **Investigate.** For every id currently returned by `pInvestigate.items`,\n   run `CQ::investigate/advance <defect-id>` INLINE. Continue past one parked\n   defect; another defect may remain actionable.\n\n2. **Seed fixes.** For `pSeed.items`, fetch the full root-caused defects and\n   separate guarded bootstrap-repair blockers from ordinary unowned defects.\n\n   A bootstrap-repair blocker is already owned by a `planned`/`building` goal,\n   blocks that goal's sole active finalized task, and has no live canonical\n   `fix-goal` correction lineage. For each such defect, call `create_item` with\n   `ledger_id: \"goals\"`, `owner_ref: \"defects:<D>\"`,\n   `creation_kind: \"fix-goal\"`, no explicit milestone/id, status `planning`,\n   and correction-specific title, description, and source refs. The guarded\n   bundle returns the same correction goal on exact replay and concurrent\n   claims. Never call ordinary plan follow-up on the blocked goal and never\n   replace or mutate its task, worktree, finalized manifest, dispatch evidence,\n   receipts, or completion journal. If the returned correction lineage is\n   already `done`, resolve the defect; if it is `abandoned`, mark the defect\n   `wontfix`. Until then, its normal plan/implement predicates own progress.\n\n   Process remaining ordinary seed candidates in deterministic chunks of at\n   most five. For each chunk:\n\n   - create one coordination milestone;\n   - create one `goals` item in `planning`, with a title/description covering\n     every defect, `sourceRefs` containing each `defects:<id>`, and enough\n     root-cause/fix context for planning;\n   - append `goals:<new-goal>` to each defect's `ledgerRefs`, preserving existing\n     refs.\n\n   Except for the guarded bootstrap-repair case above, a root-caused defect\n   already owned by a goal must not seed another. Defects below the configured\n   severity floor remain visible through `belowFloor` but do not seed\n   automatically.\n\n3. **Plan.** If `pPlan.value`, run `CQ::plan/advance` INLINE once; that command\n   advances every unlocked planning goal and owns auto-investigation of defects\n   filed during plan review.\n\n4. **Research.** For every id currently returned by `pResearch.items`, run\n   `CQ::research/advance <research-id>` INLINE.\n\n5. **Implement.** If `pImplement.value` or `pOperatorAction.value`, run\n   `CQ::implement/advance` INLINE once. It owns worker dispatch/review/merge for\n   ordinary tasks and the parent-only operator-action lifecycle for\n   `pOperatorAction.items`; an operator action never dispatches a worker.\n\n6. **Re-check investigation.** Re-read predicates and run newly actionable\n   defects before deciding whether the cycle made progress. Planning,\n   research, and implementation can expose new defects.\n\nAfter any ledger mutation, begin another cycle. Do not impose an iteration,\ntime, or token cap.\n\n## Legitimate stops\n\nA full cycle may stop only when it made no ledger progress and one of these\nconditions holds:\n\n- all six actionable predicates are false (`drained`);\n- every remaining actionable branch waits on open requirements questions\n  (`answers-required`);\n- progress requires an operation CQ cannot perform, such as missing credentials,\n  unavailable infrastructure, deployment, or an external manual action\n  (`user-action-required`);\n- both question-gated and external-action-gated branches remain (`mixed`);\n- predicates remain actionable but a complete cycle produces no legal mutation\n  and no legitimate user gate (`illness-detected`).\n\nDo not ask for confirmation between stages. Fix-versus-wontfix, whether a\nconfirmed defect should be fixed, cost, blast radius, public API impact, and\nscope size are not requirements questions. Running this command authorizes\ncontinued in-scope repair. Ask only when the answer changes required behavior or\nprovides otherwise-unavailable external information or authority.\n\n`belowFloor`, `planBusy`, research parking, and `goalDrift` are diagnostic\ncompanions, not reasons by themselves to claim the run drained. Report them when\nthey explain inactive work.\n\n## End-of-run maintenance\n\nAfter quiescence:\n\n1. For each active non-goal milestone whose referenced items are all terminal,\n   mark it `done` and archive it. Never auto-close goals.\n2. Inspect implementation worktrees. Remove only a task worktree when\n   `decideWorktreeSweep` returns `remove`: the tip is an ancestor of the\n   integration base, `git cherry <base> <tip>` reports every commit as\n   patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the\n   associated task is `done`/`abandoned`. Preserve any worktree carrying novel\n   commits (`git cherry` `+` lines), report it, then prune stale worktree\n   metadata. Never infer safety from a branch name alone.\n3. Make no git commit or push for ledger mutations; the configured ledger\n   backend owns persistence.\n\n## Handoff and report\n\nWrite exactly one `handoffs` item for the whole run:\n\n- `status`: `drained`, `answers-required`, `user-action-required`, `mixed`, or\n  `illness-detected`;\n- `flow`: `advance`;\n- `summary`: stages run, durable ids/statuses changed, and final predicate state;\n- `blockingQuestions`: open question ids when applicable;\n- `handoffReasons`: external actions or illness evidence when applicable;\n- `ledgerRefs`: the affected defects, goals, researches, and tasks.\n\nThen report:\n\n- the terminal category;\n- changes grouped by investigate, seed, plan, research, and implement;\n- required user answers/actions, if any;\n- below-floor, parked, drifted, or preserved-worktree diagnostics;\n- the handoff id.\n\nBefore returning, perform the surface-specific run-guard cleanup stated above.",
+    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n{{cq:fragment:inline-command-recursion}}\n{{cq:fragment:advance-run-guard}}\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"no arguments; current ledger state\"\noutputs:\n  - \"root-caused defects seeded into fix goals\"\n  - \"all actionable investigate, plan, research, and implement work advanced to quiescence\"\n  - \"one run-level handoff and a drained/blocked/mixed report\"\nioSchema:\n  - \"authoritative readiness comes from ledger::derive_predicates\"\n  - \"cycle order: investigate -> seed -> plan -> research -> implement -> investigate re-check\"\n  - \"no fixed iteration cap; stop only after a full no-progress cycle\"\n```\n\nYou are the whole-ledger sequencer. Run the four flow commands INLINE in this\nsession; do not dispatch their agents yourself or duplicate their internal\nlogic. Subcommands suppress standalone handoffs while chained here. Ledger state,\nnot prose output, determines the next action.\n\n## Authoritative state\n\nAt run start and after every stage that may mutate the ledger, call:\n\n```\nledger::derive_predicates()\n```\n\nIt returns:\n\n```json\n{\n  \"pInvestigate\": { \"value\": true, \"items\": [\"<defect-id>\"] },\n  \"pSeed\": { \"value\": true, \"items\": [\"<defect-id>\"] },\n  \"pPlan\": { \"value\": true, \"items\": [\"<goal-id>\"] },\n  \"pResearch\": { \"value\": true, \"items\": [\"<research-id>\"] },\n  \"pImplement\": { \"value\": true, \"items\": [\"<task-id>\"] },\n  \"pOperatorAction\": { \"value\": true, \"items\": [\"<task-id>\"] },\n  \"openQuestionGate\": { \"value\": false, \"items\": [] },\n  \"belowFloor\": { \"value\": false, \"items\": [] },\n  \"planBusy\": { \"value\": false, \"items\": [] },\n  \"goalDrift\": { \"value\": false, \"items\": [] },\n  \"upstreamBlocked\": { \"value\": false, \"items\": [] }\n}\n```\n\nTrust these derived values. `upstreamBlocked` is report-only and never stops\nthe cycle; record third-party package faults on the `upstream` ledger and run\n`CQ::upstream` for filing/recheck. Use `snapshot()` or focused item reads only for\nnarrative needed by the selected action. Never reimplement readiness by scanning\nentire ledgers or parsing a child command's report.\n\n## Always-on cohort admission\n\nOrdinary investigation and implementation use **mandatory safe fusion**. There\nis no fusion setting. Before selecting work, read `ledger::get_cohort_status()`\nand its authoritative `readyBoundaries`; use a bounded ready observation of at\nmost 256 members from one admitted phase/authority boundary. Preserve explicit\ntotal and unexamined counts: an oversized boundary is not permission to silently\npartition correlated work into singletons. Do not scan historical ledgers to\nestimate readiness or include unrelated goals merely because they share a file.\n\nEach selected set must be phase-homogeneous and share one complete common atom:\ncausal/repository witness, focused acceptance provenance, selected regression,\ncanonical gate, reviewer class, deployment class, finalization class, and split\nconditions. Pairwise compatibility is not transitive; correlated labels alone\ndo not prove a common atom. Novel work is eligible on the same evidence basis.\nThe child flow calls `ledger::cohort_advance` with its explicit frozen proposal;\nthe server re-derives admission from the current primary workset and Git and\nrecords either a fused definition or an explicit singleton with its reason.\nMissing evidence is not permission to invent compatibility or bypass admission.\n\nRetain definitions, pending attempts, candidate seals, and evidence subjects\nacross rounds. Resume only through current execution-epoch authority; retained\nmetadata and earlier capabilities do not authorize effects. Reuse exact green\nevidence for the unchanged sealed candidate, never by patch similarity. Status\nand `cq ledger cohort status --json` expose retained metadata and actual counters;\nremote metadata visibility does not create a local executor.\n\n## Cycle\n\nRepeat the following order. Re-read predicates after each numbered stage.\n\n1. **Investigate.** For each bounded ready investigation boundary, run\n   `CQ::investigate/advance <defect-id ...>` INLINE with its ordered candidate\n   members. The child owns phase-homogeneous cohort admission and per-member\n   adjudication. Continue past a parked cohort; independent admitted work may\n   remain actionable. Never split the input into eager per-defect dispatches\n   before the common-atom decision.\n\n2. **Seed fixes.** For `pSeed.items`, fetch the full root-caused defects and\n   separate guarded bootstrap-repair blockers from ordinary unowned defects.\n\n   A bootstrap-repair blocker is already owned by a `planned`/`building` goal,\n   blocks that goal's sole active finalized task, and has no live canonical\n   `fix-goal` correction lineage. For each such defect, call `create_item` with\n   `ledger_id: \"goals\"`, `owner_ref: \"defects:<D>\"`,\n   `creation_kind: \"fix-goal\"`, no explicit milestone/id, status `planning`,\n   and correction-specific title, description, and source refs. The guarded\n   bundle returns the same correction goal on exact replay and concurrent\n   claims. Never call ordinary plan follow-up on the blocked goal and never\n   replace or mutate its task, worktree, finalized manifest, dispatch evidence,\n   receipts, or completion journal. If the returned correction lineage is\n   already `done`, resolve the defect; if it is `abandoned`, mark the defect\n   `wontfix`. Until then, its normal plan/implement predicates own progress.\n\n   Process remaining ordinary seed candidates in deterministic chunks of at\n   most five. For each chunk:\n\n   - create one coordination milestone;\n   - create one `goals` item in `planning`, with a title/description covering\n     every defect, `sourceRefs` containing each `defects:<id>`, and enough\n     root-cause/fix context for planning;\n   - append `goals:<new-goal>` to each defect's `ledgerRefs`, preserving existing\n     refs.\n\n   Except for the guarded bootstrap-repair case above, a root-caused defect\n   already owned by a goal must not seed another. Defects below the configured\n   severity floor remain visible through `belowFloor` but do not seed\n   automatically.\n\n3. **Plan.** If `pPlan.value`, run `CQ::plan/advance` INLINE once; that command\n   advances every unlocked planning goal and owns auto-investigation of defects\n   filed during plan review.\n\n4. **Research.** For every id currently returned by `pResearch.items`, run\n   `CQ::research/advance <research-id>` INLINE.\n\n5. **Implement.** If `pImplement.value` or `pOperatorAction.value`, run\n   `CQ::implement/advance` INLINE once. It owns worker dispatch/review/merge for\n   admitted implementation cohorts and the parent-only operator-action lifecycle for\n   `pOperatorAction.items`; an operator action never dispatches a worker.\n\n6. **Re-check investigation.** Re-read predicates and run newly actionable\n   defects before deciding whether the cycle made progress. Planning,\n   research, and implementation can expose new defects.\n\nAfter any ledger mutation, begin another cycle. Do not impose an iteration,\ntime, or token cap.\n\n## Legitimate stops\n\nA full cycle may stop only when it made no ledger progress and one of these\nconditions holds:\n\n- all six actionable predicates are false (`drained`);\n- every remaining actionable branch waits on open requirements questions\n  (`answers-required`);\n- progress requires an operation CQ cannot perform, such as missing credentials,\n  unavailable infrastructure, deployment, or an external manual action\n  (`user-action-required`);\n- both question-gated and external-action-gated branches remain (`mixed`);\n- predicates remain actionable but a complete cycle produces no legal mutation\n  and no legitimate user gate (`illness-detected`).\n\nDo not ask for confirmation between stages. Fix-versus-wontfix, whether a\nconfirmed defect should be fixed, cost, blast radius, public API impact, and\nscope size are not requirements questions. Running this command authorizes\ncontinued in-scope repair. Ask only when the answer changes required behavior or\nprovides otherwise-unavailable external information or authority.\n\n`belowFloor`, `planBusy`, research parking, and `goalDrift` are diagnostic\ncompanions, not reasons by themselves to claim the run drained. Report them when\nthey explain inactive work.\n\n## End-of-run maintenance\n\nAfter quiescence:\n\n1. For each touched, admitted non-goal milestone, require its complete inventory\n   to be terminal and eligible before an exact archive. Reuse the cohort's\n   atomic sweep result; never follow it with a broad historical/completed-item\n   sweep. Preserve unrelated active items and external owners. Never auto-close goals.\n2. Inspect implementation worktrees. Remove only a task worktree when\n   `decideWorktreeSweep` returns `remove`: the tip is an ancestor of the\n   integration base, `git cherry <base> <tip>` reports every commit as\n   patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the\n   associated task is `done`/`abandoned`. Preserve any worktree carrying novel\n   commits (`git cherry` `+` lines), report it, then prune stale worktree\n   metadata. Never infer safety from a branch name alone. A cohort worktree\n   requires its whole member set's released completion and an installed guarded\n   cohort-release interface; never substitute a first-task release or raw Git.\n3. Make no git commit or push for ledger mutations; the configured ledger\n   backend owns persistence.\n\n## Handoff and report\n\nWrite exactly one `handoffs` item for the whole run:\n\n- `status`: `drained`, `answers-required`, `user-action-required`, `mixed`, or\n  `illness-detected`;\n- `flow`: `advance`;\n- `summary`: stages run, durable ids/statuses changed, and final predicate state;\n- `blockingQuestions`: open question ids when applicable;\n- `handoffReasons`: external actions or illness evidence when applicable;\n- `ledgerRefs`: the affected defects, goals, researches, and tasks.\n\nThen report:\n\n- the terminal category;\n- changes grouped by investigate, seed, plan, research, and implement;\n- required user answers/actions, if any;\n- below-floor, parked, drifted, or preserved-worktree diagnostics;\n- the handoff id.\n\nInclude durable cohort definitions/member refs, pending versus sealed candidates,\ncurrent recovery state, exact completion/sweep results, and measured counter\ndeltas from `get_cohort_status`. Distinguish executed, reused, rejected, and\nunexamined work; never report task count as validation count or derive invented\nsavings. Bootstrap-repair isolation, external-upstream handling, and user-only\ndeployment/goal closure authority are unchanged.\n\nBefore returning, perform the surface-specific run-guard cleanup stated above.",
     privilege: "RO",
     exposedTools: "none declared",
   },
@@ -4378,9 +9946,9 @@ export const AGENT_ROLES: AgentRole[] = [
     name: "/cq:investigate:advance",
     kind: "orchestrator",
     source: "commands/cq/investigate/advance.md",
-    description: "Advance one defect investigation round: extend its hypothesis tree, gather and validate evidence, adjudicate nodes, and hand a confirmed cause to planning.",
+    description: "Advance an admitted investigation cohort: validate shared evidence and adjudicate each member's hypothesis tree separately.",
     inputs: [
-  "one defect id and its linked hypothesis/question/research state"
+  "bounded ordered ready defect candidates and their linked hypothesis/question/research state"
 ],
     outputs: [
   "validated hypothesis evidence and status changes",
@@ -4392,7 +9960,7 @@ export const AGENT_ROLES: AgentRole[] = [
   "parallel explorers only for independent roots; serial drilling within a branch",
   "explorer/prober output: {hypothesisId,evidence[],lean,notes?,probeRequest?}"
 ],
-    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n{{cq:fragment:subagent-dispatch}}\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n```yaml\ninputs:\n  - \"one defect id and its linked hypothesis/question/research state\"\noutputs:\n  - \"validated hypothesis evidence and status changes\"\n  - \"optional execution probes or research escalation\"\n  - \"confirmed root cause, suggested fix, and defect-seeded planning goal\"\nioSchema:\n  - \"one resumable evidence/adjudication round per invocation\"\n  - \"parallel explorers only for independent roots; serial drilling within a branch\"\n  - \"explorer/prober output: {hypothesisId,evidence[],lean,notes?,probeRequest?}\"\n```\n\nYou own the investigation loop for one defect. Explorers and probers gather\nevidence; they never mutate the ledger or adjudicate. Re-derive state from the\nledger on every invocation. A round must dispatch a child or make a durable\nmutation; otherwise stop with a handoff instead of rereading indefinitely.\n\n## State and invariants\n\n1. Fetch the defect with `projection: \"full\"`. Stop on `resolved` or `wontfix`.\n2. Fetch linked hypotheses, questions, and researches with full projection.\n   Reconstruct hypothesis ancestry from `parentHypothesis`; every node must\n   retain `ledgerRefs: [\"defects:<defect-id>\"]`.\n3. An unanswered linked question parks the affected branch. Fold answered text\n   into the next framing.\n4. A hypothesis parked on `researches:<research-id>` remains parked while that\n   research is `open` or `wip`. On `concluded`, use its findings/conclusion as\n   evidence; on `inconclusive` or `abandoned`, resume from the remaining\n   evidence.\n5. Before forming or dispatching hypotheses, move an `open` defect to `wip`.\n   Never attempt the invalid direct transition from `open` to `root-caused`.\n6. Resolve the frontier model once with\n   `ledger::get_config(\"tiers\")`; use the configured frontier model\n   verbatim. If unavailable, inherit the current runtime model. Do not invent a\n   model identifier.\n\n## Round\n\n### 1. Form hypotheses\n\nIf the tree has no actionable node, create a small set of mutually distinct,\nfalsifiable root hypotheses. Otherwise select unresolved leaves whose parents\nhave enough validated evidence to justify drilling. Do not duplicate an\nexisting statement or create children merely to keep the loop active.\n\nEach new hypothesis includes:\n\n- a precise statement;\n- optional `parentHypothesis`;\n- `ledgerRefs: [\"defects:<defect-id>\"]`;\n- `status: \"open\"`.\n\n### 2. Gather evidence\n\nDispatch one `investigate-explorer` per selected node. Independent roots may run\nin parallel; descendants of one branch run serially because later framing\ndepends on earlier evidence.\n\nThe input must contain the canonical `defectId`, hypothesis id and statement,\ndefect/branch context, known sibling or parent findings, and focused leads. The child returns numbered\nevidence with a precise citation, a three-to-five-line verbatim excerpt, a\nrelevance statement, and a non-binding lean.\n\nIf an explorer returns `probeRequest`, dispatch `investigate-prober` with the\nsame context plus `{what, why}` in an isolated throwaway worktree. The prober is\nlocal-only: no network, no persistent main-checkout edits. Harvest its evidence,\nthen remove the worktree. Never execute a probe in the main checkout.\n\nAfter every child returns, persist its summary through `cq log put` and its raw\ntranscript when available. Before piping a transcript, require `test -s\n<transcript>` so empty or whitespace-only captures are skipped rather than\nwritten. Attach the paths to the hypothesis. Never write log files directly.\n\n### 3. Validate before writing\n\nReopen every cited source or rerun the cited command:\n\n- citation and excerpt match exactly;\n- the excerpt contains enough surrounding lines to establish context;\n- command evidence records the exact command and observed output;\n- relevance accurately says whether the item supports or contradicts;\n- no cited evidence was fabricated, stale, or outside the requested scope.\n\nStore accepted evidence with `[correct]`; retain rejected evidence only when\nuseful, marked `[incorrect]` with the validation reason. Never adjudicate from an\nunvalidated item.\n\n### 4. Adjudicate\n\nFor each updated node:\n\n- `confirmed`: validated evidence establishes the statement and withstands\n  relevant contradiction;\n- `wrong`: validated evidence refutes it;\n- `uncertain`: evidence remains mixed or insufficient;\n- leave `open` only when the child could not run or return usable evidence.\n\nWhen an unresolved fact can be answered empirically but not by this local\ninvestigation, create a `researches` item instead of a user question. Link it to\nthe defect and hypothesis, append `researches:<research-id>` to the hypothesis,\nset the node `uncertain`, and park that branch.\n\nCreate a user question only for a requirements/preference choice or information\nthe user alone can supply, such as unavailable credentials or an irreproducible\nexternal event. Never ask whether to fix a confirmed fault.\n\n### 5. Confirmed cause\n\nWhen the validated tree establishes a root cause:\n\n1. Update the defect's `rootCause` with the cited causal chain and set\n   `suggestedFix` to the smallest general correction.\n2. Set defect status to `root-caused`.\n3. Reuse a nonterminal goal already linked through `defects:<defect-id>`;\n   otherwise create a coordination milestone and a defect-seeded goal in\n   `planning`, carrying the cause, correction boundary, regression expectations,\n   and `sourceRefs: [\"defects:<defect-id>\"]`.\n4. Ensure the defect and goal link in both directions.\n5. Stop. Do not run the planner/reviewer loop here.\n\nWhen this command runs standalone, create one open question pointing the user to\n`CQ::plan/advance <goal-id>`. When chained from plan flow, omit that question;\nthe parent resumes planning automatically.\n\nIf the evidence rules out every viable branch without establishing a cause, set\nthe defect `inconclusive` with a precise account of what remains unknown.\n\n## Stop conditions\n\nStop this invocation when any condition holds:\n\n- the defect reached `root-caused`, `inconclusive`, `resolved`, or `wontfix`;\n- every unresolved branch waits on an open question or active research;\n- the round produced no new validated evidence and no justified child;\n- the same blocked state recurs without a new lead;\n- a required external capability remains unavailable.\n\nThere is no fixed depth, child-count, or time cap. The bound is progress.\n\n## Handoff and report\n\nWhen standalone, write one `handoffs` item with `flow: \"investigate\"`, links to\nthe defect, hypotheses, research, goal, and questions, and one of:\n\n- `drained`: cause confirmed or investigation conclusively exhausted;\n- `answers-required`: open requirements question;\n- `user-action-required`: specific unavailable external action;\n- `illness-detected`: actionable state remained but no legal progress occurred.\n\nSuppress this handoff when chained by another CQ command.\n\nReport the defect status, hypotheses created/adjudicated, validated evidence,\nprobe/research activity, the confirmed cause or remaining uncertainty, the\ndefect-seeded goal, and the exact next action.",
+    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n{{cq:fragment:subagent-dispatch}}\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n```yaml\ninputs:\n  - \"bounded ordered ready defect candidates and their linked hypothesis/question/research state\"\noutputs:\n  - \"validated hypothesis evidence and status changes\"\n  - \"optional execution probes or research escalation\"\n  - \"confirmed root cause, suggested fix, and defect-seeded planning goal\"\nioSchema:\n  - \"one resumable evidence/adjudication round per invocation\"\n  - \"parallel explorers only for independent roots; serial drilling within a branch\"\n  - \"explorer/prober output: {hypothesisId,evidence[],lean,notes?,probeRequest?}\"\n```\n\nYou own the investigation loop for an admitted cohort. Explorers and probers gather\nevidence; they never mutate the ledger or adjudicate. Re-derive state from the\nledger on every invocation. A round must dispatch a child or make a durable\nmutation; otherwise stop with a handoff instead of rereading indefinitely.\n\n## Mandatory cohort admission\n\nUse mandatory safe fusion before per-node dispatch. Read authoritative\n`derive_predicates()` and `get_cohort_status().readyBoundaries`, then make a\nbounded observation of at most 256 ordered ready defects within one admitted\ninvestigation boundary. Preserve total/unexamined counts for oversized boundaries;\nnever silently turn the remainder into singleton work. An explicit requested\ndefect remains in scope; unrelated work and other phases do not become admitted.\n\nCall `cohort_advance({operation:\"observe\",plan,operation_id})` with the selected\nmembers, their exact investigation hypothesis refs and revision-bound acceptance\nprovenance, and complete candidate atoms. The server must record a phase-homogeneous\ncommon atom or an explicit singleton with its reason. A shared label or pairwise\noverlap is insufficient; one complete witness/regression/gate/reviewer/deployment/\nfinalization atom must cover the whole set. Novel work uses the same rule.\nNo fusion setting or eager per-defect fallback exists.\n\nUse `cohort_investigation_advance({input:{operation:..., ...}})` for the following\nresumable parent operations; operation fields use the exact camelCase names below:\n\n- `prepare`: pass the same `admissionPlan`, observed `definitionDigest`,\n  `operationId`, and ordered `members` containing `defectRef`, `branchContext`,\n  and `leads`. The server derives canonical hypotheses, revisions, and role\n  contracts. Launch each returned `launches[].prepared` through the normal native\n  bridge with its exact investigation binding: pass\n  `investigationCohort: launch.nativeBinding` and\n  `effectTargetRef: \"cq-cohort-effect:v1:<planDigest>\"`, preserving the returned\n  role, handle, and capabilities. A prepared launch is not an executed role.\n  Never reconstruct dispatch capabilities or substitute a task.\n- `collect`: pass `planDigest` after native completion has been confirmed. The\n  server authenticates consumed role results, reopens citations, and returns\n  required prober preparations or per-member `adjudicationRequests`. Preparation,\n  result storage, and consumed native completion are distinct states.\n- `probe`: approve an explicit normalized `command` (`argv`, repository-relative\n  `cwd`, and `environment`) with exact `planDigest`, prober `preparedDigest`, and\n  `citation`. The server executes it under all-member admission. Never execute an\n  explorer's free-text `probeRequest` automatically. Retained `probeEvidence`\n  binds real execution identity, output digest, redacted diagnostics, and bounded\n  `completeOutput`; an unavailable complete range is not evidence.\n- `adjudicate`: pass `planDigest` and the selected members' exact returned\n  `evidenceDigest`, with explicit verdict, rationale, cause/correction-boundary\n  digests, and applicable common-atom digests. This is parent judgment over\n  authenticated evidence, not a worker verdict or implementation acceptance.\n  Preserve separate judgments for every member and honor a returned split.\n- `resume`: pass the unchanged `planDigest` only after an execution-epoch change.\n  The server reauthenticates retained evidence before renewing live authority;\n  the previous epoch's launch authority cannot be reused.\n\nUse only the installed cohort investigation operation and returned dispatch\nauthority when available; observation alone is not execution authority. A missing\ncohort executor is `executor-unavailable`, never permission to substitute raw\ntask-only dispatch or caller-authored evidence. Bind every local probe/effect to\nthe current execution epoch; retained evidence is metadata, not a reusable lease.\nOn unchanged restart, renew live authority explicitly and preserve only exactly\nmatching durable evidence. A changed definition, member/hypothesis revision, or\nprobe boundary invalidates affected evidence.\n\nShare gathering only while the complete common atom holds. Retain per-member\ncitations, findings, hypotheses, causal conclusions, and adjudications; no majority\nvote or first-defect anchor replaces them. A divergent cause/probe requirement\nrecords an explicit split and preserves parent/member lineage. Aggregate only\nauthenticated returned evidence, with no implementation acceptance, commit gate,\nreview, or completion receipt inferred from an investigation result.\n\nApply the following state, validation, and adjudication rules separately to every\nmember. Park only the affected branch when a question/research gate appears;\nre-observe or split before changing admitted membership. Never mutate the sealed\nmember set in place or broaden workset/user authority.\n\n## State and invariants\n\n1. Fetch the defect with `projection: \"full\"`. Stop on `resolved` or `wontfix`.\n2. Fetch linked hypotheses, questions, and researches with full projection.\n   Reconstruct hypothesis ancestry from `parentHypothesis`; every node must\n   retain `ledgerRefs: [\"defects:<defect-id>\"]`.\n3. An unanswered linked question parks the affected branch. Fold answered text\n   into the next framing.\n4. A hypothesis parked on `researches:<research-id>` remains parked while that\n   research is `open` or `wip`. On `concluded`, use its findings/conclusion as\n   evidence; on `inconclusive` or `abandoned`, resume from the remaining\n   evidence.\n5. Before forming or dispatching hypotheses, move an `open` defect to `wip`.\n   Never attempt the invalid direct transition from `open` to `root-caused`.\n6. Resolve the frontier model once with\n   `ledger::get_config(\"tiers\")`; use the configured frontier model\n   verbatim. If unavailable, inherit the current runtime model. Do not invent a\n   model identifier.\n\n## Round\n\n### 1. Form hypotheses\n\nIf the tree has no actionable node, create a small set of mutually distinct,\nfalsifiable root hypotheses. Otherwise select unresolved leaves whose parents\nhave enough validated evidence to justify drilling. Do not duplicate an\nexisting statement or create children merely to keep the loop active.\n\nEach new hypothesis includes:\n\n- a precise statement;\n- optional `parentHypothesis`;\n- `ledgerRefs: [\"defects:<defect-id>\"]`;\n- `status: \"open\"`.\n\n### 2. Gather evidence\n\nDispatch one `investigate-explorer` per selected node. Independent roots may run\nin parallel; descendants of one branch run serially because later framing\ndepends on earlier evidence.\n\nThe input must contain the canonical `defectId`, hypothesis id and statement,\ndefect/branch context, known sibling or parent findings, and focused leads. The child returns numbered\nevidence with a precise citation, a three-to-five-line verbatim excerpt, a\nrelevance statement, and a non-binding lean.\n\nIf an explorer returns `probeRequest`, dispatch `investigate-prober` with the\nsame context plus `{what, why}` in an isolated throwaway worktree. The prober is\nlocal-only: no network, no persistent main-checkout edits. Harvest its evidence,\nthen remove the worktree. Never execute a probe in the main checkout.\n\nAfter every child returns, persist its summary through `cq log put` and its raw\ntranscript when available. Before piping a transcript, require `test -s\n<transcript>` so empty or whitespace-only captures are skipped rather than\nwritten. Attach the paths to the hypothesis. Never write log files directly.\n\n### 3. Validate before writing\n\nReopen every cited source or rerun the cited command:\n\n- citation and excerpt match exactly;\n- the excerpt contains enough surrounding lines to establish context;\n- command evidence records the exact command and observed output;\n- relevance accurately says whether the item supports or contradicts;\n- no cited evidence was fabricated, stale, or outside the requested scope.\n\nStore accepted evidence with `[correct]`; retain rejected evidence only when\nuseful, marked `[incorrect]` with the validation reason. Never adjudicate from an\nunvalidated item.\n\n### 4. Adjudicate\n\nFor each updated node:\n\n- `confirmed`: validated evidence establishes the statement and withstands\n  relevant contradiction;\n- `wrong`: validated evidence refutes it;\n- `uncertain`: evidence remains mixed or insufficient;\n- leave `open` only when the child could not run or return usable evidence.\n\nWhen an unresolved fact can be answered empirically but not by this local\ninvestigation, create a `researches` item instead of a user question. Link it to\nthe defect and hypothesis, append `researches:<research-id>` to the hypothesis,\nset the node `uncertain`, and park that branch.\n\nCreate a user question only for a requirements/preference choice or information\nthe user alone can supply, such as unavailable credentials or an irreproducible\nexternal event. Never ask whether to fix a confirmed fault.\n\n### 5. Confirmed cause\n\nWhen the validated tree establishes a root cause:\n\n1. Update the defect's `rootCause` with the cited causal chain and set\n   `suggestedFix` to the smallest general correction.\n2. Set defect status to `root-caused`.\n3. Reuse a nonterminal goal already linked through `defects:<defect-id>`;\n   otherwise create a coordination milestone and a defect-seeded goal in\n   `planning`, carrying the cause, correction boundary, regression expectations,\n   and `sourceRefs: [\"defects:<defect-id>\"]`.\n4. Ensure the defect and goal link in both directions.\n5. Stop. Do not run the planner/reviewer loop here.\n\nWhen this command runs standalone, create one open question pointing the user to\n`CQ::plan/advance <goal-id>`. When chained from plan flow, omit that question;\nthe parent resumes planning automatically.\n\nIf the evidence rules out every viable branch without establishing a cause, set\nthe defect `inconclusive` with a precise account of what remains unknown.\n\n## Stop conditions\n\nStop this invocation when any condition holds:\n\n- the defect reached `root-caused`, `inconclusive`, `resolved`, or `wontfix`;\n- every unresolved branch waits on an open question or active research;\n- the round produced no new validated evidence and no justified child;\n- the same blocked state recurs without a new lead;\n- a required external capability remains unavailable.\n\nThere is no fixed depth, child-count, or time cap. The bound is progress.\n\n## Handoff and report\n\nWhen standalone, write one `handoffs` item with `flow: \"investigate\"`, links to\nthe defect, hypotheses, research, goal, and questions, and one of:\n\n- `drained`: cause confirmed or investigation conclusively exhausted;\n- `answers-required`: open requirements question;\n- `user-action-required`: specific unavailable external action;\n- `illness-detected`: actionable state remained but no legal progress occurred.\n\nSuppress this handoff when chained by another CQ command.\n\nReport the defect status, hypotheses created/adjudicated, validated evidence,\nprobe/research activity, the confirmed cause or remaining uncertainty, the\ndefect-seeded goal, and the exact next action.",
     privilege: "RO",
     exposedTools: "none declared",
   },
@@ -4463,7 +10031,7 @@ export const AGENT_ROLES: AgentRole[] = [
     name: "/cq:implement:advance",
     kind: "orchestrator",
     source: "commands/cq/implement/advance.md",
-    description: "Advance implementation: dispatch DAG-ready tasks in isolated worktrees, review and correct them, then merge verified commits in dependency order.",
+    description: "Advance implementation through always-on safe cohorts, exact-candidate acceptance, whole-candidate review, and atomic completion.",
     inputs: [
   "optional milestone ids; empty resumes eligible finalized-manifest work",
   "full task state, dependencies, linked questions, worktrees, and reviewer configuration"
@@ -4473,11 +10041,10 @@ export const AGENT_ROLES: AgentRole[] = [
   "standalone handoff"
 ],
     ioSchema: [
-  "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs?|supervisedGateEvidence?,summary,blockedReason?}",
-  "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}",
-  "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
+  "ordinary worker/reviewer/resolver: exact full cohort envelope plus ordered memberObservations; no taskId anchor",
+  "bootstrap and retained historical task journals keep their exact task-scoped contracts"
 ],
-    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"optional milestone ids; empty resumes eligible finalized-manifest work\"\n  - \"full task state, dependencies, linked questions, worktrees, and reviewer configuration\"\noutputs:\n  - \"task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival\"\n  - \"standalone handoff\"\nioSchema:\n  - \"worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs?|supervisedGateEvidence?,summary,blockedReason?}\"\n  - \"reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}\"\n  - \"resolver: {taskId,status,resultCommit?,summary,blockedReason?}\"\n```\n\nYou orchestrate implementation. Children never mutate the ledger or merge.\nRe-derive state on every invocation. A pass must dispatch a child, mutate the\nledger, or merge; stop after two consecutive read-only passes.\n\nCanonicalize and validate an explicit milestone batch before its first effect.\nWith configured roots, select only active graph members belonging to each\nmilestone's exact finalized manifest; without explicit ids, resume only\neligible finalized-manifest work. Empty roots retain unrestricted historical\nselection. Preserve the selected finalized manifest exactly through dispatch,\nreview, correction, rebase, merge, and terminal writes; re-read the workset at\nthe effect boundaries required by the shared contract.\n\n{{cq:fragment:subagent-dispatch}}\n{{cq:fragment:implement-dispatch-workflow}}\n\n## Shared rules\n\n- Resolve `tiers` and `reviewers` once per pass with\n  `ledger::get_config(\"tiers\")` and `ledger::get_config(\"reviewers\")`.\n  Workers use their task's `suggestedModel`; reviewers and conflict resolvers\n  use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is\n  absent, inherit the current model and report the missing configuration.\n- Run at most eight workers concurrently. Each task uses an isolated worktree\n  and branch `implement/<taskId>`.\n- **Managed worktrees.** ALL worktree lifecycle goes through\n  `ledger::worktree_manage` — never raw git worktree lifecycle commands\n  (add/remove/prune) on any active implement/advance surface. Before changing a\n  task to `wip` or launching a worker, call\n  `worktree_manage({ operation: \"prepare\", taskId, baseCommit: <full main tip> })`\n  (or resume-by-handle with the retained opaque handle). Accept only a prepare\n  result whose dependency-base evidence is verified. Pass the returned absolute\n  path as advisory `worktreePath` on the child input. Retain the opaque handle\n  across criticism rounds; on orchestrator restart, recover via prepare's\n  resume-required response for that taskId and resume the same tree. Never\n  discard worker partial/WIP state. Consume the worker's required\n  `actualWorktreePath` on output as the authoritative location; merge by\n  `resultCommit` SHA.\n- **Managed dispatch recovery.** After a manager-bound implement-worker is\n  terminally aborted `missing-result` or `parent-lost`, retain its exact worktree\n  handle and call `worktree_manage({ operation: \"resolve-dispatch-recovery\", handle })`.\n  Accept only the server-returned discriminated preparation authority. For\n  `preparation.kind === \"current\"`, retain the returned opaque authority and use\n  `prepare_dispatch` with `recoveryPreparation: <preparation.recoveryPreparation>`;\n  omit `recovery`, `reprepareOf`, `continuation`, and `guardedRebase`. For\n  `preparation.kind === \"legacy\"`, take `recoveryReference` from `preparation.recovery`;\n  persist that literal reference with the task's recovery metadata and `cq log put`\n  record, then use `recovery: <recoveryReference>` and without `reprepareOf`.\n  Never copy preparation authority into child input or transcripts. Re-read the\n  worktree `HEAD` immediately before prepare and require it to equal the returned\n  live tip. Preserve dirty partial work and the original terminal cause. An absent,\n  ambiguous, stale, foreign, or already-used authority fails closed; never fall back\n  from a rejected current seal to legacy recovery. The server resolves the exact\n  terminal generation and injects\n  only its verified durable Git receipt lineage. Never retry an advanced tip as\n  a fresh lineage-free dispatch, never reconstruct a prior dispatch handle or\n  recovery association from registry files, and never substitute raw\n  attestation, repository, worktree, branch, base, tip, terminal, or receipt\n  coordinates for the opaque reference.\n- **Deterministic gate failure.** `gate-rejected` is a completed deterministic gate\n  failure, not lost transport or parent interruption. Reconcile a lost store/finalize\n  acknowledgement against the durable terminal result and retain its bounded\n  command/exit/count/output diagnostics. Do not resolve recovery, reclassify it as\n  `parent-lost`, or redispatch the unchanged tip. Route the observed failure to\n  focused correction; another full gate requires a changed candidate. Genuine\n  interrupted or unclassified runner failure retains `parent-lost` recovery.\n  Other roles retain their existing first-loss retry and second-loss fail-closed rule.\n- **Consumed-worker continuation.** A consumed manager-bound implement-worker\n  whose worktree remains live is continued only through its single-use opaque\n  association. Before an ordinary criticism redispatch, or before parking a\n  consumed worker for later resumption, call\n  `worktree_manage({ operation: \"resolve-dispatch-continuation\", handle })` and\n  accept exactly one server-returned `continuationReference`. Persist that\n  literal reference with the task metadata and `cq log put` record. Re-read\n  `HEAD`, require it to equal the returned live tip, then call\n  `prepare_dispatch` with `continuation: <continuationReference>` and without\n  `reprepareOf`, `recovery`, or `guardedRebase`. The server resolves the consumed\n  generation, complete receipt closure, manager identity, repository binding,\n  and authorized caller lineage, and atomically claims the association while\n  allocating its successor. A missing, ambiguous, expired, stale, foreign, or\n  already-claimed reference blocks redispatch; never reconstruct terminal\n  handles, receipts, or capabilities. Guarded-rebase redispatch remains the\n  explicit `reprepareOf` + `guardedRebase` exception described below.\n- **Exact pre-registry adoption.** When, and only when, a task already has a\n  pre-registry tree at the canonical\n  `<repositoryRoot>/.claude/worktrees/implement-<taskId>` path on branch\n  `implement/<taskId>`, observe its full `HEAD` and use handle-free prepare:\n  `worktree_manage({ operation: \"prepare\", taskId, baseCommit, adoptWorktreePath: <exact canonical path>, expectedHead: <observed full HEAD> })`.\n  Supply `adoptWorktreePath` and `expectedHead` only as a pair and never with\n  a handle. Supply no activity fence, registry, reconciliation, Git, or install\n  authority; the production server constructs those internally. A mismatch or\n  refusal blocks the `wip` transition and launch. Retain the returned opaque\n  handle for all later resume, criticism, conflict, and release operations.\n- Persist every child summary and available raw transcript with `cq log put`,\n  attach their logical paths to the affected ledger item, and never expose\n  capabilities or secrets. Before piping a transcript, require `test -s\n  <transcript>` so empty or whitespace-only captures are skipped rather than\n  written.\n- The surface-specific fragment defines dispatch input delivery and result\n  materialization. Retain the parent-prepared handle. Interpret a native\n  result only after the exact retained handle yields `state: \"consumed\"`.\n  Never inspect a body-returning completion or trust a child-reported handle.\n- A missing or non-consumed native result is a LOST REPORT. Log it. For a\n  manager-bound implement-worker, use the parent-lost recovery procedure above;\n  other roles retry the same role once with a fresh prepared dispatch. A second\n  loss fails that task path closed, leaves the task non-terminal and its worktree\n  intact, and cannot become a worker failure, reviewer abstention, or resolver\n  verdict.\n\n## 0. Activate protected historical implementation evidence\n\nBefore the ordinary activation probe, call\n`get_implementation_evidence_service_status` with no caller-supplied identity.\nTreat its service-returned `goalRef`, manifest, digest, and mappings as the\nglobal implementation-evidence authority. Resolve that goal, including its\narchive when terminal, and read its exact finalized-manifest mappings for\n`t-evidence`, `t-historical-evidence`, and `t-activate-evidence` plus those\nthree tasks. This authority is independent of the current workset roots and\nselected implementation goals. Never require or synthesize these keys on a\nselected workset goal. When replacement evidence is not active, use this\n**manifest-derived bootstrap mode** and no other readiness path:\n\n- while the exact mapped `t-evidence` task is `planned`, derive the ready set\n  through the ordinary §1 rules, require that task to be ready, and process only\n  the exact mapped `t-evidence` task through §§3–7. No other task may prepare,\n  dispatch, review, or merge in that pass. Stop `user-action-required` after\n  recording its terminal completion so the user can deploy/restart its exact\n  result before the next bootstrap step;\n- after `t-evidence` is `done` and `t-historical-evidence` is `planned`, call\n  `get_implementation_evidence_service_status` through the deployed evidence\n  task's authenticated management service with no caller-supplied goal,\n  manifest, mapping, commit, or action identity. Require protocol version 2;\n  exact operation inventory; `startupBuildCommit` equal to the evidence task's\n  result commit; the observed live repository head; exact frozen digest and\n  mappings; a recognized bootstrap phase; and the exact\n  `finalizedReviewOutcomeContract`. Then call\n  `advance_implementation_evidence_bootstrap` with that returned identity and\n  `expected_phase: \"historical-dispatch\"`. Accept only `admitted|existing`, one\n  opaque `<bootstrapRef>`, and only the exact historical task. Prepare only that\n  task and pass\n  `implementationEvidenceBootstrap: <bootstrapRef>` to `prepare_dispatch`;\n  missing, stale, local-only, predecessor, replayed, or mismatched authority\n  stops before worktree preparation. After recording its terminal completion,\n  stop `user-action-required` for deployment/restart at that exact result;\n- after both Git tasks are `done`, while the unchanged evidence-task service is\n  still deployed, call `get_implementation_evidence_service_status` again and\n  require the same startup build and frozen identity. Call\n  `advance_implementation_evidence_bootstrap` with the returned identity and\n  `expected_phase: \"activation-handoff\"`, including when the v2 packaged\n  registry is unavailable. Accept only `operator-action-required|existing`,\n  the exact activation task, canonical action key\n  `activate-implementation-evidence`, expected historical-service commit, and\n  opaque action and handoff references. Materialize no worktree and dispatch no\n  third Git task. Stop `user-action-required` so the user can deploy/restart the\n  historical task's exact result.\n\nThis bootstrap mode never treats task prose, a local checkout, a generic write,\nor patch/tree equivalence as authority. A missing or ambiguous mapping, a\nnon-strict activation envelope, a surplus global bootstrap task, or any task-state\ncombination outside the three cases above stops closed. Once the exact\nactivation action is verified and complete, leave bootstrap mode and require\nthe ordinary active probe below.\n\nAfter the user deploys/restarts the historical task result, call\n`get_implementation_evidence_service_status` and require\n`startupBuildCommit` to equal that exact result. Complete, in order, **arm,\naudit, apply, active proof, operator evidence, and typed completion**. Probe the\nexact implementation-evidence activation manifest selected by the global\nfinalized mapping with the service-returned `goalRef`, manifest id, and expected\nrepository head, binding the full observed integration HEAD. Never fall back\nto an older packaged manifest. Reject every noncanonical action key and require\nthe `activate-implementation-evidence` envelope. Continue to ordinary\nreconciliation only from `active`.\n\nFor `absent`, call `arm_implementation_evidence_activation` with the same goal,\nmanifest, head, one stable operation id, author, and session. Accept only the\nexact finalized-manifest mappings returned for `t-evidence`,\n`t-historical-evidence`, and `t-activate-evidence`; never substitute predecessor\ntask literals. Retain the returned packaged manifest digest and complete ordered\n`recordKey`/`taskRef` coordinates as the sole inputs to audit-panel preparation\nand final application; never derive either from caller-side storage or naming\nconventions. The first two tasks must already be done, the activation task must\ncarry the strict `CQ-OPERATOR-ACTION v1\nactivate-implementation-evidence.` envelope, and the frozen boundary must\nequal the observed head.\n\nFor every returned packaged record not already backed by a mechanically sufficient\nauthenticated implementation review, call\n`prepare_implementation_audit_panel`, then prepare each ordered opaque attempt.\nNative attempts dispatch only the returned `implementation-auditor` payload;\nadapter attempts run only through\n`execute_external_implementation_audit_attempt`. Finalize every attempt through\n`finalize_implementation_audit_attempt`. If and only if the entire configured\nroster terminally abstains, use `prepare_implementation_audit_fallback` once\nand finalize that authenticated native attempt. Never manufacture a verdict or\nsend the ordinary implement-reviewer worktree contract.\n\nCall `apply_implementation_audit_manifest` with the exact manifest id/digest,\nhead, and complete ordered attempt-ref set. Missing, surplus, reordered,\nforeign, or nonterminal refs block the whole application. Re-probe status and\nrequire `active` before deriving ready work. `pending`, `stale`, incomplete, or\nany preparation/application refusal stops this pass closed; do not dispatch\nreconciliation, use generic writes, or infer activation from task prose,\nreviews, logs, tags, or resultCommit text.\n\nThe canonical activation manifest is\n`d347-implementation-evidence-activation-v2`. `active` is the only state that\nadmits ordinary work. A `stale` probe with a null activation ref may re-arm only\nafter a retained descendant-head parent correction and only through\n`arm_implementation_evidence_activation`. Accept that recovery only when the\nresponse names the exact stale requirement as `supersededRequirementRef`,\nreturns the unchanged semantic manifest/mappings/cohort at the new head, and\nthe server proves the stale requirement had no prepared panel, audit, or\napplication. Continue with only the replacement arm's returned digest and\nrecord coordinates.\n\nA `stale` probe with a non-null activation ref first checks for one already-recorded,\none-step protected transition. When one exists, identify the unique\nfinalized-manifest Git task whose terminal go-ahead review names one recorded\ncompletion from the stale requirement's exact boundary to the current head,\nthen replay one stable\n`continue_implementation_evidence_activation({ goal_ref, manifest_id,\nprior_requirement_ref, completed_task_ref, completion_ref,\nexpected_from_head, expected_repository_head, operation_id, author, session })`\nrequest. Accept only `continued|existing` with every returned ref, task, head,\nand completion equal to that request, then re-probe and require `active`.\n\nWhen no such protected completion exists because the current head is instead a\nretained descendant parent correction, re-arm through\n`arm_implementation_evidence_activation` and repeat the complete ordered audit\nand application sequence at the new head. Accept this recovery only when the\nresponse names the exact fulfilled stale requirement as\n`supersededRequirementRef`; the old requirement has a matching authenticated\nactivation and manifest application; and the semantic manifest, finalized\ndigest, mappings, and cohort are unchanged. Continue with only the replacement\narm's returned digest and record coordinates. Missing prior activation or\napplication, changed authority, an unretained or same boundary, multiple live\nlineage tips, incomplete audit, disapproval, surplus evidence, or changed-input\nreplay stops closed. Never use this parent-correction arm when a protected task\ncompletion exists, and never read protected storage, diagnostics, summaries,\nor logs to reconstruct either recovery authority.\n\n## 1. Derive the ready set\n\nBefore selecting or dispatching work, recover every active implementation\ncompletion journal by calling `record_implementation_completion` for its task\nwith the exact observed integration head and a stable recovery operation id.\n`merge-required` resumes only the journal-bound merge below;\n`reprepare-required` closes no authority and requires rebase plus a fresh\nauthenticated panel before a new prepare naming `supersedes_completion_ref`;\n`recorded|existing` resumes defect reconciliation and release. A\n`merge-started` or merged-but-unrecorded journal blocks every other repository\nmerge until this recovery records it. Never fall back to generic task/review\nwrites or an unjournaled merge.\n\nExplicit operator adoption is a separate recovery path for already-integrated\nwork whose dispatch authority is unavailable, not an automatic fallback from\n`reprepare-required`. Use `record_implementation_adoption` only after the user\napproves adoption and that approval is retained in an answered question. Bind\nthe exact task `updatedAt` and SHA-256 of its full item JSON (recursively sorted\nobject keys, compact encoding, as `implementationAdoptionTaskDigest` computes),\ncurrent clean integration HEAD, retained adopted\ncommit, complete active completion-reference set, verbatim approval answer,\nauthority-loss reason, and successful operator-reported validation of that\nexact HEAD with its retained log path and SHA-256. Reuse qualifying validation;\ndo not rerun it merely to record adoption. Keep one stable operation id for\nexact retry. Accept only `kind=operator-adoption`, `status=recorded|existing`\nwith the requested task/result/head. This records adoption, supersedes the\nnamed stale journals, and closes the task without a synthetic review or\nworker/reviewer receipts. Never substitute `adoptionRef` for `completionRef`\nin activation continuation or another reviewed-completion operation. The\nmanagement service must advertise this operation; an older service must not\nwrite the version-2 private evidence store. No generic terminal write bypass\nis authorized by this path.\n\nRead each target milestone and its full task items, linked questions, milestone\ndependencies, and referenced dependency items.\n\nBefore dispatch, prune stale worktree metadata and inspect all implementation\nand runtime-created worktrees via prepare/resume semantics. Never touch the\nmain checkout, the ledger backup branch, a worktree for a `wip`/`blocked` task,\nor an unmerged worktree without a terminal task association. Release a worktree\nonly through guarded\n`worktree_manage({ operation: \"release\", handle, terminalDisposition, … })`\nwhen the associated task is terminal (`done`/`abandoned`) and release guards\npass. Never infer safety from a branch name alone. Never raw-remove or prune.\n\nChange a `blocked` task back to `planned` after all linked questions become\n`answered`; include the answers in its next dispatch.\n\nA task is ready when:\n\n- its status is `planned`;\n- it has no open linked question;\n- every resolvable `dependsOn` item has a satisfying status declared by its\n  ledger (`tasks:done`, `defects:resolved`, `questions:answered`, and analogous\n  configured sets);\n- every prerequisite milestone has all tasks terminal.\n\nA description beginning exactly\n`CQ-OPERATOR-ACTION v1 <action-key>.` selects the closed operator-action\narm below. The key contains ASCII alphanumeric segments separated by single\nhyphens, for example `deployed-recovery`. The store rejects a misplaced,\nmalformed, or duplicate envelope.\nSuch tasks appear only in `pOperatorAction`, never `pImplement`, and MUST NOT\nenter worktree preparation, `wip`, worker dispatch, review, rebase, merge, or\nrelease logic.\n\nTerminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not\nsatisfy dependencies. Advisory or unresolvable free-text references do.\n\nIf no task is ready and no task awaits review or merge, report and stop.\n\n## 2. Operator-action tasks (parent only)\n\nFor each DAG-ready strict-envelope task, keep the actor split explicit:\nthe user performs deployment and acknowledges its observed identity; this\nparent runs bounded shell probes after acknowledgement. A child, worktree,\nmerge, push, deploy, switch, or implicit acknowledgement is forbidden.\n\n1. Resolve one exact expected output identity and a non-empty, closed list of\n   exact probe commands from the task description and acceptance. Build/package\n   output observation may establish the identity; do not deploy it. If the task\n   does not specify enough information to make either exact, stop\n   `illness-detected` rather than inventing acceptance.\n2. Call\n   `ledger::materialize_operator_action({ task_id, expected_output_identity,\n   expected_evidence, author, session })` before any ordinary readiness action.\n   Accept only `created` or exact `existing`. This deterministically creates or\n   restart-reuses one pending revision-1 action and one `user-action-required`\n   handoff; conflicting identity/evidence fails closed.\n3. While pending, park without changing the task to `wip`. Report the action id,\n   current revision, exact identity, handoff id, and the user instruction to\n   deploy then call `ledger::acknowledge_operator_action` with that\n   `expected_revision`. A mismatching acknowledgement leaves the action pending\n   and authorizes no probe. A replay against an already `verified` action returns\n   `verified`; skip directly to typed completion.\n   If the persisted identity or evidence contract proves incorrect before any\n   evidence exists, or a pending action's current acknowledgement epoch ended\n   in recorded failure, this parent may call\n   `ledger::revise_operator_action({ action_id, expected_revision,\n   expected_output_identity, expected_evidence, revised_at, author, session })`\n   with the exact current revision and complete replacement contract. For the\n   evidence-bearing exception, require the terminal evidence entry and\n   `lastFailure` to identify the same failed probe in the current revision and\n   acknowledgement epoch; fail closed on malformed, stale, or inconsistent audit\n   state. The revision CAS preserves the exact prior action/task/handoff snapshot,\n   advances to the next revision, clears acknowledgement and evidence state,\n   refreshes the handoff, and returns an abandoned linked strict task to\n   `planned`. Reject successful partial evidence, acknowledged evidence without a\n   terminal failure, verified or completed actions, stale revisions, and unsafe\n   task/handoff states. Never use generic reopening as a substitute.\n4. After the exact user acknowledgement returns `acknowledged`, run only the\n   persisted commands, sequentially and with bounded stdout/stderr capture.\n   After each command call `ledger::record_operator_action_evidence` with the\n   current `expected_revision`, literal command, stdout, stderr, exit code,\n   observed output identity, and timestamp. Evidence is append-only and bound\n   to that revision. A nonzero exit or identity mismatch returns the action to\n   pending; do not erase earlier observations or finish the task. After the next\n   exact acknowledgement, rerun every persisted probe; successes from an earlier\n   acknowledgement/failure epoch do not count toward verification.\n5. Only a `verified` action authorizes\n   `ledger::complete_operator_action({ action_id, expected_revision, completion,\n   author, session })`. Re-read the action and pass its current revision before\n   every acknowledgement, evidence, revision, or completion call. This typed\n   transition marks the linked task `done`. Re-derive predicates; never use\n   generic `update_item` or another resurrection operation to bypass verification.\n\n## 3. Dispatch workers\n\n**Prepare BEFORE wip and BEFORE launch.** For each selected task:\n\n1. Resolve the intended base as the current full main tip with\n   `git rev-parse --verify` and require `git cat-file -t` to return `commit`.\n2. Call `worktree_manage({ operation: \"prepare\", taskId, baseCommit })` (or\n   the exact pre-registry handle-free prepare above, or resume-by-handle with\n   the retained handle / allowResumeRequired recovery). On adoption or\n   resume-required, retain the returned handle and path and continue on that\n   tree — do not mint a second tree for the same task. Never use adoption for\n   any non-canonical path, branch, task identity, or changed `HEAD`.\n3. Accept only verified dependency-base evidence from prepare. Missing or\n   unresolvable dependency `resultCommit` evidence blocks dispatch without a\n   `wip` write; it becomes actionable after the ledger object is corrected.\n4. Resolve the authoritative tip with\n   `git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`,\n   and require `git -C <worktree> cat-file -t <startingCommit>` to return\n   `commit` plus\n   `git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit\n   zero. Immediately before launch, require the current worktree `HEAD` to equal\n   that retained `startingCommit`. Retain the exact `baseCommit`, `round`,\n   `startingCommit`, and opaque worktree handle; never reconstruct them from a\n   child report.\n5. Only after prepare succeeds: if the linked owning goal is `planned`, move it\n   once to `building` (never terminal). Set the task `wip`.\n6. Dispatch `implement-worker` with the exact task specification, advisory\n   `worktreePath` from prepare, branch, verified full-SHA base, required\n   `round` (0 on first dispatch; increment on each criticism re-dispatch),\n   authoritative `startingCommit`, parent-owned `validationIntent: \"final\"`,\n   optional `priorResultCommit` on round>0, and any prior criticism.\n7. Materialize only a consumed, schema-valid result through the dispatch\n   protocol. Before accepting a passing result, require its `resultCommit` to be\n   a commit, the worker branch tip to equal it,\n   `actualWorktreePath` to be a non-empty absolute path,\n   `baseVerification.status === \"verified\"` with full SHAs, and\n   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n   When the dispatch carried `gitChangeCapability`, require the complete\n   durable `gitReceipts` chain in commit order from the exact trusted origin\n   (the ordinary dispatch base or server-resolved guarded rebased-start\n   anchor) through `resultCommit`. Authenticate every receipt's dispatch\n   identity, parent, tree, sorted paths, and object data against Git; require\n   contiguous old/new edges, the exact clean managed tip, and no omitted,\n   reordered, or substituted durable receipt. Independently require the exact\n   sorted `filesTouched` set to equal the ordinary base-to-result or guarded\n   onto-to-result net diff. Historical receipt paths may strictly exceed that\n   net diff when later commits restore or remove paths. Only the\n   server-resolved guarded exact-tip mode may use an empty durable suffix, and\n   then `resultCommit` must equal the rebased tip. The trusted server validates\n   the same invariants before storing a broker-capable passing result.\n\n**Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task\nworktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent\ndeliverable) in the existing WIP partial format with open checkpoints, plus any\nuncommitted or committed-but-incomplete work. When a self-describing partial\nexists, RESUME the same worker in the same managed worktree (same handle) onto\nthat partial rather than preparing a fresh empty tree. Re-running an expensive\nprobe to recover work already done is the expensive failure mode; resumption is\npreferred when there is durable state to resume onto. When the prior return is a\nLOST REPORT or an incomplete turn, harvest first, then resume.\n\nA base-only repair / reprepare / rebase maintenance round does **not** count as\ncriticism, no-files output, or an ill-loop counter increment.\n\n**Canonical queue execution boundary.** Enqueue, qualification, acquisition,\nlease transitions, staged rebase, parent gate, review, completion, and merge\nrun only through the local XDG construction that owns the repository root and\nimplementation-evidence authority. A private `cq serve`/PostgreSQL backend is\nmetadata and status only: `executor-unavailable` must be returned before a\nrunnable implementation row, qualification, acquisition, or Git effect. Never\nforward mounts, credentials, or PostgreSQL/XDG state to manufacture a remote\nexecutor.\n\nAt rollout version 1, adopt pre-queue live rows under the stable `g213-t4`\ncontract in `(gateSubmittedAt, attestationId, generation)` order. Protect every\nmanaged worktree before adoption. Compatible `gate-pending` rows enter\nunqualified and become qualified only from an exact trusted completion binding;\nincompatible rows are durably parked and legacy `gate-running` rows are\n`execution-uncertain`. Existing exact green evidence may be adopted only after\nits output, result commit, managed-worktree binding, and supervised-gate digest\nall match. Never synthesize completion evidence or revive an old generation.\nThe downstream implementation consumer uses this contract; the queue rollout\nproducer does not depend on that consumer.\n\n**Full-gate cardinality.** Worker and conflict-resolver children run typed\nfocused checks only. For each candidate generation, trusted result storage runs\nthe repository-wide full gate exactly once after the child exits and records\nthe actual invocation count. Reviewers consume that bound evidence without a\nrerun. A correction or guarded-rebase successor is a new candidate generation\nand receives its own one parent-owned final gate; intermediate staging and\nresolver turns receive zero full-gate invocations.\n\n## 4. Review\n\nBefore any review dispatch, require\n`git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\nReview each passing worker result against the actual `baseCommit..resultCommit`\ndiff, acceptance criteria, and gate evidence. A worker failure enters the\ncriticism loop using `blockedReason`.\n\nFor a brokered Codex worker, accept only runner-owned\n`supervisedGateEvidence` attached by the trusted result-storage boundary.\nRequire exact task/result commit/branch/worktree bindings, canonical command,\nclean tree, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0` before\nreview dispatch. Never accept caller-minted evidence or a passing result that\nstill contains caller-supplied `gateDurationMs`.\n\nBefore launching any reviewer, call\n`prepare_implementation_review_panel({ task_ref, result_commit,\nworker_dispatch, operation_id, author, session })`. Retain its exact\n`panelRef`, `rosterDigest`, and ordered opaque `attemptRefs`; never derive,\nreorder, omit, duplicate, or append a ref. The server snapshots the configured\nroster and binds every attempt to the task, result commit, configured position,\nidentity, and consumed worker dispatch.\n\nFor every returned ref in order call\n`prepare_implementation_review_attempt({ panel_ref, attempt_ref, operation_id,\nauthor, session })`. A `launch: native` response carries the only\n`DispatchPrepared` that may launch that reviewer; consume it through the native\ndispatch protocol. A `launch: adapter` response authorizes no caller shellout:\ncall `execute_external_implementation_review_attempt({ attempt_ref,\noperation_id, author, session })`, which resolves and executes the configured\nadapter and prepare-bound input inside the trusted parent. Call\n`finalize_implementation_review_attempt({ attempt_ref, operation_id, author,\nsession })` for every attempt. The finalizer derives its receipt only from the\nbound consumed native dispatch or trusted adapter execution. Callers never\nsubmit a verdict, abstention, stdout, stderr, exit code, or adapter identity to\nan evidence operation. Require every finalizer response to carry exactly one\nbounded `outcome`: either `{ kind: \"verdict\", verdict }` or\n`{ kind: \"operational-abstention\" }`. Use the returned validated\n`outcome.verdict` as the sole source of the attempt's exact criticism,\nquestions, and defects for reconciliation and correction redispatch. Never\ninfer those fields from `terminalState`, raw process output, task prose, logs,\nor protected store state.\n\n**Reviewer gate evidence.** Pass a consumed worker's verified\n`supervisedGateEvidence` through to every protected `implement-reviewer` and require\nthe reviewer to validate its exact bindings and green counts without rerunning\nthe gate. For a legacy result without this evidence, when a surface's dispatch\nworkflow requires parent-attested gate evidence (gate primitives denied), the\nparent MUST attach `parentGateAttestation` built from a just-run or freshly run\nfull gate on the worker tip:\n`{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,\ncapturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and\n`passCount > 0`. Do not escalate the child sandbox to gain gate primitives.\nNon-sandboxed reviewers use the same runner-owned evidence path. Every reviewer\nreruns the gate only when exact trusted evidence is absent or invalid.\n\n**External reviewer usable-verdict rule.** Fence-strip and validate stdout first.\nA complete, parseable verdict counts as a vote despite a non-zero shell exit;\nlog that exit anomaly. Require full-object validation before accepting the\nverdict. Only empty, malformed, failed, unavailable, or off-contract execution\nbecomes an authenticated `operational-abstention`, never caller-authored JSON.\n\n**External reviewer no-timeout rule.** No wall-clock timeout is imposed.\nFence-strip and validate stdout first. A complete, parseable verdict counts as\na vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit\ncauses abstention only when no complete, parseable, fully validated verdict\nexists; a stalled adapter remains an operational failure rather than a silent\nabstention.\n\nIf and only if every configured attempt has finalized as\n`operational-abstention`, call\n`prepare_implementation_review_fallback({ panel_ref, operation_id, author,\nsession })` once and run/finalize its returned native attempt. The fallback\nreceipt binds the trigger and exact excluded adapter identities. Zero approved\nattempts can never approve a task.\n\nReconcile the complete finalized receipt set in configured order:\n\n- any `disapprove` wins; all must approve and the gate must be green for\n  `approve`;\n- union and source-tag `criticism`, `questions`, and `defects`, deduplicating\n  equivalent entries;\n- `approve` requires empty criticism/questions and verified\n  `resultCommitEvidence` + `baseAncestry` on every surviving native reviewer;\n- `disapprove` requires at least one criticism or question.\n\nFile each out-of-scope or pre-existing `defects[]` entry once as an open defect\nlinked to the task and owning goal. Under restrictive roots, create it through\nthe task owner using `owner_ref: \"tasks:<T>\"` and\n`creation_kind: \"implementation-defect\"`. Such defects do not block the\ncurrent task and never become user disposition questions.\n\n## 5. Correct or park\n\nWhen the reconciled verdict disapproves with criticism and no questions,\nredispatch the same worker in the **same managed worktree** (retained handle;\n`round` incremented; `priorResultCommit` = prior pass tip when present), then\nreview again. Resolve and claim the consumed-worker continuation authority above\nfor this ordinary redispatch; never pass the consumed attestation handle as\n`reprepareOf`. Round N+1 must retain round N commits. There is no fixed round cap\nwhile evidence shows convergence.\n\nPark the task when:\n\n- the review asks a genuine user-only requirements question;\n- a correction round makes no file change;\n- the same criticism repeats without shrinking across consecutive rounds;\n- the same gate failure signature repeats.\n\nCreate linked open questions with the round history. Under restrictive roots,\ncreate each through `owner_ref: \"tasks:<T>\"` and\n`creation_kind: \"exact-gate-question\"`. Then set the task `blocked` and\npreserve its worktree + handle. Do not ask the user to decide whether a\nconfirmed fault deserves a fix. When a consumed worker is the parked tip,\nresolve and persist its continuation reference before ending the pass.\n\n## 6. Success authority\n\nA task may merge only when all of these hold:\n\n- its latest worker and required native-reviewer results were consumed through\n  parent-retained handles;\n- the worker carries either trusted green `supervisedGateEvidence` or a\n  legacy in-child `REAL_CHECK_EXIT=0` gate result;\n- all surviving reviewers approved with empty criticism/questions and verified\n  commit/ancestry evidence;\n- the orchestrator independently verified the exact commit and ancestry.\n\nTreat `gateDurationMs` below `50`, absent/zero, or below one quarter of the\nmedian for earlier rounds of this same task as implausible. Apply this check\nonly to the legacy in-child arm. Re-run `bun run check` in the foreground and\nuse its real exit status. If that cannot be done, fail closed. Runner-owned\n`supervisedGateEvidence` carries its measured duration and does not use this\ncaller-plausibility heuristic.\n\nBefore rebase and immediately before merge, the orchestrator independently:\n\n1. require `git cat-file -t <resultCommit>` to return `commit` (full SHA);\n2. require the worker branch tip to equal `resultCommit`;\n3. require the exact sorted `filesTouched` set to equal the ordinary\n   base-to-result or guarded onto-to-result net diff;\n4. for a broker-capable result, reauthenticate the complete durable receipt\n   chain from its exact trusted origin through the clean `resultCommit` tip:\n   exact dispatch identity, contiguous heads, and each commit's actual parent,\n   tree, sorted paths, and object data. Treat receipt-path history as distinct\n   from the net diff, and permit an empty suffix only for the server-resolved\n   guarded exact-tip exception;\n5. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`\n   to exit zero;\n6. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to\n   exit zero;\n7. require every dependency task `resultCommit` to be an ancestor of the tip\n   (or equal) when resolvable — missing/unresolvable dependency evidence forbids\n   merge.\n\nFabricated, missing, non-tip, stale-base, or non-ancestor result commits never\nmerge. Any failure is a contract breach and forbids merge-back.\n\n## 6a. Expected-failure tasks\n\n§6a governs only a task that declares an expected failure.\n\nForm (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.\n\nForm (b), subprocess exit-code assertion: spawn the failing tool as a child and assert its non-zero exit code and output.\n\nForm (c), green-on-arrival discriminating control: exercise the same detector with paired inputs or a pure mutation while the task's gate stays green.\n\nForms (a) and (b) express the expected failure inside a green full gate. Form\n(c) carries no marker. A red full gate remains unmergeable. Capturing failure\nagainst a parent commit may supplement, but never replace, these controls.\n\n## 7. Merge in DAG order\n\nProcess successful tasks sequentially after their dependencies have landed.\nIf main has advanced past the dispatch base, rebase onto current main and rerun\ngates + review before ff-only merge; that ancestry-only maintenance does not\nincrement criticism/no-files counters. If the tip changes under rebase, the old\nworker result loses authority: redispatch the worker on the rebased tree (same\nhandle), rerun its gate and review, and repeat the success checks.\n\n**Guarded rebase authority.** Run the rebase only through the task-bound\nbroker under one stable operation id, using the exact current main commit\nalready verified above:\n\n```sh\ncq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit> --operation-id <stableRebaseOperationId>\n```\n\nChoose `<stableRebaseOperationId>` once per rebase maintenance round — for\nexample `implement-<taskId>-rebase-r<round>` — and reuse it verbatim when a\nresponse is lost or ambiguous: an exact replay returns the same authority\nwithout re-running the effect. A changed payload under a reused id is\nrejected; when main advances again, select a fresh operation id. Never run a\nrebase maintenance round without an operation id.\n\nA finalized guarded rebase prints exactly one machine-readable stdout line\n`CQ_GUARDED_REBASE_REFERENCE=cq-guarded-rebase:v1:<64 lowercase hex>`.\nCapture that exact reference and retain it as the sole rebase authority.\nMissing, malformed, duplicated, or mismatched handoff output stops the flow\nclosed: never fall back to raw Git, never read or reconstruct the rebase\njournal, and never mint coordinates or lineage yourself.\n\nRedispatch the worker on the rebased managed tree (same retained handle)\nsupplying only that parent-only reference with the exact terminal prior worker\ngeneration: the prepare carries `reprepareOf` naming the consumed pre-rebase\nworker handle and `guardedRebase` carrying the exact retained reference —\nnothing else from the rebase. The server, never the flow or the child,\nresolves the reference against its terminal durable journal and materializes\n`guardedRebaseLineage` into the worker input; a caller-supplied\n`guardedRebaseLineage` is always rejected. On this initial bridge round set\n`baseCommit` to the verified onto commit, `startingCommit` to the observed\nrebased worktree tip, and `priorResultCommit` to the exact pre-rebase worker\n`resultCommit`; the server verifies every coordinate against the journal and\nrejects any substitution. Never claim the rewritten pre-rebase commit is an\nancestor of the rebased tip — the exact-equality binding is the only ancestry\nexemption. The server-resolved lineage selects the mode: under `exactTip` the\nworker reports the exact rebased tip with an empty fresh receipt suffix and no\nearly WIP commit; any guarded correction that advances the tip keeps early\npersistence and a non-empty contiguous suffix beginning at the rebased head,\nand any later criticism round follows the ordinary persistence procedure.\n\nConsume the redispatched result only through the retained handle after the\nparent-owned gate attaches fresh green evidence bound to the exact rebased\ntip, then rerun every required reviewer against the rebased result and repeat\nthe success checks: pre-rebase worker, reviewer, and gate authority never\nauthorizes the rebased result. A prepare rejection, an unresolvable or stale\nreference, or a lineage mismatch stops the flow closed rather than falling\nback to raw Git, broadening the worker sandbox, or accepting caller-minted\nlineage or gate evidence. Only after the fresh gate and reviews pass does the\nexisting ff-only guarded merge below run.\n\nOn conflict, call `worktree_manage` with `operation: \"observe-conflict\"` and the\nmanager handle. Supply its exact `conflictState` (original tip, onto, dispatch\nbase, current HEAD and ancestry, sequencer identity/todo/current command, and\nevery unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only\nfrom a consumed `pass` result whose\ndurable continuation receipts form one chain ending at its terminal\n`resultCommit`; then replay the identical guarded rebase command — same\noperation id, same commit — to reconcile the journal to its verified terminal\ntip and mint the reference before the redispatch above (a conflicted journal\nnever selects the exact-tip mode). A consumed `fail` must still carry the bound\nbranch, absolute\nworktree path, and the complete durable receipt chain; after any continuation\nits last receipt must end at the exact live nonterminal conflict state. Then\ncreate a linked question, set the task `blocked`, keep the worktree/handle, and\nskip its dependants.\n\nAfter the final checks and fresh approved panel, call\n`prepare_implementation_completion({ task_ref, expected_repository_head,\nresult_commit, worker_dispatch, review_attempt_refs, completion, log_paths,\nmerge_operation_id, supersedes_completion_ref?, operation_id, author, session })`.\nRetain its exact `{ completionRef, taskRef, resultCommit, repositoryHead,\nevidenceFingerprint }`. This prepare must precede the merge and must bind the\nexact finalized manifest, owner goal, worker result and receipt chain, gate and\nacceptance observations, clean diff, ancestry, immutable roster, complete\nordered finalized attempts, and intended ff-only merge. Any evidence mismatch\nfails closed without partial mutation.\n\nMerge the exact object only through the prepared journal, using the same stable\n`merge_operation_id` supplied to prepare:\n\n```sh\ncq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit> --completion-ref <completionRef> --operation-id <merge_operation_id>\n```\n\nCapture stdout and require exactly one\n`CQ_IMPLEMENTATION_COMPLETION_MERGE=<canonical JSON>` line. Parse and validate\nthat its status is `merged|existing` and that `completionRef`, `taskRef`,\n`resultCommit`, `repositoryHead`, `mergeOperationId`, and\n`evidenceFingerprint` exactly equal the retained prepare. Missing, malformed,\nduplicate, mismatched, or lost acknowledgement enters journal recovery; never\nretry with raw Git or the legacy commit-only command.\n\nImmediately call\n`record_implementation_completion({ task_ref, expected_repository_head,\noperation_id, author, session })`. Accept only `recorded|existing` with the\nsame completion/task/result/head/fingerprint. This protected transaction, not\n`update_item` or `create_item`, marks the task done with its result, completion,\nand log paths and creates exactly one terminal go-ahead review carrying strict\nversioned `implementationEvidence`. `merge-required` or `reprepare-required`\nreturns to recovery and forbids release or defect reconciliation.\n\nBefore release, defect reconciliation, or readiness rederivation, continue the\nactive v2 evidence requirement across this exact recorded merge. Call\n`continue_implementation_evidence_activation` with the previously active\n`requirementRef`, this task and the returned `completionRef`, the completion's\nprepared repository head as `expected_from_head`, the recorded merged head as\n`expected_repository_head`, and one stable operation id. Accept only\n`continued|existing` whose continuation, previous/new requirement, activation,\ntask, completion, and head bindings match exactly. Re-probe and require\n`active` at the merged head. Any absent/pending/stale prior activation,\nnonterminal or ambiguous completion, missing runner-owned green gate,\ndisapproved terminal review, foreign/surplus task, non-fast-forward ancestry,\nintervening unreceipted commit, semantic manifest drift, completion reuse, or\nchanged-input replay forbids release and all later dispatch.\n\nCleanup uses guarded release only:\n\n```\nworktree_manage({\n  operation: \"release\",\n  handle: <retained opaque handle>,\n  terminalDisposition: \"done\",\n  resultCommit: <merged tip>,\n  deleteBranch: true\n})\n```\n\nA failed harvest or release guard preserves the tree and any side recovery ref.\nNever raw-remove or prune outside guarded release. Successful terminal flow\nreleases once: Remove its worktree, delete its\nderived branch, and prune worktree metadata through that single guarded release.\n\nFor each linked defect, collect all fix tasks from the defect's task\ndependencies and reverse task links. When all are `done`, set the defect\n`resolved` with a concise fix summary. A discovered task in `planned`, `wip`,\nor `blocked` prevents resolution; never treat task discovery as task completion.\n\nDisapproved review rounds remain protected attempt receipts; file their\nquestions/defects through the existing typed owner-scoped paths. Only\n`record_implementation_completion` creates the terminal go-ahead review for a\nmerged implementation. Generic writes cannot terminalize a Git-producing task\nor create, attach, alter, supersede, or terminalize `implementationEvidence`.\n\nRe-derive the ready set after every merge and continue until drained.\n\n## 8. Milestones and goals\n\nFor each touched milestone, close and archive it only when every contained item\nis terminal and, for a coordination milestone, its goal is also terminal.\nPerform `update_item(ledger_id: \"milestones\", ..., status: \"done\")` before\n`archive_milestone(...)`.\n\nNever auto-close a goal. When all of a goal's work milestones are archived,\nreport that the user may set the goal to `done`; a later sweep may then archive\nits coordination milestone.\n\n## Report and handoff\n\nReport merged tasks and commits, blocked tasks and question ids, failed paths,\narchived milestones, and goals ready for user closure.\n\nWhen invoked standalone, write exactly one append-only `handoffs` item:\n\n- `drained`: no reachable task remains;\n- `answers-required`: tasks are blocked on open questions;\n- `user-action-required`: a named task needs a specific external action only\n  the user can perform;\n- `mixed`: several stop causes coexist;\n- `illness-detected`: a protocol, merge, or invariant failure prevents\n  progress.\n\nSet `flow: \"implement\"`, relevant `ledgerRefs`, required\n`blockingQuestions`/`handoffReasons`, and pass log paths. Do not write a\nhandoff for an ordinary context-window interruption. Never stop because of\nelapsed effort, task count, or remaining work size.\n\nWhen invoked inline by another flow, suppress this handoff; the outermost\ncommand owns it.",
+    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n\nEffect-boundary authority follows this shared contract:\n\n{{cq:fragment:workset-effect-discipline}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"optional milestone ids; empty resumes eligible finalized-manifest work\"\n  - \"full task state, dependencies, linked questions, worktrees, and reviewer configuration\"\noutputs:\n  - \"task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival\"\n  - \"standalone handoff\"\nioSchema:\n  - \"ordinary worker/reviewer/resolver: exact full cohort envelope plus ordered memberObservations; no taskId anchor\"\n  - \"bootstrap and retained historical task journals keep their exact task-scoped contracts\"\n```\n\nYou orchestrate implementation. Children never mutate the ledger or merge.\nRe-derive state on every invocation. A pass must dispatch a child, mutate the\nledger, or merge; stop after two consecutive read-only passes.\n\nCanonicalize and validate an explicit milestone batch before its first effect.\nWith configured roots, select only active graph members belonging to each\nmilestone's exact finalized manifest; without explicit ids, resume only\neligible finalized-manifest work. Empty roots retain unrestricted historical\nselection. Preserve the selected finalized manifest exactly through dispatch,\nreview, correction, rebase, merge, and terminal writes; re-read the workset at\nthe effect boundaries required by the shared contract.\n\n{{cq:fragment:subagent-dispatch}}\n{{cq:fragment:implement-dispatch-workflow}}\n\n## Shared rules\n\n- Resolve `tiers` and `reviewers` once per pass with\n  `ledger::get_config(\"tiers\")` and `ledger::get_config(\"reviewers\")`.\n  Workers use their task's `suggestedModel`; reviewers and conflict resolvers\n  use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is\n  absent, inherit the current model and report the missing configuration.\n- Run at most eight workers concurrently, one per independently admitted cohort.\n  Every cohort has one managed worktree and its server-derived cohort branch;\n  never manufacture a representative task or first-member anchor.\n- **Managed worktrees.** Ordinary preparation uses `ledger::cohort_advance`;\n  historical singleton lifecycle uses `ledger::worktree_manage`. Never raw git worktree lifecycle commands\n  (add/remove/prune) on any active implement/advance surface. Before changing a\n  bootstrap task to `wip` or launching its worker, call\n  `worktree_manage({ operation: \"prepare\", taskId, baseCommit: <full main tip> })`\n  (or resume-by-handle with the retained opaque handle). Accept only a prepare\n  result whose dependency-base evidence is verified. Pass the returned absolute\n  path as advisory `worktreePath` on the child input. Retain the opaque handle\n  across criticism rounds; on orchestrator restart, recover via prepare's\n  resume-required response for that taskId and resume the same tree. Never\n  discard worker partial/WIP state. Consume the worker's required\n  `actualWorktreePath` on output as the authoritative location; merge by\n  `resultCommit` SHA.\n- **Managed dispatch recovery.** After a manager-bound implement-worker is\n  terminally aborted `missing-result` or `parent-lost`, retain its exact worktree\n  handle and call `worktree_manage({ operation: \"resolve-dispatch-recovery\", handle })`.\n  Accept only the server-returned discriminated preparation authority. For\n  `preparation.kind === \"current\"`, retain the returned opaque authority and use\n  `prepare_dispatch` with `recoveryPreparation: <preparation.recoveryPreparation>`;\n  omit `recovery`, `reprepareOf`, `continuation`, and `guardedRebase`. For\n  `preparation.kind === \"legacy\"`, take `recoveryReference` from `preparation.recovery`;\n  persist that literal reference with the task's recovery metadata and `cq log put`\n  record, then use `recovery: <recoveryReference>` and without `reprepareOf`.\n  Never copy preparation authority into child input or transcripts. Re-read the\n  worktree `HEAD` immediately before prepare and require it to equal the returned\n  live tip. Preserve dirty partial work and the original terminal cause. An absent,\n  ambiguous, stale, foreign, or already-used authority fails closed; never fall back\n  from a rejected current seal to legacy recovery. The server resolves the exact\n  terminal generation and injects\n  only its verified durable Git receipt lineage. Never retry an advanced tip as\n  a fresh lineage-free dispatch, never reconstruct a prior dispatch handle or\n  recovery association from registry files, and never substitute raw\n  attestation, repository, worktree, branch, base, tip, terminal, or receipt\n  coordinates for the opaque reference.\n- **Retired staged-rebase handoff.** A coordinator result with\n  `state: \"blocked\"` and `frontState: \"staged-rebase-retired\"` is terminal for\n  that coordinator invocation. Retain its exact `front` dispatch handle and\n  `sourceReference`; never poll it again with the now-revoked parent-gate\n  capability. With the task's retained manager handle, call only\n  `worktree_manage({ operation: \"resolve-staged-rebase\", handle, sourceDispatch: front, sourceReference })`.\n  Accept `staged-rebase-conflict-pending` as the exact conflict handoff and use\n  `observe-conflict` plus the ordinary conflict-resolver path. After its\n  continuation receipts are terminal, replay the identical manager operation.\n  Accept `staged-rebase-preparation-ready` only when its task, live tip, source,\n  source reference, guarded-rebase reference, and nested `preparation.reprepareOf`\n  all equal the retained identities; then pass only\n  `preparation.reprepareOf` and `preparation.guardedRebase` to the ordinary\n  `prepare_dispatch` successor path. `staged-rebase-successor-bound` is an\n  idempotent acknowledgement of the exact already-allocated successor, not\n  authority to allocate another. Never restore the retired parent capability,\n  use parent-lost recovery, read the private journal, reconstruct either opaque\n  reference, create a replacement rebase, or infer lineage from equivalent\n  patches.\n- **Deterministic gate failure.** `gate-rejected` is a completed deterministic gate\n  failure, not lost transport or parent interruption. Reconcile a lost store/finalize\n  acknowledgement against the durable terminal result and retain its bounded\n  command/exit/count/output diagnostics. Do not resolve recovery, reclassify it as\n  `parent-lost`, or redispatch the unchanged tip. Route the observed failure to\n  focused correction; another full gate requires a changed candidate. Genuine\n  interrupted or unclassified runner failure retains `parent-lost` recovery.\n  Other roles retain their existing first-loss retry and second-loss fail-closed rule.\n- **Consumed-worker continuation.** A consumed manager-bound implement-worker\n  whose worktree remains live is continued only through its single-use opaque\n  association. Before an ordinary criticism redispatch, or before parking a\n  consumed worker for later resumption, call\n  `worktree_manage({ operation: \"resolve-dispatch-continuation\", handle })` and\n  accept exactly one server-returned `continuationReference`. Persist that\n  literal reference with the task metadata and `cq log put` record. Re-read\n  `HEAD`, require it to equal the returned live tip, then call\n  `prepare_dispatch` with `continuation: <continuationReference>` and without\n  `reprepareOf`, `recovery`, or `guardedRebase`. The server resolves the consumed\n  generation, complete receipt closure, manager identity, repository binding,\n  and authorized caller lineage, and atomically claims the association while\n  allocating its successor. A missing, ambiguous, expired, stale, foreign, or\n  already-claimed reference blocks redispatch; never reconstruct terminal\n  handles, receipts, or capabilities. Guarded-rebase redispatch remains the\n  explicit `reprepareOf` + `guardedRebase` exception described below.\n- **Exact pre-registry adoption.** When, and only when, a task already has a\n  pre-registry tree at the canonical\n  `<repositoryRoot>/.claude/worktrees/implement-<taskId>` path on branch\n  `implement/<taskId>`, observe its full `HEAD` and use handle-free prepare:\n  `worktree_manage({ operation: \"prepare\", taskId, baseCommit, adoptWorktreePath: <exact canonical path>, expectedHead: <observed full HEAD> })`.\n  Supply `adoptWorktreePath` and `expectedHead` only as a pair and never with\n  a handle. Supply no activity fence, registry, reconciliation, Git, or install\n  authority; the production server constructs those internally. A mismatch or\n  refusal blocks the `wip` transition and launch. Retain the returned opaque\n  handle for all later resume, criticism, conflict, and release operations.\n- Persist every child summary and available raw transcript with `cq log put`,\n  attach their logical paths to the affected ledger item, and never expose\n  capabilities or secrets. Before piping a transcript, require `test -s\n  <transcript>` so empty or whitespace-only captures are skipped rather than\n  written.\n- The surface-specific fragment defines dispatch input delivery and result\n  materialization. Retain the parent-prepared handle. Interpret a native\n  result only after the exact retained handle yields `state: \"consumed\"`.\n  Never inspect a body-returning completion or trust a child-reported handle.\n- A missing or non-consumed native result is a LOST REPORT. Log it. For a\n  manager-bound implement-worker, use the parent-lost recovery procedure above;\n  other roles retry the same role once with a fresh prepared dispatch. A second\n  loss fails that task path closed, leaves the task non-terminal and its worktree\n  intact, and cannot become a worker failure, reviewer abstention, or resolver\n  verdict.\n\n## 0. Activate protected historical implementation evidence\n\nBefore the ordinary activation probe, call\n`get_implementation_evidence_service_status` with no caller-supplied identity.\nTreat its service-returned `goalRef`, manifest, digest, and mappings as the\nglobal implementation-evidence authority. Resolve that goal, including its\narchive when terminal, and read its exact finalized-manifest mappings for\n`t-evidence`, `t-historical-evidence`, and `t-activate-evidence` plus those\nthree tasks. This authority is independent of the current workset roots and\nselected implementation goals. Never require or synthesize these keys on a\nselected workset goal. When replacement evidence is not active, use this\n**manifest-derived bootstrap mode** and no other readiness path:\n\n- while the exact mapped `t-evidence` task is `planned`, derive the ready set\n  through the ordinary §1 rules, require that task to be ready, and process only\n  the exact mapped `t-evidence` task through §§3–7. No other task may prepare,\n  dispatch, review, or merge in that pass. Stop `user-action-required` after\n  recording its terminal completion so the user can deploy/restart its exact\n  result before the next bootstrap step;\n- after `t-evidence` is `done` and `t-historical-evidence` is `planned`, call\n  `get_implementation_evidence_service_status` through the deployed evidence\n  task's authenticated management service with no caller-supplied goal,\n  manifest, mapping, commit, or action identity. Require protocol version 2;\n  exact operation inventory; `startupBuildCommit` equal to the evidence task's\n  result commit; the observed live repository head; exact frozen digest and\n  mappings; a recognized bootstrap phase; and the exact\n  `finalizedReviewOutcomeContract`. Then call\n  `advance_implementation_evidence_bootstrap` with that returned identity and\n  `expected_phase: \"historical-dispatch\"`. Accept only `admitted|existing`, one\n  opaque `<bootstrapRef>`, and only the exact historical task. Prepare only that\n  task and pass\n  `implementationEvidenceBootstrap: <bootstrapRef>` to `prepare_dispatch`;\n  missing, stale, local-only, predecessor, replayed, or mismatched authority\n  stops before worktree preparation. After recording its terminal completion,\n  stop `user-action-required` for deployment/restart at that exact result;\n- after both Git tasks are `done`, while the unchanged evidence-task service is\n  still deployed, call `get_implementation_evidence_service_status` again and\n  require the same startup build and frozen identity. Call\n  `advance_implementation_evidence_bootstrap` with the returned identity and\n  `expected_phase: \"activation-handoff\"`, including when the v2 packaged\n  registry is unavailable. Accept only `operator-action-required|existing`,\n  the exact activation task, canonical action key\n  `activate-implementation-evidence`, expected historical-service commit, and\n  opaque action and handoff references. Materialize no worktree and dispatch no\n  third Git task. Stop `user-action-required` so the user can deploy/restart the\n  historical task's exact result.\n\nThis bootstrap mode never treats task prose, a local checkout, a generic write,\nor patch/tree equivalence as authority. A missing or ambiguous mapping, a\nnon-strict activation envelope, a surplus global bootstrap task, or any task-state\ncombination outside the three cases above stops closed. Once the exact\nactivation action is verified and complete, leave bootstrap mode and require\nthe ordinary active probe below.\n\nAfter the user deploys/restarts the historical task result, call\n`get_implementation_evidence_service_status` and require\n`startupBuildCommit` to equal that exact result. Complete, in order, **arm,\naudit, apply, active proof, operator evidence, and typed completion**. Probe the\nexact implementation-evidence activation manifest selected by the global\nfinalized mapping with the service-returned `goalRef`, manifest id, and expected\nrepository head, binding the full observed integration HEAD. Never fall back\nto an older packaged manifest. Reject every noncanonical action key and require\nthe `activate-implementation-evidence` envelope. Continue to ordinary\nreconciliation only from `active`.\n\nFor `absent`, call `arm_implementation_evidence_activation` with the same goal,\nmanifest, head, one stable operation id, author, and session. Accept only the\nexact finalized-manifest mappings returned for `t-evidence`,\n`t-historical-evidence`, and `t-activate-evidence`; never substitute predecessor\ntask literals. Retain the returned packaged manifest digest and complete ordered\n`recordKey`/`taskRef` coordinates as the sole inputs to audit-panel preparation\nand final application; never derive either from caller-side storage or naming\nconventions. The first two tasks must already be done, the activation task must\ncarry the strict `CQ-OPERATOR-ACTION v1\nactivate-implementation-evidence.` envelope, and the frozen boundary must\nequal the observed head.\n\nFor every returned packaged record not already backed by a mechanically sufficient\nauthenticated implementation review, call\n`prepare_implementation_audit_panel`, then prepare each ordered opaque attempt.\nNative attempts dispatch only the returned `implementation-auditor` payload;\nadapter attempts run only through\n`execute_external_implementation_audit_attempt`. Finalize every attempt through\n`finalize_implementation_audit_attempt`. If and only if the entire configured\nroster terminally abstains, use `prepare_implementation_audit_fallback` once\nand finalize that authenticated native attempt. Never manufacture a verdict or\nsend the ordinary implement-reviewer worktree contract.\n\nCall `apply_implementation_audit_manifest` with the exact manifest id/digest,\nhead, and complete ordered attempt-ref set. Missing, surplus, reordered,\nforeign, or nonterminal refs block the whole application. Re-probe status and\nrequire `active` before deriving ready work. `pending`, `stale`, incomplete, or\nany preparation/application refusal stops this pass closed; do not dispatch\nreconciliation, use generic writes, or infer activation from task prose,\nreviews, logs, tags, or resultCommit text.\n\nThe canonical activation manifest is\n`d347-implementation-evidence-activation-v2`. `active` is the only state that\nadmits ordinary work. A `stale` probe with a null activation ref may re-arm only\nafter a retained descendant-head parent correction and only through\n`arm_implementation_evidence_activation`. Accept that recovery only when the\nresponse names the exact stale requirement as `supersededRequirementRef`,\nreturns the unchanged semantic manifest/mappings/cohort at the new head, and\nthe server proves the stale requirement had no prepared panel, audit, or\napplication. Continue with only the replacement arm's returned digest and\nrecord coordinates.\n\nA `stale` probe with a non-null activation ref first checks for one already-recorded,\none-step protected transition. When one exists, identify the unique\nfinalized-manifest Git task whose terminal go-ahead review names one recorded\ncompletion from the stale requirement's exact boundary to the current head,\nthen replay one stable\n`continue_implementation_evidence_activation({ goal_ref, manifest_id,\nprior_requirement_ref, completed_task_ref, completion_ref,\nexpected_from_head, expected_repository_head, operation_id, author, session })`\nrequest. Accept only `continued|existing` with every returned ref, task, head,\nand completion equal to that request, then re-probe and require `active`.\n\nWhen no such protected completion exists because the current head is instead a\nretained descendant parent correction, re-arm through\n`arm_implementation_evidence_activation` and repeat the complete ordered audit\nand application sequence at the new head. Accept this recovery only when the\nresponse names the exact fulfilled stale requirement as\n`supersededRequirementRef`; the old requirement has a matching authenticated\nactivation and manifest application; and the semantic manifest, finalized\ndigest, mappings, and cohort are unchanged. Continue with only the replacement\narm's returned digest and record coordinates. Missing prior activation or\napplication, changed authority, an unretained or same boundary, multiple live\nlineage tips, incomplete audit, disapproval, surplus evidence, or changed-input\nreplay stops closed. Never use this parent-correction arm when a protected task\ncompletion exists, and never read protected storage, diagnostics, summaries,\nor logs to reconstruct either recovery authority.\n\n## 1. Derive the ready set\n\nRecover retained cohort operations using `get_cohort_status` and\n`get_cohort_completion_status({operation_id})` before selecting new work. A\ndurable cohort merge or recording handoff must finish through the identical\n`complete_cohort({batch})`; never replace it with the singleton journal API.\nThe task-journal recovery below applies only to already-retained historical\nsingleton journals and manifest-derived bootstrap work.\n\nBefore selecting or dispatching work, recover every active implementation\ncompletion journal by calling `record_implementation_completion` for its task\nwith the exact observed integration head and a stable recovery operation id.\n`merge-required` resumes only the journal-bound merge below;\n`reprepare-required` closes no authority and requires rebase plus a fresh\nauthenticated panel before a new prepare naming `supersedes_completion_ref`;\n`recorded|existing` resumes defect reconciliation and release. A\n`merge-started` or merged-but-unrecorded journal blocks every other repository\nmerge until this recovery records it. Never fall back to generic task/review\nwrites or an unjournaled merge.\n\nExplicit operator adoption is a separate recovery path for already-integrated\nwork whose dispatch authority is unavailable, not an automatic fallback from\n`reprepare-required`. Use `record_implementation_adoption` only after the user\napproves adoption and that approval is retained in an answered question. Bind\nthe exact task `updatedAt` and SHA-256 of its full item JSON (recursively sorted\nobject keys, compact encoding, as `implementationAdoptionTaskDigest` computes),\ncurrent clean integration HEAD, retained adopted\ncommit, complete active completion-reference set, verbatim approval answer,\nauthority-loss reason, and successful operator-reported validation of that\nexact HEAD with its retained log path and SHA-256. Reuse qualifying validation;\ndo not rerun it merely to record adoption. Keep one stable operation id for\nexact retry. Accept only `kind=operator-adoption`, `status=recorded|existing`\nwith the requested task/result/head. This records adoption, supersedes the\nnamed stale journals, and closes the task without a synthetic review or\nworker/reviewer receipts. Never substitute `adoptionRef` for `completionRef`\nin activation continuation or another reviewed-completion operation. The\nmanagement service must advertise this operation; an older service must not\nwrite the version-2 private evidence store. No generic terminal write bypass\nis authorized by this path.\n\nRead each target milestone and its full task items, linked questions, milestone\ndependencies, and referenced dependency items.\n\nBefore dispatch, prune stale worktree metadata and inspect all implementation\nand runtime-created worktrees via prepare/resume semantics. Never touch the\nmain checkout, the ledger backup branch, a worktree for a `wip`/`blocked` task,\nor an unmerged worktree without a terminal task association. Release a worktree\nonly through guarded\n`worktree_manage({ operation: \"release\", handle, terminalDisposition, … })`\nwhen the associated task is terminal (`done`/`abandoned`) and release guards\npass. Never infer safety from a branch name alone. Never raw-remove or prune.\n\nChange a `blocked` task back to `planned` after all linked questions become\n`answered`; include the answers in its next dispatch.\n\nA task is ready when:\n\n- its status is `planned`;\n- it has no open linked question;\n- every resolvable `dependsOn` item has a satisfying status declared by its\n  ledger (`tasks:done`, `defects:resolved`, `questions:answered`, and analogous\n  configured sets);\n- every prerequisite milestone has all tasks terminal.\n\nA description beginning exactly\n`CQ-OPERATOR-ACTION v1 <action-key>.` selects the closed operator-action\narm below. The key contains ASCII alphanumeric segments separated by single\nhyphens, for example `deployed-recovery`. The store rejects a misplaced,\nmalformed, or duplicate envelope.\nSuch tasks appear only in `pOperatorAction`, never `pImplement`, and MUST NOT\nenter worktree preparation, `wip`, worker dispatch, review, rebase, merge, or\nrelease logic.\n\nTerminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not\nsatisfy dependencies. Advisory or unresolvable free-text references do.\n\nIf no task is ready and no task awaits review or merge, report and stop.\n\n## 1a. Canonical ordinary cohort delivery\n\nThis section is mandatory for ordinary Git-producing work; §§3–7 below retain\nonly the manifest-derived bootstrap mode and existing historical singleton\njournal protocol. An ordinary explicit singleton still uses this cohort path.\nNo fusion setting, opt-out, manual first-task proxy, or eager per-task gate\nfallback exists.\n\n1. Read `derive_predicates()` and `get_cohort_status().readyBoundaries`. Construct\n   a bounded ready observation within one phase and admitted owner boundary,\n   with at most 256 ordered members. Preserve an oversized boundary's explicit\n   unexamined count and stop that boundary for a justified bounded plan rather\n   than silently dispatching its members independently. Fetch full records only\n   for selected acceptance/ownership/dependency details.\n2. Before observation, transition the complete selected boundary's planned tasks\n   to `wip` and planned owning goals to `building` through existing owner-scoped\n   lifecycle writes. These are parent actions, not automatic host transitions.\n   Requery readiness after these writes; an ineligible member requires a new\n   admission decision, not omission. Then propose a strict\n   `cq-cohort-admission-plan` version 1 with each `memberRef`\n   and complete `boundaryCandidates`: one repository-node or confirmed-cause\n   witness, shared-regression and canonical-full-gate command boundaries,\n   reviewer/deployment/finalization classes, explicit split conditions, and\n   each distinct focused command with exact source ref/revision provenance.\n   Command boundaries bind normalized argv, repository-relative cwd, and\n   environment; never infer executable commands from vague prose.\n3. Call `cohort_advance({operation:\"observe\",plan,operation_id})`. Retain its\n   server-derived phase-homogeneous common-atom decisions, definition digest,\n   definition generation, ordered members, frozen acceptance matrix, and\n   explicit singleton reasons. Fusion is required when the whole set shares a\n   common atom; shared labels or pairwise/non-transitive compatibility are not\n   enough. Exclude unrelated, unavailable, externally gated, or mixed-phase\n   members with recorded reasons. Novel tasks require the same evidence, not a\n   pre-existing duplicate-defect label.\n4. Call `cohort_advance({operation:\"prepare\",plan,definition_digest,operation_id})`\n   for the selected implementation definition. Accept only its managed\n   worktree, verified dependency base, and complete returned cohort envelope.\n   The host requires the already-`wip` task/manifest revisions observed above;\n   never change a frozen member and reuse its old envelope. Keep one\n   parent-owned pending candidate attempt for the exact\n   full member set; do not invent a candidate seal from a proposed commit.\n5. Prepare the installed `implement-worker` cohort contract with `cohort`, the\n   complete ordered `members`, exact managed branch/path/base/starting commit,\n   round, and parent-owned validation intent. Children stage the whole candidate\n   and use broker-issued version-2 Git receipts; they do not select members,\n   mutate the ledger, merge, or run a full gate. Require ordered distinct\n   `memberObservations`, exact receipt continuity and net diff, and the trusted\n   native terminal binding before qualification. Qualification seals the\n   immutable candidate seal and `evidenceSubject`; pending attempts cannot\n   authorize acceptance. The worker becomes consumed only after the trusted\n   queue-front ladder settles; a staged result is not an accepted result.\n   Source, schema, prompt, and generated files belong to this same candidate:\n   perform required regeneration before sealing, then rebuild/probe the exact\n   packaged artifact when acceptance requires it. Later generated/source edits\n   invalidate the earlier seal; never report an earlier artifact as final proof.\n6. The trusted queue-front coordinator runs the frozen ladder: every distinct\n   member-focused command, then the selected shared-regression command, then\n   one canonical full gate (`bun run check`). A shared boundary never collapses\n   different focused commands. Deduplicate only exact covered executions and\n   reuse only matching green sealed-subject receipts. Red focused/shared work\n   stops before the full gate; red canonical evidence routes to correction,\n   never an unchanged-candidate retry disguised as transport recovery.\n7. Retain exact authenticated evidence across unchanged restart or review-only\n   retry. For unchanged preparation or a sealed candidate, call\n   `cohort_advance({operation:\"resume\",plan,definition_digest,intent_digest,operation_id})`;\n   add the exact producing `worker_dispatch` only when renewing its parent gate\n   grant. For an interrupted retired guarded-rebase transfer, call\n   `cohort_advance({operation:\"rebase-successor\",operation_id,rebase:{source_dispatch,guarded_rebase,onto_commit,prior_result_commit}})`\n   with its retained checkpoint, not a plan, task anchor, or caller-minted lease.\n   This authorizes only the recorded successor transition, never the old worker.\n   If either capability is unavailable, stop effects and report it rather than\n   inventing an operation. Every effect requires the current execution epoch.\n   Durable evidence is not a live capability;\n   stale-epoch Git, dispatch, probe, gate, and release effects must reject.\n   A changed candidate, definition, matrix, owner/member revision, environment,\n   or receipt lineage requires the corresponding new seal and rejects affected\n   old evidence. Never mint a receipt bridge or copy a task receipt as cohort\n   acceptance. Corrections and conflict resolution keep every member's intent\n   and the full manager binding; incompatible intent records a split rather\n   than silently dropping a member. No raw Git or task-only recovery fallback.\n8. Review the whole-candidate diff once per required configured reviewer class,\n   with the sealed envelope, every member's separate acceptance, and exact\n   version-2 supervised gate evidence. Reviewers return one whole verdict and\n   ordered `memberObservations`; no reviewer reruns the gate. Authenticate each\n   consumed approving review using `record_cohort_review({reviewer_dispatch,\n   envelope,operation_id,author,session})`; retain its opaque reference for every\n   covered member. Missing member observations, unresolved questions/criticism,\n   stale commit/ancestry, or substituted gate/dispatch evidence rejects the\n   whole approval. Do not reinterpret singleton panel receipts as cohort votes.\n9. Submit `complete_cohort({batch})` with one stable operation id, exact envelope,\n   aggregated acceptance receipt, result commit, every member's completion,\n   authenticated review refs and log paths, provenance, and an exact sweep.\n   For deployment, bind a closed compatible plan with immutable package/source\n   identity and an explicit ordered smoke command for every member; otherwise\n   use `deploymentPlan:null`. Never supply a caller lease or executable override.\n   The host journals one guarded ff-only merge, shared operator action, and\n   authenticated deployed build/probe epoch before one all-member primary\n   transaction. `deployment-required` parks for the user's exact acknowledgement;\n   do not deploy, switch, acknowledge, or invent successful probes yourself.\n10. Reuse the unchanged candidate's acceptance: **no post-merge validation** and\n    no duplicate gate. A changed runtime artifact for the same authenticated\n    source/seal reruns only deployment probes. Failure leaves every member\n    nonterminal; retain actual diagnostics. Recover `prepared`, `merged`,\n    `probes-complete`, `ledger-recording`, `ledger-recorded`, and `released`\n    handoffs honestly. Lost primary acknowledgement verifies the committed\n    protected batch before any effect or new mutation admission.\n11. Only the atomic completion writes all tasks and exact implementation\n    reviews, resolves wholly covered defects, merges exact partial archives,\n    and archives eligible fully covered non-coordination milestones and the\n    fulfilled canonical deployment handoff. Preserve unrelated/active/external\n    items and verified operator-action history. Queue/journal settlement is\n    separate and resumable, never evidence of an uncommitted terminal subset.\n    Never auto-close goals; report only exact ready-for-user-closure results.\n\nOn `executor-unavailable`, keep metadata/status available and report the missing\nlocal XDG repository executor. Neither remote PostgreSQL metadata nor an observed\nstatus response authorizes effects. Bootstrap isolation, strict operator-action\ntasks, external-upstream work, and explicit user adoption/goal closure remain\ntheir existing closed authority boundaries; fusion cannot broaden them.\n\n## 2. Operator-action tasks (parent only)\n\nFor each DAG-ready strict-envelope task, keep the actor split explicit:\nthe user performs deployment and acknowledges its observed identity; this\nparent runs bounded shell probes after acknowledgement. A child, worktree,\nmerge, push, deploy, switch, or implicit acknowledgement is forbidden.\n\n1. Resolve one exact expected output identity and a non-empty, closed list of\n   exact probe commands from the task description and acceptance. Build/package\n   output observation may establish the identity; do not deploy it. If the task\n   does not specify enough information to make either exact, stop\n   `illness-detected` rather than inventing acceptance.\n2. Call\n   `ledger::materialize_operator_action({ task_id, expected_output_identity,\n   expected_evidence, author, session })` before any ordinary readiness action.\n   Accept only `created` or exact `existing`. This deterministically creates or\n   restart-reuses one pending revision-1 action and one `user-action-required`\n   handoff; conflicting identity/evidence fails closed.\n3. While pending, park without changing the task to `wip`. Report the action id,\n   current revision, exact identity, handoff id, and the user instruction to\n   deploy then call `ledger::acknowledge_operator_action` with that\n   `expected_revision`. A mismatching acknowledgement leaves the action pending\n   and authorizes no probe. A replay against an already `verified` action returns\n   `verified`; skip directly to typed completion.\n   If the persisted identity or evidence contract proves incorrect before any\n   evidence exists, or a pending action's current acknowledgement epoch ended\n   in recorded failure, this parent may call\n   `ledger::revise_operator_action({ action_id, expected_revision,\n   expected_output_identity, expected_evidence, revised_at, author, session })`\n   with the exact current revision and complete replacement contract. For the\n   evidence-bearing exception, require the terminal evidence entry and\n   `lastFailure` to identify the same failed probe in the current revision and\n   acknowledgement epoch; fail closed on malformed, stale, or inconsistent audit\n   state. The revision CAS preserves the exact prior action/task/handoff snapshot,\n   advances to the next revision, clears acknowledgement and evidence state,\n   refreshes the handoff, and returns an abandoned linked strict task to\n   `planned`. Reject successful partial evidence, acknowledged evidence without a\n   terminal failure, verified or completed actions, stale revisions, and unsafe\n   task/handoff states. Never use generic reopening as a substitute.\n4. After the exact user acknowledgement returns `acknowledged`, run only the\n   persisted commands, sequentially and with bounded stdout/stderr capture.\n   After each command call `ledger::record_operator_action_evidence` with the\n   current `expected_revision`, literal command, stdout, stderr, exit code,\n   observed output identity, and timestamp. Evidence is append-only and bound\n   to that revision. A nonzero exit or identity mismatch returns the action to\n   pending; do not erase earlier observations or finish the task. After the next\n   exact acknowledgement, rerun every persisted probe; successes from an earlier\n   acknowledgement/failure epoch do not count toward verification.\n5. Only a `verified` action authorizes\n   `ledger::complete_operator_action({ action_id, expected_revision, completion,\n   author, session })`. Re-read the action and pass its current revision before\n   every acknowledgement, evidence, revision, or completion call. This typed\n   transition marks the linked task `done`. Re-derive predicates; never use\n   generic `update_item` or another resurrection operation to bypass verification.\n\n## 3. Dispatch workers\n\n**Prepare BEFORE wip and BEFORE launch.** For each selected task:\n\n1. Resolve the intended base as the current full main tip with\n   `git rev-parse --verify` and require `git cat-file -t` to return `commit`.\n2. Call `worktree_manage({ operation: \"prepare\", taskId, baseCommit })` (or\n   the exact pre-registry handle-free prepare above, or resume-by-handle with\n   the retained handle / allowResumeRequired recovery). On adoption or\n   resume-required, retain the returned handle and path and continue on that\n   tree — do not mint a second tree for the same task. Never use adoption for\n   any non-canonical path, branch, task identity, or changed `HEAD`.\n3. Accept only verified dependency-base evidence from prepare. Missing or\n   unresolvable dependency `resultCommit` evidence blocks dispatch without a\n   `wip` write; it becomes actionable after the ledger object is corrected.\n4. Resolve the authoritative tip with\n   `git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`,\n   and require `git -C <worktree> cat-file -t <startingCommit>` to return\n   `commit` plus\n   `git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit\n   zero. Immediately before launch, require the current worktree `HEAD` to equal\n   that retained `startingCommit`. Retain the exact `baseCommit`, `round`,\n   `startingCommit`, and opaque worktree handle; never reconstruct them from a\n   child report.\n5. Only after prepare succeeds: if the linked owning goal is `planned`, move it\n   once to `building` (never terminal). Set the task `wip`.\n6. Dispatch `implement-worker` with the exact task specification, advisory\n   `worktreePath` from prepare, branch, verified full-SHA base, required\n   `round` (0 on first dispatch; increment on each criticism re-dispatch),\n   authoritative `startingCommit`, parent-owned `validationIntent: \"final\"`,\n   optional `priorResultCommit` on round>0, and any prior criticism.\n7. Materialize only a consumed, schema-valid result through the dispatch\n   protocol. Before accepting a passing result, require its `resultCommit` to be\n   a commit, the worker branch tip to equal it,\n   `actualWorktreePath` to be a non-empty absolute path,\n   `baseVerification.status === \"verified\"` with full SHAs, and\n   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n   When the dispatch carried `gitChangeCapability`, require the complete\n   durable `gitReceipts` chain in commit order from the exact trusted origin\n   (the ordinary dispatch base or server-resolved guarded rebased-start\n   anchor) through `resultCommit`. Authenticate every receipt's dispatch\n   identity, parent, tree, sorted paths, and object data against Git; require\n   contiguous old/new edges, the exact clean managed tip, and no omitted,\n   reordered, or substituted durable receipt. Independently require the exact\n   sorted `filesTouched` set to equal the ordinary base-to-result or guarded\n   onto-to-result net diff. Historical receipt paths may strictly exceed that\n   net diff when later commits restore or remove paths. Only the\n   server-resolved guarded exact-tip mode may use an empty durable suffix, and\n   then `resultCommit` must equal the rebased tip. The trusted server validates\n   the same invariants before storing a broker-capable passing result.\n\n**Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task\nworktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent\ndeliverable) in the existing WIP partial format with open checkpoints, plus any\nuncommitted or committed-but-incomplete work. When a self-describing partial\nexists, RESUME the same worker in the same managed worktree (same handle) onto\nthat partial rather than preparing a fresh empty tree. Re-running an expensive\nprobe to recover work already done is the expensive failure mode; resumption is\npreferred when there is durable state to resume onto. When the prior return is a\nLOST REPORT or an incomplete turn, harvest first, then resume.\n\nA base-only repair / reprepare / rebase maintenance round does **not** count as\ncriticism, no-files output, or an ill-loop counter increment.\n\n**Canonical queue execution boundary.** Enqueue, qualification, acquisition,\nlease transitions, staged rebase, parent gate, review, completion, and merge\nrun only through the local XDG construction that owns the repository root and\nimplementation-evidence authority. A private `cq serve`/PostgreSQL backend is\nmetadata and status only: `executor-unavailable` must be returned before a\nrunnable implementation row, qualification, acquisition, or Git effect. Never\nforward mounts, credentials, or PostgreSQL/XDG state to manufacture a remote\nexecutor.\n\nAt rollout version 1, adopt pre-queue live rows under the stable `g213-t4`\ncontract in `(gateSubmittedAt, attestationId, generation)` order. Protect every\nmanaged worktree before adoption. Compatible `gate-pending` rows enter\nunqualified and become qualified only from an exact trusted completion binding;\nincompatible rows are durably parked and legacy `gate-running` rows are\n`execution-uncertain`. Existing exact green evidence may be adopted only after\nits output, result commit, managed-worktree binding, and supervised-gate digest\nall match. Never synthesize completion evidence or revive an old generation.\nThe downstream implementation consumer uses this contract; the queue rollout\nproducer does not depend on that consumer.\n\n**Full-gate cardinality.** Worker and conflict-resolver children run typed\nfocused checks only. Trusted result storage stages candidates, not an eager\nper-task full gate. The queue-front coordinator owns exact-candidate acceptance\nand records actual invocation/reuse counts. Reviewers consume bound evidence\nwithout a rerun. An unchanged sealed subject receives no duplicate full gate;\na changed candidate must satisfy its current ladder before one canonical gate.\nIntermediate staging and resolver turns receive zero full-gate invocations.\n\n## 4. Review\n\nBefore any review dispatch, require\n`git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\nReview each passing worker result against the actual `baseCommit..resultCommit`\ndiff, acceptance criteria, and gate evidence. A worker failure enters the\ncriticism loop using `blockedReason`.\n\nFor a brokered Codex worker, accept only runner-owned\n`supervisedGateEvidence` attached by the trusted result-storage boundary.\nRequire exact task/result commit/branch/worktree bindings, canonical command,\nclean tree, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0` before\nreview dispatch. Never accept caller-minted evidence or a passing result that\nstill contains caller-supplied `gateDurationMs`.\n\nBefore launching any reviewer, call\n`prepare_implementation_review_panel({ task_ref, result_commit,\nworker_dispatch, operation_id, author, session })`. Retain its exact\n`panelRef`, `rosterDigest`, and ordered opaque `attemptRefs`; never derive,\nreorder, omit, duplicate, or append a ref. The server snapshots the configured\nroster and binds every attempt to the task, result commit, configured position,\nidentity, and consumed worker dispatch.\n\nFor every returned ref in order call\n`prepare_implementation_review_attempt({ panel_ref, attempt_ref, operation_id,\nauthor, session })`. A `launch: native` response carries the only\n`DispatchPrepared` that may launch that reviewer; consume it through the native\ndispatch protocol. A `launch: adapter` response authorizes no caller shellout:\ncall `execute_external_implementation_review_attempt({ attempt_ref,\noperation_id, author, session })`, which resolves and executes the configured\nadapter and prepare-bound input inside the trusted parent. Call\n`finalize_implementation_review_attempt({ attempt_ref, operation_id, author,\nsession })` for every attempt. The finalizer derives its receipt only from the\nbound consumed native dispatch or trusted adapter execution. Callers never\nsubmit a verdict, abstention, stdout, stderr, exit code, or adapter identity to\nan evidence operation. Require every finalizer response to carry exactly one\nbounded `outcome`: either `{ kind: \"verdict\", verdict }` or\n`{ kind: \"operational-abstention\" }`. Use the returned validated\n`outcome.verdict` as the sole source of the attempt's exact criticism,\nquestions, and defects for reconciliation and correction redispatch. Never\ninfer those fields from `terminalState`, raw process output, task prose, logs,\nor protected store state.\n\n**Reviewer gate evidence.** Pass a consumed worker's verified\n`supervisedGateEvidence` through to every protected `implement-reviewer` and require\nthe reviewer to validate its exact bindings and green counts without rerunning\nthe gate. Missing or invalid evidence returns to the trusted candidate\ncoordinator; neither a reviewer nor this parent manufactures a fallback gate\nattestation. Do not escalate the child sandbox to gain gate primitives.\n\n**External reviewer usable-verdict rule.** Fence-strip and validate stdout first.\nA complete, parseable verdict counts as a vote despite a non-zero shell exit;\nlog that exit anomaly. Require full-object validation before accepting the\nverdict. Only empty, malformed, failed, unavailable, or off-contract execution\nbecomes an authenticated `operational-abstention`, never caller-authored JSON.\n\n**External reviewer no-timeout rule.** No wall-clock timeout is imposed.\nFence-strip and validate stdout first. A complete, parseable verdict counts as\na vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit\ncauses abstention only when no complete, parseable, fully validated verdict\nexists; a stalled adapter remains an operational failure rather than a silent\nabstention.\n\nIf and only if every configured attempt has finalized as\n`operational-abstention`, call\n`prepare_implementation_review_fallback({ panel_ref, operation_id, author,\nsession })` once and run/finalize its returned native attempt. The fallback\nreceipt binds the trigger and exact excluded adapter identities. Zero approved\nattempts can never approve a task.\n\nReconcile the complete finalized receipt set in configured order:\n\n- any `disapprove` wins; all must approve and the gate must be green for\n  `approve`;\n- union and source-tag `criticism`, `questions`, and `defects`, deduplicating\n  equivalent entries;\n- `approve` requires empty criticism/questions and verified\n  `resultCommitEvidence` + `baseAncestry` on every surviving native reviewer;\n- `disapprove` requires at least one criticism or question.\n\nFile each out-of-scope or pre-existing `defects[]` entry once as an open defect\nlinked to the task and owning goal. Under restrictive roots, create it through\nthe task owner using `owner_ref: \"tasks:<T>\"` and\n`creation_kind: \"implementation-defect\"`. Such defects do not block the\ncurrent task and never become user disposition questions.\n\n## 5. Correct or park\n\nWhen the reconciled verdict disapproves with criticism and no questions,\nredispatch the same worker in the **same managed worktree** (retained handle;\n`round` incremented; `priorResultCommit` = prior pass tip when present), then\nreview again. Resolve and claim the consumed-worker continuation authority above\nfor this ordinary redispatch; never pass the consumed attestation handle as\n`reprepareOf`. Round N+1 must retain round N commits. There is no fixed round cap\nwhile evidence shows convergence.\n\nPark the task when:\n\n- the review asks a genuine user-only requirements question;\n- a correction round makes no file change;\n- the same criticism repeats without shrinking across consecutive rounds;\n- the same gate failure signature repeats.\n\nCreate linked open questions with the round history. Under restrictive roots,\ncreate each through `owner_ref: \"tasks:<T>\"` and\n`creation_kind: \"exact-gate-question\"`. Then set the task `blocked` and\npreserve its worktree + handle. Do not ask the user to decide whether a\nconfirmed fault deserves a fix. When a consumed worker is the parked tip,\nresolve and persist its continuation reference before ending the pass.\n\n## 6. Success authority\n\nA task may merge only when all of these hold:\n\n- its latest worker and required native-reviewer results were consumed through\n  parent-retained handles;\n- the worker carries either trusted green `supervisedGateEvidence` or a\n  legacy in-child `REAL_CHECK_EXIT=0` gate result;\n- all surviving reviewers approved with empty criticism/questions and verified\n  commit/ancestry evidence;\n- the orchestrator independently verified the exact commit and ancestry.\n\nTreat `gateDurationMs` below `50`, absent/zero, or below one quarter of the\nmedian for earlier rounds of this same task as implausible. Apply this check\nonly to the legacy in-child arm. Re-run `bun run check` in the foreground and\nuse its real exit status. If that cannot be done, fail closed. Runner-owned\n`supervisedGateEvidence` carries its measured duration and does not use this\ncaller-plausibility heuristic.\n\nBefore rebase and immediately before merge, the orchestrator independently:\n\n1. require `git cat-file -t <resultCommit>` to return `commit` (full SHA);\n2. require the worker branch tip to equal `resultCommit`;\n3. require the exact sorted `filesTouched` set to equal the ordinary\n   base-to-result or guarded onto-to-result net diff;\n4. for a broker-capable result, reauthenticate the complete durable receipt\n   chain from its exact trusted origin through the clean `resultCommit` tip:\n   exact dispatch identity, contiguous heads, and each commit's actual parent,\n   tree, sorted paths, and object data. Treat receipt-path history as distinct\n   from the net diff, and permit an empty suffix only for the server-resolved\n   guarded exact-tip exception;\n5. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`\n   to exit zero;\n6. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to\n   exit zero;\n7. require every dependency task `resultCommit` to be an ancestor of the tip\n   (or equal) when resolvable — missing/unresolvable dependency evidence forbids\n   merge.\n\nFabricated, missing, non-tip, stale-base, or non-ancestor result commits never\nmerge. Any failure is a contract breach and forbids merge-back.\n\n## 6a. Expected-failure tasks\n\n§6a governs only a task that declares an expected failure.\n\nForm (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.\n\nForm (b), subprocess exit-code assertion: spawn the failing tool as a child and assert its non-zero exit code and output.\n\nForm (c), green-on-arrival discriminating control: exercise the same detector with paired inputs or a pure mutation while the task's gate stays green.\n\nForms (a) and (b) express the expected failure inside a green full gate. Form\n(c) carries no marker. A red full gate remains unmergeable. Capturing failure\nagainst a parent commit may supplement, but never replace, these controls.\n\n## 7. Merge in DAG order\n\nProcess successful tasks sequentially after their dependencies have landed.\nIf main has advanced past the dispatch base, rebase onto current main and rerun\ngates + review before ff-only merge; that ancestry-only maintenance does not\nincrement criticism/no-files counters. If the tip changes under rebase, the old\nworker result loses authority: redispatch the worker on the rebased tree (same\nhandle), rerun its gate and review, and repeat the success checks.\n\n**Guarded rebase authority.** Run the rebase only through the task-bound\nbroker under one stable operation id, using the exact current main commit\nalready verified above:\n\n```sh\ncq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit> --operation-id <stableRebaseOperationId>\n```\n\nChoose `<stableRebaseOperationId>` once per rebase maintenance round — for\nexample `implement-<taskId>-rebase-r<round>` — and reuse it verbatim when a\nresponse is lost or ambiguous: an exact replay returns the same authority\nwithout re-running the effect. A changed payload under a reused id is\nrejected; when main advances again, select a fresh operation id. Never run a\nrebase maintenance round without an operation id.\n\nA finalized guarded rebase prints exactly one machine-readable stdout line\n`CQ_GUARDED_REBASE_REFERENCE=cq-guarded-rebase:v1:<64 lowercase hex>`.\nCapture that exact reference and retain it as the sole rebase authority.\nMissing, malformed, duplicated, or mismatched handoff output stops the flow\nclosed: never fall back to raw Git, never read or reconstruct the rebase\njournal, and never mint coordinates or lineage yourself.\n\nRedispatch the worker on the rebased managed tree (same retained handle)\nsupplying only that parent-only reference with the exact terminal prior worker\ngeneration: the prepare carries `reprepareOf` naming the consumed pre-rebase\nworker handle and `guardedRebase` carrying the exact retained reference —\nnothing else from the rebase. The server, never the flow or the child,\nresolves the reference against its terminal durable journal and materializes\n`guardedRebaseLineage` into the worker input; a caller-supplied\n`guardedRebaseLineage` is always rejected. On this initial bridge round set\n`baseCommit` to the verified onto commit, `startingCommit` to the observed\nrebased worktree tip, and `priorResultCommit` to the exact pre-rebase worker\n`resultCommit`; the server verifies every coordinate against the journal and\nrejects any substitution. Never claim the rewritten pre-rebase commit is an\nancestor of the rebased tip — the exact-equality binding is the only ancestry\nexemption. The server-resolved lineage selects the mode: under `exactTip` the\nworker reports the exact rebased tip with an empty fresh receipt suffix and no\nearly WIP commit; any guarded correction that advances the tip keeps early\npersistence and a non-empty contiguous suffix beginning at the rebased head,\nand any later criticism round follows the ordinary persistence procedure.\n\nConsume the redispatched result only through the retained handle after the\nparent-owned gate attaches fresh green evidence bound to the exact rebased\ntip, then rerun every required reviewer against the rebased result and repeat\nthe success checks: pre-rebase worker, reviewer, and gate authority never\nauthorizes the rebased result. A prepare rejection, an unresolvable or stale\nreference, or a lineage mismatch stops the flow closed rather than falling\nback to raw Git, broadening the worker sandbox, or accepting caller-minted\nlineage or gate evidence. Only after the fresh gate and reviews pass does the\nexisting ff-only guarded merge below run.\n\nOn an ordinary parent-initiated guarded-rebase conflict, call `worktree_manage`\nwith `operation: \"observe-conflict\"` and the\nmanager handle. Supply its exact `conflictState` (original tip, onto, dispatch\nbase, current HEAD and ancestry, sequencer identity/todo/current command, and\nevery unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only\nfrom a consumed `pass` result whose\ndurable continuation receipts form one chain ending at its terminal\n`resultCommit`; then replay the identical guarded rebase command — same\noperation id, same commit — to reconcile the journal to its verified terminal\ntip and mint the reference before the redispatch above (a conflicted journal\nnever selects the exact-tip mode). A consumed `fail` must still carry the bound\nbranch, absolute\nworktree path, and the complete durable receipt chain; after any continuation\nits last receipt must end at the exact live nonterminal conflict state. Then\ncreate a linked question, set the task `blocked`, keep the worktree/handle, and\nskip its dependants. A coordinator-retired staged-rebase conflict instead uses\nonly the manager-bound `resolve-staged-rebase` handoff above; do not replay the\nretired coordinator or its revoked authority through this ordinary arm.\n\nAfter the final checks and fresh approved panel, call\n`prepare_implementation_completion({ task_ref, expected_repository_head,\nresult_commit, worker_dispatch, review_attempt_refs, completion, log_paths,\nmerge_operation_id, supersedes_completion_ref?, operation_id, author, session })`.\nRetain its exact `{ completionRef, taskRef, resultCommit, repositoryHead,\nevidenceFingerprint }`. This prepare must precede the merge and must bind the\nexact finalized manifest, owner goal, worker result and receipt chain, gate and\nacceptance observations, clean diff, ancestry, immutable roster, complete\nordered finalized attempts, and intended ff-only merge. Any evidence mismatch\nfails closed without partial mutation.\n\nMerge the exact object only through the prepared journal, using the same stable\n`merge_operation_id` supplied to prepare:\n\n```sh\ncq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit> --completion-ref <completionRef> --operation-id <merge_operation_id>\n```\n\nCapture stdout and require exactly one\n`CQ_IMPLEMENTATION_COMPLETION_MERGE=<canonical JSON>` line. Parse and validate\nthat its status is `merged|existing` and that `completionRef`, `taskRef`,\n`resultCommit`, `repositoryHead`, `mergeOperationId`, and\n`evidenceFingerprint` exactly equal the retained prepare. Missing, malformed,\nduplicate, mismatched, or lost acknowledgement enters journal recovery; never\nretry with raw Git or the legacy commit-only command.\n\nImmediately call\n`record_implementation_completion({ task_ref, expected_repository_head,\noperation_id, author, session })`. Accept only `recorded|existing` with the\nsame completion/task/result/head/fingerprint. This protected transaction, not\n`update_item` or `create_item`, marks the task done with its result, completion,\nand log paths and creates exactly one terminal go-ahead review carrying strict\nversioned `implementationEvidence`. `merge-required` or `reprepare-required`\nreturns to recovery and forbids release or defect reconciliation.\n\nBefore release, defect reconciliation, or readiness rederivation, continue the\nactive v2 evidence requirement across this exact recorded merge. Call\n`continue_implementation_evidence_activation` with the previously active\n`requirementRef`, this task and the returned `completionRef`, the completion's\nprepared repository head as `expected_from_head`, the recorded merged head as\n`expected_repository_head`, and one stable operation id. Accept only\n`continued|existing` whose continuation, previous/new requirement, activation,\ntask, completion, and head bindings match exactly. Re-probe and require\n`active` at the merged head. Any absent/pending/stale prior activation,\nnonterminal or ambiguous completion, missing runner-owned green gate,\ndisapproved terminal review, foreign/surplus task, non-fast-forward ancestry,\nintervening unreceipted commit, semantic manifest drift, completion reuse, or\nchanged-input replay forbids release and all later dispatch.\n\nCleanup uses guarded release only:\n\n```\nworktree_manage({\n  operation: \"release\",\n  handle: <retained opaque handle>,\n  terminalDisposition: \"done\",\n  resultCommit: <merged tip>,\n  deleteBranch: true\n})\n```\n\nA failed harvest or release guard preserves the tree and any side recovery ref.\nNever raw-remove or prune outside guarded release. Successful terminal flow\nreleases once: Remove its worktree, delete its\nderived branch, and prune worktree metadata through that single guarded release.\n\nFor each linked defect, collect all fix tasks from the defect's task\ndependencies and reverse task links. When all are `done`, set the defect\n`resolved` with a concise fix summary. A discovered task in `planned`, `wip`,\nor `blocked` prevents resolution; never treat task discovery as task completion.\n\nDisapproved review rounds remain protected attempt receipts; file their\nquestions/defects through the existing typed owner-scoped paths. Only\n`record_implementation_completion` creates the terminal go-ahead review for a\nmerged implementation. Generic writes cannot terminalize a Git-producing task\nor create, attach, alter, supersede, or terminalize `implementationEvidence`.\n\nRe-derive the ready set after every merge and continue until drained.\n\n## 8. Milestones and goals\n\nFor each touched milestone, close and archive it only when every contained item\nis terminal and, for a coordination milestone, its goal is also terminal.\nPerform `update_item(ledger_id: \"milestones\", ..., status: \"done\")` before\n`archive_milestone(...)`.\n\nNever auto-close a goal. When all of a goal's work milestones are archived,\nreport that the user may set the goal to `done`; a later sweep may then archive\nits coordination milestone.\n\n## Report and handoff\n\nReport merged tasks and commits, blocked tasks and question ids, failed paths,\narchived milestones, and goals ready for user closure.\n\nWhen invoked standalone, write exactly one append-only `handoffs` item:\n\n- `drained`: no reachable task remains;\n- `answers-required`: tasks are blocked on open questions;\n- `user-action-required`: a named task needs a specific external action only\n  the user can perform;\n- `mixed`: several stop causes coexist;\n- `illness-detected`: a protocol, merge, or invariant failure prevents\n  progress.\n\nSet `flow: \"implement\"`, relevant `ledgerRefs`, required\n`blockingQuestions`/`handoffReasons`, and pass log paths. Do not write a\nhandoff for an ordinary context-window interruption. Never stop because of\nelapsed effort, task count, or remaining work size.\n\nWhen invoked inline by another flow, suppress this handoff; the outermost\ncommand owns it.",
     privilege: "RO",
     exposedTools: "none declared",
   },

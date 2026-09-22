@@ -56,7 +56,7 @@ async function seed(): Promise<{
   repositoryRoot: string;
   stateDir: string;
   worktreePath: string;
-  authorization: DispatchBoundGitAuthorization;
+  authorization: Extract<DispatchBoundGitAuthorization, { readonly taskId: string }>;
   head: string;
 }> {
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2042-broker-"));

@@ -29,6 +29,7 @@ import type {
   WorksetRequest,
   WorksetResult,
   WorksetResultFor,
+  CohortStatusViewV1,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 import type { FinalizeBatchOperation } from "@cq/ledger/finalize";
@@ -176,4 +177,6 @@ export interface LedgerClient {
 }
 
 /** Ledger UI client with the additive workset operation. */
-export interface WorksetCapableLedgerClient extends LedgerClient, WorksetOperationClient {}
+export interface WorksetCapableLedgerClient extends LedgerClient, WorksetOperationClient {
+  getCohortStatus(): Promise<CohortStatusViewV1>;
+}

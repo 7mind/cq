@@ -7,6 +7,7 @@ import {
   InMemoryAttestationStore,
   PostgresAttestationBackend,
   abortDispatchOn,
+  assertTaskGitEffectBinding,
   attestationRowDigest,
   claimParentGateOn,
   completeParentGateOn,
@@ -21,7 +22,7 @@ import {
   type AttestationEnvelope,
   type AttestationBackend,
   type AttestationNamespace,
-  type DispatchGitEffectBinding,
+  type DispatchTaskGitEffectBinding as DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
   type EnqueueImplementationCandidateRequest,
@@ -67,6 +68,7 @@ async function completeTrustedGreen(
   const resultCommit = result["resultCommit"];
   if (typeof resultCommit !== "string") throw new Error("staged worker result has no commit");
   const context = claimed.context;
+  assertTaskGitEffectBinding(context);
   const supervisedGateEvidence = {
     kind: "cq-supervised-gate-evidence" as const,
     version: 1 as const,
@@ -282,10 +284,12 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
       backend,
       now,
       withProtectedManagedWorktree: async (binding, operation) => {
+        assertTaskGitEffectBinding(binding);
         protectedTasks.push(binding.taskId);
         return { state: "protected", value: await operation() };
       },
       resolve: async (row) => {
+        assertTaskGitEffectBinding(row.gitEffectBinding!);
         const taskId = row.gitEffectBinding!.taskId;
         if (taskId === "T65214") {
           return { state: "incompatible" as const, detail: { reason: "legacy-output-shape" } };
@@ -807,10 +811,12 @@ describe("live attestation queue rollout [Behavioral-Active Blackbox-Group]", ()
           backend: pgBackend,
           now: pgNow,
           withProtectedManagedWorktree: async (binding, operation) => {
+            assertTaskGitEffectBinding(binding);
             protectedTasks.push(binding.taskId);
             return { state: "protected", value: await operation() };
           },
           resolve: async (row) => {
+            assertTaskGitEffectBinding(row.gitEffectBinding!);
             const taskId = row.gitEffectBinding!.taskId;
             if (taskId === "T65223") {
               return { state: "incompatible" as const, detail: { reason: "legacy-shape" } };

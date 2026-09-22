@@ -1,10 +1,11 @@
 import { resolve } from "node:path";
-import { runWorksetGitEffectGate, type WorksetGitEffectBinding } from "@cq/process-control";
+import { cohortEffectTargetRefV1, runWorksetGitEffectGate, type CohortEffectEnvelopeV1, type WorksetGitEffectBinding } from "@cq/process-control";
 import { TASKS_LEDGER } from "./constants.js";
 import {
   nodeManagedWorktreeGitRunner,
   type ManagedWorktreeGitResult,
   type ManagedWorktreeGitRunner,
+  type ManagedCohortWorktreeAuthority,
 } from "./managedWorktree.js";
 import type { LedgerStore } from "./store/LedgerStore.js";
 import { requireWorksetStore } from "./worksetAccess.js";
@@ -15,6 +16,7 @@ import {
   type ManagedTerminalReleaseEffect,
 } from "./managedTerminalReleaseAdmission.js";
 import { resolveUniqueTaskState } from "./taskStateResolver.js";
+import { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.js";
 
 const ZERO_COMMIT = "0".repeat(40);
 
@@ -46,6 +48,7 @@ function terminalReleaseEffect(binding: WorksetGitEffectBinding): ManagedTermina
   }
   if (
     binding.kind === "branch-create" &&
+    binding.mode === undefined &&
     binding.reference !== undefined &&
     binding.expectedReferenceCommit !== undefined
   ) {
@@ -144,6 +147,60 @@ export function createManagedWorktreeGitEffectRunner(
     });
   }
 
+  return createManagedGitEffectRunnerCore({ repositoryRoot, targetRef, branch: taskBranch, readOnlyGit,
+    runEffect: async (binding, resolveCoordinates) => {
+      const resolveBinding = async (): Promise<WorksetGitEffectBinding> => {
+        if (options.terminalReleaseBinding === undefined) {
+          assertLiveTask(options.store, options.taskId);
+        } else {
+          const task = await resolveUniqueTaskState(options.store, options.taskId);
+          if (task.status !== options.terminalReleaseBinding.terminalDisposition) {
+            throw new Error(`managed terminal release task status ${task.status} does not equal bound disposition ${options.terminalReleaseBinding.terminalDisposition}`);
+          }
+        }
+        return await resolveCoordinates();
+      };
+      return runLedgerWorksetGitEffect({ store: options.store, expected: binding, resolve: resolveBinding,
+        ...(options.terminalReleaseBinding === undefined ? {} : { terminalReleaseBinding: options.terminalReleaseBinding }) });
+    },
+  });
+}
+
+export function createManagedCohortWorktreeGitEffectRunner(input: {
+  readonly store: LedgerStore;
+  readonly repositoryRoot: string;
+  readonly authority: ManagedCohortWorktreeAuthority;
+  readonly readOnlyGit: ManagedWorktreeGitRunner;
+}): ManagedWorktreeGitRunner {
+  const repositoryRoot = resolve(input.repositoryRoot);
+  if (repositoryRoot !== input.repositoryRoot) throw new Error("cohort Git effect repository root must be canonical");
+  const envelope: CohortEffectEnvelopeV1 = structuredClone(input.authority.envelope);
+  const authority = { ...input.authority, envelope, lease: structuredClone(input.authority.lease) };
+  const provider = createCohortWorksetEffectAdmissionProvider(authority, requireWorksetStore(input.store));
+  return createManagedGitEffectRunnerCore({ repositoryRoot, targetRef: cohortEffectTargetRefV1(envelope),
+    branch: `implement/cohort-${envelope.intent.intentDigest}`, readOnlyGit: input.readOnlyGit,
+    runEffect: async (binding, resolveCoordinates) => runWorksetGitEffectGate({
+      expected: { ...binding, cohort: envelope }, provider,
+      resolve: async () => {
+        const coordinates = await resolveCoordinates();
+        await authority.store.assertLiveCohortAuthority(authority.lease, envelope);
+        return { ...coordinates, cohort: envelope };
+      },
+    }),
+  });
+}
+
+interface ManagedGitEffectRunnerCore {
+  readonly repositoryRoot: string;
+  readonly targetRef: string;
+  readonly branch: string;
+  readonly readOnlyGit: ManagedWorktreeGitRunner;
+  runEffect(binding: WorksetGitEffectBinding, resolveCoordinates: () => Promise<WorksetGitEffectBinding>): Promise<ManagedWorktreeGitResult>;
+}
+
+function createManagedGitEffectRunnerCore(options: ManagedGitEffectRunnerCore): ManagedWorktreeGitRunner {
+  const { repositoryRoot, targetRef, branch: taskBranch, readOnlyGit } = options;
+
   function assertTaskBranch(branch: string): string {
     if (branch !== taskBranch) {
       throw new Error("managed worktree Git effect branch does not match its task target");
@@ -173,27 +230,7 @@ export function createManagedWorktreeGitEffectRunner(
     binding: WorksetGitEffectBinding,
     resolveCoordinates: () => Promise<WorksetGitEffectBinding> = async () => binding,
   ): Promise<ManagedWorktreeGitResult> {
-    const resolveBinding = async (): Promise<WorksetGitEffectBinding> => {
-      if (options.terminalReleaseBinding === undefined) {
-        assertLiveTask(options.store, options.taskId);
-      } else {
-        const task = await resolveUniqueTaskState(options.store, options.taskId);
-        if (task.status !== options.terminalReleaseBinding.terminalDisposition) {
-          throw new Error(
-            `managed terminal release task status ${task.status} does not equal bound disposition ${options.terminalReleaseBinding.terminalDisposition}`,
-          );
-        }
-      }
-      return await resolveCoordinates();
-    };
-    return await runLedgerWorksetGitEffect({
-      store: options.store,
-      expected: binding,
-      resolve: resolveBinding,
-      ...(options.terminalReleaseBinding === undefined
-        ? {}
-        : { terminalReleaseBinding: options.terminalReleaseBinding }),
-    });
+    return options.runEffect(binding, resolveCoordinates);
   }
 
   return async (cwd, args) => {

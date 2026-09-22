@@ -15,6 +15,8 @@ import {
   managedWorktreeHandlesEqual,
   type ManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
+import { resolveNativeManagedWorktreeSubject, type NativeManagedWorktreeSubject } from "./nativeManagedWorktreeSubject.js";
+import { cohortValueDigestV1, type CohortEffectEnvelopeV1 } from "@cq/process-control";
 import { isAbsoluteFilesystemPath } from "./nativeDispatchQualification.js";
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
@@ -57,6 +59,7 @@ export type PiNativeWorktreeReleaseResult =
     };
 
 export interface PiNativeWorktreePreflightRequest {
+  readonly cohort?: CohortEffectEnvelopeV1;
   readonly absolutePath: string;
   readonly baseCommit: string;
   readonly headCommit: string;
@@ -85,6 +88,7 @@ export type PiNativeWorktreePreflightResult =
     };
 
 export interface PiNativeWorktreeBinding {
+  readonly cohort?: CohortEffectEnvelopeV1;
   readonly handle: PiNativeManagedWorktreeHandle;
   readonly absolutePath: string;
   readonly baseCommit: string;
@@ -104,6 +108,7 @@ export type PiNativeWorktreeBindResult =
 export interface PiNativeWorktreeManagePort {
   prepare(request: {
     readonly taskId?: string;
+    readonly cohort?: CohortEffectEnvelopeV1;
     readonly baseCommit?: string;
     readonly handle?: PiNativeManagedWorktreeHandle;
     readonly allowResumeRequired?: boolean;
@@ -112,6 +117,7 @@ export interface PiNativeWorktreeManagePort {
     readonly expectedHead?: string;
   }): Promise<PiNativeWorktreePrepareResult>;
   release(request: {
+    readonly cohort?: CohortEffectEnvelopeV1;
     readonly handle: PiNativeManagedWorktreeHandle;
     readonly terminalDisposition: "done" | "abandoned";
     readonly resultCommit?: string | null;
@@ -170,6 +176,11 @@ export function preflightPiNativeWorktree(
         `${JSON.stringify(request.expectedHead)}`,
     });
   }
+  if (request.cohort !== undefined && request.handle === undefined) {
+    return { status: "refused", reason: "handle-invalid", detail: "native cohort preflight requires its managed V3 handle" };
+  }
+  try { resolveNativeManagedWorktreeSubject(request); }
+  catch (error) { return { status: "refused", reason: "handle-invalid", detail: String(error) }; }
   if (request.handle !== undefined) {
     if (!isHandleShape(request.handle)) {
       return Object.freeze({
@@ -212,6 +223,7 @@ export function preflightPiNativeWorktree(
 export async function bindPiNativeWorktree(input: {
   readonly port: PiNativeWorktreeManagePort;
   readonly taskId?: string;
+  readonly cohort?: CohortEffectEnvelopeV1;
   readonly baseCommit?: string;
   readonly handle?: PiNativeManagedWorktreeHandle;
   readonly allowResumeRequired?: boolean;
@@ -231,15 +243,11 @@ export async function bindPiNativeWorktree(input: {
         "adoptWorktreePath and expectedHead must appear together on handle-free prepare",
     });
   }
-  // worktree_manage requires taskId even on resume-by-handle; prefer explicit,
-  // else take it from the opaque handle when present.
-  const taskId =
-    input.taskId ??
-    (input.handle !== undefined && typeof input.handle.taskId === "string"
-      ? input.handle.taskId
-      : undefined);
+  let subject: NativeManagedWorktreeSubject;
+  try { subject = resolveNativeManagedWorktreeSubject(input); }
+  catch (error) { return { status: "refused", reason: "handle-invalid", detail: String(error) }; }
   const prepared = await input.port.prepare({
-    ...(taskId === undefined ? {} : { taskId }),
+    ...subject,
     ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
     ...(input.handle === undefined ? {} : { handle: input.handle }),
     ...(input.allowResumeRequired === undefined
@@ -269,6 +277,10 @@ export async function bindPiNativeWorktree(input: {
       detail: "prepare returned a non-structural handle",
     });
   }
+  if (input.handle?.version === 3 && !managedWorktreeHandlesEqual(input.handle, prepared.handle)) {
+    return { status: "refused", reason: "handle-invalid",
+      detail: "prepare substituted the opaque resumed cohort handle" };
+  }
   if (
     prepared.evidence.worktreeId !== prepared.handle.worktreeId ||
     prepared.evidence.branch !== prepared.handle.branch
@@ -287,6 +299,7 @@ export async function bindPiNativeWorktree(input: {
     headCommit,
     expectedHead: prepared.evidence.headCommit,
     handle: prepared.handle,
+    ...(subject.cohort === undefined ? {} : { cohort: subject.cohort }),
   });
   if (preflight.status === "refused") {
     return Object.freeze({
@@ -300,6 +313,7 @@ export async function bindPiNativeWorktree(input: {
     status: "bound" as const,
     binding: Object.freeze({
       handle: prepared.handle,
+      ...(subject.cohort === undefined ? {} : { cohort: subject.cohort }),
       absolutePath: preflight.absolutePath,
       baseCommit: preflight.baseCommit,
       headCommit: preflight.headCommit,
@@ -325,6 +339,7 @@ export async function releasePiNativeWorktree(input: {
     baseCommit: input.binding.baseCommit,
     headCommit: input.binding.headCommit,
     handle: input.binding.handle,
+    ...(input.binding.cohort === undefined ? {} : { cohort: input.binding.cohort }),
   });
   if (preflight.status === "refused") {
     return Object.freeze({
@@ -335,6 +350,7 @@ export async function releasePiNativeWorktree(input: {
   }
   return input.port.release({
     handle: input.binding.handle,
+    ...(input.binding.cohort === undefined ? {} : { cohort: input.binding.cohort }),
     terminalDisposition: input.terminalDisposition,
     ...(input.resultCommit === undefined ? {} : { resultCommit: input.resultCommit }),
     ...(input.deleteBranch === undefined ? {} : { deleteBranch: input.deleteBranch }),
@@ -348,12 +364,19 @@ export async function releasePiNativeWorktree(input: {
 export function assertPiNativeWorktreeBindingIntact(
   expected: PiNativeWorktreeBinding,
   observed: {
+    readonly cohort?: CohortEffectEnvelopeV1;
     readonly absolutePath?: string;
     readonly baseCommit?: string;
     readonly headCommit?: string;
     readonly handle?: PiNativeManagedWorktreeHandle;
   },
 ): void {
+  try { resolveNativeManagedWorktreeSubject(expected); }
+  catch (error) { throw new PiNativeWorktreeBindingError("handle-invalid", String(error)); }
+  if (observed.cohort !== undefined &&
+      cohortValueDigestV1(observed.cohort) !== cohortValueDigestV1(expected.cohort)) {
+    throw new PiNativeWorktreeBindingError("cohort-mutated", "full cohort envelope changed after native binding");
+  }
   if (
     observed.absolutePath !== undefined &&
     observed.absolutePath !== expected.absolutePath

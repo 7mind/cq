@@ -28,6 +28,7 @@ import {
   promises as fs,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -44,13 +45,24 @@ import {
 import { fileURLToPath } from "node:url";
 import {
   MANAGED_WORKTREE_HANDLE_KIND,
+  assertDispatchCohortRebaseTransition,
+  cohortRebaseManagerBinding,
+  cohortRebaseTransitionMatches,
+  type DispatchCohortRebaseTransition,
+  type DispatchCohortGitEffectBinding,
+  type DispatchHandle,
   assessWipArtifactClosure,
   parseWipArtifact,
-  validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
+  validateManagedTaskWorktreeHandle as validateManagedWorktreeHandleContract,
+  validateManagedWorktreeHandle as validateAnyManagedWorktreeHandle,
   WipArtifactParseError,
   type DispatchGuardedRebaseBridge,
-  type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
-  type ImplementWorkerSupervisedGateEvidence,
+  type ManagedTaskWorktreeHandle as ConfigManagedWorktreeHandle,
+  type ManagedWorktreeHandle as AnyManagedWorktreeHandle,
+  type ManagedWorktreeHandleV3,
+  type CohortEffectEnvelopeV1,
+  type ManagedWorktreeHandleV1 as ConfigManagedWorktreeHandleV1,
+  type ImplementTaskWorkerSupervisedGateEvidence,
   type WipClosureProjection,
 } from "@cq/config";
 import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
@@ -80,6 +92,13 @@ import {
   type LegacyWorktreeReconciliationTransaction,
 } from "./legacyWorktreeReconciliation.js";
 import { Lockfile } from "./store/lockfile.js";
+import { assertCohortEffectEnvelopeV1, cohortValueDigestV1, cohortWorktreeIdentityFromEnvelopeV1,
+  createCohortCandidateIntentV1, createCohortEffectEnvelopeV1, resolveCohortDefinitionObservationV1 } from "./workCohort.js";
+import { cohortEffectTargetRefV1, runWorksetGitEffectGate } from "@cq/process-control";
+import { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.js";
+import { materializeGuardedRebaseBridge, verifyHistoricalCohortGuardedRebaseBridge } from "./guardedRebaseContinuation.js";
+import type { LedgerStore } from "./store/LedgerStore.js";
+import type { WorkCohortLeaseV1, WorkCohortStore } from "./workCohortStore.js";
 import {
   currentRecoveryJournalRoot,
   FsCurrentRecoverySealJournalStore,
@@ -101,6 +120,8 @@ const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
 const HANDLES_DIRNAME = "handles";
 const TASK_REGISTRY_DIRNAME = "tasks";
+const COHORT_REGISTRY_DIRNAME = "cohorts";
+const COHORT_REGISTRY_KEY_RE = /^cohort-[0-9a-f]{64}$/;
 const TASK_GENERATIONS_DIRNAME = "generations";
 const TASK_STAGING_DIRNAME = "staging";
 const TASK_CURRENT_FILENAME = "current.json";
@@ -142,6 +163,30 @@ export interface ManagedWorktreeDispatchBinding {
   readonly baseCommit: string;
 }
 
+export interface ManagedCohortWorktreeAuthority {
+  readonly store: WorkCohortStore;
+  readonly lease: WorkCohortLeaseV1;
+  readonly envelope: CohortEffectEnvelopeV1;
+}
+
+export interface ManagedCohortWorktreeDispatchBinding extends Omit<ManagedWorktreeDispatchBinding, "taskId"> {
+  readonly cohort: CohortEffectEnvelopeV1;
+}
+
+export interface PrepareManagedCohortWorktreeRequest {
+  readonly repositoryRoot: string;
+  readonly baseCommit: string;
+  readonly handle: ManagedWorktreeHandleV3 | null;
+  readonly dependencyReader: DependencyTaskSnapshotReader;
+  readonly priorResultCommit: string | null;
+  readonly integrationHead: string;
+}
+
+export type PrepareManagedCohortWorktreeResult =
+  | ManagedWorktreeAllocationResult<ManagedWorktreeHandleV3>
+  | { readonly status: "resume-required"; readonly reason: "live-tree-exists";
+      readonly handle: ManagedWorktreeHandleV3; readonly evidence: PreparedWorktreeEvidence };
+
 /** Registry identity sufficient to order a prepare with lineage sealing. */
 export interface ManagedWorktreeLineageBinding {
   readonly taskId: string;
@@ -164,6 +209,7 @@ export interface ManagedWorktreeTerminalReleaseRegistryBinding {
 }
 
 export interface PreparedWorktreeEvidence {
+  readonly registryPublicationWarning?: string;
   readonly worktreeId: string;
   readonly absolutePath: string;
   readonly branch: string;
@@ -204,6 +250,8 @@ export type PrepareManagedWorktreeRefusalReason =
   | "adoption-authority-stale"
   | "adoption-recovery-failed"
   | "registry-conflict"
+  | "cohort-authority-stale"
+  | "member-reserved"
   | "prepare-lock-busy";
 
 export type PrepareManagedWorktreeResult =
@@ -382,6 +430,8 @@ export interface ManagedWorktreeDeps {
   readonly taskAdoptionAuthority?: ManagedWorktreeTaskAdoptionAuthority;
   /** Bound dispatch/lease/process/content observer required for legacy adoption. */
   readonly adoptionActivityFence?: LegacyWorktreeActivityFence;
+  readonly cohortStore?: WorkCohortStore;
+  readonly validateCohortPublication?: (envelope: CohortEffectEnvelopeV1) => undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +671,7 @@ function refusedPrepare(
   reason: PrepareManagedWorktreeRefusalReason,
   detail: string,
   extra: Partial<Extract<PrepareManagedWorktreeResult, { status: "refused" }>> = {},
-): PrepareManagedWorktreeResult {
+): Extract<PrepareManagedWorktreeResult, { readonly status: "refused" }> {
   return { status: "refused", reason, detail, ...extra };
 }
 
@@ -664,7 +714,7 @@ function legacyTaskIndexDir(regRoot: string, taskId: string): string {
 }
 
 function taskRegistryDir(regRoot: string, taskId: string): string {
-  return join(regRoot, TASK_REGISTRY_DIRNAME, taskId);
+  return join(regRoot, COHORT_REGISTRY_KEY_RE.test(taskId) ? COHORT_REGISTRY_DIRNAME : TASK_REGISTRY_DIRNAME, taskId);
 }
 
 function taskGenerationPath(regRoot: string, taskId: string, generation: string): string {
@@ -675,7 +725,12 @@ function taskCurrentPath(regRoot: string, taskId: string): string {
   return join(taskRegistryDir(regRoot, taskId), TASK_CURRENT_FILENAME);
 }
 
-function fingerprintHandle(handle: ManagedWorktreeHandle): string {
+function registrySubjectKey(handle: AnyManagedWorktreeHandle): string {
+  return handle.version === 3 ? `cohort-${handle.cohort.candidateIntentDigest}` : handle.taskId;
+}
+
+function fingerprintHandle(handle: AnyManagedWorktreeHandle): string {
+  if (handle.version === 3) return cohortValueDigestV1(handle);
   const material = [
     handle.kind,
     String(handle.version),
@@ -692,14 +747,27 @@ function fingerprintHandle(handle: ManagedWorktreeHandle): string {
   return createHash("sha256").update(material).digest("hex");
 }
 
-interface StoredHandleRecord {
-  readonly handle: ManagedWorktreeHandle;
+interface StoredHandleRecord<H extends AnyManagedWorktreeHandle = ManagedWorktreeHandle> {
+  readonly handle: H;
   readonly fingerprint: string;
   readonly status: "live" | "released";
   readonly headAtPrepare: string;
   readonly bunWorkspaceRoot: string;
   readonly trustedGateProjection?: ManagedWorktreeTrustedGateProjection;
   readonly releasedAt?: string;
+  readonly retainedCohortAuthority?: {
+    readonly lease: WorkCohortLeaseV1;
+    readonly envelope: CohortEffectEnvelopeV1;
+  };
+  readonly cohortRebaseSuccessor?: {
+    readonly proof: DispatchCohortRebaseTransition;
+    readonly bridge: Extract<DispatchGuardedRebaseBridge, { readonly version: 2 }>;
+    readonly handle: ManagedWorktreeHandleV3;
+  };
+  readonly cohortRebasePredecessor?: {
+    readonly proof: DispatchCohortRebaseTransition;
+    readonly bridge: Extract<DispatchGuardedRebaseBridge, { readonly version: 2 }>;
+  };
 }
 
 interface ManagedWorktreeTrustedGateProjection {
@@ -721,11 +789,9 @@ interface ManagedWorktreeTrustedGateProjection {
   readonly capturedAt: string;
 }
 
-interface TaskRegistryGeneration {
-  readonly version: 2;
-  readonly taskId: string;
-  readonly records: readonly StoredHandleRecord[];
-}
+type TaskRegistryGeneration =
+  | { readonly version: 2; readonly taskId: string; readonly records: readonly StoredHandleRecord[] }
+  | { readonly version: 3; readonly subjectKey: string; readonly records: readonly StoredHandleRecord<AnyManagedWorktreeHandle>[] };
 
 interface TaskRegistryPointer {
   readonly version: 2;
@@ -758,14 +824,15 @@ async function readStoredHandle(
 
 async function writeStoredHandleExclusive(
   regRoot: string,
-  record: StoredHandleRecord,
+  record: StoredHandleRecord<AnyManagedWorktreeHandle>,
   fault: ManagedWorktreeFaultInjector,
 ): Promise<void> {
-  const records = await loadOrReconcileTaskRecords(regRoot, record.handle.taskId, fault);
+  const key = registrySubjectKey(record.handle);
+  const records = await loadOrReconcileSubjectRecords(regRoot, key, fault);
   if (records.some((entry) => entry.handle.token === record.handle.token)) {
     throw new Error(`managed registry token already exists: ${record.handle.token}`);
   }
-  await publishTaskGeneration(regRoot, record.handle.taskId, [...records, record], fault);
+  await publishTaskGeneration(regRoot, key, [...records, record], fault);
 }
 
 async function updateStoredHandle(
@@ -792,16 +859,18 @@ async function listLiveHandlesForTask(
   return records.filter((record) => record.status === "live");
 }
 
-function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredHandleRecord {
+function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredHandleRecord<AnyManagedWorktreeHandle> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Partial<StoredHandleRecord>;
-  if (!isHandleShape(record.handle)) return false;
-  if (taskId !== undefined && record.handle.taskId !== taskId) return false;
-  if (record.fingerprint !== fingerprintHandle(record.handle)) return false;
+  const record = value as Partial<StoredHandleRecord<AnyManagedWorktreeHandle>>;
+  const validation = validateAnyManagedWorktreeHandle(record.handle);
+  if (validation.status !== "valid") return false;
+  const handle = validation.handle;
+  if (taskId !== undefined && registrySubjectKey(handle) !== taskId) return false;
+  if (record.fingerprint !== fingerprintHandle(handle)) return false;
   if (record.status !== "live" && record.status !== "released") return false;
   if (typeof record.headAtPrepare !== "string") return false;
   if (typeof record.bunWorkspaceRoot !== "string") return false;
-  const projectionBinding = { handle: record.handle, fingerprint: record.fingerprint };
+  const projectionBinding = { handle, fingerprint: record.fingerprint };
   if (
     record.trustedGateProjection !== undefined &&
     !isManagedWorktreeTrustedGateProjection(record.trustedGateProjection, projectionBinding)
@@ -809,13 +878,50 @@ function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredH
     return false;
   }
   if (record.releasedAt !== undefined && typeof record.releasedAt !== "string") return false;
+  if (record.cohortRebaseSuccessor !== undefined) {
+    const successor = record.cohortRebaseSuccessor;
+    try { assertDispatchCohortRebaseTransition(successor.proof); } catch { return false; }
+    if (handle.version !== 3 || validateAnyManagedWorktreeHandle(successor.handle).status !== "valid" ||
+        successor.proof.sourceBinding.handleToken !== handle.token || successor.proof.sourceBinding.handleFingerprint !== record.fingerprint ||
+        successor.proof.successorBinding.handleFingerprint !== fingerprintHandle(successor.handle) ||
+        successor.proof.guardedRebaseBridgeDigest !== cohortValueDigestV1(successor.bridge)) return false;
+  }
+  if (record.cohortRebasePredecessor !== undefined) {
+    const predecessor = record.cohortRebasePredecessor;
+    try { assertDispatchCohortRebaseTransition(predecessor.proof); } catch { return false; }
+    if (handle.version !== 3 || predecessor.proof.successorBinding.handleFingerprint !== record.fingerprint ||
+        predecessor.proof.guardedRebaseBridgeDigest !== cohortValueDigestV1(predecessor.bridge)) return false;
+  }
+  if (record.retainedCohortAuthority !== undefined) {
+    if (handle.version !== 3) return false;
+    const retained = record.retainedCohortAuthority;
+    if (typeof retained !== "object" || retained === null ||
+        Object.keys(retained).sort().join(",") !== "envelope,lease" ||
+        typeof retained.lease !== "object" || retained.lease === null ||
+        Object.keys(retained.lease).sort().join(",") !== "capability,executionEpoch,holderId,semanticSubject" ||
+        Object.values(retained.lease).some((value) => typeof value !== "string" || value.length === 0)) return false;
+    try { assertCohortEffectEnvelopeV1(retained.envelope); } catch { return false; }
+    if (retained.lease.executionEpoch !== retained.envelope.executionEpoch ||
+        retained.lease.semanticSubject !== retained.envelope.semanticSubject ||
+        cohortValueDigestV1(handle.cohort) !== cohortValueDigestV1(cohortWorktreeIdentityFromEnvelopeV1(retained.envelope))) return false;
+  }
   return true;
 }
 
-function canonicalStoredHandleRecord(record: StoredHandleRecord): StoredHandleRecord {
+function canonicalStoredHandleRecord(record: StoredHandleRecord<AnyManagedWorktreeHandle>): StoredHandleRecord<AnyManagedWorktreeHandle> {
   const handle = record.handle;
   return {
-    handle: {
+    handle: handle.version === 3 ? {
+      kind: handle.kind, version: handle.version, token: handle.token, worktreeId: handle.worktreeId,
+      branch: handle.branch, repositoryRoot: handle.repositoryRoot, absolutePath: handle.absolutePath,
+      baseCommit: handle.baseCommit, createdAt: handle.createdAt, nonce: handle.nonce,
+      cohort: { kind: handle.cohort.kind, version: handle.cohort.version, cohortId: handle.cohort.cohortId,
+        definitionDigest: handle.cohort.definitionDigest, candidateIntentDigest: handle.cohort.candidateIntentDigest,
+        memberSetDigest: handle.cohort.memberSetDigest, memberAuthorities: handle.cohort.memberAuthorities.map((member) => ({
+          taskRef: member.taskRef, taskRevision: member.taskRevision, goalRef: member.goalRef,
+          finalizedManifestDigest: member.finalizedManifestDigest, authorityRevision: member.authorityRevision,
+        })) },
+    } : {
       kind: handle.kind,
       version: handle.version,
       token: handle.token,
@@ -836,13 +942,18 @@ function canonicalStoredHandleRecord(record: StoredHandleRecord): StoredHandleRe
       ? {}
       : { trustedGateProjection: record.trustedGateProjection }),
     ...(record.releasedAt !== undefined ? { releasedAt: record.releasedAt } : {}),
+    ...(record.retainedCohortAuthority === undefined ? {} :
+      { retainedCohortAuthority: structuredClone(record.retainedCohortAuthority) }),
+    ...(record.cohortRebaseSuccessor === undefined ? {} : { cohortRebaseSuccessor: structuredClone(record.cohortRebaseSuccessor) }),
+    ...(record.cohortRebasePredecessor === undefined ? {} : { cohortRebasePredecessor: structuredClone(record.cohortRebasePredecessor) }),
   };
 }
 
 function isManagedWorktreeTrustedGateProjection(
   value: unknown,
-  record: Pick<StoredHandleRecord, "handle" | "fingerprint">,
+  record: Pick<StoredHandleRecord<AnyManagedWorktreeHandle>, "handle" | "fingerprint">,
 ): value is ManagedWorktreeTrustedGateProjection {
+  if (record.handle.version === 3) return false;
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const projection = value as Partial<ManagedWorktreeTrustedGateProjection>;
   return (
@@ -871,10 +982,9 @@ function isManagedWorktreeTrustedGateProjection(
   );
 }
 
-function serializeTaskGeneration(taskId: string, records: readonly StoredHandleRecord[]): string {
-  const generation: TaskRegistryGeneration = {
-    version: 2,
-    taskId,
+function serializeTaskGeneration(taskId: string, records: readonly StoredHandleRecord<AnyManagedWorktreeHandle>[]): string {
+  const generation = {
+    ...(COHORT_REGISTRY_KEY_RE.test(taskId) ? { version: 3, subjectKey: taskId } : { version: 2, taskId }),
     records: [...records]
       .sort((left, right) => left.handle.token.localeCompare(right.handle.token))
       .map(canonicalStoredHandleRecord),
@@ -907,7 +1017,7 @@ async function syncRegistryDirectory(
 async function readCurrentTaskGeneration(
   regRoot: string,
   taskId: string,
-): Promise<readonly StoredHandleRecord[] | null> {
+): Promise<readonly StoredHandleRecord<AnyManagedWorktreeHandle>[] | null> {
   let pointerRaw: string;
   try {
     pointerRaw = await fs.readFile(taskCurrentPath(regRoot, taskId), "utf8");
@@ -954,8 +1064,9 @@ async function readCurrentTaskGeneration(
   }
   const generation = generationValue as Partial<TaskRegistryGeneration>;
   if (
-    generation.version !== 2 ||
-    generation.taskId !== taskId ||
+    (COHORT_REGISTRY_KEY_RE.test(taskId)
+      ? generation.version !== 3 || generation.subjectKey !== taskId
+      : generation.version !== 2 || generation.taskId !== taskId) ||
     !Array.isArray(generation.records)
   ) {
     throw new Error(`managed registry generation is malformed for ${taskId}`);
@@ -967,13 +1078,13 @@ async function readCurrentTaskGeneration(
     }
     tokens.add(record.handle.token);
   }
-  return generation.records as readonly StoredHandleRecord[];
+  return generation.records as readonly StoredHandleRecord<AnyManagedWorktreeHandle>[];
 }
 
 async function publishTaskGeneration(
   regRoot: string,
   taskId: string,
-  records: readonly StoredHandleRecord[],
+  records: readonly StoredHandleRecord<AnyManagedWorktreeHandle>[],
   fault: ManagedWorktreeFaultInjector,
 ): Promise<void> {
   const generationRaw = serializeTaskGeneration(taskId, records);
@@ -987,9 +1098,13 @@ async function publishTaskGeneration(
   }
 
   const taskDir = taskRegistryDir(regRoot, taskId);
-  const tasksDir = join(regRoot, TASK_REGISTRY_DIRNAME);
+  const tasksDir = dirname(taskDir);
   const generationsDir = join(taskDir, TASK_GENERATIONS_DIRNAME);
   const stagingDir = join(taskDir, TASK_STAGING_DIRNAME);
+  if (COHORT_REGISTRY_KEY_RE.test(taskId)) {
+    await fs.mkdir(tasksDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(tasksDir, 0o700);
+  }
   await fs.mkdir(generationsDir, { recursive: true });
   await fs.mkdir(stagingDir, { recursive: true });
   const finalGeneration = taskGenerationPath(regRoot, taskId, generation);
@@ -1015,7 +1130,8 @@ async function publishTaskGeneration(
     await syncRegistryDirectory(generationsDir, "generation", fault);
   }
 
-  await fault("after-registry-generation-sync", { taskId, generation });
+  const identity = COHORT_REGISTRY_KEY_RE.test(taskId) ? { subjectKey: taskId } : { taskId };
+  await fault("after-registry-generation-sync", { ...identity, generation });
 
   const pointer: TaskRegistryPointer = { version: 2, generation };
   const pointerRaw = `${JSON.stringify(pointer, null, 2)}\n`;
@@ -1030,7 +1146,7 @@ async function publishTaskGeneration(
   } finally {
     await pointerHandle.close();
   }
-  await fault("before-registry-pointer-rename", { taskId, generation });
+  await fault("before-registry-pointer-rename", { ...identity, generation });
   await fs.rename(stagedPointer, taskCurrentPath(regRoot, taskId));
   await syncRegistryDirectory(taskDir, "pointer", fault);
   if (current === null) {
@@ -1038,7 +1154,7 @@ async function publishTaskGeneration(
     await syncRegistryDirectory(regRoot, "tasks-directory", fault);
     await syncRegistryDirectory(dirname(regRoot), "registry-root", fault);
   }
-  await fault("after-registry-pointer-rename", { taskId, generation });
+  await fault("after-registry-pointer-rename", { ...identity, generation });
 }
 
 interface StagedTaskGenerationPublication {
@@ -1060,15 +1176,19 @@ function syncDirectoryNow(directory: string): void {
 async function stageTaskGenerationPublication(
   regRoot: string,
   taskId: string,
-  records: readonly StoredHandleRecord[],
+  records: readonly StoredHandleRecord<AnyManagedWorktreeHandle>[],
   fault: ManagedWorktreeFaultInjector,
 ): Promise<StagedTaskGenerationPublication> {
   const generationRaw = serializeTaskGeneration(taskId, records);
   const generation = digestRegistryBytes(generationRaw);
   const taskDir = taskRegistryDir(regRoot, taskId);
-  const tasksDir = join(regRoot, TASK_REGISTRY_DIRNAME);
+  const tasksDir = dirname(taskDir);
   const generationsDir = join(taskDir, TASK_GENERATIONS_DIRNAME);
   const stagingDir = join(taskDir, TASK_STAGING_DIRNAME);
+  if (COHORT_REGISTRY_KEY_RE.test(taskId)) {
+    await fs.mkdir(tasksDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(tasksDir, 0o700);
+  }
   await fs.mkdir(generationsDir, { recursive: true });
   await fs.mkdir(stagingDir, { recursive: true });
   const finalGeneration = taskGenerationPath(regRoot, taskId, generation);
@@ -1093,7 +1213,8 @@ async function stageTaskGenerationPublication(
     await fs.rename(stagedGeneration, finalGeneration);
     await syncRegistryDirectory(generationsDir, "generation", fault);
   }
-  await fault("after-registry-generation-sync", { taskId, generation });
+  const identity = COHORT_REGISTRY_KEY_RE.test(taskId) ? { subjectKey: taskId } : { taskId };
+  await fault("after-registry-generation-sync", { ...identity, generation });
 
   const currentPath = taskCurrentPath(regRoot, taskId);
   let oldPointerRaw: string | null = null;
@@ -1204,9 +1325,9 @@ async function readLegacyTaskRecords(
     } catch {
       continue;
     }
-    if (!isStoredHandleRecord(value, taskId)) continue;
+    if (!isStoredHandleRecord(value, taskId) || value.handle.version === 3) continue;
     if (name !== `${value.handle.token}.json`) continue;
-    records.set(value.handle.token, value);
+    records.set(value.handle.token, { ...value, handle: value.handle });
   }
 
   let indexNames: string[] = [];
@@ -1253,11 +1374,22 @@ async function loadOrReconcileTaskRecords(
   fault: ManagedWorktreeFaultInjector,
 ): Promise<readonly StoredHandleRecord[]> {
   const current = await readCurrentTaskGeneration(regRoot, taskId);
-  if (current !== null) return current;
+  if (current !== null) return current.map((record) => {
+    if (record.handle.version === 3) throw new Error("task registry contains a cohort handle");
+    return { ...record, handle: record.handle };
+  });
   const legacy = await readLegacyTaskRecords(regRoot, taskId);
   if (legacy.length === 0) return [];
   await publishTaskGeneration(regRoot, taskId, legacy, fault);
   return legacy;
+}
+
+async function loadOrReconcileSubjectRecords(
+  regRoot: string, subjectKey: string, fault: ManagedWorktreeFaultInjector,
+): Promise<readonly StoredHandleRecord<AnyManagedWorktreeHandle>[]> {
+  if (COHORT_REGISTRY_KEY_RE.test(subjectKey)) return (await readCurrentTaskGeneration(regRoot, subjectKey)) ?? [];
+  if (!TASK_ID_RE.test(subjectKey)) throw new Error("managed registry subject key is invalid");
+  return loadOrReconcileTaskRecords(regRoot, subjectKey, fault);
 }
 
 // ---------------------------------------------------------------------------
@@ -1394,7 +1526,7 @@ async function rollbackFreshWorktree(
 
 async function emergencyRegisterLiveHandle(
   regRoot: string,
-  handle: ManagedWorktreeHandle,
+  handle: AnyManagedWorktreeHandle,
   headCommit: string,
   bunWorkspaceRoot: string,
 ): Promise<boolean> {
@@ -1626,7 +1758,7 @@ async function verifyBaseCommit(
 }
 
 async function buildEvidence(
-  handle: ManagedWorktreeHandle,
+  handle: AnyManagedWorktreeHandle,
   headCommit: string,
   bunWorkspaceRoot: string,
   bunWorkspaceRoots: readonly string[],
@@ -1655,7 +1787,6 @@ async function resumeFromStored(
   stored: StoredHandleRecord,
   repositoryRoot: string,
 ): Promise<PrepareManagedWorktreeResult> {
-  const git = deps.git ?? nodeManagedWorktreeGitRunner;
   const handle = stored.handle;
   const integrity = assertHandleIntegrity(handle, repositoryRoot);
   if (integrity !== null) {
@@ -1673,6 +1804,17 @@ async function resumeFromStored(
       `handle branch ${handle.branch} does not match requested branch ${request.branch}`,
     );
   }
+
+  return resumeManagedRecord(request.priorResultCommit, deps, stored);
+}
+
+async function resumeManagedRecord<H extends AnyManagedWorktreeHandle>(
+  priorResultCommit: string | null | undefined,
+  deps: ManagedWorktreeDeps,
+  stored: StoredHandleRecord<H>,
+): Promise<ManagedWorktreeAllocationResult<H>> {
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const handle = stored.handle;
 
   try {
     const stat = await fs.stat(handle.absolutePath);
@@ -1701,23 +1843,23 @@ async function resumeFromStored(
     );
   }
 
-  if (request.priorResultCommit !== undefined && request.priorResultCommit !== null) {
-    if (!FULL_COMMIT_SHA.test(request.priorResultCommit)) {
+  if (priorResultCommit !== undefined && priorResultCommit !== null) {
+    if (!FULL_COMMIT_SHA.test(priorResultCommit)) {
       return refusedPrepare(
         "prior-result-commit-mismatch",
-        `priorResultCommit is not a full SHA: ${request.priorResultCommit}`,
+        `priorResultCommit is not a full SHA: ${priorResultCommit}`,
       );
     }
     const ancestor = await git(handle.absolutePath, [
       "merge-base",
       "--is-ancestor",
-      request.priorResultCommit,
+      priorResultCommit,
       head,
     ]);
-    if (ancestor.code !== 0 && request.priorResultCommit !== head) {
+    if (ancestor.code !== 0 && priorResultCommit !== head) {
       return refusedPrepare(
         "prior-result-commit-mismatch",
-        `priorResultCommit ${request.priorResultCommit} is not equal to or an ancestor of HEAD ${head}`,
+        `priorResultCommit ${priorResultCommit} is not equal to or an ancestor of HEAD ${head}`,
       );
     }
   }
@@ -1812,6 +1954,19 @@ export async function prepareManagedWorktree(
   }
 
   try {
+    const reservation = await findCohortMemberOwner(regRoot, [request.taskId], null);
+    if (reservation !== null) return refusedPrepare("member-reserved", reservation);
+    if (deps.cohortStore !== undefined) {
+      const transitions = (await deps.cohortStore.snapshot()).portable.reservationTransitions;
+      const active = new Map<string, (typeof transitions)[number]>();
+      for (const transition of transitions) {
+        if (transition.transition === "reserved") active.set(transition.reservationId, transition);
+        else active.delete(transition.reservationId);
+      }
+      if ([...active.values()].some((value) => value.memberRefs.includes(`tasks:${request.taskId}`))) {
+        return refusedPrepare("member-reserved", `task ${request.taskId} belongs to an active cohort reservation`);
+      }
+    }
     if (request.handle !== undefined) {
       let stored: StoredHandleRecord | null;
       try {
@@ -1855,6 +2010,156 @@ export async function prepareManagedWorktree(
       await releasePrepareLock();
     }
   }
+}
+
+async function findCohortMemberOwner(
+  regRoot: string, taskIds: readonly string[], permittedSubject: string | null,
+): Promise<string | null> {
+  const directory = join(regRoot, COHORT_REGISTRY_DIRNAME);
+  let entries: string[];
+  try { entries = await fs.readdir(directory); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const members = new Set(taskIds.map((id) => `tasks:${id}`));
+  for (const key of entries) {
+    if (!COHORT_REGISTRY_KEY_RE.test(key)) throw new Error("invalid cohort registry subject directory");
+    if (key === permittedSubject) continue;
+    const records = await readCurrentTaskGeneration(regRoot, key);
+    for (const record of records ?? []) {
+      if (record.handle.version !== 3) throw new Error("cohort registry contains a task handle");
+      if (record.status === "live" && record.handle.cohort.memberAuthorities.some((member) => members.has(member.taskRef))) {
+        return `cohort ${record.handle.cohort.cohortId} already owns an overlapping member`;
+      }
+    }
+  }
+  return null;
+}
+
+async function withManagedMemberPrepareLocks<T>(
+  regRoot: string, taskIds: readonly string[], deps: ManagedWorktreeDeps, effect: () => Promise<T>,
+): Promise<T> {
+  const lockfile = deps.lockfile ?? new Lockfile({ ...(deps.prepareLockTimeoutMs === undefined ? {} :
+    { acquireTimeoutMs: deps.prepareLockTimeoutMs }) });
+  const releases: (() => Promise<void>)[] = [];
+  try {
+    for (const taskId of [...new Set(taskIds)].sort()) {
+      releases.push(await lockfile.acquire(join(regRoot, PREPARE_LOCKS_DIRNAME), `prepare-${taskId}`));
+    }
+    return await effect();
+  } finally {
+    for (const release of releases.reverse()) await release();
+  }
+}
+
+export async function prepareManagedCohortWorktree(
+  request: PrepareManagedCohortWorktreeRequest,
+  deps: ManagedWorktreeDeps,
+  authority: ManagedCohortWorktreeAuthority,
+): Promise<PrepareManagedCohortWorktreeResult> {
+  const { store, lease, envelope } = authority;
+  try { await store.assertLiveCohortAuthority(lease, envelope); }
+  catch (error) { return refusedPrepare("cohort-authority-stale", String(error)); }
+  const cohort = cohortWorktreeIdentityFromEnvelopeV1(envelope);
+  const taskIds = cohort.memberAuthorities.map((member) => member.taskRef.slice("tasks:".length));
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const repositoryRoot = await resolveRepositoryRoot(git, request.repositoryRoot);
+  if (repositoryRoot === null) return refusedPrepare("repository-invalid", "cohort repository does not exist");
+  const regRoot = registryRoot(repositoryRoot, deps.stateDir);
+  const subjectKey = `cohort-${cohort.candidateIntentDigest}`;
+  if (request.handle !== null) {
+    const validated = validateAnyManagedWorktreeHandle(request.handle, repositoryRoot);
+    if (validated.status !== "valid" || validated.handle.version !== 3) return refusedPrepare("handle-invalid", "cohort handle is invalid");
+    if (cohortValueDigestV1(validated.handle.cohort) !== cohortValueDigestV1(cohort)) {
+      return refusedPrepare("handle-mismatch", "handle differs from the complete current cohort identity");
+    }
+  }
+  return withManagedMemberPrepareLocks(regRoot, taskIds, deps, async () => {
+    try { await store.assertLiveCohortAuthority(lease, envelope); }
+    catch (error) { return refusedPrepare("cohort-authority-stale", String(error)); }
+    const overlap = await findCohortMemberOwner(regRoot, taskIds, subjectKey);
+    if (overlap !== null) return refusedPrepare("member-reserved", overlap);
+    const fault = deps.faultInjector ?? (async () => undefined);
+    for (const taskId of taskIds) {
+      if ((await listLiveHandlesForTask(regRoot, taskId, fault)).length > 0) {
+        return refusedPrepare("member-reserved", `member ${taskId} already owns a task worktree`);
+      }
+    }
+    const records = await loadOrReconcileSubjectRecords(regRoot, subjectKey, fault);
+    const live = records.filter((record) => record.status === "live");
+    if (live.length > 1) return refusedPrepare("live-tree-ambiguous", "cohort owns multiple live worktrees");
+    if (request.handle !== null || live.length > 0) {
+      const stored = request.handle === null ? live[0] : records.find((record) => record.handle.token === request.handle!.token);
+      if (stored === undefined || stored.handle.version !== 3 ||
+          cohortValueDigestV1(stored.handle.cohort) !== cohortValueDigestV1(cohort) ||
+          (request.handle !== null && fingerprintHandle(request.handle) !== stored.fingerprint)) {
+        return refusedPrepare("handle-mismatch", "cohort handle does not match its authoritative registry");
+      }
+      const resumed = await resumeManagedRecord(request.priorResultCommit, deps, { ...stored, handle: stored.handle });
+      if (resumed.status === "refused") return resumed;
+      try { await store.assertLiveCohortAuthority(lease, envelope); }
+      catch (error) { return refusedPrepare("cohort-authority-stale", String(error)); }
+      try { await store.publishLiveCohortEffect(lease, envelope, () => { deps.validateCohortPublication?.(envelope); }); }
+      catch (error) { return refusedPrepare("cohort-authority-stale", String(error)); }
+      return request.handle === null ? { ...resumed, status: "resume-required", reason: "live-tree-exists" } : resumed;
+    }
+    if (envelope.state !== "pre-seal") return refusedPrepare("cohort-authority-stale", "a sealed candidate cannot allocate a new worktree");
+    const repository = await managedRepositoryIdentity(git, repositoryRoot);
+    const tree = await git(repositoryRoot, ["rev-parse", "--verify", "--quiet", `${request.baseCommit}^{tree}`]);
+    if (repository === null || repository.repositoryId !== envelope.definition.repository.repositoryId ||
+        request.baseCommit !== envelope.definition.repository.headCommit ||
+        tree.code !== 0 || tree.stdout.trim() !== envelope.definition.repository.treeOid) {
+      return refusedPrepare("repository-invalid", "cohort definition does not bind this exact repository/base/tree");
+    }
+    const dispatchGit = deps.dispatchGit ?? nodeDispatchBaseGitRunner;
+    const base = await verifyBaseCommit(dispatchGit, repositoryRoot, request.baseCommit, request.integrationHead);
+    if (base.status !== "verified") return refusedPrepare(base.status === "rebase-required" ? "base-rebase-required" : "base-unresolvable", "cohort dispatch base is not verified", { base });
+    const dependencies = new Map<string, DependencyResultCommit>();
+    for (const taskId of taskIds) {
+      const resolved = await resolveDependencyResultCommitsForDispatch({ cwd: repositoryRoot,
+        rootTaskRef: taskId, proposedDispatchBase: request.baseCommit }, request.dependencyReader, dispatchGit);
+      if (resolved.status === "unresolvable") return refusedPrepare("dependency-unresolvable", "cohort member dependency is unresolved", { dependency: resolved });
+      for (const dependency of resolved.dependencyResultCommits) dependencies.set(cohortValueDigestV1(dependency), dependency);
+    }
+    const branch = `implement/${subjectKey}`;
+    if ((await branchCheckedOutPaths(git, repositoryRoot, branch)).length > 0) return refusedPrepare("branch-checked-out-elsewhere", "cohort branch is already checked out");
+    const ctx: PrepareUnderLockContext = { git, dispatchGit, install: deps.install ?? defaultInstallRunner,
+      idFactory: deps.idFactory ?? (() => generateUuidV7(deps.now?.().getTime())), now: deps.now ?? (() => new Date()),
+      allowResumeRequired: true, fault, repositoryRoot, regRoot };
+    return allocateManagedWorktreeUnderLock({ baseCommit: request.baseCommit, branch,
+      dependencyResultCommits: [...dependencies.values()] }, {
+      audit: { cohortId: cohort.cohortId, candidateIntentDigest: cohort.candidateIntentDigest },
+      createHandle: (fields): ManagedWorktreeHandleV3 => ({ ...fields, version: 3, cohort }),
+      register: async (handle, headCommit, bunWorkspaceRoot) => {
+        const record: StoredHandleRecord<ManagedWorktreeHandleV3> = { handle, fingerprint: fingerprintHandle(handle),
+          status: "live", headAtPrepare: headCommit, bunWorkspaceRoot,
+          retainedCohortAuthority: { lease: structuredClone(lease), envelope: structuredClone(envelope) } };
+        const staged = await stageTaskGenerationPublication(regRoot, subjectKey, [...records, record], fault);
+        try {
+          await fault("before-registry-pointer-rename", { subjectKey, generation: staged.generation });
+          await store.publishLiveCohortEffect(lease, envelope, () => { deps.validateCohortPublication?.(envelope); return staged.publish(); });
+          await fault("after-registry-pointer-rename", { subjectKey, generation: staged.generation });
+        } catch (error) {
+          if (staged.published) throw new PublishedManagedWorktreeRegistryError(String(error));
+          await staged.rollback();
+          throw error;
+        }
+      },
+      emergencyRegister: (handle, head, workspace) => emergencyRegisterLiveHandle(regRoot, handle, head, workspace),
+    }, deps, ctx);
+  });
+}
+
+async function managedRepositoryIdentity(git: ManagedWorktreeGitRunner, repositoryRoot: string): Promise<{
+  readonly repositoryId: string; readonly repositoryRoot: string; readonly commonDir: string;
+} | null> {
+  const result = await git(repositoryRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (result.code !== 0 || result.stdout.trim() === "") return null;
+  const canonicalRepository = await fs.realpath(repositoryRoot);
+  const commonDir = await fs.realpath(result.stdout.trim());
+  return { repositoryRoot: canonicalRepository, commonDir,
+    repositoryId: createHash("sha256").update(`${canonicalRepository}\n${commonDir}`).digest("hex") };
 }
 
 interface PrepareUnderLockContext {
@@ -2331,9 +2636,6 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
   const {
     git,
     dispatchGit,
-    install,
-    idFactory,
-    now,
     allowResumeRequired,
     fault,
     repositoryRoot,
@@ -2447,6 +2749,46 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     );
   }
 
+
+  return allocateManagedWorktreeUnderLock<ManagedWorktreeHandle>(
+    { baseCommit, branch, dependencyResultCommits },
+    {
+      audit: { taskId: request.taskId },
+      createHandle: (fields) => ({ ...fields, version: FRESH_HANDLE_VERSION, taskId: request.taskId }),
+      register: async (handle, headCommit, bunWorkspaceRoot) => {
+        await writeStoredHandleExclusive(regRoot, {
+          handle, fingerprint: fingerprintHandle(handle), status: "live", headAtPrepare: headCommit, bunWorkspaceRoot,
+        }, fault);
+      },
+      emergencyRegister: (handle, headCommit, bunWorkspaceRoot) =>
+        emergencyRegisterLiveHandle(regRoot, handle, headCommit, bunWorkspaceRoot),
+    },
+    deps,
+    ctx,
+  );
+}
+
+type ManagedWorktreeAllocationResult<H> =
+  | { readonly status: "prepared"; readonly handle: H; readonly evidence: PreparedWorktreeEvidence }
+  | Extract<PrepareManagedWorktreeResult, { readonly status: "refused" }>;
+
+interface ManagedWorktreeAllocationOwner<H extends AnyManagedWorktreeHandle> {
+  readonly audit: Readonly<{ taskId: string }> | Readonly<{ cohortId: string; candidateIntentDigest: string }>;
+  createHandle(fields: Omit<ConfigManagedWorktreeHandleV1, "version" | "taskId">): H;
+  register(handle: H, headCommit: string, bunWorkspaceRoot: string): Promise<void>;
+  emergencyRegister(handle: H, headCommit: string, bunWorkspaceRoot: string): Promise<boolean>;
+}
+
+class PublishedManagedWorktreeRegistryError extends Error {}
+
+async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHandle>(
+  input: { readonly baseCommit: string; readonly branch: string; readonly dependencyResultCommits: readonly DependencyResultCommit[] },
+  owner: ManagedWorktreeAllocationOwner<H>,
+  deps: ManagedWorktreeDeps,
+  ctx: PrepareUnderLockContext,
+): Promise<ManagedWorktreeAllocationResult<H>> {
+  const { baseCommit, branch, dependencyResultCommits } = input;
+  const { git, install, idFactory, now, fault, repositoryRoot } = ctx;
   // An explicit root is a test/legacy seam. Production closure selection must
   // happen from the clean target worktree, not from a possibly divergent seed.
   const seedBunWorkspaceRoot = deps.bunWorkspaceRoot;
@@ -2467,7 +2809,7 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
 
   await fault("before-worktree-add", {
     repositoryRoot,
-    taskId: request.taskId,
+    ...owner.audit,
     branch,
     baseCommit,
   });
@@ -2510,14 +2852,14 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     reason: PrepareManagedWorktreeRefusalReason,
     detail: string,
     extra: Partial<Extract<PrepareManagedWorktreeResult, { status: "refused" }>> = {},
-  ): Promise<PrepareManagedWorktreeResult> => {
+  ): Promise<ManagedWorktreeAllocationResult<H>> => {
     const rolled = await rollbackFreshWorktree(
       git,
       repositoryRoot,
       absolutePath,
       branch,
       createdBranch,
-    );
+    ).catch((error: unknown) => ({ ok: false, detail: error instanceof Error ? error.message : String(error) }));
     if (rolled.ok) {
       return refusedPrepare(reason, detail, extra);
     }
@@ -2534,21 +2876,18 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     const createdAt = now().toISOString();
     const token = randomBytes(16).toString("hex");
     const nonce = randomBytes(8).toString("hex");
-    const recoveryHandle: ManagedWorktreeHandle = {
+    const recoveryHandle = owner.createHandle({
       kind: MANAGED_WORKTREE_HANDLE_KIND,
-      version: FRESH_HANDLE_VERSION,
       token,
       worktreeId,
-      taskId: request.taskId,
       branch,
       repositoryRoot,
       absolutePath,
       baseCommit,
       createdAt,
       nonce,
-    };
-    const registered = await emergencyRegisterLiveHandle(
-      regRoot,
+    });
+    const registered = await owner.emergencyRegister(
       recoveryHandle,
       headForRecovery,
       managedWorkspace,
@@ -2684,25 +3023,23 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
   const createdAt = now().toISOString();
   const token = randomBytes(16).toString("hex");
   const nonce = randomBytes(8).toString("hex");
-  const handle: ManagedWorktreeHandle = {
+  const handle = owner.createHandle({
     kind: MANAGED_WORKTREE_HANDLE_KIND,
-    version: FRESH_HANDLE_VERSION,
     token,
     worktreeId,
-    taskId: request.taskId,
     branch,
     repositoryRoot,
     absolutePath,
     baseCommit,
     createdAt,
     nonce,
-  };
+  });
 
   try {
     await fault("before-registry-commit", {
       token,
       absolutePath,
-      taskId: request.taskId,
+      ...owner.audit,
     });
   } catch (error) {
     return refuseAfterAdd(
@@ -2711,20 +3048,18 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     );
   }
 
-  const stored: StoredHandleRecord = {
-    handle,
-    fingerprint: fingerprintHandle(handle),
-    status: "live",
-    headAtPrepare: headCommit,
-    bunWorkspaceRoot,
-  };
+  let registryPublicationWarning: string | null = null;
   try {
-    await writeStoredHandleExclusive(regRoot, stored, fault);
+    await owner.register(handle, headCommit, bunWorkspaceRoot);
   } catch (error) {
-    return refuseAfterAdd(
-      "registry-conflict",
-      `failed to commit handle registry: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    if (error instanceof PublishedManagedWorktreeRegistryError) {
+      registryPublicationWarning = `Registry pointer published; retained worktree after publication fault: ${error.message}`;
+    } else {
+      return refuseAfterAdd(
+        "registry-conflict",
+        `failed to commit handle registry: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   const evidence = await buildEvidence(
@@ -2736,7 +3071,7 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     dependencyResultCommits,
     "fresh",
   );
-  return { status: "prepared", handle, evidence };
+  return { status: "prepared", handle, evidence: registryPublicationWarning === null ? evidence : { ...evidence, registryPublicationWarning } };
 }
 
 // ---------------------------------------------------------------------------
@@ -3151,7 +3486,7 @@ export async function recordManagedWorktreeSupervisedGateEvidence(
   binding: ManagedWorktreeDispatchBinding & {
     readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
   },
-  evidence: ImplementWorkerSupervisedGateEvidence,
+  evidence: ImplementTaskWorkerSupervisedGateEvidence,
   deps: Pick<ManagedWorktreeDeps, "git" | "stateDir" | "prepareLockTimeoutMs"> = {},
 ): Promise<void> {
   await assertManagedWorktreeDispatchBindingLive(binding, deps);
@@ -3454,6 +3789,16 @@ export async function resolveManagedWorktreeDispatchBinding(
   );
   if (matches.length !== 1) return null;
   const stored = matches[0]!;
+  const coordinates = await resolveManagedGitCoordinates(stored, repositoryRoot, request.allowDetachedRebase === true, git);
+  return coordinates === null ? null : Object.freeze({ ...coordinates, taskId: stored.handle.taskId });
+}
+
+async function resolveManagedGitCoordinates(
+  stored: StoredHandleRecord<AnyManagedWorktreeHandle>,
+  repositoryRoot: string,
+  allowDetachedRebase: boolean,
+  git: ManagedWorktreeGitRunner,
+): Promise<Omit<ManagedWorktreeDispatchBinding, "taskId"> | null> {
   const top = await resolveRepositoryRoot(git, stored.handle.absolutePath);
   if (top === null || top !== resolve(stored.handle.absolutePath)) return null;
   const commonResult = await git(stored.handle.absolutePath, [
@@ -3474,7 +3819,7 @@ export async function resolveManagedWorktreeDispatchBinding(
   const symbolic = await git(stored.handle.absolutePath, ["symbolic-ref", "--quiet", "HEAD"]);
   const ref = `refs/heads/${stored.handle.branch}`;
   if (symbolic.code !== 0 || symbolic.stdout.trim() !== ref) {
-    if (request.allowDetachedRebase !== true) return null;
+    if (!allowDetachedRebase) return null;
     const gitDirResult = await git(stored.handle.absolutePath, [
       "rev-parse",
       "--path-format=absolute",
@@ -3494,7 +3839,6 @@ export async function resolveManagedWorktreeDispatchBinding(
     }
   }
   return Object.freeze({
-    taskId: stored.handle.taskId,
     handleToken: stored.handle.token,
     handleFingerprint: stored.fingerprint,
     repositoryRoot: canonicalRepository,
@@ -3507,6 +3851,347 @@ export async function resolveManagedWorktreeDispatchBinding(
     ref,
     baseCommit: stored.handle.baseCommit,
   });
+}
+
+export async function resolveManagedCohortWorktreeDispatchBinding(
+  handle: ManagedWorktreeHandleV3,
+  authority: ManagedCohortWorktreeAuthority,
+  deps: ManagedWorktreeDeps,
+  allowDetachedRebase: boolean,
+): Promise<ManagedCohortWorktreeDispatchBinding | null> {
+  await authority.store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+  const validated = validateAnyManagedWorktreeHandle(handle);
+  if (validated.status !== "valid" || validated.handle.version !== 3) return null;
+  const identity = cohortWorktreeIdentityFromEnvelopeV1(authority.envelope);
+  if (cohortValueDigestV1(handle.cohort) !== cohortValueDigestV1(identity)) return null;
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const repositoryRoot = await resolveRepositoryRoot(git, handle.repositoryRoot);
+  if (repositoryRoot === null || repositoryRoot !== handle.repositoryRoot) return null;
+  const regRoot = registryRoot(repositoryRoot, deps.stateDir);
+  return withManagedMemberPrepareLocks(regRoot, identity.memberAuthorities.map((member) => member.taskRef.slice("tasks:".length)), deps, async () => {
+    await authority.store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+    const records = await loadOrReconcileSubjectRecords(regRoot, registrySubjectKey(handle), async () => undefined);
+    const stored = records.find((record) => record.status === "live" && record.handle.token === handle.token);
+    if (stored === undefined || fingerprintHandle(handle) !== stored.fingerprint || stored.handle.version !== 3) return null;
+    const coordinates = await resolveManagedGitCoordinates(stored, repositoryRoot, allowDetachedRebase, git);
+    if (coordinates === null || coordinates.repositoryId !== authority.envelope.definition.repository.repositoryId ||
+        (coordinates.baseCommit !== authority.envelope.definition.repository.headCommit &&
+         coordinates.baseCommit !== stored.cohortRebasePredecessor?.bridge.ontoCommit)) return null;
+    await authority.store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+    return Object.freeze({ ...coordinates, cohort: authority.envelope });
+  });
+}
+
+export async function resolveRetainedManagedCohortAuthority(
+  repositoryRoot: string,
+  store: WorkCohortStore,
+  envelope: CohortEffectEnvelopeV1,
+  deps: ManagedWorktreeDeps,
+  allowDetachedRebase: boolean,
+): Promise<{ readonly authority: ManagedCohortWorktreeAuthority;
+  readonly binding: ManagedCohortWorktreeDispatchBinding; readonly handle: ManagedWorktreeHandleV3 }> {
+  assertCohortEffectEnvelopeV1(envelope);
+  const records = await readCurrentTaskGeneration(registryRoot(repositoryRoot, deps.stateDir), `cohort-${envelope.intent.intentDigest}`);
+  const live = (records ?? []).filter((record) => record.status === "live");
+  if (live.length !== 1 || live[0]!.handle.version !== 3 || live[0]!.retainedCohortAuthority === undefined) {
+    throw new Error("cohort authority retention is unavailable; explicit resume is required");
+  }
+  const stored = live[0]!;
+  const handle = stored.handle;
+  if (handle.version !== 3) throw new Error("cohort authority resolved a task worktree");
+  const retained = stored.retainedCohortAuthority!;
+  if (cohortValueDigestV1(retained.envelope) !== cohortValueDigestV1(envelope)) {
+    throw new Error("cohort dispatch differs from the exact retained authority; explicit resume is required");
+  }
+  const authority = { store, lease: structuredClone(retained.lease), envelope: structuredClone(retained.envelope) };
+  await store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+  const binding = await resolveManagedCohortWorktreeDispatchBinding(handle, authority, deps, allowDetachedRebase);
+  if (binding === null || handle.repositoryRoot !== repositoryRoot || binding.handleFingerprint !== stored.fingerprint) {
+    throw new Error("retained cohort authority no longer resolves to its actual managed worktree");
+  }
+  return { authority, binding, handle };
+}
+
+export async function readRetainedManagedCohortHandle(repositoryRoot: string, intentDigest: string,
+  deps: ManagedWorktreeDeps): Promise<ManagedWorktreeHandleV3 | null> {
+  if (!/^[0-9a-f]{64}$/u.test(intentDigest)) throw new Error("cohort handle lookup requires an exact intent digest");
+  const records = await readCurrentTaskGeneration(registryRoot(repositoryRoot, deps.stateDir), `cohort-${intentDigest}`);
+  const live = (records ?? []).filter((record) => record.status === "live");
+  if (live.length === 0) return null;
+  if (live.length !== 1 || live[0]!.handle.version !== 3 || live[0]!.fingerprint !== fingerprintHandle(live[0]!.handle)) {
+    throw new Error("cohort handle lookup does not resolve one authentic live registry record");
+  }
+  return structuredClone(live[0]!.handle as ManagedWorktreeHandleV3);
+}
+
+export async function readManagedCohortRebaseSuccessor(prior: DispatchCohortGitEffectBinding,
+  deps: ManagedWorktreeDeps): Promise<NonNullable<StoredHandleRecord["cohortRebaseSuccessor"]> | null> {
+  const records = await readCurrentTaskGeneration(registryRoot(prior.repositoryRoot, deps.stateDir), `cohort-${prior.cohort.intent.intentDigest}`);
+  const stored = (records ?? []).find((record) => record.handle.token === prior.handleToken && record.fingerprint === prior.handleFingerprint);
+  return stored?.cohortRebaseSuccessor === undefined ? null : structuredClone(stored.cohortRebaseSuccessor);
+}
+
+export interface ManagedCohortRebaseSuccessorRequest {
+  readonly source: DispatchHandle; readonly prior: DispatchCohortGitEffectBinding; readonly guardedRebase: string;
+  readonly ontoCommit: string; readonly priorResultCommit: string;
+}
+
+export function prepareManagedCohortRebaseSuccessor(input: ManagedCohortRebaseSuccessorRequest,
+  store: WorkCohortStore, ledger: LedgerStore, deps: ManagedWorktreeDeps) {
+  return prepareManagedCohortRebaseSuccessorWithResume(input, store, ledger, deps, null);
+}
+
+export function resumeManagedCohortRebaseSuccessor(input: ManagedCohortRebaseSuccessorRequest, holderId: string,
+  store: WorkCohortStore, ledger: LedgerStore, deps: ManagedWorktreeDeps) {
+  if (holderId.trim() === "") throw new Error("cohort transfer resume requires an explicit holder");
+  return prepareManagedCohortRebaseSuccessorWithResume(input, store, ledger, deps, holderId);
+}
+
+async function prepareManagedCohortRebaseSuccessorWithResume(input: ManagedCohortRebaseSuccessorRequest,
+  store: WorkCohortStore, ledger: LedgerStore, deps: ManagedWorktreeDeps, resumeHolder: string | null) {
+  if (ledger.worksetStore === undefined) throw new Error("cohort successor requires an all-member workset store");
+  const workset = ledger.worksetStore();
+  const prior = input.prior;
+  const regRoot = registryRoot(prior.repositoryRoot, deps.stateDir);
+  const sourceKey = `cohort-${prior.cohort.intent.intentDigest}`;
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const fault = deps.faultInjector ?? (async () => undefined);
+  return withManagedCohortAuthorityWriterLock(prior.repositoryRoot, deps, () =>
+    withManagedWorktreeEffectLock(prior, deps, async () => {
+      let records = await readCurrentTaskGeneration(regRoot, sourceKey);
+      let stored = records?.find((record) => record.handle.token === prior.handleToken && record.fingerprint === prior.handleFingerprint);
+      if (stored === undefined || stored.handle.version !== 3 || stored.retainedCohortAuthority === undefined) throw new Error("cohort rebase source registry is unavailable");
+      let sourceAuthority = { store, ...stored.retainedCohortAuthority };
+      let successor = stored.cohortRebaseSuccessor;
+      if (resumeHolder !== null && successor === undefined) throw new Error("cohort transfer resume requires an existing private transition");
+      if (successor === undefined) {
+        const sourceBinding = { ...cohortRebaseManagerBinding(prior), cohort: sourceAuthority.envelope };
+        const bridge = await materializeGuardedRebaseBridge({ reference: input.guardedRebase, prior: { ...prior, ...input.source },
+          current: sourceBinding, cohortAuthority: sourceAuthority,
+          baseCommitInput: input.ontoCommit,
+          startingCommitInput: (await git(prior.worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+          priorResultCommitInput: input.priorResultCommit,
+          ...(deps.stateDir === undefined ? {} : { stateDir: deps.stateDir }),
+        });
+        if (bridge.version !== 2 || sourceAuthority.envelope.state !== "sealed") throw new Error("cohort successor requires a finalized sealed source");
+        const state = (await store.snapshot()).portable;
+        const definition = sourceAuthority.envelope.definition;
+        const intent = createCohortCandidateIntentV1(definition, `guarded-successor:${input.source.attestationId}:${input.source.generation}:${bridge.requestDigest}`);
+        const envelope = createCohortEffectEnvelopeV1({ definition, intent,
+          observation: resolveCohortDefinitionObservationV1({ definition, observations: state.observations, decisions: state.decisions }),
+          evidenceSubject: null, executionEpoch: sourceAuthority.envelope.executionEpoch });
+        const handle: ManagedWorktreeHandleV3 = { ...stored.handle, token: randomBytes(24).toString("hex"), nonce: randomBytes(16).toString("hex"),
+          branch: `implement/cohort-${intent.intentDigest}`, baseCommit: bridge.ontoCommit,
+          createdAt: new Date().toISOString(), cohort: cohortWorktreeIdentityFromEnvelopeV1(envelope) };
+        const successorBinding = { ...cohortRebaseManagerBinding(prior), cohort: envelope, handleToken: handle.token,
+          handleFingerprint: fingerprintHandle(handle), branch: handle.branch, ref: `refs/heads/${handle.branch}`, baseCommit: handle.baseCommit };
+        const unsigned = { kind: "cq-cohort-rebase-transition" as const, version: 1 as const, source: input.source,
+          sourceBinding: cohortRebaseManagerBinding(prior), successorBinding, guardedRebaseBridgeDigest: cohortValueDigestV1(bridge) };
+        successor = { proof: { ...unsigned, transitionDigest: cohortValueDigestV1(unsigned) }, bridge, handle };
+        const retainedSuccessor = successor;
+        await withManagedMemberPrepareLocks(regRoot, definition.members.map((member) => member.memberRef.slice("tasks:".length)), deps, async () => {
+          records = await readCurrentTaskGeneration(regRoot, sourceKey);
+          if (records === null) throw new Error("cohort source disappeared before transition intent");
+          const next = records.map((record) => record.handle.token === prior.handleToken ? { ...record, cohortRebaseSuccessor: retainedSuccessor } : record);
+          const staged = await stageTaskGenerationPublication(regRoot, sourceKey, next, fault);
+          await store.publishLiveCohortEffect(sourceAuthority.lease, sourceAuthority.envelope, () => {
+            deps.validateCohortPublication?.(sourceAuthority.envelope); return staged.publish();
+          });
+          stored = next.find((record) => record.handle.token === prior.handleToken)!;
+        });
+      }
+      const { proof, bridge, handle } = successor;
+      if (input.guardedRebase !== bridge.guardedRebase || input.ontoCommit !== bridge.ontoCommit || input.priorResultCommit !== bridge.oldResultCommit || !cohortRebaseTransitionMatches(prior,
+        { ...proof.successorBinding, guardedRebaseBridge: bridge, cohortRebaseTransition: proof }, input.source)) {
+        throw new Error("cohort successor request differs from its durable transition intent");
+      }
+      await verifyHistoricalCohortGuardedRebaseBridge(bridge, deps.stateDir);
+      const completed = await readCurrentTaskGeneration(regRoot, registrySubjectKey(handle));
+      const completedRecord = completed?.find((record) => record.status === "live" && record.fingerprint === proof.successorBinding.handleFingerprint);
+      if (completedRecord?.retainedCohortAuthority !== undefined && stored.status === "released" &&
+          (await store.snapshot()).runtime.lease?.semanticSubject === completedRecord.retainedCohortAuthority.envelope.semanticSubject) {
+        const resolved = await resolveRetainedManagedCohortAuthority(prior.repositoryRoot, store,
+          completedRecord.retainedCohortAuthority.envelope, deps, false);
+        return { ...resolved, bridge, proof };
+      }
+      const symbol = await git(prior.worktreePath, ["symbolic-ref", "--quiet", "HEAD"]);
+      const head = await revParse(git, prior.worktreePath, "HEAD");
+      const status = await git(prior.worktreePath, ["status", "--porcelain", "--untracked-files=all"]);
+      if (head !== bridge.rebasedStartCommit || status.code !== 0 || status.stdout.trim() !== "") throw new Error("cohort successor transition lost its exact clean rebased tip");
+      if (symbol.stdout.trim() !== prior.ref && symbol.stdout.trim() !== proof.successorBinding.ref) throw new Error("cohort successor branch was substituted");
+      const snapshot = await store.snapshot();
+      if (resumeHolder !== null && sourceAuthority.envelope.executionEpoch !== snapshot.runtime.executionEpoch) {
+        if (sourceAuthority.envelope.state !== "sealed") throw new Error("cohort transfer resume lacks a sealed source");
+        const oldEnvelope = sourceAuthority.envelope;
+        const envelope = createCohortEffectEnvelopeV1({ definition: oldEnvelope.definition, intent: oldEnvelope.intent,
+          observation: resolveCohortDefinitionObservationV1({ definition: oldEnvelope.definition,
+            observations: snapshot.portable.observations, decisions: snapshot.portable.decisions }),
+          evidenceSubject: oldEnvelope.evidenceSubject, executionEpoch: snapshot.runtime.executionEpoch });
+        const recoveryDirectory = join(regRoot, "cohort-transfer-recovery");
+        await fs.mkdir(recoveryDirectory, { recursive: true, mode: 0o700 });
+        const recoveryPath = join(recoveryDirectory, `${cohortValueDigestV1({ transition: proof.transitionDigest, epoch: envelope.executionEpoch })}.json`);
+        let lease: WorkCohortLeaseV1;
+        if (snapshot.runtime.lease !== null) {
+          const recovery = JSON.parse(await fs.readFile(recoveryPath, "utf8")) as {
+            readonly transitionDigest: string; readonly envelope: CohortEffectEnvelopeV1; readonly lease: WorkCohortLeaseV1 };
+          if (Object.keys(recovery).sort().join(",") !== "envelope,lease,transitionDigest" || recovery.transitionDigest !== proof.transitionDigest ||
+              cohortValueDigestV1(recovery.envelope) !== cohortValueDigestV1(envelope)) throw new Error("cohort transfer recovery authority was substituted");
+          lease = recovery.lease;
+        } else {
+          const receiptBridge = snapshot.portable.receiptBridges.find((entry) => entry.sealDigest === oldEnvelope.evidenceSubject.sealDigest);
+          if (receiptBridge === undefined) throw new Error("cohort transfer resume lost its exact source receipt bridge");
+          await store.revalidateForResume({ definitionDigest: oldEnvelope.definition.definitionDigest,
+            sealDigest: oldEnvelope.evidenceSubject.sealDigest, evidenceSubjectDigest: oldEnvelope.evidenceSubject.evidenceSubjectDigest,
+            acceptanceMatrixDigest: oldEnvelope.definition.acceptanceMatrixDigest,
+            environmentDigest: oldEnvelope.definition.environment.environmentDigest, receiptBridgeDigest: receiptBridge.bridgeDigest });
+          lease = await store.acquireLeaseAndPublish({ holderId: resumeHolder, semanticSubject: envelope.semanticSubject }, (renewed) => {
+            deps.validateCohortPublication?.(envelope);
+            const stagedPath = `${recoveryPath}.${randomBytes(12).toString("hex")}.tmp`;
+            const descriptor = openSync(stagedPath, "wx", 0o600);
+            try { writeFileSync(descriptor, JSON.stringify({ transitionDigest: proof.transitionDigest, envelope, lease: renewed })); fsyncSync(descriptor); }
+            finally { closeSync(descriptor); }
+            renameSync(stagedPath, recoveryPath); syncDirectoryNow(recoveryDirectory); syncDirectoryNow(regRoot);
+            return undefined;
+          });
+        }
+        await store.assertLiveCohortAuthority(lease, envelope);
+        sourceAuthority = { store, lease, envelope };
+      }
+      const plannedEnvelope = proof.successorBinding.cohort;
+      const nextEnvelope = createCohortEffectEnvelopeV1({ definition: plannedEnvelope.definition, intent: plannedEnvelope.intent,
+        observation: resolveCohortDefinitionObservationV1({ definition: plannedEnvelope.definition,
+          observations: snapshot.portable.observations, decisions: snapshot.portable.decisions }),
+        evidenceSubject: null, executionEpoch: sourceAuthority.envelope.executionEpoch });
+      const nextLease = { ...sourceAuthority.lease, semanticSubject: nextEnvelope.semanticSubject };
+      if (symbol.stdout.trim() === prior.ref) {
+        const expected = { kind: "branch-create" as const, mode: "cohort-rebase-successor" as const,
+          cohort: sourceAuthority.envelope, successor: nextEnvelope, targetRef: cohortEffectTargetRefV1(sourceAuthority.envelope),
+          repositoryRoot: prior.repositoryRoot, worktreePath: prior.worktreePath, branch: prior.branch,
+          successorBranch: handle.branch, expectedCommit: head, guardedRebaseBridgeDigest: proof.guardedRebaseBridgeDigest };
+        const effect = await runWorksetGitEffectGate({ expected,
+          provider: createCohortWorksetEffectAdmissionProvider(sourceAuthority, workset),
+          resolve: async () => { await store.assertLiveCohortAuthority(sourceAuthority.lease, sourceAuthority.envelope);
+            if ((await git(prior.worktreePath, ["symbolic-ref", "--quiet", "HEAD"])).stdout.trim() !== prior.ref ||
+                await revParse(git, prior.worktreePath, "HEAD") !== head) throw new Error("cohort successor branch changed before rename");
+            return expected; },
+        });
+        if (effect.code !== 0) throw new Error(`cohort successor branch rename failed: ${effect.stderr}`);
+      }
+      await withManagedMemberPrepareLocks(regRoot, prior.cohort.definition.members.map((member) => member.memberRef.slice("tasks:".length)), deps, async () => {
+        records = await readCurrentTaskGeneration(regRoot, sourceKey);
+        if (records === null || stored === undefined) throw new Error("cohort successor source record disappeared");
+        const sourceRecords = records.map((record) => record.handle.token === prior.handleToken ? { ...record, status: "released" as const, releasedAt: handle.createdAt } : record);
+        const targetKey = registrySubjectKey(handle);
+        const targetRecords = await readCurrentTaskGeneration(regRoot, targetKey);
+        const target: StoredHandleRecord<ManagedWorktreeHandleV3> = { handle, fingerprint: fingerprintHandle(handle), status: "live",
+          headAtPrepare: head, bunWorkspaceRoot: stored.bunWorkspaceRoot,
+          retainedCohortAuthority: { lease: nextLease, envelope: nextEnvelope }, cohortRebasePredecessor: { proof, bridge } };
+        if (targetRecords !== null && targetRecords.some((record) => record.fingerprint !== target.fingerprint)) throw new Error("cohort successor registry already belongs to another transition");
+        const sourcePublication = await stageTaskGenerationPublication(regRoot, sourceKey, sourceRecords, fault);
+        const nextPublication = await stageTaskGenerationPublication(regRoot, targetKey, [target], fault);
+        await store.transitionLeaseToSuccessor(sourceAuthority.lease, sourceAuthority.envelope, nextEnvelope, () => {
+          deps.validateCohortPublication?.(nextEnvelope);
+          sourcePublication.publish(); nextPublication.publish(); return undefined;
+        });
+      });
+      const resolved = await resolveRetainedManagedCohortAuthority(prior.repositoryRoot, store, nextEnvelope, deps, false);
+      return { ...resolved, bridge, proof };
+    }));
+}
+
+export async function resolveManagedCohortRebaseTransition(binding: DispatchCohortGitEffectBinding,
+  prior: DispatchCohortGitEffectBinding, source: DispatchHandle, reference: string, deps: ManagedWorktreeDeps) {
+  const records = await readCurrentTaskGeneration(registryRoot(binding.repositoryRoot, deps.stateDir), `cohort-${binding.cohort.intent.intentDigest}`);
+  const stored = (records ?? []).find((record) => record.status === "live" && record.fingerprint === binding.handleFingerprint);
+  const retained = stored?.cohortRebasePredecessor;
+  if (retained === undefined || retained.bridge.guardedRebase !== reference ||
+      !cohortRebaseTransitionMatches(prior, { ...binding, guardedRebaseBridge: retained.bridge, cohortRebaseTransition: retained.proof }, source)) {
+    throw new Error("cohort prepare lacks its exact private manager successor transition");
+  }
+  await verifyHistoricalCohortGuardedRebaseBridge(retained.bridge, deps.stateDir);
+  return structuredClone(retained);
+}
+
+export async function withManagedCohortAuthorityWriterLock<T>(
+  repositoryRoot: string, deps: ManagedWorktreeDeps, run: () => Promise<T>,
+): Promise<T> {
+  const lockfile = deps.lockfile ?? new Lockfile();
+  const release = await lockfile.acquire(join(registryRoot(repositoryRoot, deps.stateDir), PREPARE_LOCKS_DIRNAME), "cohort-authority");
+  try { return await run(); } finally { await release(); }
+}
+
+export async function bindRetainedManagedCohortSeal(
+  repositoryRoot: string, store: WorkCohortStore, envelope: CohortEffectEnvelopeV1, deps: ManagedWorktreeDeps,
+): Promise<{ readonly authority: ManagedCohortWorktreeAuthority;
+  readonly binding: ManagedCohortWorktreeDispatchBinding; readonly handle: ManagedWorktreeHandleV3 }> {
+  if (envelope.state !== "sealed") throw new Error("retained cohort transition requires a sealed candidate");
+  const records = await readCurrentTaskGeneration(registryRoot(repositoryRoot, deps.stateDir), `cohort-${envelope.intent.intentDigest}`);
+  const live = (records ?? []).filter((record) => record.status === "live");
+  const stored = live.length === 1 ? live[0] : undefined;
+  if (stored === undefined || stored.handle.version !== 3 || stored.retainedCohortAuthority === undefined ||
+      stored.handle.repositoryRoot !== repositoryRoot ||
+      stored.retainedCohortAuthority.envelope.executionEpoch !== envelope.executionEpoch ||
+      cohortValueDigestV1(stored.handle.cohort) !== cohortValueDigestV1(cohortWorktreeIdentityFromEnvelopeV1(envelope))) {
+    throw new Error("cohort seal transition lacks its exact current retained authority");
+  }
+  const lease = await store.bindLeaseToSeal(stored.retainedCohortAuthority.lease, envelope);
+  const authority = { store, lease, envelope: structuredClone(envelope) };
+  await retainManagedCohortAuthority(stored.handle, authority, deps);
+  return resolveRetainedManagedCohortAuthority(repositoryRoot, store, envelope, deps, false);
+}
+
+export async function retainManagedCohortAuthority(
+  handle: ManagedWorktreeHandleV3,
+  authority: ManagedCohortWorktreeAuthority,
+  deps: ManagedWorktreeDeps,
+): Promise<void> {
+  await authority.store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+  if (cohortValueDigestV1(handle.cohort) !== cohortValueDigestV1(cohortWorktreeIdentityFromEnvelopeV1(authority.envelope))) {
+    throw new Error("retained cohort authority substituted its managed membership");
+  }
+  const regRoot = registryRoot(handle.repositoryRoot, deps.stateDir);
+  const key = registrySubjectKey(handle);
+  await withManagedMemberPrepareLocks(regRoot, handle.cohort.memberAuthorities.map((member) => member.taskRef.slice("tasks:".length)), deps, async () => {
+    const records = await readCurrentTaskGeneration(regRoot, key);
+    if (records === null) throw new Error("cohort authority publication requires a current managed registry");
+    const index = records.findIndex((record) => record.status === "live" && record.handle.token === handle.token);
+    const stored = records[index];
+    if (stored === undefined || stored.fingerprint !== fingerprintHandle(handle)) throw new Error("cohort authority publication lost its actual managed handle");
+    const next = [...records];
+    next[index] = { ...stored, retainedCohortAuthority: { lease: structuredClone(authority.lease), envelope: structuredClone(authority.envelope) } };
+    const fault = deps.faultInjector ?? (async () => undefined);
+    const staged = await stageTaskGenerationPublication(regRoot, key, next, fault);
+    try {
+      await fault("before-registry-pointer-rename", { subjectKey: key, generation: staged.generation });
+      await authority.store.publishLiveCohortEffect(authority.lease, authority.envelope, () => { deps.validateCohortPublication?.(authority.envelope); return staged.publish(); });
+      await fault("after-registry-pointer-rename", { subjectKey: key, generation: staged.generation });
+    } catch (error) {
+      if (!staged.published) await staged.rollback();
+      throw error;
+    }
+  });
+}
+
+export async function assertManagedCohortWorktreeDispatchBindingLive(
+  binding: ManagedCohortWorktreeDispatchBinding,
+  authority: ManagedCohortWorktreeAuthority,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir">,
+  allowDetachedRebase: boolean,
+): Promise<void> {
+  await authority.store.assertLiveCohortAuthority(authority.lease, authority.envelope);
+  if (cohortValueDigestV1(binding.cohort) !== cohortValueDigestV1(authority.envelope)) {
+    throw new Error("cohort binding differs from its complete live effect authority");
+  }
+  const regRoot = registryRoot(binding.repositoryRoot, deps.stateDir);
+  const records = await loadOrReconcileSubjectRecords(regRoot, `cohort-${authority.envelope.intent.intentDigest}`, async () => undefined);
+  const stored = records.find((record) => record.status === "live" && record.handle.token === binding.handleToken);
+  if (stored === undefined || stored.handle.version !== 3) throw new Error("cohort worktree binding is no longer live");
+  const current = await resolveManagedCohortWorktreeDispatchBinding(stored.handle, authority, deps, allowDetachedRebase);
+  if (current === null) throw new Error("cohort worktree binding no longer resolves to its managed Git coordinates");
+  for (const key of ["handleToken", "handleFingerprint", "repositoryRoot", "repositoryId", "commonDir",
+    "worktreePath", "branch", "ref", "baseCommit"] as const) {
+    if (current[key] !== binding[key]) throw new Error(`cohort worktree binding changed at ${key}`);
+  }
 }
 
 /** Recheck the complete manager/repository identity while the effect lock is held. */
@@ -3555,6 +4240,23 @@ export async function observeManagedWorktreeLiveTip(
   );
   if (tip === null || !FULL_COMMIT_SHA.test(tip)) {
     throw new Error("managed worktree HEAD is not a full commit SHA");
+  }
+  return tip;
+}
+
+/** Resolve HEAD while permitting the exact manager-bound detached rebase state. */
+export async function observeManagedWorktreeRebaseTip(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir">,
+): Promise<string> {
+  await assertManagedWorktreeConflictDispatchBindingLive(binding, deps);
+  const tip = await revParse(
+    deps.git ?? nodeManagedWorktreeGitRunner,
+    binding.worktreePath,
+    "HEAD",
+  );
+  if (tip === null || !FULL_COMMIT_SHA.test(tip)) {
+    throw new Error("managed rebase worktree HEAD is not a full commit SHA");
   }
   return tip;
 }

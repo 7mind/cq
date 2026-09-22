@@ -272,6 +272,7 @@ describe("XDG project identity storage shape", () => {
           "meta",
           "plan_claims",
           "plan_operations",
+          "work_cohort_state",
           "workset_admissions",
           "workset_exclusive",
           "workset_state",

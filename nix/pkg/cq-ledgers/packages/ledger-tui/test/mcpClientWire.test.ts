@@ -249,7 +249,7 @@ describe("McpLedgerClient archive acknowledgement contract", () => {
   });
 
   it("serializes one atomic finalization batch [D394]", async () => {
-    const { client, calls } = stubClient({ execute_finalize: { applied: 2 } });
+    const { client, calls } = stubClient({ execute_finalize: { applied: 3 } });
 
     expect(
       await client.executeFinalize([
@@ -265,8 +265,13 @@ describe("McpLedgerClient archive acknowledgement contract", () => {
           action: "archive-milestone",
           summary: "shipped",
         },
+        {
+          id: "archive-item:tasks:T2", action: "archive-terminal-item", version: 1,
+          targetId: "tasks:T2", expectedMilestoneId: "M2", expectedUpdatedAt: "2026-09-22T00:00:00.000Z",
+          expectedItemDigest: "a".repeat(64), summary: "exact completed task",
+        },
       ]),
-    ).toEqual({ applied: 2 });
+    ).toEqual({ applied: 3 });
     expect(calls).toEqual([
       {
         name: "execute_finalize",
@@ -283,6 +288,11 @@ describe("McpLedgerClient archive acknowledgement contract", () => {
               target_id: "M9",
               action: "archive-milestone",
               summary: "shipped",
+            },
+            {
+              id: "archive-item:tasks:T2", action: "archive-terminal-item", version: 1,
+              target_id: "tasks:T2", expected_milestone_id: "M2", expected_updated_at: "2026-09-22T00:00:00.000Z",
+              expected_item_digest: "a".repeat(64), summary: "exact completed task",
             },
           ],
         },

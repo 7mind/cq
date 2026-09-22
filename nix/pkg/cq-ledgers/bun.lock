@@ -82,6 +82,7 @@
       "dependencies": {
         "@cq/config": "workspace:*",
         "@cq/ledger": "workspace:*",
+        "@cq/process-control": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
         "zod": "^4.0.0",
       },

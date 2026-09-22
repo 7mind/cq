@@ -239,6 +239,8 @@ function scenario(kind: ScenarioKind): {
   return {
     snapshot: {
       version: 2,
+      cohortReviews: {},
+      cohortCompletions: {},
       panels: {},
       attempts: {},
       completions: { [COMPLETION_REF]: completion },

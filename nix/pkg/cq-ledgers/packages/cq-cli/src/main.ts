@@ -68,6 +68,7 @@ import {
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 import { runDispatchRecoveryCommand } from "./dispatchRecovery.js";
 import { runImplementationEvidenceStatus } from "./implementationEvidenceStatus.js";
+import { queryCohortStatus, runCohortStatus } from "./workCohortStatus.js";
 export { createEmbeddedStatusImplementationEvidenceService } from "./implementationEvidenceStatus.js";
 
 import { withRemoteAdminClient } from "./remoteClient.js";
@@ -245,6 +246,8 @@ export const USAGE = [
   "                                                  rebased managed tree; the server, never",
   "                                                  the caller, materializes the lineage.",
   "  ledger implementation-evidence status --json [--cwd <repository-root>]",
+  "  ledger cohort status --json [--cwd <repository-root>]",
+  "                                                  read retained cohort state and measured counters; no execution authority",
   "                                                  query authenticated deployment identity",
   "  dispatch-recovery <seal|status> --task-id <Tn> [--cwd <repository>]",
   "                                                  seal the maximal terminal worker receipt",
@@ -1163,7 +1166,9 @@ export async function dispatch(
     return { ...outcome, longRunning: false };
   }
   if (first === "ledger") {
-    const outcome = await runImplementationEvidenceStatus(argv.slice(1), io);
+    const outcome = argv[1] === "cohort"
+      ? await runCohortStatus(argv.slice(1), io, process.cwd(), queryCohortStatus)
+      : await runImplementationEvidenceStatus(argv.slice(1), io);
     return { ...outcome, longRunning: false };
   }
   const args = parseSubcommandArgs(argv.slice(1));

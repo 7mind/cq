@@ -6,14 +6,19 @@ import {
   collapseAttestationEnvelope,
   dispatchPayloadDigest,
   implementWorkerSidecar,
+  isImplementWorkerSupervisedGateRejectionDetails,
   isAttestationTombstone,
   loadConfig,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   validateAgainstSchema,
   type AttestationBackend,
   type AttestationEnvelope,
   type AttestationRow,
   type DispatchGitEffectBinding,
+  type DispatchGuardedRebaseBridge,
+  type DispatchGateRejectedCorrectionClaim,
+  type DispatchJournalRecoveryClaim,
   type DispatchJSONValue,
   type PrepareDispatchRequest,
 } from "@cq/config";
@@ -130,6 +135,12 @@ function bindingMatches(
   );
 }
 
+function retainedGitEffectBinding(row: AttestationRow): DispatchGitEffectBinding | undefined {
+  return isAttestationTombstone(row)
+    ? row.dispatchContinuationBinding?.gitEffectBinding
+    : row.gitEffectBinding;
+}
+
 export function assertManagedRecoveryTipEligible(
   rows: readonly AttestationRow[],
   binding: ManagedWorktreeDispatchBinding,
@@ -215,6 +226,102 @@ function assertNoActiveGeneration(snapshot: RecoveryLineageSnapshot): void {
       `dispatch lineage ${active.attestationId} generation ${String(active.generation)} is ${active.state}`,
     );
   }
+}
+
+export function currentRecoveryGuardedRebaseBridge(
+  journal: CurrentRecoveryCommittedJournal,
+  rows: readonly AttestationRow[],
+  binding: ManagedWorktreeDispatchBinding,
+): DispatchGuardedRebaseBridge | undefined {
+  const seed = journal.seal.seed;
+  const sealedRows = rows.filter((row) => row.generation <= seed.lineageMaximumGeneration);
+  for (const row of sealedRows) {
+    const candidate = retainedGitEffectBinding(row);
+    if (
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation <= seed.selectedSourceHandle.generation &&
+      candidate?.guardedRebaseBridge !== undefined &&
+      !bindingMatches(candidate, binding)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "guarded recovery ancestor carries a foreign managed binding",
+      );
+    }
+  }
+  const snapshot = lineageSnapshot(sealedRows, binding, journal.version !== 1);
+  assertNoActiveGeneration(snapshot);
+  if (snapshot.digest !== journal.snapshotDigest || snapshot.digest !== seed.snapshotDigest) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "committed recovery snapshot no longer matches its original journal",
+    );
+  }
+  const selectedRows = sealedRows.filter(
+    (row) =>
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation === seed.selectedSourceHandle.generation,
+  );
+  const selectedRow = selectedRows[0];
+  if (selectedRows.length !== 1 || selectedRow?.terminalDigest !== seed.sourceTerminalDigest) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "committed recovery source no longer matches its original terminal identity",
+    );
+  }
+  const selectedBinding = retainedGitEffectBinding(selectedRow);
+  const selectedBridge =
+    selectedBinding !== undefined && bindingMatches(selectedBinding, binding)
+      ? selectedBinding.guardedRebaseBridge
+      : undefined;
+  const guardedAncestorRows = sealedRows.filter(
+    (row) =>
+      row.attestationId === seed.selectedSourceHandle.attestationId &&
+      row.generation <= seed.selectedSourceHandle.generation,
+  );
+  const candidates = guardedAncestorRows.flatMap((row) => {
+    const candidate = retainedGitEffectBinding(row);
+    return candidate !== undefined &&
+      bindingMatches(candidate, binding) &&
+      candidate.guardedRebaseBridge !== undefined
+      ? [candidate.guardedRebaseBridge]
+      : [];
+  });
+  const distinct = new Map(
+    candidates.map((bridge) => [
+      dispatchPayloadDigest(bridge as unknown as DispatchJSONValue),
+      bridge,
+    ]),
+  );
+  const sealedBridge =
+    "guardedRebaseBridge" in seed.gitBinding ? seed.gitBinding.guardedRebaseBridge : undefined;
+  if (sealedBridge !== undefined) {
+    const digest = dispatchPayloadDigest(sealedBridge as unknown as DispatchJSONValue);
+    if (selectedBridge !== undefined) {
+      if (dispatchPayloadDigest(selectedBridge as unknown as DispatchJSONValue) !== digest) {
+        throw new CurrentRecoverySealError(
+          "journal-conflict",
+          "sealed guarded bridge differs from its authenticated source ancestry",
+        );
+      }
+      return sealedBridge;
+    }
+    if (distinct.size !== 1 || !distinct.has(digest)) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "sealed guarded bridge differs from its authenticated source ancestry",
+      );
+    }
+    return sealedBridge;
+  }
+  if (distinct.size === 0) return undefined;
+  if (distinct.size !== 1) {
+    throw new CurrentRecoverySealError(
+      "source-ambiguous",
+      "bridge-less recovery epoch has multiple authenticated guarded ancestors",
+    );
+  }
+  return distinct.values().next().value;
 }
 
 function lineageMaximumGeneration(snapshot: RecoveryLineageSnapshot): number {
@@ -346,7 +453,10 @@ function sealForSource(
   source: CurrentRecoverySourceCandidate,
   snapshotDigest: string,
   capturedAt: string,
+  recoveredGuardedRebaseBridge?: DispatchGuardedRebaseBridge,
 ): CurrentRecoverySeal {
+  const sourceBinding = retainedGitEffectBinding(row);
+  const guardedRebaseBridge = recoveredGuardedRebaseBridge ?? sourceBinding?.guardedRebaseBridge;
   const common = {
     selectedSourceHandle: source.selectedSourceHandle,
     lineageMaximumGeneration: source.lineageMaximumGeneration,
@@ -356,7 +466,10 @@ function sealForSource(
     taskId: coordinates.taskId,
     taskDigest: coordinates.taskDigest,
     finalizedManifestDigest: coordinates.finalizedManifestDigest,
-    gitBinding: coordinates.binding,
+    gitBinding: {
+      ...coordinates.binding,
+      ...(guardedRebaseBridge === undefined ? {} : { guardedRebaseBridge }),
+    },
     gitReceipts: source.gitReceipts,
     liveTip: coordinates.liveTip,
     ...(source.guardedTipTransition === undefined
@@ -759,6 +872,48 @@ function journalSuccessorRows(
   });
 }
 
+type BoundedJournalSuccessorCause =
+  | "inherited-closure-missing"
+  | "inherited-closure-prefix-mismatch"
+  | "staged-closure-prefix-mismatch"
+  | "guarded-transition-prefix-out-of-range"
+  | "guarded-transition-binding-mismatch"
+  | "guarded-transition-component-mismatch"
+  | "intermediate-state-not-consumed"
+  | "intermediate-continuation-missing";
+
+function inheritedClosureMismatchCause(
+  row: AttestationEnvelope,
+  inherited: readonly GitChangeBrokerReceipt[] | undefined,
+  precedingLength: number,
+  incomingStagedEdge: AuthenticatedStagedRecoveryEdge | null,
+  transition: CurrentRecoveryGuardedTipTransition | undefined,
+): BoundedJournalSuccessorCause {
+  if (inherited === undefined) return "inherited-closure-missing";
+  if (incomingStagedEdge !== null) return "staged-closure-prefix-mismatch";
+  if (transition === undefined) return "inherited-closure-prefix-mismatch";
+  if (transition.receiptPrefixLength > precedingLength) {
+    return "guarded-transition-prefix-out-of-range";
+  }
+  return bindingMatchesGuardedTransition(row.gitEffectBinding, transition)
+    ? "guarded-transition-component-mismatch"
+    : "guarded-transition-binding-mismatch";
+}
+
+function boundedJournalSuccessorDiagnostic(
+  row: AttestationEnvelope,
+  cause: BoundedJournalSuccessorCause,
+  inheritedLength: number,
+  observedLength: number,
+): string {
+  return (
+    `generation=${String(row.generation)}; state=${row.state}; cause=${cause}; ` +
+    `inheritedLength=${String(inheritedLength)}; observedLength=${String(observedLength)}; ` +
+    `claim=${row.dispatchJournalRecoveryClaim === undefined ? "absent" : "present"}; ` +
+    `bridge=${row.gitEffectBinding?.guardedRebaseBridge === undefined ? "absent" : "present"}`
+  );
+}
+
 interface AuthenticatedStagedRecoveryEdge {
   readonly source: { readonly attestationId: string; readonly generation: number };
   readonly successor: { readonly attestationId: string; readonly generation: number };
@@ -961,33 +1116,6 @@ function prepareRequestTimeoutMs(row: AttestationEnvelope): number | undefined {
   return Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
 }
 
-function guardedRecoverySuccessorRequest(
-  row: AttestationEnvelope,
-  binding: DispatchGitEffectBinding,
-  reprepareOf: { readonly attestationId: string; readonly generation: number },
-): PrepareDispatchRequest | undefined {
-  const timeoutMs = prepareRequestTimeoutMs(row);
-  if (timeoutMs === undefined) return undefined;
-  return {
-    namespace: row.namespace,
-    roleId: row.promptProvenance.roleId,
-    surface: row.promptProvenance.surface,
-    input: row.input,
-    idempotencyKey: row.idempotencyKey,
-    timeoutMs,
-    overlays: row.overlays,
-    registry: DISPATCH_OVERLAY_REGISTRY,
-    promptDigest: row.promptProvenance.promptDigest,
-    catalogHash: row.promptProvenance.catalogHash,
-    expectedChild: row.expectedChild,
-    reprepareOf,
-    gitEffectBinding: binding,
-    ...(row.implementationEvidenceBootstrapRef === undefined
-      ? {}
-      : { implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef }),
-  };
-}
-
 function recoveredSourceRequest(
   row: AttestationEnvelope,
   binding: DispatchGitEffectBinding,
@@ -1022,6 +1150,29 @@ function recoveredSourceRequest(
   };
 }
 
+type GuardedJournalSuccessorCause =
+  | "evidence-missing"
+  | "source-successor-identity-mismatch"
+  | "source-terminal-mismatch"
+  | "successor-claim-mismatch"
+  | "retained-claim-binding-mismatch"
+  | "successor-input-mismatch"
+  | "successor-prepare-digest-mismatch"
+  | "managed-binding-mismatch"
+  | "retained-seed-evidence-missing"
+  | "retained-seed-authority-mismatch"
+  | "retained-seed-source-mismatch"
+  | "retained-seed-task-mismatch"
+  | "retained-seed-live-tip-mismatch"
+  | "retained-source-prepare-digest-mismatch";
+
+function guardedJournalSuccessorDiagnostic(
+  cause: GuardedJournalSuccessorCause,
+  claim: DispatchJournalRecoveryClaim | undefined,
+): string {
+  return `cause=${cause}; claim=${claim === undefined ? "retained" : "successor"}`;
+}
+
 async function journalGuardedRecoverySuccessorEdge(
   sourceRow: AttestationEnvelope,
   successor: AttestationEnvelope,
@@ -1032,10 +1183,18 @@ async function journalGuardedRecoverySuccessorEdge(
   const sourceBinding = sourceRow.gitEffectBinding;
   const successorBinding = successor.gitEffectBinding;
   const bridge = successorBinding?.guardedRebaseBridge;
-  const claim = sourceRow.dispatchJournalRecoveryClaim;
-  if (bridge === undefined || claim === undefined) return null;
-  const seed = journal.seal.seed;
-  const inherited = sourceBinding?.inheritedGitReceipts;
+  const claim = successor.dispatchJournalRecoveryClaim;
+  const sourceClaim = sourceRow.dispatchJournalRecoveryClaim;
+  if (bridge === undefined || (claim === undefined && sourceClaim === undefined)) return null;
+  const input =
+    successor.input !== null &&
+    typeof successor.input === "object" &&
+    !Array.isArray(successor.input)
+      ? (successor.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const inherited = successorBinding?.inheritedGitReceipts ?? sourceBinding?.inheritedGitReceipts;
+  const sourceRequest =
+    sourceBinding === undefined ? undefined : recoveredSourceRequest(sourceRow, sourceBinding);
   const detailsDigest =
     sourceRow.abortDetails === undefined
       ? null
@@ -1045,102 +1204,198 @@ async function journalGuardedRecoverySuccessorEdge(
     reason: sourceRow.abortReason ?? null,
     detailsDigest,
   });
-  const sourceRequest =
-    sourceBinding === undefined ? undefined : recoveredSourceRequest(sourceRow, sourceBinding);
-  const successorRequest =
-    successorBinding === undefined
+  const timeoutMs =
+    attestationInstantMs(successor.deadlines.childCancelAt, "deadlines.childCancelAt") -
+    attestationInstantMs(successor.createdAt, "createdAt");
+  const request: PrepareDispatchRequest | undefined =
+    successorBinding === undefined || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0
       ? undefined
-      : guardedRecoverySuccessorRequest(successor, successorBinding, {
-          attestationId: sourceRow.attestationId,
-          generation: sourceRow.generation,
-        });
-  const sealedSource =
-    journal.seal.version === 1
-      ? {
-          kind: "aborted" as const,
-          version: 1 as const,
-          abortReason: journal.seal.seed.sourceAbortReason,
-        }
-      : journal.seal.seed.source;
-  if (
-    journal.fence === undefined ||
+      : {
+          namespace: successor.namespace,
+          roleId: successor.promptProvenance.roleId,
+          surface: successor.promptProvenance.surface,
+          input: successor.input,
+          idempotencyKey: successor.idempotencyKey,
+          timeoutMs,
+          overlays: successor.overlays,
+          registry: DISPATCH_OVERLAY_REGISTRY,
+          promptDigest: successor.promptProvenance.promptDigest,
+          catalogHash: successor.promptProvenance.catalogHash,
+          expectedChild: successor.expectedChild,
+          reprepareOf: {
+            attestationId: sourceRow.attestationId,
+            generation: sourceRow.generation,
+          },
+          gitEffectBinding: successorBinding,
+          ...(claim === undefined
+            ? {}
+            : {
+                journalRecoveryReservation: {
+                  fenceRef: claim.fenceRef,
+                  sourceAttestationId: claim.selectedSource.attestationId,
+                  selectedSourceGeneration: claim.selectedSource.generation,
+                  lineageMaximumGeneration: claim.lineageMaximumGeneration,
+                },
+                journalRecoveryClaim: claim,
+              }),
+          ...(successor.implementationEvidenceBootstrapRef === undefined
+            ? {}
+            : {
+                implementationEvidenceBootstrapRef: successor.implementationEvidenceBootstrapRef,
+              }),
+        };
+  const mismatchCause: GuardedJournalSuccessorCause | undefined =
     sourceBinding === undefined ||
     successorBinding === undefined ||
+    input === undefined ||
     inherited === undefined ||
-    sourceRequest === undefined ||
-    successorRequest === undefined ||
-    sourceRow.attestationId !== successor.attestationId ||
-    sourceRow.generation + 1 !== successor.generation ||
-    sourceRow.state !== "aborted" ||
-    sourceRow.abortReason === undefined ||
-    !ELIGIBLE_ABORT_REASONS.has(sourceRow.abortReason) ||
-    sourceRow.abortedAt !== sourceRow.terminalAt ||
-    (sourceRow.abortDetailsDigest !== undefined &&
-      sourceRow.abortDetailsDigest !== detailsDigest) ||
-    sourceRow.terminalDigest !== terminalDigest ||
-    claim.fenceRef !== journal.fence.fenceRef ||
-    claim.sealReference !== journal.seal.sealReference ||
-    claim.sealDigest !== journal.seal.sealDigest ||
-    claim.selectedSource.attestationId !== seed.selectedSourceHandle.attestationId ||
-    claim.selectedSource.generation !== seed.selectedSourceHandle.generation ||
-    claim.lineageMaximumGeneration !== seed.lineageMaximumGeneration ||
-    claim.sourceTerminalDigest !== seed.sourceTerminalDigest ||
-    dispatchPayloadDigest(claim.source as unknown as DispatchJSONValue) !==
-      dispatchPayloadDigest(sealedSource as unknown as DispatchJSONValue) ||
-    claim.taskId !== seed.taskId ||
-    claim.taskDigest !== seed.taskDigest ||
-    claim.finalizedManifestDigest !== seed.finalizedManifestDigest ||
-    claim.managedFingerprint !== seed.managedFingerprint ||
-    claim.liveTip !== seed.liveTip ||
-    claim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited) ||
-    prepareDispatchRequestDigest(sourceRequest) !== sourceRow.prepareRequestDigest ||
-    prepareDispatchRequestDigest(successorRequest) !== successor.prepareRequestDigest ||
-    !bindingMatches(sourceBinding, binding) ||
-    !bindingMatches(successorBinding, binding)
-  ) {
+    request === undefined
+      ? "evidence-missing"
+      : sourceRow.attestationId !== successor.attestationId ||
+          sourceRow.generation + 1 !== successor.generation
+        ? "source-successor-identity-mismatch"
+        : sourceRow.state !== "aborted" ||
+            sourceRow.abortReason === undefined ||
+            !ELIGIBLE_ABORT_REASONS.has(sourceRow.abortReason) ||
+            sourceRow.abortedAt !== sourceRow.terminalAt ||
+            (sourceRow.abortDetailsDigest !== undefined &&
+              sourceRow.abortDetailsDigest !== detailsDigest) ||
+            sourceRow.terminalDigest !== terminalDigest
+          ? "source-terminal-mismatch"
+          : claim !== undefined &&
+              (claim.selectedSource.attestationId !== sourceRow.attestationId ||
+                claim.selectedSource.generation !== sourceRow.generation ||
+                claim.lineageMaximumGeneration !== sourceRow.generation ||
+                claim.sourceTerminalDigest !== terminalDigest ||
+                claim.source.kind !== "aborted" ||
+                claim.source.abortReason !== sourceRow.abortReason ||
+                claim.taskId !== binding.taskId ||
+                claim.managedFingerprint !== binding.handleFingerprint ||
+                claim.liveTip !== bridge.oldResultCommit ||
+                claim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))
+            ? "successor-claim-mismatch"
+            : claim === undefined &&
+                (sourceClaim?.taskId !== binding.taskId ||
+                  sourceClaim.managedFingerprint !== binding.handleFingerprint ||
+                  sourceClaim.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(inherited))
+              ? "retained-claim-binding-mismatch"
+              : input["taskId"] !== binding.taskId ||
+                  input["branch"] !== binding.branch ||
+                  input["baseCommit"] !== bridge.ontoCommit ||
+                  input["startingCommit"] !== bridge.rebasedStartCommit ||
+                  input["priorResultCommit"] !== bridge.oldResultCommit
+                ? "successor-input-mismatch"
+                : !prepareDispatchRequestDigestMatchesKnownFormat(
+                      request,
+                      successor.prepareRequestDigest,
+                    )
+                  ? "successor-prepare-digest-mismatch"
+                  : !bindingMatches(sourceBinding, binding) ||
+                      !bindingMatches(successorBinding, binding)
+                    ? "managed-binding-mismatch"
+                    : undefined;
+  if (mismatchCause !== undefined) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
-      "journal recovery cancellation does not authenticate its exact guarded successor",
+      "journal recovery cancellation does not authenticate its exact guarded successor; " +
+        guardedJournalSuccessorDiagnostic(mismatchCause, claim),
     );
   }
-  let receipts: readonly GitChangeBrokerReceipt[];
-  try {
-    receipts = await deps.resolveReceipts(sourceRow, bridge.oldResultCommit);
-  } catch (error) {
+  if (sourceBinding === undefined || inherited === undefined) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
-      `journal recovery cancellation receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      "journal recovery cancellation does not authenticate its exact guarded successor; " +
+        guardedJournalSuccessorDiagnostic("evidence-missing", claim),
     );
   }
-  if (
-    receipts.length < inherited.length ||
-    !receiptClosuresEqual(receipts.slice(0, inherited.length), inherited)
-  ) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery cancellation does not retain its claimed receipt closure",
-    );
-  }
-  let sourceTip = claim.liveTip;
-  for (const [index, receipt] of receipts.slice(inherited.length).entries()) {
+  let receipts = inherited;
+  if (claim === undefined) {
+    if (sourceClaim === undefined || sourceRequest === undefined) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery cancellation does not authenticate its exact guarded successor; " +
+          guardedJournalSuccessorDiagnostic("retained-seed-evidence-missing", claim),
+      );
+    }
+    const seed = journal.seal.seed;
+    const sealedSource =
+      journal.seal.version === 1
+        ? {
+            kind: "aborted" as const,
+            version: 1 as const,
+            abortReason: journal.seal.seed.sourceAbortReason,
+          }
+        : journal.seal.seed.source;
+    const seedMismatchCause: GuardedJournalSuccessorCause | undefined =
+      journal.fence === undefined
+        ? "retained-seed-evidence-missing"
+        : sourceClaim.fenceRef !== journal.fence.fenceRef ||
+            sourceClaim.sealReference !== journal.seal.sealReference ||
+            sourceClaim.sealDigest !== journal.seal.sealDigest
+          ? "retained-seed-authority-mismatch"
+          : sourceClaim.selectedSource.attestationId !== seed.selectedSourceHandle.attestationId ||
+              sourceClaim.selectedSource.generation !== seed.selectedSourceHandle.generation ||
+              sourceClaim.lineageMaximumGeneration !== seed.lineageMaximumGeneration ||
+              sourceClaim.sourceTerminalDigest !== seed.sourceTerminalDigest ||
+              dispatchPayloadDigest(sourceClaim.source as unknown as DispatchJSONValue) !==
+                dispatchPayloadDigest(sealedSource as unknown as DispatchJSONValue)
+            ? "retained-seed-source-mismatch"
+            : sourceClaim.taskDigest !== seed.taskDigest ||
+                sourceClaim.finalizedManifestDigest !== seed.finalizedManifestDigest
+              ? "retained-seed-task-mismatch"
+              : sourceClaim.liveTip !== seed.liveTip
+                ? "retained-seed-live-tip-mismatch"
+                : !prepareDispatchRequestDigestMatchesKnownFormat(
+                      sourceRequest,
+                      sourceRow.prepareRequestDigest,
+                    )
+                  ? "retained-source-prepare-digest-mismatch"
+                  : undefined;
+    if (seedMismatchCause !== undefined) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery cancellation does not authenticate its exact guarded successor; " +
+          guardedJournalSuccessorDiagnostic(seedMismatchCause, claim),
+      );
+    }
+    try {
+      receipts = await deps.resolveReceipts(sourceRow, bridge.oldResultCommit);
+    } catch (error) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        `journal recovery cancellation receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     if (
-      receipt.taskId !== binding.taskId ||
-      receipt.attestationId !== sourceRow.attestationId ||
-      receipt.generation !== sourceRow.generation ||
-      receipt.oldHead !== sourceTip
+      receipts.length < inherited.length ||
+      !receiptClosuresEqual(receipts.slice(0, inherited.length), inherited)
     ) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
-        `journal recovery cancellation receipt suffix ${String(index)} is foreign or unordered`,
+        "journal recovery cancellation does not retain its claimed receipt closure",
       );
     }
-    sourceTip = receipt.newHead;
-  }
-  if (sourceTip !== bridge.oldResultCommit) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery cancellation receipt closure does not end at its guarded source tip",
-    );
+    let sourceTip = sourceClaim.liveTip;
+    for (const [index, receipt] of receipts.slice(inherited.length).entries()) {
+      if (
+        receipt.taskId !== binding.taskId ||
+        receipt.attestationId !== sourceRow.attestationId ||
+        receipt.generation !== sourceRow.generation ||
+        receipt.oldHead !== sourceTip
+      ) {
+        throw new CurrentRecoverySealError(
+          "journal-conflict",
+          `journal recovery cancellation receipt suffix ${String(index)} is foreign or unordered`,
+        );
+      }
+      sourceTip = receipt.newHead;
+    }
+    if (sourceTip !== bridge.oldResultCommit) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery cancellation receipt closure does not end at its guarded source tip",
+      );
+    }
   }
   return Object.freeze({
     source: Object.freeze({
@@ -1157,7 +1412,7 @@ async function journalGuardedRecoverySuccessorEdge(
     rebasedStartCommit: bridge.rebasedStartCommit,
     oldResultCommit: bridge.oldResultCommit,
     receipts,
-    receiptsArePostGuardedComponent: false,
+    receiptsArePostGuardedComponent: sourceBinding.guardedRebaseBridge !== undefined,
   });
 }
 
@@ -1227,11 +1482,23 @@ async function journalSuccessorSource(
   deps: CurrentRecoveryCaptureDeps,
 ): Promise<CurrentRecoverySourceCandidate | null> {
   assertCommittedCoordinates(journal, coordinates);
+  const seed = journal.seal.seed;
+  const seededGuardedTipTransitions = currentRecoveryGuardedTipTransitions(seed);
+  const retainedGuardedRebaseBridge = currentRecoveryGuardedRebaseBridge(
+    journal,
+    rows,
+    coordinates.binding,
+  );
+  const guardedRebaseBridge =
+    seededGuardedTipTransitions.length === 0 ? retainedGuardedRebaseBridge : undefined;
+  const sealedGuardedRebaseBridge =
+    guardedRebaseBridge === undefined || !("guardedRebaseBridge" in seed.gitBinding)
+      ? undefined
+      : seed.gitBinding.guardedRebaseBridge;
   const successors = [...journalSuccessorRows(rows, journal, coordinates.binding)].sort(
     (left, right) => left.generation - right.generation,
   );
   if (successors.length === 0) return null;
-  const seed = journal.seal.seed;
   const onlySuccessor = successors.length === 1 ? successors[0] : undefined;
   if (
     onlySuccessor !== undefined &&
@@ -1259,9 +1526,65 @@ async function journalSuccessorSource(
     }
     successorEnvelopes.push(successor);
   }
+  const gateRejectedCorrectionClaim = (
+    row: AttestationEnvelope,
+    predecessor: AttestationEnvelope,
+  ): DispatchGateRejectedCorrectionClaim | undefined => {
+    if (row.gateRejectedCorrectionClaim !== undefined) {
+      return row.gateRejectedCorrectionClaim;
+    }
+    if (
+      row.dispatchContinuationClaim !== undefined ||
+      row.dispatchJournalRecoveryClaim !== undefined ||
+      row.gitEffectBinding === undefined ||
+      journal.fence === undefined
+    ) {
+      return undefined;
+    }
+    const control = predecessor.implementationQueue;
+    if (control === undefined) return undefined;
+    const predecessorBridge = predecessor.gitEffectBinding?.guardedRebaseBridge;
+    const claim = Object.freeze({
+      fenceRef: journal.fence.fenceRef,
+      source: Object.freeze({
+        attestationId: predecessor.attestationId,
+        generation: predecessor.generation,
+      }),
+      resultCommit: control.attempt.resultCommit,
+      gitReceiptLineageDigest: control.attempt.gitReceiptLineageDigest,
+      guardedRebaseBridgeDigest:
+        predecessorBridge === undefined
+          ? null
+          : dispatchPayloadDigest(predecessorBridge as unknown as DispatchJSONValue),
+    });
+    const timeoutMs =
+      attestationInstantMs(row.deadlines.childCancelAt, "deadlines.childCancelAt") -
+      attestationInstantMs(row.createdAt, "createdAt");
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return undefined;
+    const request: PrepareDispatchRequest = {
+      namespace: row.namespace,
+      roleId: row.promptProvenance.roleId,
+      surface: row.promptProvenance.surface,
+      input: row.input,
+      idempotencyKey: row.idempotencyKey,
+      timeoutMs,
+      overlays: row.overlays,
+      registry: DISPATCH_OVERLAY_REGISTRY,
+      promptDigest: row.promptProvenance.promptDigest,
+      catalogHash: row.promptProvenance.catalogHash,
+      expectedChild: row.expectedChild,
+      reprepareOf: claim.source,
+      gitEffectBinding: row.gitEffectBinding,
+      gateRejectedCorrectionClaim: claim,
+      ...(row.implementationEvidenceBootstrapRef === undefined
+        ? {}
+        : { implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef }),
+    };
+    return prepareDispatchRequestDigest(request) === row.prepareRequestDigest ? claim : undefined;
+  };
   let inheritedReceipts: readonly GitChangeBrokerReceipt[] = seed.gitReceipts;
   let inheritedTip = seed.liveTip;
-  let guardedTipTransitions = currentRecoveryGuardedTipTransitions(seed);
+  let guardedTipTransitions = seededGuardedTipTransitions;
   for (const [index, successor] of successorEnvelopes.entries()) {
     if (!bindingMatches(successor.gitEffectBinding, coordinates.binding)) {
       throw new CurrentRecoverySealError(
@@ -1286,24 +1609,39 @@ async function journalSuccessorSource(
           )));
     const inherited = successor.gitEffectBinding?.inheritedGitReceipts;
     const latestTransition = guardedTipTransitions.at(-1);
+    const inheritedTransitionComponent =
+      latestTransition === undefined ||
+      latestTransition.receiptPrefixLength > inheritedReceipts.length
+        ? undefined
+        : inheritedReceipts.slice(latestTransition.receiptPrefixLength);
     const inheritedMatches =
       incomingGuardedEdge === null
-        ? inherited !== undefined &&
-          (receiptClosuresEqual(inherited, inheritedReceipts) ||
-            (latestTransition !== undefined &&
-              latestTransition.receiptPrefixLength <= inheritedReceipts.length &&
-              bindingMatchesGuardedTransition(successor.gitEffectBinding, latestTransition) &&
-              receiptClosuresEqual(
-                inherited,
-                inheritedReceipts.slice(latestTransition.receiptPrefixLength),
-              )))
+        ? (inherited !== undefined && receiptClosuresEqual(inherited, inheritedReceipts)) ||
+          (latestTransition !== undefined &&
+            inheritedTransitionComponent !== undefined &&
+            bindingMatchesGuardedTransition(successor.gitEffectBinding, latestTransition) &&
+            (inherited === undefined
+              ? inheritedTransitionComponent.length === 0
+              : receiptClosuresEqual(inherited, inheritedTransitionComponent)))
         : inherited === undefined ||
           (inherited.length <= inheritedReceipts.length &&
             receiptClosuresEqual(inherited, inheritedReceipts.slice(0, inherited.length)));
     if (!inheritedMatches) {
       throw new CurrentRecoverySealError(
         "journal-conflict",
-        "journal recovery successor does not inherit the preceding receipt closure",
+        "journal recovery successor does not inherit the preceding receipt closure: " +
+          boundedJournalSuccessorDiagnostic(
+            successor,
+            inheritedClosureMismatchCause(
+              successor,
+              inherited,
+              inheritedReceipts.length,
+              incomingGuardedEdge,
+              latestTransition,
+            ),
+            inheritedReceipts.length,
+            inherited?.length ?? 0,
+          ),
       );
     }
     if (
@@ -1318,12 +1656,38 @@ async function journalSuccessorSource(
       );
     }
     const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
-    const expectedBaseCommit =
-      incomingGuardedEdge?.ontoCommit ??
+    const successorBridge = successor.gitEffectBinding?.guardedRebaseBridge;
+    const transitionBridgeMatches =
+      latestTransition !== undefined &&
+      successorBridge !== undefined &&
+      latestTransition.guardedRebase === successorBridge.guardedRebase &&
+      latestTransition.requestDigest === successorBridge.requestDigest &&
+      latestTransition.oldResultCommit === successorBridge.oldResultCommit &&
+      latestTransition.ontoCommit === successorBridge.ontoCommit &&
+      latestTransition.rebasedStartCommit === successorBridge.rebasedStartCommit;
+    const bridgeMatches =
+      incomingGuardedEdge !== null ||
+      transitionBridgeMatches ||
+      (guardedRebaseBridge === undefined
+        ? successorBridge === undefined
+        : successorBridge === undefined
+          ? sealedGuardedRebaseBridge === undefined
+          : dispatchPayloadDigest(successorBridge as unknown as DispatchJSONValue) ===
+            dispatchPayloadDigest(guardedRebaseBridge as unknown as DispatchJSONValue));
+    const logicalBaseCommit =
       guardedTipTransitions.at(-1)?.ontoCommit ??
+      guardedRebaseBridge?.ontoCommit ??
       coordinates.binding.baseCommit;
+    const inheritedExpectedBaseCommit =
+      guardedRebaseBridge !== undefined &&
+      sealedGuardedRebaseBridge === undefined &&
+      successorBridge === undefined
+        ? coordinates.binding.baseCommit
+        : logicalBaseCommit;
+    const expectedBaseCommit = incomingGuardedEdge?.ontoCommit ?? inheritedExpectedBaseCommit;
     const expectedStartingCommit = incomingGuardedEdge?.rebasedStartCommit ?? inheritedTip;
     if (
+      !bridgeMatches ||
       input["taskId"] !== coordinates.taskId ||
       input["branch"] !== coordinates.binding.branch ||
       input["baseCommit"] !== expectedBaseCommit ||
@@ -1369,10 +1733,119 @@ async function journalSuccessorSource(
       guardedTipTransitions = appended.transitions;
       continue;
     }
+    if (successor.state === "aborted" && successor.abortReason === "gate-rejected") {
+      const correction = successorEnvelopes[index + 1]!;
+      const control = successor.implementationQueue;
+      const output =
+        successor.output !== null &&
+        typeof successor.output === "object" &&
+        !Array.isArray(successor.output)
+          ? (successor.output as Readonly<Record<string, DispatchJSONValue>>)
+          : undefined;
+      const correctionInput =
+        correction.input !== null &&
+        typeof correction.input === "object" &&
+        !Array.isArray(correction.input)
+          ? (correction.input as Readonly<Record<string, DispatchJSONValue>>)
+          : undefined;
+      const claim = gateRejectedCorrectionClaim(correction, successor);
+      const predecessorBridge = successor.gitEffectBinding?.guardedRebaseBridge;
+      const correctionBridge = correction.gitEffectBinding?.guardedRebaseBridge;
+      const predecessorBridgeDigest =
+        predecessorBridge === undefined
+          ? null
+          : dispatchPayloadDigest(predecessorBridge as unknown as DispatchJSONValue);
+      const correctionBridgeDigest =
+        correctionBridge === undefined
+          ? null
+          : dispatchPayloadDigest(correctionBridge as unknown as DispatchJSONValue);
+      const resultCommit = output?.["resultCommit"];
+      let resolved: readonly GitChangeBrokerReceipt[] | undefined;
+      try {
+        resolved =
+          typeof resultCommit === "string"
+            ? await deps.resolveReceipts(successor, resultCommit)
+            : undefined;
+      } catch {
+        resolved = undefined;
+      }
+      const transition = guardedTipTransitions.at(-1);
+      const componentPrefix =
+        transition === undefined || transition.receiptPrefixLength > inheritedReceipts.length
+          ? undefined
+          : inheritedReceipts.slice(transition.receiptPrefixLength);
+      const componentBindingAuthenticated =
+        transition !== undefined &&
+        componentPrefix !== undefined &&
+        bindingMatchesGuardedTransition(correction.gitEffectBinding, transition);
+      const authenticatedClosure =
+        resolved === undefined || typeof resultCommit !== "string"
+          ? undefined
+          : authenticateResolvedRecoveryReceiptClosureWithForm({
+              taskId: coordinates.taskId,
+              attestationId: successor.attestationId,
+              generation: successor.generation,
+              inheritedReceipts,
+              inheritedTip,
+              resultCommit,
+              resolvedReceipts: resolved,
+              componentBindingAuthenticated,
+              ...(componentPrefix === undefined ? {} : { componentPrefix }),
+            });
+      const correctionInherited = correction.gitEffectBinding?.inheritedGitReceipts;
+      if (
+        journal.fence === undefined ||
+        claim === undefined ||
+        claim.fenceRef !== journal.fence.fenceRef ||
+        claim.source.attestationId !== successor.attestationId ||
+        claim.source.generation !== successor.generation ||
+        successor.parentGateCapabilityHash === undefined ||
+        successor.abortDetails === undefined ||
+        successor.abortDetailsDigest !== dispatchPayloadDigest(successor.abortDetails) ||
+        !isImplementWorkerSupervisedGateRejectionDetails(successor.abortDetails) ||
+        control === undefined ||
+        control.state !== "terminal" ||
+        control.terminal?.reason !== "gate-rejected" ||
+        control.terminal.detailsDigest !== successor.abortDetailsDigest ||
+        correction.attestationId !== successor.attestationId ||
+        correction.generation !== successor.generation + 1 ||
+        output?.["status"] !== "pass" ||
+        resultCommit !== claim.resultCommit ||
+        control.attempt.resultCommit !== claim.resultCommit ||
+        control.attempt.gitReceiptLineageDigest !== claim.gitReceiptLineageDigest ||
+        dispatchPayloadDigest(output["gitReceipts"] ?? []) !== claim.gitReceiptLineageDigest ||
+        dispatchPayloadDigest(control.attempt.gitReceipts as unknown as DispatchJSONValue) !==
+          claim.gitReceiptLineageDigest ||
+        predecessorBridgeDigest !== claim.guardedRebaseBridgeDigest ||
+        correctionBridgeDigest !== predecessorBridgeDigest ||
+        correctionInput?.["startingCommit"] !== claim.resultCommit ||
+        correctionInput["priorResultCommit"] !== claim.resultCommit ||
+        resolved === undefined ||
+        authenticatedClosure === undefined ||
+        correctionInherited === undefined ||
+        !receiptClosuresEqual(correctionInherited, resolved)
+      ) {
+        throw new CurrentRecoverySealError(
+          "journal-conflict",
+          "intermediate gate-rejected recovery correction is incomplete, divergent, or foreign",
+        );
+      }
+      inheritedReceipts = authenticatedClosure.receipts;
+      inheritedTip = claim.resultCommit;
+      continue;
+    }
     if (successor.state !== "consumed" || continuation === undefined) {
       throw new CurrentRecoverySealError(
         "source-ambiguous",
-        "an intermediate recovery successor is not one consumed continuation source",
+        "an intermediate recovery successor is not one consumed continuation source: " +
+          boundedJournalSuccessorDiagnostic(
+            successor,
+            successor.state !== "consumed"
+              ? "intermediate-state-not-consumed"
+              : "intermediate-continuation-missing",
+            inheritedReceipts.length,
+            continuation?.gitReceipts.length ?? 0,
+          ),
       );
     }
     const closure = continuation.gitReceipts;
@@ -1545,7 +2018,16 @@ export async function captureCurrentRecoverySeal(
       assertNoActiveGeneration(snapshot);
       const row = sourceRow(snapshot, source);
       const capturedAt = deps.now();
-      const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
+      const seal = sealForSource(
+        coordinates,
+        row,
+        source,
+        snapshot.digest,
+        capturedAt,
+        source.guardedTipTransition === undefined && source.guardedTipTransitions === undefined
+          ? currentRecoveryGuardedRebaseBridge(existing, rows, coordinates.binding)
+          : undefined,
+      );
       if (seal.version !== 1) {
         throw new CurrentRecoverySealError(
           "journal-conflict",

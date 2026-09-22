@@ -28,8 +28,10 @@
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
+import { cohortSealedEnvelopeSchema, cohortRoleArm, singleTaskOrCohortSchema } from "./cohortContract.js";
 import {
   implementWorkerSupervisedGateEvidenceSchema,
+  cohortSupervisedGateEvidenceSchema,
   type ImplementWorkerSupervisedGateEvidence,
 } from "./implement-worker.js";
 
@@ -523,7 +525,18 @@ const outputSchema = {
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 7,
-  inputSchema,
-  outputSchema,
+  version: 8,
+  inputSchema: singleTaskOrCohortSchema(inputSchema, {
+    ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input"),
+    properties: { ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input").properties,
+      supervisedGateEvidence: cohortSupervisedGateEvidenceSchema },
+    required: [...inputSchema.required.filter((field) => field !== "taskId" && field !== "acceptance"), "cohort", "members", "supervisedGateEvidence"],
+    not: { required: ["parentGateAttestation"] },
+  }),
+  outputSchema: singleTaskOrCohortSchema(outputSchema, {
+    ...cohortRoleArm(outputSchema, cohortSealedEnvelopeSchema, "output"),
+    properties: { ...cohortRoleArm(outputSchema, cohortSealedEnvelopeSchema, "output").properties,
+      gateReRan: { const: false } },
+    not: { required: ["gateDurationMs"] },
+  }),
 };

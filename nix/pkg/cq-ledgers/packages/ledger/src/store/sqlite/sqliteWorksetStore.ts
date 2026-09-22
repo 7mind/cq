@@ -21,6 +21,8 @@ import {
   WORKSET_EXTERNAL_EFFECT_KINDS,
   WORKSET_LEDGER_MUTATION_KINDS,
   WorksetAdmissionError,
+  worksetExternalEffectTargets,
+  type WorksetExternalEffectRequest,
   canonicalizeWorksetRootReplacement,
   isTrustedWorksetManagementAuthority,
   registerLiveWorksetAdmission,
@@ -28,7 +30,6 @@ import {
   type WorksetAdministrativeEffectKind,
   type WorksetAdmissionCoordinatorHooks,
   type WorksetExternalEffectAdmission,
-  type WorksetExternalEffectKind,
   type WorksetLedgerMutationAdmission,
   type WorksetLedgerMutationKind,
   type WorksetProcessGroupRegistration,
@@ -536,10 +537,7 @@ export function createSqliteWorksetStore(
   }
 
   async function admitExternalEffectInternal(
-    input: {
-      readonly kind: WorksetExternalEffectKind;
-      readonly targetRef: string;
-    },
+    input: WorksetExternalEffectRequest,
     requireTargetAdmission: boolean,
   ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
@@ -548,8 +546,9 @@ export function createSqliteWorksetStore(
         `unknown external effect kind: ${String(input.kind)}`,
       );
     }
+    const targets = worksetExternalEffectTargets(input);
     const granted = await beginNonExclusiveAdmit("external-effect");
-    if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, granted.roots)) {
+    if (requireTargetAdmission && !targets.every((target) => isTargetAdmitted(target, granted.roots))) {
       deleteAdmission(granted.id);
       throw new WorksetAdmissionError(
         "target-excluded",
@@ -561,7 +560,7 @@ export function createSqliteWorksetStore(
         "UPDATE workset_admissions SET kind = ?, targets_json = ?, target_ref = ? WHERE id = ?",
       ).run(
         input.kind,
-        JSON.stringify([input.targetRef]),
+        JSON.stringify(targets),
         input.targetRef,
         granted.id,
       );
@@ -737,10 +736,7 @@ export function createSqliteWorksetStore(
     return handle;
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffect(input: WorksetExternalEffectRequest): Promise<WorksetExternalEffectAdmission> {
     return admitExternalEffectInternal(input, true);
   }
 

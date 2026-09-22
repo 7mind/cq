@@ -17,6 +17,8 @@
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { finalizeBatchOperationWire } from "@cq/ledger/finalize";
+import type { CohortStatusViewV1 } from "@cq/ledger";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
@@ -110,6 +112,10 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
 
   displayName(): string {
     return this._displayName;
+  }
+
+  getCohortStatus(): Promise<CohortStatusViewV1> {
+    return this.call("get_cohort_status", {});
   }
 
   private async call<T>(name: string, args: Record<string, unknown>): Promise<T> {
@@ -273,15 +279,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
     operations: readonly FinalizeBatchOperation[],
   ): Promise<{ applied: number }> {
     return await this.call<{ applied: number }>("execute_finalize", {
-      operations: operations.map((operation) => ({
-        id: operation.id,
-        target_id: operation.targetId,
-        action: operation.action,
-        ...(operation.targetStatus === undefined
-          ? {}
-          : { target_status: operation.targetStatus }),
-        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
-      })),
+      operations: operations.map(finalizeBatchOperationWire),
     });
   }
 

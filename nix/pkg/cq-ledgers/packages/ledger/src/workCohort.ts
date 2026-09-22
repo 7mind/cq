@@ -1,7 +1,21 @@
-import { createHash } from "node:crypto";
+import { canonicalCohortValueV1 as canonical, cohortValueDigestV1 as digest,
+  assertCohortCandidateIntentV1, assertCohortEffectEnvelopeV1 } from "@cq/process-control";
+export { assertCohortCandidateIntentV1, assertCohortEffectEnvelopeV1, createCohortCandidateIntentV1,
+  cohortValueDigestV1 } from "@cq/process-control";
 import { posix } from "node:path";
 
-import type { AttestationEnvelope, AttestationStore, ImplementationQueueControl } from "@cq/config";
+import type {
+  AttestationEnvelope, AttestationStore, ImplementationQueueControl, DispatchGitChangeReceipt,
+  DispatchCohortRebaseTransition, DispatchGuardedRebaseBridge,
+  CohortRepositoryIdentityV1, CohortEnvironmentIdentityV1, CohortDefinitionIdentityV1,
+  CohortCandidateIntentV1, CohortEvidenceSubjectV1, CohortMemberTaskAuthorityV1, CohortEffectEnvelopeV1, CohortWorktreeIdentityV1,
+} from "@cq/config";
+import { implementationQueueSubjectsMatch, implementationQueueAuthoritiesMatch, cohortRebaseTransitionMatches,
+  assertDispatchGuardedRebaseBridge } from "@cq/config";
+export type {
+  CohortRepositoryIdentityV1, CohortEnvironmentIdentityV1, CohortDefinitionIdentityV1,
+  CohortCandidateIntentV1, CohortEvidenceSubjectV1, CohortMemberTaskAuthorityV1, CohortEffectEnvelopeV1, CohortWorktreeIdentityV1,
+} from "@cq/config";
 import ts from "typescript";
 
 import {
@@ -48,32 +62,6 @@ export type CohortExclusionReasonV1 = (typeof COHORT_EXCLUSION_PRIORITY_V1)[numb
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 
-function canonical(value: unknown): string {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("cohort identity contains a non-finite number");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => {
-        const member = record[key];
-        if (member === undefined) throw new Error(`cohort identity field ${key} is undefined`);
-        return `${JSON.stringify(key)}:${canonical(member)}`;
-      })
-      .join(",")}}`;
-  }
-  throw new Error("cohort identity contains a non-JSON value");
-}
-
-function digest(value: unknown): string {
-  return createHash("sha256").update(canonical(value)).digest("hex");
-}
 
 function immutableSnapshot<T>(value: T): T {
   if (
@@ -132,16 +120,6 @@ function normalizedRepositoryPath(value: string, label: string): string {
     throw new Error(`${label} must be a normalized repository-relative path`);
   }
   return value.startsWith("./") ? value.slice(2) : value;
-}
-
-export interface CohortRepositoryIdentityV1 {
-  readonly repositoryId: string;
-  readonly headCommit: string;
-  readonly treeOid: string;
-}
-
-export interface CohortEnvironmentIdentityV1 {
-  readonly environmentDigest: string;
 }
 
 export interface CohortWorksetSnapshotV1 {
@@ -2221,27 +2199,6 @@ export function constructCohortDecisionsV1(
   return Object.freeze(decisions);
 }
 
-export interface CohortDefinitionIdentityV1 {
-  readonly kind: "cq-cohort-definition-identity";
-  readonly version: 1;
-  readonly cohortId: string;
-  readonly definitionGeneration: number;
-  readonly phase: CohortPhaseV1;
-  readonly members: readonly {
-    readonly memberRef: string;
-    readonly memberRevision: string;
-    readonly authorityRef: string;
-    readonly authorityRevision: string;
-  }[];
-  readonly selectedAtomDigest: string;
-  readonly acceptanceMatrixDigest: string;
-  readonly repository: CohortRepositoryIdentityV1;
-  readonly environment: CohortEnvironmentIdentityV1;
-  readonly splitConditions: readonly string[];
-  readonly semanticDigest: string;
-  readonly definitionDigest: string;
-}
-
 function definitionSemanticPayload(
   cohortId: string,
   decision: CohortDecisionV1,
@@ -2296,18 +2253,35 @@ export function createCohortDefinitionIdentityV1(input: {
   return Object.freeze({ ...payload, definitionDigest: digest(payload) });
 }
 
-export interface CohortPreparedDispatchIdentityV1 {
+export type CohortPreparedDispatchIdentityV1 = {
   readonly attestationId: string;
   readonly generation: number;
-  readonly taskId: string;
   readonly branch: string;
   readonly startingCommit: string;
+} & ({ readonly taskId: string; readonly cohort?: never } |
+  { readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never });
+
+export function resolveCohortDefinitionObservationV1(input: {
+  readonly definition: CohortDefinitionIdentityV1;
+  readonly decisions: readonly CohortDecisionV1[];
+  readonly observations: readonly CohortAdmissionObservationV1[];
+}): CohortAdmissionObservationV1 {
+  for (const decision of input.decisions) {
+    if (decision.matrix.matrixDigest !== input.definition.acceptanceMatrixDigest) continue;
+    const observation = input.observations.find((value) => value.observationSetDigest === decision.observationSetDigest);
+    if (observation === undefined) continue;
+    const reconstructed = createCohortDefinitionIdentityV1({ cohortId: input.definition.cohortId,
+      decision, observation, prior: null });
+    if (reconstructed.semanticDigest === input.definition.semanticDigest) return observation;
+  }
+  throw new Error("cohort definition lacks its exact producing observation");
 }
 
 interface CohortCandidateAttemptBaseV1 {
   readonly kind: "cq-cohort-candidate-attempt";
   readonly version: 1;
   readonly definitionDigest: string;
+  readonly intent: CohortCandidateIntentV1;
   readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
   readonly pendingAttemptDigest: string;
   readonly candidateAttemptDigest: string;
@@ -2328,17 +2302,85 @@ export interface StagedCohortCandidateAttemptV1 extends CohortCandidateAttemptBa
     readonly resultTree: string;
     readonly gitReceiptLineageDigest: string;
     readonly repositoryDiffDigest: string;
+    readonly qualificationDigest: string;
+    readonly qualifiedOutputDigest: string;
+    readonly guardedRebase?: CohortGuardedCandidateBridgeV1;
   };
+}
+
+export interface CohortGuardedCandidateBridgeV1 {
+  readonly transition: DispatchCohortRebaseTransition;
+  readonly bridge: Extract<DispatchGuardedRebaseBridge, { readonly version: 2 }>;
+}
+
+export function assertCohortGuardedCandidateBridgeV1(value: CohortGuardedCandidateBridgeV1,
+  prepared: CohortPreparedDispatchIdentityV1, baseCommit: string): void {
+  assertDispatchGuardedRebaseBridge(value.bridge);
+  const { transition, bridge } = value;
+  if (Object.keys(value).sort().join(",") !== "bridge,transition" || bridge.version !== 2 || bridge.cohort.state !== "sealed" ||
+      !cohortRebaseTransitionMatches(transition.sourceBinding, { ...transition.successorBinding,
+        guardedRebaseBridge: bridge, cohortRebaseTransition: transition }, transition.source) ||
+      !implementationQueueSubjectsMatch(prepared, transition.successorBinding, true) ||
+      prepared.attestationId !== transition.source.attestationId || prepared.generation !== transition.source.generation + 1 ||
+      prepared.branch !== transition.successorBinding.branch || prepared.startingCommit !== bridge.rebasedStartCommit || baseCommit !== bridge.ontoCommit) {
+    throw new Error("cohort guarded candidate bridge differs from the exact prepared successor");
+  }
 }
 
 export type CohortCandidateAttemptV1 =
   | PendingCohortCandidateAttemptV1
   | StagedCohortCandidateAttemptV1;
 
+class AuthenticatedG213CandidateAttemptV1 implements StagedCohortCandidateAttemptV1 {
+  readonly kind: "cq-cohort-candidate-attempt";
+  readonly version: 1;
+  readonly definitionDigest: string;
+  readonly intent: CohortCandidateIntentV1;
+  readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
+  readonly state: "staged";
+  readonly pendingAttemptDigest: string;
+  readonly candidateAttemptDigest: string;
+  readonly g213: StagedCohortCandidateAttemptV1["g213"];
+  readonly #registry: WeakSet<StagedCohortCandidateAttemptV1>;
+
+  constructor(
+    attempt: StagedCohortCandidateAttemptV1,
+    registry: WeakSet<StagedCohortCandidateAttemptV1>,
+  ) {
+    this.kind = attempt.kind;
+    this.version = attempt.version;
+    this.definitionDigest = attempt.definitionDigest;
+    this.intent = attempt.intent;
+    this.preparedDispatch = attempt.preparedDispatch;
+    this.state = attempt.state;
+    this.pendingAttemptDigest = attempt.pendingAttemptDigest;
+    this.candidateAttemptDigest = attempt.candidateAttemptDigest;
+    this.g213 = attempt.g213;
+    this.#registry = registry;
+    registry.add(this);
+    Object.freeze(this);
+  }
+
+  isAuthenticated(): boolean {
+    return this.#registry.has(this);
+  }
+}
+
 export function createPendingCohortCandidateAttemptV1(
   definition: CohortDefinitionIdentityV1,
   preparedDispatch: CohortPreparedDispatchIdentityV1,
+  intent: CohortCandidateIntentV1,
 ): PendingCohortCandidateAttemptV1 {
+  assertCohortCandidateIntentV1(intent, definition);
+  if (!implementationQueueSubjectsMatch(preparedDispatch, preparedDispatch, false)) {
+    throw new Error("prepared dispatch requires one closed task or cohort identity");
+  }
+  if (preparedDispatch.cohort !== undefined &&
+      (preparedDispatch.cohort.state !== "pre-seal" ||
+       canonical(preparedDispatch.cohort.definition) !== canonical(definition) ||
+       canonical(preparedDispatch.cohort.intent) !== canonical(intent))) {
+    throw new Error("prepared cohort dispatch differs from the exact definition or candidate intent");
+  }
   assertCommit(preparedDispatch.startingCommit, "prepared dispatch starting commit");
   if (!Number.isInteger(preparedDispatch.generation) || preparedDispatch.generation < 1) {
     throw new Error("prepared dispatch generation must be a positive integer");
@@ -2347,6 +2389,7 @@ export function createPendingCohortCandidateAttemptV1(
     kind: "cq-cohort-candidate-attempt" as const,
     version: 1 as const,
     definitionDigest: definition.definitionDigest,
+    intent,
     preparedDispatch,
   };
   const pendingAttemptDigest = digest(base);
@@ -2358,6 +2401,7 @@ export interface G213QualifiedCandidateRowV1 {
   readonly preparedDispatch: CohortPreparedDispatchIdentityV1;
   readonly queue: ImplementationQueueControl;
   readonly repositoryDiff: readonly CohortWholeDiffEntryV1[];
+  readonly guardedRebase?: CohortGuardedCandidateBridgeV1;
 }
 
 export interface G213CandidateAttemptBindingV1 {
@@ -2367,6 +2411,7 @@ export interface G213CandidateAttemptBindingV1 {
 function stageAuthenticatedCohortCandidateAttemptV1(
   pending: PendingCohortCandidateAttemptV1,
   binding: G213CandidateAttemptBindingV1,
+  registry: WeakSet<StagedCohortCandidateAttemptV1>,
 ): StagedCohortCandidateAttemptV1 {
   if (canonical(pending.preparedDispatch) !== canonical(binding.row.preparedDispatch)) {
     throw new Error("G213 candidate binding differs from the actual G213 row");
@@ -2375,10 +2420,8 @@ function stageAuthenticatedCohortCandidateAttemptV1(
   if (
     queue.state !== "qualified" ||
     queue.qualification === undefined ||
-    queue.attempt.taskId !== pending.preparedDispatch.taskId ||
-    queue.enrollment.taskId !== queue.attempt.taskId ||
-    queue.enrollment.goalRef !== queue.attempt.goalRef ||
-    queue.enrollment.finalizedManifestDigest !== queue.attempt.finalizedManifestDigest ||
+    !implementationQueueSubjectsMatch(queue.attempt, pending.preparedDispatch, false) ||
+    !implementationQueueAuthoritiesMatch(queue.enrollment, queue.attempt, false) ||
     queue.partition.partitionKey !== queue.enrollment.partitionKey ||
     queue.partition.partitionKey !== queue.qualification.partitionKey ||
     queue.enrollment.enrollmentId !== queue.qualification.enrollmentId ||
@@ -2397,17 +2440,24 @@ function stageAuthenticatedCohortCandidateAttemptV1(
     resultTree: queue.attempt.resultTree,
     gitReceiptLineageDigest: queue.attempt.gitReceiptLineageDigest,
     repositoryDiffDigest: digest(repositoryDiff),
+    qualificationDigest: queue.qualification.qualificationDigest,
+    qualifiedOutputDigest: queue.qualification.outputDigest,
+    ...(binding.row.guardedRebase === undefined ? {} : { guardedRebase: binding.row.guardedRebase }),
   });
   const payload = {
     kind: pending.kind,
     version: pending.version,
     definitionDigest: pending.definitionDigest,
+    intent: pending.intent,
     preparedDispatch: pending.preparedDispatch,
     state: "staged" as const,
     pendingAttemptDigest: pending.pendingAttemptDigest,
     g213,
   };
-  return Object.freeze({ ...payload, candidateAttemptDigest: digest(payload) });
+  return new AuthenticatedG213CandidateAttemptV1(
+    Object.freeze({ ...payload, candidateAttemptDigest: digest(payload) }),
+    registry,
+  );
 }
 
 export interface CohortWholeDiffEntryV1 {
@@ -2526,6 +2576,7 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
     readonly generation: number;
   };
   readonly repository: G213CandidateRepositoryV1;
+  readonly store: Pick<AttestationStore, "read">;
 }): Promise<G213QualifiedCandidateRowV1> {
   const row = immutableSnapshot(input.row);
   const queue = row.implementationQueue;
@@ -2559,7 +2610,7 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   assertCommit(baseCommit, "actual G213 row base commit");
   if (
     queue.attempt.managedWorktreeBindingDigest !== digest(binding) ||
-    queue.attempt.taskId !== binding.taskId ||
+    !implementationQueueSubjectsMatch(queue.attempt, binding, false) ||
     queue.attempt.repositoryId !== binding.repositoryId ||
     queue.attempt.worktreePath !== binding.worktreePath ||
     queue.attempt.observedBaseCommit !== baseCommit ||
@@ -2580,12 +2631,20 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   }
   const output = row.output as Readonly<Record<string, unknown>>;
   if (
-    output["taskId"] !== binding.taskId ||
+    !implementationQueueSubjectsMatch(output, binding, false) ||
     output["branch"] !== binding.branch ||
     output["resultCommit"] !== queue.attempt.resultCommit ||
     digest(output["gitReceipts"] ?? []) !== queue.attempt.gitReceiptLineageDigest
   ) {
     throw new Error("actual G213 row staged output differs from its queue attempt");
+  }
+  if (binding.cohort !== undefined &&
+      (!implementationQueueSubjectsMatch(rowInput, binding, false) ||
+       !implementationQueueAuthoritiesMatch(queue.enrollment, queue.attempt, false) ||
+       queue.attempt.version !== 2 || queue.enrollment.version !== 2 ||
+       row.promptProvenance.inputDigest !== digest(row.input) ||
+       queue.qualification.outputDigest !== digest(row.output))) {
+    throw new Error("actual G213 cohort row lacks its exact full-member production identity");
   }
   const repositoryDiff = normalizeWholeDiff(
     await input.repository.resolveWholeDiff({
@@ -2595,6 +2654,23 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
       resultTree: queue.attempt.resultTree,
     }),
   );
+  let guardedRebase: CohortGuardedCandidateBridgeV1 | undefined;
+  if (binding.cohortRebaseTransition !== undefined) {
+    const transition = binding.cohortRebaseTransition;
+    const bridge = binding.guardedRebaseBridge;
+    const source = input.store.read(transition.source);
+    const sourceCheckpoint = source?.kind === "envelope" ? source.implementationQueue?.stagedRebaseSource : undefined;
+    if (bridge?.version !== 2 || source?.kind !== "envelope" || source.gitEffectBinding === undefined ||
+        !cohortRebaseTransitionMatches(source.gitEffectBinding, binding, source) ||
+        source.implementationQueue?.state !== "staged-rebase-retired" ||
+        sourceCheckpoint?.sourceResultCommit !== bridge.oldResultCommit || sourceCheckpoint.guardedRebaseJournalDigest !== bridge.requestDigest ||
+        sourceCheckpoint.successor?.attestationId !== row.attestationId || sourceCheckpoint.successor.generation !== row.generation) {
+      throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
+    }
+    guardedRebase = Object.freeze({ transition, bridge });
+    assertCohortGuardedCandidateBridgeV1(guardedRebase, { attestationId: row.attestationId, generation: row.generation,
+      cohort: binding.cohort!, branch: binding.branch, startingCommit }, baseCommit);
+  }
   if (
     !Array.isArray(output["filesTouched"]) ||
     canonical(sortedUnique(output["filesTouched"] as string[])) !==
@@ -2606,18 +2682,20 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
     preparedDispatch: Object.freeze({
       attestationId: row.attestationId,
       generation: row.generation,
-      taskId: binding.taskId,
+      ...(binding.cohort === undefined ? { taskId: binding.taskId } : { cohort: binding.cohort }),
       branch: binding.branch,
       startingCommit,
     }),
     queue,
     repositoryDiff,
+    ...(guardedRebase === undefined ? {} : { guardedRebase }),
   });
 }
 
 /** Own the non-copyable identity of rows authenticated from persisted G213 state. */
 export class G213CandidateAuthenticatorV1 {
   readonly #authenticatedRows = new WeakSet<G213QualifiedCandidateRowV1>();
+  readonly #authenticatedAttempts = new WeakSet<StagedCohortCandidateAttemptV1>();
   readonly #store: Pick<AttestationStore, "namespace" | "read">;
   readonly #repository: G213CandidateRepositoryV1;
 
@@ -2651,6 +2729,7 @@ export class G213CandidateAuthenticatorV1 {
       row: persisted,
       requestedHandle: input,
       repository: this.#repository,
+      store: this.#store,
     });
     this.#authenticatedRows.add(row);
     return row;
@@ -2664,25 +2743,15 @@ export class G213CandidateAuthenticatorV1 {
     if (!this.#authenticatedRows.has(binding.row)) {
       throw new Error("G213 candidate binding differs from the actual G213 row");
     }
-    return stageAuthenticatedCohortCandidateAttemptV1(pending, binding);
+    return stageAuthenticatedCohortCandidateAttemptV1(
+      pending,
+      binding,
+      this.#authenticatedAttempts,
+    );
   }
 }
 
-export interface CohortGitChangeReceiptV1 {
-  readonly kind: "cq-git-change-receipt";
-  readonly version: 1;
-  readonly attestationId: string;
-  readonly generation: number;
-  readonly taskId: string;
-  readonly operationId: string;
-  readonly requestDigest: string;
-  readonly oldHead: string;
-  readonly newHead: string;
-  readonly tree: string;
-  readonly objectOids: readonly string[];
-  readonly paths: readonly string[];
-  readonly committedAt: string;
-}
+export type CohortGitChangeReceiptV1 = DispatchGitChangeReceipt;
 
 export interface CohortCandidateSealV1 {
   readonly kind: "cq-cohort-candidate-seal";
@@ -2724,7 +2793,17 @@ export interface CohortCandidateSealStoreV1 {
   read(candidateAttemptDigest: string): CohortCandidateSealV1 | undefined;
 }
 
-function materializeSeal(request: CohortCandidateSealRequestV1): CohortCandidateSealV1 {
+export function materializeCohortCandidateSealV1(
+  request: CohortCandidateSealRequestV1,
+): CohortCandidateSealV1 {
+  if (
+    !(request.attempt instanceof AuthenticatedG213CandidateAttemptV1) ||
+    !request.attempt.isAuthenticated()
+  ) {
+    throw new CohortCandidateSealConflictError(
+      "candidate seal lacks the actual durable G213 qualified-attempt binding",
+    );
+  }
   if (request.definition.definitionDigest !== request.attempt.definitionDigest) {
     throw new CohortCandidateSealConflictError("candidate attempt belongs to another definition");
   }
@@ -2745,11 +2824,19 @@ function materializeSeal(request: CohortCandidateSealRequestV1): CohortCandidate
     throw new CohortCandidateSealConflictError("candidate whole diff differs from G213 repository diff");
   }
   const receipts = [...request.gitReceipts];
-  if (receipts.length === 0 && request.baseCommit !== request.resultCommit) {
+  const guarded = request.attempt.g213.guardedRebase;
+  if (guarded !== undefined) assertCohortGuardedCandidateBridgeV1(guarded, request.attempt.preparedDispatch, request.baseCommit);
+  if (receipts.length === 0 && request.baseCommit !== request.resultCommit && (guarded === undefined || !guarded.bridge.exactTip)) {
     throw new CohortCandidateSealConflictError("changed candidate lacks its Git receipt bridge");
   }
-  let expected = request.baseCommit;
+  let expected = guarded?.bridge.rebasedStartCommit ?? request.baseCommit;
   for (const receipt of receipts) {
+    if (receipt.kind !== "cq-git-change-receipt" ||
+        receipt.version !== (receipt.cohort === undefined ? 1 : 2) ||
+        (request.attempt.preparedDispatch.cohort !== undefined &&
+         !implementationQueueSubjectsMatch(receipt, request.attempt.preparedDispatch, true))) {
+      throw new CohortCandidateSealConflictError("Git receipt bridge substituted its complete producing subject");
+    }
     if (receipt.oldHead !== expected) {
       throw new CohortCandidateSealConflictError("Git receipt bridge is not contiguous from base");
     }
@@ -2788,7 +2875,7 @@ export class InMemoryCohortCandidateSealStoreV1 implements CohortCandidateSealSt
     readonly state: "sealed" | "existing";
     readonly seal: CohortCandidateSealV1;
   } {
-    const candidate = materializeSeal(request);
+    const candidate = materializeCohortCandidateSealV1(request);
     const prior = this.#seals.get(request.attempt.candidateAttemptDigest);
     if (prior !== undefined) {
       if (canonical(prior) !== canonical(candidate)) {
@@ -2803,14 +2890,6 @@ export class InMemoryCohortCandidateSealStoreV1 implements CohortCandidateSealSt
   read(candidateAttemptDigest: string): CohortCandidateSealV1 | undefined {
     return this.#seals.get(candidateAttemptDigest);
   }
-}
-
-export interface CohortEvidenceSubjectV1 {
-  readonly kind: "cq-cohort-evidence-subject";
-  readonly version: 1;
-  readonly definitionDigest: string;
-  readonly sealDigest: string;
-  readonly evidenceSubjectDigest: string;
 }
 
 export function createCohortEvidenceSubjectV1(
@@ -2829,50 +2908,61 @@ export function createCohortEvidenceSubjectV1(
   return Object.freeze({ ...payload, evidenceSubjectDigest: digest(payload) });
 }
 
-export interface CohortEffectEnvelopeV1 {
-  readonly kind: "cq-cohort-effect-envelope";
-  readonly version: 1;
-  readonly semanticSubject: string;
-  readonly executionEpoch: string;
-  readonly envelopeDigest: string;
-}
 
 export function createCohortEffectEnvelopeV1(input: {
   readonly definition: CohortDefinitionIdentityV1;
-  readonly attempt: CohortCandidateAttemptV1;
+  readonly observation: CohortAdmissionObservationV1;
+  readonly intent: CohortCandidateIntentV1;
   readonly evidenceSubject: CohortEvidenceSubjectV1 | null;
   readonly executionEpoch: string;
 }): CohortEffectEnvelopeV1 {
-  assertNonEmpty(input.executionEpoch, "cohort execution epoch");
-  if (input.definition.definitionDigest !== input.attempt.definitionDigest) {
-    throw new Error("effect envelope attempt belongs to another definition");
-  }
+  const memberAuthorities: readonly CohortMemberTaskAuthorityV1[] = input.definition.members.map((member) => {
+    const observed = input.observation.members.find((value) => value.memberRef === member.memberRef);
+    if (observed === undefined || observed.phase !== "implementation" ||
+        observed.memberRevision !== member.memberRevision || observed.authorityRevision !== member.authorityRevision) {
+      throw new Error("cohort effect member lacks its exact implementation observation");
+    }
+    return { taskRef: observed.memberRef, taskRevision: observed.taskRevision, goalRef: observed.goalRef,
+      finalizedManifestDigest: observed.finalizedManifestRevision, authorityRevision: observed.authorityRevision };
+  });
+  const memberSetDigest = digest(memberAuthorities);
   const semanticSubject =
     input.evidenceSubject === null
       ? digest({
           definitionDigest: input.definition.definitionDigest,
-          candidateAttemptDigest: input.attempt.candidateAttemptDigest,
+          intentDigest: input.intent.intentDigest,
+          memberSetDigest,
         })
       : input.evidenceSubject.evidenceSubjectDigest;
-  if (
-    input.evidenceSubject !== null &&
-    input.evidenceSubject.definitionDigest !== input.definition.definitionDigest
-  ) {
-    throw new Error("effect envelope evidence belongs to another definition");
-  }
   const payload = {
     kind: "cq-cohort-effect-envelope" as const,
     version: 1 as const,
+    definition: input.definition,
+    intent: input.intent,
+    memberAuthorities,
+    memberSetDigest,
+    ...(input.evidenceSubject === null ? { state: "pre-seal" as const } :
+      { state: "sealed" as const, evidenceSubject: input.evidenceSubject }),
     semanticSubject,
     executionEpoch: input.executionEpoch,
   };
-  return Object.freeze({ ...payload, envelopeDigest: digest(payload) });
+  const envelope = immutableSnapshot({ ...payload, envelopeDigest: digest(payload) });
+  assertCohortEffectEnvelopeV1(envelope);
+  return envelope;
 }
 
 export interface CohortLiveEffectBindingV1 {
   readonly semanticSubject: string;
   readonly executionEpoch: string;
   readonly effectDigest: string;
+}
+
+export function cohortWorktreeIdentityFromEnvelopeV1(envelope: CohortEffectEnvelopeV1): CohortWorktreeIdentityV1 {
+  assertCohortEffectEnvelopeV1(envelope);
+  return immutableSnapshot({ kind: "cq-cohort-worktree-identity" as const, version: 1 as const,
+    cohortId: envelope.definition.cohortId, definitionDigest: envelope.definition.definitionDigest,
+    candidateIntentDigest: envelope.intent.intentDigest, memberSetDigest: envelope.memberSetDigest,
+    memberAuthorities: envelope.memberAuthorities });
 }
 
 export function bindCohortLiveEffectV1(

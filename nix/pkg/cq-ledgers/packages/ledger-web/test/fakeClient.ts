@@ -280,6 +280,9 @@ const MODEL_CONFIGURABLE_ROLE_TIERS: Record<string, "frontier" | "standard" | "f
 );
 
 export class FakeClient implements WorksetCapableLedgerClient {
+  async getCohortStatus() {
+    return { executor: "unavailable" as const, status: null, readyBoundaries: [] };
+  }
   closed = false;
   readonly fetchLedgerCalls: Array<{
     ledgerId: string;

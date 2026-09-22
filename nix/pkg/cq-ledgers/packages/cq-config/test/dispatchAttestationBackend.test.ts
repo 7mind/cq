@@ -80,6 +80,7 @@ import {
   type StoreDispatchResult,
 } from "@cq/config";
 import { PROTOTYPE_NAMES } from "./attestationStoreContract.js";
+import { cohortRoleEnvelope } from "./workCohortRoleFixture.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "backend-unit" };
 const OTHER: AttestationNamespace = { backend: "xdg", projectKey: "somewhere-else" };
@@ -760,6 +761,37 @@ describe("persisted row serialization", () => {
     expect(() =>
       rehydrateAttestationRow(NAMESPACE, resolverPersisted.body, resolverPersisted.rowDigest),
     ).toThrow(/malformed "gitEffectBinding"/);
+  });
+
+  test("a cohort guarded-rebase bridge round-trips without an anchor and rejects incomplete or substituted journal chains [Blackbox-Group]", () => {
+    const cohort = cohortRoleEnvelope();
+    const sourceBinding = { handleToken: "cohort-token", handleFingerprint: "8".repeat(64),
+      repositoryRoot: "/repo", repositoryId: cohort.definition.repository.repositoryId,
+      commonDir: "/repo/.git", worktreePath: "/repo/cohort", branch: `implement/cohort-${cohort.intent.intentDigest}`,
+      ref: `refs/heads/implement/cohort-${cohort.intent.intentDigest}`, baseCommit: "a".repeat(40) };
+    const bridge = { version: 2 as const, cohort, sourceBinding,
+      guardedRebase: `cq-guarded-rebase:v1:${"3".repeat(64)}`, operationId: "cohort-rebase", requestDigest: "3".repeat(64),
+      oldResultCommit: "4".repeat(40), ontoCommit: "5".repeat(40), rebasedStartCommit: "6".repeat(40),
+      outcome: "clean" as const, exactTip: true, finalizedAt: "2026-09-22T00:00:00.000Z",
+      journals: [{ requestDigest: "3".repeat(64), oldResultCommit: "4".repeat(40), ontoCommit: "5".repeat(40),
+        rebasedStartCommit: "6".repeat(40), cohortEnvelopeDigest: cohort.envelopeDigest, conflictReceiptDigests: [] }] };
+    const worker = envelope({ gitChangeCapabilityHash: "7".repeat(64),
+      gitEffectBinding: { ...sourceBinding, cohort, guardedRebaseBridge: bridge } });
+    const persisted = persistAttestationRow(worker);
+    expect(rehydrateAttestationRow(NAMESPACE, persisted.body, persisted.rowDigest)).toEqual(worker);
+    for (const mutate of [
+      (value: Record<string, unknown>) => { value["taskId"] = "T1"; },
+      (value: Record<string, unknown>) => { delete value["version"]; },
+      (value: Record<string, unknown>) => { value["journals"] = []; },
+      (value: Record<string, unknown>) => { value["sourceBinding"] = { ...sourceBinding, taskId: "T1" }; },
+      (value: Record<string, unknown>) => { value["journals"] = [{ ...bridge.journals[0], oldResultCommit: "f".repeat(40) }]; },
+      (value: Record<string, unknown>) => { value["journals"] = [{ ...bridge.journals[0], cohortEnvelopeDigest: "f".repeat(64) }]; },
+    ]) {
+      const row = JSON.parse(persisted.body) as Record<string, unknown>;
+      const binding = row["gitEffectBinding"] as Record<string, unknown>;
+      mutate(binding["guardedRebaseBridge"] as Record<string, unknown>);
+      expect(() => rehydrateAttestationRow(NAMESPACE, JSON.stringify(row), attestationRowDigest(row as unknown as AttestationRow))).toThrow(/malformed "gitEffectBinding"/);
+    }
   });
 
   test("a tombstone persists NO capability hash, so no capability can resolve it", () => {

@@ -386,6 +386,27 @@ export interface CreateInMemoryWorksetAdmissionCoordinatorOptions {
   readonly noteAdmissionSettled?: (id: string) => void;
 }
 
+export interface WorksetExternalEffectRequest {
+  readonly kind: WorksetExternalEffectKind;
+  readonly targetRef: string;
+  readonly cohortTargets?: readonly string[];
+}
+
+export function worksetExternalEffectTargets(input: WorksetExternalEffectRequest): readonly string[] {
+  const cohort = /^cq-cohort-effect:v1:[0-9a-f]{64}$/u.test(input.targetRef);
+  if (input.cohortTargets === undefined) {
+    if (cohort) throw new WorksetAdmissionError("invalid-replacement", "cohort effect requires its complete member targets");
+    return [input.targetRef];
+  }
+  const targets = input.cohortTargets;
+  if (!cohort || !Array.isArray(targets) || targets.length === 0 || new Set(targets).size !== targets.length ||
+      !targets.every((target) => /^(tasks:T|defects:D)[0-9]+$/u.test(target)) ||
+      targets.some((target) => target.split(":")[0] !== targets[0]!.split(":")[0])) {
+    throw new WorksetAdmissionError("invalid-replacement", "cohort effect requires distinct phase-homogeneous canonical members");
+  }
+  return [...targets];
+}
+
 export interface WorksetAdmissionCoordinator {
   snapshot(): WorksetRootsEpoch;
   /**
@@ -400,10 +421,7 @@ export interface WorksetAdmissionCoordinator {
    * Admit one external effect (broker-facing). The broker must register the
    * process group before target release and release only after settlement.
    */
-  admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission>;
+  admitExternalEffect(input: WorksetExternalEffectRequest): Promise<WorksetExternalEffectAdmission>;
   admitManagedTerminalReleaseEffect(
     input: ManagedTerminalReleaseAdmissionRequest,
   ): Promise<WorksetExternalEffectAdmission>;
@@ -794,10 +812,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
   }
 
   async function admitExternalEffectInternal(
-    input: {
-      readonly kind: WorksetExternalEffectKind;
-      readonly targetRef: string;
-    },
+    input: WorksetExternalEffectRequest,
     requireTargetAdmission: boolean,
   ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
@@ -806,9 +821,10 @@ export function createInMemoryWorksetAdmissionCoordinator(
         `unknown external effect kind: ${String(input.kind)}`,
       );
     }
+    const targets = worksetExternalEffectTargets(input);
     const granted = await beginNonExclusiveAdmit("external-effect");
     try {
-      if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, granted.roots)) {
+      if (requireTargetAdmission && !targets.every((target) => isTargetAdmitted(target, granted.roots))) {
         throw new WorksetAdmissionError(
           "target-excluded",
           `external effect target "${input.targetRef}" is outside the admitted workset`,
@@ -821,7 +837,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
           kind: input.kind,
           epoch: granted.epoch,
           roots: granted.roots,
-          targets: [input.targetRef],
+          targets,
           targetRef: input.targetRef,
         };
         await publishAdmission(lease);
@@ -963,10 +979,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
     return handle;
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffect(input: WorksetExternalEffectRequest): Promise<WorksetExternalEffectAdmission> {
     return admitExternalEffectInternal(input, true);
   }
 

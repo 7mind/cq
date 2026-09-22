@@ -162,6 +162,17 @@ describe("T1325 role tool capability matrix", () => {
     }
   });
 
+  test("cohort review and completion mutations remain parent-only", () => {
+    for (const tool of ["record_cohort_review", "complete_cohort"] as const) {
+      expect(exposedLedgerToolsForRole("implement/advance")).toContain(tool);
+      for (const role of ["implement-worker", "implement-reviewer", "implement-conflict-resolver"] as const) {
+        expect(excludedLedgerToolsForRole(role)).toContain(tool);
+      }
+    }
+    expect(DOMAIN_LEDGER_TOOL_NAMES).not.toContain("get_cohort_completion_status");
+    expect(exposedLedgerToolsForRole("implement/advance")).toContain("get_cohort_completion_status");
+  });
+
   // Regression origin: tasks:T1329 acceptance (2026-07-31).
   test("every catalog role makes one fail-closed decision for every ledger tool", () => {
     for (const profile of Object.values(ROLE_TOOL_CAPABILITY_MATRIX)) {
@@ -318,7 +329,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(61);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(64);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {

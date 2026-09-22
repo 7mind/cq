@@ -8,6 +8,7 @@
  */
 
 import type { DispatchHandle, NativeCompletionProof } from "./compactDispatchProtocol.js";
+import type { CohortEffectEnvelopeV1 } from "@cq/process-control";
 import {
   createNativeDispatchAdapter,
   type DispatchAdapterCompletion,
@@ -19,7 +20,6 @@ import {
 import {
   assertNativeAdapterQualified,
   qualifyClaudeNativeAdapter,
-  type ClaudeNativeQualificationHandle,
   type NativeAdapterQualification,
 } from "./nativeDispatchQualification.js";
 import {
@@ -68,6 +68,7 @@ export interface ClaudeNativeAdapterBinding {
    * K238 qualification — free boolean handoffs are refused.
    */
   readonly worktree: {
+    readonly cohort?: CohortEffectEnvelopeV1;
     readonly absolutePath: string;
     readonly baseCommit: string;
     readonly headCommit: string;
@@ -94,24 +95,6 @@ function handleOf(context: DispatchAdapterLaunchContext): DispatchHandle {
   });
 }
 
-function asQualificationHandle(
-  handle: ClaudeNativeManagedWorktreeHandle,
-): ClaudeNativeQualificationHandle {
-  return {
-    kind: "cq-managed-worktree-handle",
-    version: handle.version,
-    token: handle.token,
-    worktreeId: handle.worktreeId,
-    taskId: handle.taskId,
-    branch: handle.branch,
-    repositoryRoot: handle.repositoryRoot,
-    absolutePath: handle.absolutePath,
-    baseCommit: handle.baseCommit,
-    createdAt: handle.createdAt,
-    nonce: handle.nonce,
-  };
-}
-
 /**
  * Build the claude:native transport adapter. Pass through
  * {@link buildPositiveOnlyDispatchRegistry} with a K238-qualified entry.
@@ -130,6 +113,7 @@ export function createClaudeNativeDispatchAdapter(
       baseCommit: wt.baseCommit,
       headCommit: wt.headCommit,
       handle: wt.handle,
+      ...(wt.cohort === undefined ? {} : { cohort: wt.cohort }),
     });
     if (preflight.status === "refused") {
       return {
@@ -161,6 +145,7 @@ export function createClaudeNativeDispatchAdapter(
           baseCommit: wt.baseCommit,
           headCommit: wt.headCommit,
           handle: wt.handle,
+          ...(wt.cohort === undefined ? {} : { cohort: wt.cohort }),
         });
       } catch (error) {
         return {
@@ -178,7 +163,8 @@ export function createClaudeNativeDispatchAdapter(
       options.qualification ??
       qualifyClaudeNativeAdapter({
         cwd: binding.cwd,
-        handle: asQualificationHandle(wt.handle),
+        handle: structuredClone(wt.handle),
+        ...(wt.cohort === undefined ? {} : { cohort: wt.cohort }),
       });
     try {
       assertNativeAdapterQualified(qualification);

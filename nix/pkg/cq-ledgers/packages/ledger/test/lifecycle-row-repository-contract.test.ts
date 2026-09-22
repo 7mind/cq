@@ -46,12 +46,14 @@ function memoryFixture(): LifecycleRowsFixture {
   return {
     rows: {
       publicRows: {
+        ...publicRows,
         listLedgers: () => structuredClone(publicRows.listLedgers()),
         fetchActiveItem: (ref) => structuredClone(publicRows.fetchActiveItem(ref)),
         fetchArchivedItem: (ref) => structuredClone(publicRows.fetchArchivedItem(ref)),
         referenceTargets: publicRows.referenceTargets,
         referenceSources: publicRows.referenceSources,
       },
+      fetchArchivePointer: () => undefined,
       fetchGroup: (ledgerId, groupId) => ledgerId === "tasks" && groupId === "M1"
         ? { id: "M1", title: "members", description: "selected" } : undefined,
       taskRefsByMilestones: (milestoneIds) => [...taskGroups]

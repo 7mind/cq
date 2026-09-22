@@ -58,6 +58,7 @@ import type {
 } from "../taskAdoptionEligibility.js";
 import type { WorksetStore } from "../worksetStore.js";
 import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
+import type { WorkCohortStore } from "../workCohortStore.js";
 
 export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 
@@ -152,6 +153,8 @@ export interface LedgerStore {
 
   /** Stable project workset capability when the adapter supports worksets. */
   worksetStore?(): WorksetStore;
+  /** Versioned cohort metadata and candidate evidence, separate from live execution authority. */
+  workCohortStore?(): WorkCohortStore;
   /** Management-only live-validated replacement inside the adapter's native write boundary. */
   replaceWorksetRoots?(roots: readonly string[]): Promise<WorksetRootsEpoch>;
 

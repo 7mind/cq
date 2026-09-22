@@ -288,6 +288,8 @@ function snapshot(): ImplementationEvidenceSnapshot {
   };
   return {
     version: 2,
+    cohortReviews: {},
+    cohortCompletions: {},
     adoptions: {},
     panels: {},
     attempts: {},

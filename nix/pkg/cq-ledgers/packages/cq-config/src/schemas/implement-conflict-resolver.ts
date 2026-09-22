@@ -17,6 +17,7 @@
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
+import { cohortEffectEnvelopeSchema, cohortReceiptArm, cohortRoleArm, singleTaskOrCohortSchema } from "./cohortContract.js";
 
 /** The two conflict-resolver terminal-status tokens. */
 export const CONFLICT_RESOLVER_STATUSES = ["pass", "fail"] as const;
@@ -293,7 +294,14 @@ const outputSchema = {
  */
 export const implementConflictResolverSidecar: RoleSchemaSidecar = {
   id: "implement-conflict-resolver",
-  version: 6,
-  inputSchema,
-  outputSchema,
+  version: 7,
+  inputSchema: singleTaskOrCohortSchema(inputSchema, cohortRoleArm(inputSchema, cohortEffectEnvelopeSchema, "input")),
+  outputSchema: {
+    ...singleTaskOrCohortSchema(outputSchema, {
+      ...cohortRoleArm(outputSchema, cohortEffectEnvelopeSchema, "output"),
+      properties: { ...cohortRoleArm(outputSchema, cohortEffectEnvelopeSchema, "output").properties,
+        conflictReceipts: { type: "array", items: { $ref: "#/$defs/cohortConflictReceipt" } } },
+    }),
+    $defs: { ...outputSchema.$defs, cohortConflictReceipt: cohortReceiptArm(outputSchema.$defs.conflictReceipt) },
+  },
 };

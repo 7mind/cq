@@ -20,6 +20,7 @@ import type {
   StoreDispatchResultOutcome,
 } from "@cq/config";
 import type { GitChangeBrokerReceipt, GitChangeManifestEntry } from "../gitChangeBroker.js";
+import type { CohortEffectEnvelopeV1 } from "@cq/process-control";
 import type { DispatchLineageFenceAuthority } from "../dispatchLineageCutoverFence.js";
 import type {
   GitConflictContinuationReceipt,
@@ -82,6 +83,31 @@ export interface DispatchContinuationResolution {
   readonly liveTip: string;
   readonly terminalAt: string;
 }
+
+interface DispatchStagedRebaseResolutionBase {
+  readonly taskId: string;
+  readonly liveTip: string;
+  readonly source: DispatchHandle;
+  readonly sourceReference: string;
+  readonly guardedRebase: string;
+}
+
+export type DispatchStagedRebaseResolution = DispatchStagedRebaseResolutionBase &
+  (
+    | { readonly status: "staged-rebase-conflict-pending" }
+    | {
+        readonly status: "staged-rebase-preparation-ready";
+        readonly preparation: {
+          readonly kind: "guarded-rebase";
+          readonly reprepareOf: DispatchHandle;
+          readonly guardedRebase: string;
+        };
+      }
+    | {
+        readonly status: "staged-rebase-successor-bound";
+        readonly successor: DispatchHandle;
+      }
+  );
 
 export interface StoreResultToolInput {
   readonly resultCapability: ResultCapability;
@@ -206,6 +232,22 @@ export type DispatchEvidenceObservation =
     };
 
 export interface DispatchCapability {
+  /** Trusted local outer-flow operation; not exposed as a child or MCP tool. */
+  resumeCohortRebaseSuccessor?(input: {
+    readonly source: { readonly attestationId: string; readonly generation: number };
+    readonly guardedRebase: string;
+    readonly ontoCommit: string;
+    readonly priorResultCommit: string;
+    readonly holderId: string;
+  }): Promise<{
+    readonly state: "successor-queued";
+    readonly source: { readonly attestationId: string; readonly generation: number };
+    readonly successor: { readonly attestationId: string; readonly generation: number };
+  }>;
+  renewCohortParentExecution?(input: {
+    readonly workerDispatch: DispatchHandle;
+    readonly cohort: CohortEffectEnvelopeV1;
+  }): Promise<ParentGateCapability>;
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;
@@ -252,6 +294,12 @@ export interface DispatchCapability {
     gitEffectBinding: DispatchGitEffectBinding,
     liveTip: string,
   ): Promise<DispatchContinuationResolution>;
+  resolveStagedRebase?(
+    gitEffectBinding: DispatchGitEffectBinding,
+    liveTip: string,
+    source: DispatchHandle,
+    sourceReference: string,
+  ): Promise<DispatchStagedRebaseResolution>;
 }
 
 export class DispatchNotImplementedError extends Error {

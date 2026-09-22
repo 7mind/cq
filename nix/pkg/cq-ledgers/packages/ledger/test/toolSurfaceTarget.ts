@@ -92,7 +92,7 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "execute_finalize",
     description:
-      "Atomically execute an ordered batch of milestone/goal closes and milestone archives under one workset admission.",
+      "Atomically execute milestone/goal closes, milestone archives, or versioned exact terminal-item archives under one workset admission.",
     inputSchema: {
       type: "object",
       properties: {
@@ -100,6 +100,7 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
           type: "array",
           minItems: 1,
           items: {
+            anyOf: [{
             type: "object",
             properties: {
               id: { type: "string", minLength: 1 },
@@ -112,6 +113,21 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
             },
             required: ["id", "target_id", "action"],
             additionalProperties: false,
+            }, {
+              type: "object",
+              properties: {
+                id: { type: "string", minLength: 1 },
+                action: { const: "archive-terminal-item", type: "string" },
+                version: { const: 1, type: "number" },
+                target_id: { type: "string", pattern: "^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$" },
+                expected_milestone_id: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
+                expected_updated_at: { type: "string", minLength: 1 },
+                expected_item_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+                summary: { type: "string", minLength: 1 },
+              },
+              required: ["id", "action", "version", "target_id", "expected_milestone_id", "expected_updated_at", "expected_item_digest", "summary"],
+              additionalProperties: false,
+            }],
           },
         },
       },

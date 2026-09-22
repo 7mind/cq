@@ -17,7 +17,10 @@
  */
 
 import { z } from "zod";
-import type { DispatchRecoveryResolution } from "./dispatchCapability.js";
+import type {
+  DispatchRecoveryResolution,
+  DispatchStagedRebaseResolution,
+} from "./dispatchCapability.js";
 import { validateManagedWorktreeHandle } from "@cq/config";
 import { TASKS_LEDGER } from "../constants.js";
 import {
@@ -29,9 +32,11 @@ import {
   isUuidV7,
   prepareManagedWorktree,
   observeManagedWorktreeLiveTip,
+  observeManagedWorktreeRebaseTip,
   releaseManagedWorktree,
   resolveManagedWorktreeTerminalReleaseRegistryBinding,
   resolveManagedWorktreeDispatchBinding,
+  withManagedWorktreeEffectLock,
   type ManagedWorktreeDeps,
   type ManagedWorktreeDispatchBinding,
   type ManagedWorktreeHandle,
@@ -75,12 +80,25 @@ const PREPARE_ONLY_KEYS = [
 ] as const;
 
 const RELEASE_ONLY_KEYS = ["terminalDisposition", "resultCommit", "deleteBranch"] as const;
+const STAGED_REBASE_ONLY_KEYS = ["sourceDispatch", "sourceReference"] as const;
 
 const fullCommitSha = z
   .string()
   .regex(FULL_COMMIT_SHA_RE, "expected a 40-char lowercase hex commit SHA");
 
 const taskIdSchema = z.string().regex(TASK_ID_RE, "expected task id matching /^T\\d+$/");
+const dispatchHandleSchema = z
+  .object({
+    attestationId: z.string().min(1),
+    generation: z.number().int().min(1),
+  })
+  .strict();
+const stagedRebaseSourceReferenceSchema = z
+  .string()
+  .regex(
+    /^cq-staged-rebase-source:v1:[0-9a-f]{64}$/u,
+    "expected an opaque cq-staged-rebase-source:v1 reference",
+  );
 
 const managedWorktreeHandleFields = {
   token: z.string().min(1),
@@ -137,6 +155,7 @@ export const WORKTREE_MANAGE_INPUT_SHAPE = {
       "observe-conflict",
       "resolve-dispatch-recovery",
       "resolve-dispatch-continuation",
+      "resolve-staged-rebase",
       "release",
     ])
     .describe(
@@ -171,6 +190,12 @@ export const WORKTREE_MANAGE_INPUT_SHAPE = {
   expectedHead: fullCommitSha
     .optional()
     .describe("prepare only: exact legacy HEAD at adoptWorktreePath"),
+  sourceDispatch: dispatchHandleSchema
+    .optional()
+    .describe("resolve-staged-rebase only: exact retained source dispatch handle"),
+  sourceReference: stagedRebaseSourceReferenceSchema
+    .optional()
+    .describe("resolve-staged-rebase only: opaque retained staged-source reference"),
   terminalDisposition: z
     .enum(["done", "abandoned"])
     .optional()
@@ -216,6 +241,12 @@ export interface WorktreeManageCapability {
     binding: ManagedWorktreeDispatchBinding,
     liveTip: string,
   ) => Promise<object>;
+  readonly resolveStagedRebase?: (
+    binding: ManagedWorktreeDispatchBinding,
+    liveTip: string,
+    source: { readonly attestationId: string; readonly generation: number },
+    sourceReference: string,
+  ) => Promise<DispatchStagedRebaseResolution>;
   readonly deps?: ManagedWorktreeDeps;
 }
 
@@ -297,11 +328,15 @@ export function parseWorktreeManageInput(args: unknown): {
     | "observe-conflict"
     | "resolve-dispatch-recovery"
     | "resolve-dispatch-continuation"
+    | "resolve-staged-rebase"
     | "release";
   readonly prepare?: Omit<PrepareManagedWorktreeRequest, "repositoryRoot" | "dependencyReader">;
   readonly observeHandle?: ManagedWorktreeHandle;
   readonly recoveryHandle?: ManagedWorktreeHandle;
   readonly continuationHandle?: ManagedWorktreeHandle;
+  readonly stagedRebaseHandle?: ManagedWorktreeHandle;
+  readonly stagedRebaseSource?: { readonly attestationId: string; readonly generation: number };
+  readonly stagedRebaseSourceReference?: string;
   readonly release?: ReleaseManagedWorktreeRequest;
 } {
   if (args !== null && typeof args === "object") {
@@ -319,7 +354,7 @@ export function parseWorktreeManageInput(args: unknown): {
   const raw = flat as unknown as Record<string, unknown>;
 
   if (flat.operation === "prepare") {
-    for (const key of RELEASE_ONLY_KEYS) {
+    for (const key of [...RELEASE_ONLY_KEYS, ...STAGED_REBASE_ONLY_KEYS]) {
       if (raw[key] !== undefined) {
         rejectPath(key, `field "${key}" is release-only and must not accompany operation=prepare`);
       }
@@ -356,7 +391,7 @@ export function parseWorktreeManageInput(args: unknown): {
   }
 
   if (flat.operation === "observe-conflict") {
-    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS, ...STAGED_REBASE_ONLY_KEYS]) {
       if (raw[key] !== undefined) {
         rejectPath(key, `field "${key}" must not accompany operation=observe-conflict`);
       }
@@ -371,7 +406,7 @@ export function parseWorktreeManageInput(args: unknown): {
   }
 
   if (flat.operation === "resolve-dispatch-recovery") {
-    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS, ...STAGED_REBASE_ONLY_KEYS]) {
       if (raw[key] !== undefined) {
         rejectPath(key, `field "${key}" must not accompany operation=resolve-dispatch-recovery`);
       }
@@ -386,7 +421,7 @@ export function parseWorktreeManageInput(args: unknown): {
   }
 
   if (flat.operation === "resolve-dispatch-continuation") {
-    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS, ...STAGED_REBASE_ONLY_KEYS]) {
       if (raw[key] !== undefined) {
         rejectPath(
           key,
@@ -403,7 +438,30 @@ export function parseWorktreeManageInput(args: unknown): {
     };
   }
 
-  for (const key of PREPARE_ONLY_KEYS) {
+  if (flat.operation === "resolve-staged-rebase") {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+      if (raw[key] !== undefined) {
+        rejectPath(key, `field "${key}" must not accompany operation=resolve-staged-rebase`);
+      }
+    }
+    if (flat.handle === undefined) {
+      rejectPath("handle", "resolve-staged-rebase requires handle");
+    }
+    if (flat.sourceDispatch === undefined) {
+      rejectPath("sourceDispatch", "resolve-staged-rebase requires sourceDispatch");
+    }
+    if (flat.sourceReference === undefined) {
+      rejectPath("sourceReference", "resolve-staged-rebase requires sourceReference");
+    }
+    return {
+      operation: "resolve-staged-rebase",
+      stagedRebaseHandle: managedWorktreeHandleSchema.parse(flat.handle) as ManagedWorktreeHandle,
+      stagedRebaseSource: dispatchHandleSchema.parse(flat.sourceDispatch),
+      stagedRebaseSourceReference: stagedRebaseSourceReferenceSchema.parse(flat.sourceReference),
+    };
+  }
+
+  for (const key of [...PREPARE_ONLY_KEYS, ...STAGED_REBASE_ONLY_KEYS]) {
     if (raw[key] !== undefined) {
       rejectPath(key, `field "${key}" is prepare-only and must not accompany operation=release`);
     }
@@ -435,7 +493,7 @@ export interface WorktreeManageToolSpec {
 
 const WORKTREE_MANAGE_DESCRIPTION =
   "Manage one implement worktree: prepare/resume/adopt, observe rebase conflict, " +
-  "resolve sealed recovery/continuation authority, or guarded release. Prepare mints " +
+  "resolve sealed recovery/continuation or retired staged-rebase authority, or guarded release. Prepare mints " +
   "a UUIDv7 tree under `.claude/worktrees/`; legacy adoption requires `adoptWorktreePath`+" +
   "`expectedHead`. Server derives adoption and dependency evidence. Release checks " +
   "dirty/WIP/terminal state and is idempotent. Returns typed acknowledgements, never " +
@@ -469,6 +527,7 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       };
       const result = await prepareFn(request, {
         ...deps,
+        ...(store.workCohortStore === undefined ? {} : { cohortStore: store.workCohortStore() }),
         git:
           deps.git ??
           createManagedWorktreeGitEffectRunner({
@@ -575,6 +634,52 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       }
       const liveTip = await observeManagedWorktreeLiveTip(binding, deps);
       return produceWireDto(await capability.resolveDispatchContinuation(binding, liveTip));
+    }
+
+    if (parsed.operation === "resolve-staged-rebase") {
+      const resolveStagedRebase = capability.resolveStagedRebase;
+      if (resolveStagedRebase === undefined) {
+        throw new Error("worktree_manage staged-rebase recovery is unavailable for this server");
+      }
+      const handle = parsed.stagedRebaseHandle!;
+      const registryBinding = await resolveManagedWorktreeTerminalReleaseRegistryBinding(
+        capability.repositoryRoot,
+        handle,
+        deps,
+      );
+      const binding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: capability.repositoryRoot,
+          taskId: handle.taskId,
+          worktreePath: handle.absolutePath,
+          branch: handle.branch,
+          allowDetachedRebase: true,
+        },
+        deps,
+      );
+      if (
+        registryBinding === null ||
+        registryBinding.registryStatus !== "live" ||
+        binding === null ||
+        binding.handleToken !== handle.token ||
+        binding.handleFingerprint !== registryBinding.handleFingerprint ||
+        binding.baseCommit !== handle.baseCommit
+      ) {
+        throw new Error(
+          "resolve-staged-rebase handle does not resolve to one live managed worktree",
+        );
+      }
+      return await withManagedWorktreeEffectLock(binding, deps, async () => {
+        const liveTip = await observeManagedWorktreeRebaseTip(binding, deps);
+        return produceWireDto(
+          await resolveStagedRebase(
+            binding,
+            liveTip,
+            parsed.stagedRebaseSource!,
+            parsed.stagedRebaseSourceReference!,
+          ),
+        );
+      });
     }
 
     const release = parsed.release!;

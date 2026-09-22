@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 
-import type { ImplementationQueueControl } from "@cq/config";
+import {
+  InMemoryAttestationStore,
+  type AttestationEnvelope,
+  type AttestationNamespace,
+  type ImplementationQueueControl,
+} from "@cq/config";
 
 import {
+  G213CandidateAuthenticatorV1,
   produceCohortAdmissionObservationV1,
   type CohortAdmissionObservationV1,
   type CohortAdmissionSnapshotV1,
@@ -11,8 +17,18 @@ import {
   type CohortGitChangeReceiptV1,
   type CohortPhaseV1,
   type CohortRepositoryIdentityV1,
+  type CohortWholeDiffEntryV1,
+  type G213CandidateRepositoryV1,
+  type G213QualifiedCandidateRowV1,
+  type PendingCohortCandidateAttemptV1,
   type ResolvedCohortMemberV1,
+  type StagedCohortCandidateAttemptV1,
 } from "../src/workCohort.js";
+
+const candidateNamespace: AttestationNamespace = Object.freeze({
+  backend: "xdg",
+  projectKey: "work-cohort-store-fixture",
+});
 
 function canonical(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
@@ -40,6 +56,8 @@ export function boundary(label: string): CohortBoundaryIdentityV1 {
 }
 
 export interface AtomSpec {
+  readonly regressionBoundary?: CohortBoundaryIdentityV1;
+  readonly gateBoundary?: CohortBoundaryIdentityV1;
   readonly witness?: string;
   readonly witnessPath?: string;
   readonly cause?: string;
@@ -98,8 +116,8 @@ function atomCandidate(
             causeDigest: sha256(`cause:${atom.cause}`),
             receiptDigest: sha256(`receipt:${atom.cause}`),
           }),
-    sharedRegression: boundary(`regression:${atom.regression ?? "shared"}`),
-    canonicalFullGate: boundary(`gate:${atom.gate ?? "canonical"}`),
+    sharedRegression: atom.regressionBoundary ?? boundary(`regression:${atom.regression ?? "shared"}`),
+    canonicalFullGate: atom.gateBoundary ?? boundary(`gate:${atom.gate ?? "canonical"}`),
     reviewerClass: boundary(`reviewer:${atom.reviewer ?? "standard"}`),
     deploymentClass: boundary(`deployment:${atom.deployment ?? "standard"}`),
     finalizationClass: boundary(`finalization:${atom.finalization ?? "standard"}`),
@@ -110,7 +128,7 @@ function atomCandidate(
       environment: Object.freeze({}),
       provenance: Object.freeze({
         sourceRef: member.ref,
-        sourceRevision: member.revision ?? `revision:${member.ref}`,
+        sourceRevision: member.revision ?? sha256(`revision:${member.ref}`),
       }),
     }),
   });
@@ -136,7 +154,7 @@ export function snapshotFor(
   const membersByRef = new Map<string, ResolvedCohortMemberV1>();
   for (const spec of specs) {
     const phase = spec.phase ?? "implementation";
-    const revision = spec.revision ?? `revision:${spec.ref}`;
+    const revision = spec.revision ?? sha256(`revision:${spec.ref}`);
     const sourceRef = `src/${spec.ref}.ts`;
     sourceNodes.set(sourceRef, {
       path: sourceRef,
@@ -165,8 +183,8 @@ export function snapshotFor(
       memberRevision: revision,
       phase,
       ownershipBoundaryDigest: sha256(`owner:${spec.owner ?? "shared"}`),
-      authorityRef: `authority:${spec.ref}`,
-      authorityRevision: `authority-revision:${spec.ref}:${spec.authority ?? "shared"}`,
+      authorityRef: phase === "implementation" ? "goals:G1" : `authority:${spec.ref}`,
+      authorityRevision: sha256(`authority-revision:${spec.ref}:${spec.authority ?? "shared"}`),
       authorityBoundaryDigest: sha256(`authority:${spec.authority ?? "shared"}`),
       dependencyClosure: Object.freeze([...(spec.dependencies ?? [])]),
       sourceRefs: Object.freeze([sourceRef]),
@@ -207,8 +225,8 @@ export function snapshotFor(
             ...common,
             phase,
             taskRevision: revision,
-            goalRef: "goals:G-test",
-            finalizedManifestRevision: options.manifestRevision ?? "manifest:1",
+            goalRef: "goals:G1",
+            finalizedManifestRevision: options.manifestRevision ?? sha256("manifest:1"),
             implementationAuthority: `implementation-authority:${spec.ref}`,
           });
     membersByRef.set(spec.ref, member);
@@ -234,7 +252,7 @@ export function snapshotFor(
     }),
     manifest: Object.freeze({
       manifestRef: "manifests:test",
-      manifestRevision: options.manifestRevision ?? "manifest:1",
+      manifestRevision: options.manifestRevision ?? sha256("manifest:1"),
       memberRefs: Object.freeze(implementationRefs),
     }),
     repository,
@@ -284,7 +302,7 @@ export function receipt(input: {
     version: 1,
     attestationId: "att-test",
     generation: 1,
-    taskId: "T-test",
+    taskId: "T1",
     operationId: input.operation ?? "candidate",
     requestDigest: sha256(input.operation ?? "candidate"),
     oldHead: input.base,
@@ -296,12 +314,103 @@ export function receipt(input: {
   });
 }
 
+export interface QualifiedCandidateAttemptFixture {
+  readonly authenticator: G213CandidateAuthenticatorV1;
+  readonly row: G213QualifiedCandidateRowV1;
+  readonly staged: StagedCohortCandidateAttemptV1;
+}
+
+export function cohortStagedOutputFixture(input: {
+  readonly taskId: string;
+  readonly branch: string;
+  readonly resultCommit: string;
+  readonly receipts: readonly CohortGitChangeReceiptV1[];
+  readonly wholeDiff: readonly CohortWholeDiffEntryV1[];
+}) {
+  return { status: "pass", taskId: input.taskId, branch: input.branch,
+    resultCommit: input.resultCommit, gitReceipts: input.receipts,
+    filesTouched: input.wholeDiff.map((entry) => entry.path), mutationTable: [] };
+}
+
+export async function resolveQualifiedCandidateAttempt(input: {
+  readonly pending: PendingCohortCandidateAttemptV1;
+  readonly resultCommit: string;
+  readonly resultTree: string;
+  readonly receipts: readonly CohortGitChangeReceiptV1[];
+  readonly wholeDiff: readonly CohortWholeDiffEntryV1[];
+  readonly attemptId: string;
+}): Promise<QualifiedCandidateAttemptFixture> {
+  const dispatch = input.pending.preparedDispatch;
+  if (dispatch.cohort !== undefined) throw new Error("legacy candidate fixture requires its explicit task arm");
+  const output = cohortStagedOutputFixture({ ...input, taskId: dispatch.taskId, branch: dispatch.branch });
+  const gitEffectBinding = {
+    taskId: dispatch.taskId,
+    handleToken: "worktree-token",
+    handleFingerprint: sha256(`worktree-fingerprint:${input.attemptId}`),
+    repositoryRoot: "/repo",
+    repositoryId: "repository:test",
+    commonDir: "/repo/.git",
+    worktreePath: "/repo/.claude/worktrees/test",
+    branch: dispatch.branch,
+    ref: `refs/heads/${dispatch.branch}`,
+    baseCommit: dispatch.startingCommit,
+  };
+  const queue = qualifiedQueue({
+    taskId: dispatch.taskId,
+    base: dispatch.startingCommit,
+    result: input.resultCommit,
+    tree: input.resultTree,
+    receipts: input.receipts,
+    attempt: input.attemptId,
+    managedWorktreeBindingDigest: sha256(gitEffectBinding),
+    outputDigest: sha256(output),
+  });
+  const row = {
+    kind: "envelope",
+    namespace: candidateNamespace,
+    attestationId: dispatch.attestationId,
+    generation: dispatch.generation,
+    state: "gate-pending",
+    promptProvenance: {
+      roleId: "implement-worker",
+      version: 10,
+      promptDigest: sha256("prompt"),
+      inputDigest: sha256("input"),
+    },
+    expectedChild: { childId: "child", runId: "run" },
+    input: {
+      baseCommit: dispatch.startingCommit,
+      startingCommit: dispatch.startingCommit,
+    },
+    gateSubmittedOutputDigest: queue.qualification?.outputDigest,
+    gitEffectBinding,
+    implementationQueue: queue,
+    stagedCompletionQualification: queue.qualification,
+    output,
+  } as unknown as AttestationEnvelope;
+  const store = InMemoryAttestationStore.rehydrate(candidateNamespace, [row]);
+  const repository: G213CandidateRepositoryV1 = {
+    resolveWholeDiff: async () => input.wholeDiff,
+  };
+  const authenticator = new G213CandidateAuthenticatorV1({ store, repository });
+  const resolved = await authenticator.resolve({
+    attestationId: dispatch.attestationId,
+    generation: dispatch.generation,
+  });
+  return {
+    authenticator,
+    row: resolved,
+    staged: authenticator.stage(input.pending, { row: resolved }),
+  };
+}
+
 export function qualifiedQueue(input: {
   readonly taskId: string;
   readonly base: string;
   readonly result: string;
   readonly tree: string;
   readonly receipts: readonly CohortGitChangeReceiptV1[];
+  readonly outputDigest: string;
   readonly attempt?: string;
   readonly managedWorktreeBindingDigest?: string;
 }): ImplementationQueueControl {
@@ -357,7 +466,7 @@ export function qualifiedQueue(input: {
       partitionKey: "partition:test",
       enrollmentId: "enrollment:test",
       attemptId: input.attempt ?? "attempt:test",
-      outputDigest: sha256("output"),
+      outputDigest: input.outputDigest,
       expectedChild: { childId: "child", runId: "run" },
       expectedProvenance: {
         roleId: "implement-worker",

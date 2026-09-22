@@ -18,6 +18,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { ledgerItemRevisionV1 } from "../src/itemRevision.js";
 import {
   WorksetGenericMutationError,
   assertNoPublicRawWriteEscape,
@@ -734,6 +735,161 @@ export function runWorksetGenericMutationContract(
       });
       expect(ledger.fetchItem(TASKS_LEDGER, abandoned.id).status).toBe("abandoned");
       expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
+    });
+
+    caseIt(factory, "exact terminal-item finalization preserves siblings and merges prior partial archives", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "exact cohort archive" });
+      const items = [];
+      for (const headline of ["first", "second", "unrelated"]) {
+        items.push(await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+          status: "done", fields: { headline },
+        }));
+      }
+      const [first, second, unrelated] = items;
+      if (first === undefined || second === undefined || unrelated === undefined) {
+        throw new Error("exact archive fixture lacks its members");
+      }
+      await ledger.setRoots([`tasks:${first.id}`, `tasks:${second.id}`]);
+      for (const item of [first, second]) {
+        expect(await ledger.mutations.executeFinalize([{
+          id: `archive:${item.id}`,
+          action: "archive-terminal-item",
+          version: 1,
+          targetId: `tasks:${item.id}`,
+          expectedMilestoneId: milestone.id,
+          expectedUpdatedAt: item.updatedAt,
+          expectedItemDigest: ledgerItemRevisionV1(`tasks:${item.id}`, item),
+          summary: "exact completed cohort member",
+        }])).toEqual({ applied: 1 });
+      }
+      expect(ledger.fetchItem(TASKS_LEDGER, unrelated.id).status).toBe("done");
+      expect(ledger.fetchItem(MILESTONES_LEDGER, milestone.id).status).toBe("open");
+      const archive = await ledger.fetchArchive(TASKS_LEDGER, milestone.id);
+      if (archive.kind !== "group") throw new Error("expected a partial group archive");
+      expect(archive.milestone.items.map(({ id }) => id).sort()).toEqual([first.id, second.id].sort());
+    });
+
+    caseIt(factory, "exact terminal-item finalization rejects stale, nonterminal, and overlapping selections atomically", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "exact archive controls" });
+      const done = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done", fields: { headline: "completed" },
+      });
+      const active = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned", fields: { headline: "active" },
+      });
+      const operation = {
+        id: "archive:done", action: "archive-terminal-item" as const, version: 1 as const,
+        targetId: `tasks:${done.id}`, expectedMilestoneId: milestone.id,
+        expectedUpdatedAt: done.updatedAt, summary: "exact archive",
+        expectedItemDigest: ledgerItemRevisionV1(`tasks:${done.id}`, done),
+      };
+      await expect(ledger.mutations.executeFinalize([
+        operation,
+        { ...operation, id: "archive:active", targetId: `tasks:${active.id}`, expectedUpdatedAt: active.updatedAt,
+          expectedItemDigest: ledgerItemRevisionV1(`tasks:${active.id}`, active) },
+      ])).rejects.toThrow("terminal");
+      expect(ledger.fetchItem(TASKS_LEDGER, done.id).status).toBe("done");
+      await expect(ledger.mutations.executeFinalize([
+        { ...operation, expectedUpdatedAt: "stale" },
+      ])).rejects.toThrow("changed");
+      await expect(ledger.mutations.executeFinalize([
+        operation, { ...operation, id: "archive:duplicate" },
+      ])).rejects.toThrow("overlap");
+      await expect(ledger.mutations.executeFinalize([
+        operation,
+        { id: "archive:milestone", action: "archive-milestone", targetId: milestone.id, summary: "whole group" },
+      ])).rejects.toThrow("overlap");
+      expect(ledger.fetchItem(TASKS_LEDGER, done.id).status).toBe("done");
+    });
+
+    caseIt(factory, "exact terminal-item finalization rejects a content change within one timestamp", async () => {
+      const ledger = await factory.build({ now: () => "2026-09-22T00:00:00.000Z" });
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "exact revision" });
+      const item = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done", fields: { headline: "selected" },
+      });
+      const operation = {
+        id: "archive:revision", action: "archive-terminal-item" as const, version: 1 as const,
+        targetId: `tasks:${item.id}`, expectedMilestoneId: milestone.id,
+        expectedUpdatedAt: item.updatedAt, summary: "exact revision",
+        expectedItemDigest: ledgerItemRevisionV1(`tasks:${item.id}`, item),
+      };
+      const changed = await ledger.mutations.updateItem(TASKS_LEDGER, item.id, {
+        fields: { headline: "changed after selection" },
+      });
+      expect(changed.updatedAt).toBe(item.updatedAt);
+      await expect(ledger.mutations.executeFinalize([operation])).rejects.toThrow("changed");
+      expect(ledger.fetchItem(TASKS_LEDGER, item.id)).toEqual(changed);
+    });
+
+    caseIt(factory, "exact terminal-item finalization exempts ideas but not unrelated batch targets", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "exact idea archive" });
+      const root = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned", fields: { headline: "unrelated root" },
+      });
+      const excluded = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done", fields: { headline: "excluded completed task" },
+      });
+      const idea = await ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "discarded", fields: { title: "completed idea" },
+      });
+      await ledger.setRoots([`tasks:${root.id}`]);
+      const operation = {
+        id: "archive:idea", action: "archive-terminal-item" as const, version: 1 as const,
+        targetId: `ideas:${idea.id}`, expectedMilestoneId: MILESTONES_AMBIENT_ID,
+        expectedUpdatedAt: idea.updatedAt, summary: "exact idea archive",
+        expectedItemDigest: ledgerItemRevisionV1(`ideas:${idea.id}`, idea),
+      };
+      await expect(ledger.mutations.executeFinalize([
+        operation,
+        { ...operation, id: "archive:excluded", targetId: `tasks:${excluded.id}`,
+          expectedMilestoneId: milestone.id, expectedUpdatedAt: excluded.updatedAt,
+          expectedItemDigest: ledgerItemRevisionV1(`tasks:${excluded.id}`, excluded) },
+      ])).rejects.toThrow("outside the admitted workset");
+      expect(ledger.fetchItem(IDEAS_LEDGER, idea.id)).toEqual(idea);
+      expect(await ledger.mutations.executeFinalize([operation])).toEqual({ applied: 1 });
+      expect(() => ledger.fetchItem(IDEAS_LEDGER, idea.id)).toThrow();
+      expect(ledger.fetchItem(TASKS_LEDGER, excluded.id)).toEqual(excluded);
+    });
+
+    caseIt(factory, "exact terminal-item finalization retains active gates without widening selection", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "exact gate archive" });
+      const gate = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "abandoned", fields: { headline: "unsatisfied gate" },
+      });
+      const done = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done", fields: { headline: "unrelated completion" },
+      });
+      const dependent = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned", fields: { headline: "dependent", dependsOn: [`tasks:${gate.id}`] },
+      });
+      const operation = {
+        id: "archive:done", action: "archive-terminal-item" as const, version: 1 as const,
+        targetId: `tasks:${done.id}`, expectedMilestoneId: milestone.id,
+        expectedUpdatedAt: done.updatedAt, summary: "exact gate control",
+        expectedItemDigest: ledgerItemRevisionV1(`tasks:${done.id}`, done),
+      };
+      await expect(ledger.mutations.executeFinalize([
+        { ...operation, expectedMilestoneId: MILESTONES_AMBIENT_ID },
+      ])).rejects.toThrow("changed");
+      await expect(ledger.mutations.executeFinalize([
+        operation,
+        { ...operation, id: "archive:gate", targetId: `tasks:${gate.id}`, expectedUpdatedAt: gate.updatedAt,
+          expectedItemDigest: ledgerItemRevisionV1(`tasks:${gate.id}`, gate) },
+      ])).rejects.toThrow("still depends");
+      expect(ledger.fetchItem(TASKS_LEDGER, done.id)).toEqual(done);
+      expect(await ledger.mutations.executeFinalize([operation])).toEqual({ applied: 1 });
+      expect(ledger.fetchItem(TASKS_LEDGER, gate.id)).toEqual(gate);
+      expect(ledger.fetchItem(TASKS_LEDGER, dependent.id)).toEqual(dependent);
     });
 
     caseIt(factory, "executes one finalization batch under one restrictive admission [D394]", async () => {

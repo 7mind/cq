@@ -34,6 +34,8 @@
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
+import type { CohortEvidenceSubjectV1 } from "@cq/process-control";
+import { cohortBranchSchema, cohortEvidenceSubjectSchema, cohortPreSealEnvelopeSchema, cohortReceiptArm, cohortRoleArm, singleTaskOrCohortSchema } from "./cohortContract.js";
 
 /** The two worker terminal-status tokens. */
 export const IMPLEMENT_WORKER_STATUSES = ["pass", "fail"] as const;
@@ -69,7 +71,6 @@ interface ImplementWorkerSupervisedGateDiagnosticArtifactBase {
   readonly kind: "cq-supervised-gate-diagnostic-artifact";
   readonly attestationId: string;
   readonly generation: number;
-  readonly taskId: string;
   readonly resultCommit: string;
   readonly capturedAt: string;
   readonly reportDigest: string;
@@ -80,19 +81,35 @@ interface ImplementWorkerSupervisedGateDiagnosticArtifactBase {
 export interface ImplementWorkerSupervisedGateDiagnosticArtifactV1
   extends ImplementWorkerSupervisedGateDiagnosticArtifactBase {
   readonly version: 1;
+  readonly taskId: string;
+  readonly evidenceSubject?: never;
 }
 
 /** Durable full diagnostic retained in the ledger log store and bound by digest. */
 export interface ImplementWorkerSupervisedGateDiagnosticArtifactV2
   extends ImplementWorkerSupervisedGateDiagnosticArtifactBase {
   readonly version: 2;
+  readonly taskId: string;
+  readonly evidenceSubject?: never;
   readonly artifactPath: string;
   readonly artifactDigest: string;
 }
 
+interface ImplementCohortSupervisedGateDiagnosticArtifact extends ImplementWorkerSupervisedGateDiagnosticArtifactBase {
+  readonly evidenceSubject: CohortEvidenceSubjectV1;
+  readonly taskId?: never;
+}
+
+export type ImplementCohortSupervisedGateDiagnosticArtifactV3 = ImplementCohortSupervisedGateDiagnosticArtifact & { readonly version: 3 };
+export type ImplementCohortSupervisedGateDiagnosticArtifactV4 = ImplementCohortSupervisedGateDiagnosticArtifact & {
+  readonly version: 4; readonly artifactPath: string; readonly artifactDigest: string;
+};
+
 export type ImplementWorkerSupervisedGateDiagnosticArtifact =
   | ImplementWorkerSupervisedGateDiagnosticArtifactV1
-  | ImplementWorkerSupervisedGateDiagnosticArtifactV2;
+  | ImplementWorkerSupervisedGateDiagnosticArtifactV2
+  | ImplementCohortSupervisedGateDiagnosticArtifactV3
+  | ImplementCohortSupervisedGateDiagnosticArtifactV4;
 
 export interface ImplementWorkerSupervisedGateRejectionDetailsV1
   extends ImplementWorkerSupervisedGateRejectionBase {
@@ -146,13 +163,13 @@ function isDiagnosticArtifact(
     "kind",
     "reportDigest",
     "resultCommit",
-    "taskId",
+    record["version"] === 3 || record["version"] === 4 ? "evidenceSubject" : "taskId",
     "version",
   ];
   return (
-    (record["version"] === 1
+    (record["version"] === 1 || record["version"] === 3
       ? Object.keys(record).sort().join(",") === commonKeys.sort().join(",")
-      : record["version"] === 2 &&
+      : (record["version"] === 2 || record["version"] === 4) &&
         Object.keys(record).sort().join(",") ===
           [...commonKeys, "artifactDigest", "artifactPath"].sort().join(",") &&
         typeof record["artifactPath"] === "string" &&
@@ -166,8 +183,9 @@ function isDiagnosticArtifact(
     /^att_[A-Za-z0-9_-]{32,}$/u.test(record["attestationId"]) &&
     Number.isSafeInteger(record["generation"]) &&
     (record["generation"] as number) >= 1 &&
-    typeof record["taskId"] === "string" &&
-    /^T[0-9]+$/u.test(record["taskId"]) &&
+    (record["version"] === 3 || record["version"] === 4
+      ? isCohortEvidenceSubject(record["evidenceSubject"])
+      : typeof record["taskId"] === "string" && /^T[0-9]+$/u.test(record["taskId"])) &&
     typeof record["resultCommit"] === "string" &&
     /^[0-9a-f]{40}$/u.test(record["resultCommit"]) &&
     typeof record["capturedAt"] === "string" &&
@@ -181,6 +199,15 @@ function isDiagnosticArtifact(
       ? firstFailure === null
       : JSON.stringify(firstFailure) === JSON.stringify(failureIndex[0]))
   );
+}
+
+function isCohortEvidenceSubject(value: unknown): value is CohortEvidenceSubjectV1 {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const subject = value as Readonly<Record<string, unknown>>;
+  return Object.keys(subject).sort().join(",") === "definitionDigest,evidenceSubjectDigest,kind,sealDigest,version" &&
+    subject["kind"] === "cq-cohort-evidence-subject" && subject["version"] === 1 &&
+    ["definitionDigest", "sealDigest", "evidenceSubjectDigest"].every((field) =>
+      typeof subject[field] === "string" && /^[0-9a-f]{64}$/u.test(subject[field]));
 }
 
 export function isImplementWorkerSupervisedGateRejectionDetails(
@@ -328,7 +355,7 @@ const gitChangeReceiptSchema = {
  * wire shape; store_result additionally resolves every binding against the
  * prepared dispatch and refuses caller-authored instances.
  */
-export const implementWorkerSupervisedGateEvidenceSchema = {
+const taskSupervisedGateEvidenceSchema = {
   type: "object",
   properties: {
     kind: { type: "string", const: IMPLEMENT_WORKER_SUPERVISED_GATE_KIND },
@@ -392,9 +419,16 @@ export const implementWorkerSupervisedGateEvidenceSchema = {
   additionalProperties: false,
 } as const;
 
-export interface ImplementWorkerSupervisedGateEvidence {
+const { taskId: _gateTaskId, ...commonGateProperties } = taskSupervisedGateEvidenceSchema.properties;
+export const cohortSupervisedGateEvidenceSchema = {
+  ...taskSupervisedGateEvidenceSchema,
+  properties: { ...commonGateProperties, version: { const: 2 }, evidenceSubject: cohortEvidenceSubjectSchema, branch: cohortBranchSchema },
+  required: [...taskSupervisedGateEvidenceSchema.required.filter((field) => field !== "taskId"), "evidenceSubject"],
+};
+export const implementWorkerSupervisedGateEvidenceSchema = { oneOf: [taskSupervisedGateEvidenceSchema, cohortSupervisedGateEvidenceSchema] };
+
+interface ImplementWorkerSupervisedGateEvidenceBase {
   readonly kind: typeof IMPLEMENT_WORKER_SUPERVISED_GATE_KIND;
-  readonly version: 1;
   readonly attestationId: string;
   readonly generation: number;
   readonly roleId: "implement-worker";
@@ -403,7 +437,6 @@ export interface ImplementWorkerSupervisedGateEvidence {
   readonly promptDigest: string;
   readonly catalogHash: string;
   readonly inputDigest: string;
-  readonly taskId: string;
   readonly worktreePath: string;
   readonly branch: string;
   readonly baseCommit: string;
@@ -420,6 +453,18 @@ export interface ImplementWorkerSupervisedGateEvidence {
   readonly gitReceiptsDigest: string;
   readonly mutationTableDigest: string;
 }
+
+export type ImplementTaskWorkerSupervisedGateEvidence = ImplementWorkerSupervisedGateEvidenceBase & {
+  readonly version: 1;
+  readonly taskId: string;
+  readonly evidenceSubject?: never;
+};
+export type ImplementCohortWorkerSupervisedGateEvidence = ImplementWorkerSupervisedGateEvidenceBase & {
+  readonly version: 2;
+  readonly evidenceSubject: CohortEvidenceSubjectV1;
+  readonly taskId?: never;
+};
+export type ImplementWorkerSupervisedGateEvidence = ImplementTaskWorkerSupervisedGateEvidence | ImplementCohortWorkerSupervisedGateEvidence;
 
 /**
  * Verified arm of `baseVerification` — only full object SHAs, never abbreviated
@@ -823,7 +868,7 @@ const outputSchema = {
 } as const;
 
 /** Parent-gated pass output before runner-owned evidence is attached. */
-export const implementWorkerStagedOutputSchema = {
+const taskStagedOutputSchema = {
   ...outputSchema,
   allOf: [
     passStatusArm,
@@ -850,15 +895,26 @@ export const implementWorkerStagedOutputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 12` (bumped from 11, T6521): input now carries the parent-owned
- * focused-only/final validation intent and finalized output has a closed
- * focused-check arm. A stale deployed root rendered against the v11 contract
- * must not be mistaken for this one.
+ * Version 13 adds a closed full-member cohort arm without an anchor task.
  * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 12,
-  inputSchema,
-  outputSchema,
+  version: 13,
+  inputSchema: singleTaskOrCohortSchema(inputSchema, cohortRoleArm(inputSchema, cohortPreSealEnvelopeSchema, "input")),
+  outputSchema: singleTaskOrCohortSchema(outputSchema, {
+    ...cohortRoleArm(outputSchema, cohortPreSealEnvelopeSchema, "output"),
+    properties: {
+      ...cohortRoleArm(outputSchema, cohortPreSealEnvelopeSchema, "output").properties,
+      gitReceipts: { type: "array", items: cohortReceiptArm(gitChangeReceiptSchema) },
+      supervisedGateEvidence: cohortSupervisedGateEvidenceSchema,
+    },
+    allOf: [...outputSchema.allOf, { not: { anyOf: [{ required: ["gateDurationMs"] }, { required: ["focusedChecks"] }] } }],
+  }),
 };
+
+export const implementWorkerStagedOutputSchema = singleTaskOrCohortSchema(taskStagedOutputSchema, {
+  ...cohortRoleArm(taskStagedOutputSchema, cohortPreSealEnvelopeSchema, "output"),
+  properties: { ...cohortRoleArm(taskStagedOutputSchema, cohortPreSealEnvelopeSchema, "output").properties,
+    gitReceipts: { type: "array", items: cohortReceiptArm(gitChangeReceiptSchema) } },
+});

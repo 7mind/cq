@@ -59,8 +59,10 @@ import { LedgerError } from "../../types.js";
  * - v2 (T5916): keyed closure/reference indexes, normalized private plan
  *   identities, and tenant-scoped coherence versions. Existing refs backfill once.
  * - v3 (T5923): named-milestone archive pointer lookup without per-ledger probes.
+ * - v4 (T6560): tenant-keyed portable work-cohort state with ephemeral runtime fencing.
+ * - v5 (T6560): explicit restored-state resume-revalidation fence.
  */
-export const PG_SCHEMA_VERSION = 3;
+export const PG_SCHEMA_VERSION = 5;
 
 /**
  * Advisory-lock key guarding the DDL/migration pass (Q271). Arbitrary but
@@ -258,6 +260,22 @@ export async function ensureSchema(pool: SQL): Promise<void> {
         created_at_ms            BIGINT NOT NULL,
         PRIMARY KEY (project_key, admission_id)
       )
+    `;
+
+    await locked`
+      CREATE TABLE IF NOT EXISTS work_cohort_state (
+        project_key           TEXT PRIMARY KEY REFERENCES projects(project_key),
+        state_json            TEXT NOT NULL,
+        execution_epoch       TEXT NOT NULL,
+        resume_required       BOOLEAN NOT NULL DEFAULT FALSE,
+        lease_json            TEXT,
+        resume_validation_json TEXT,
+        revision              BIGINT NOT NULL
+      )
+    `;
+    await locked`
+      ALTER TABLE work_cohort_state
+      ADD COLUMN IF NOT EXISTS resume_required BOOLEAN NOT NULL DEFAULT FALSE
     `;
 
     await locked`

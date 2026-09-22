@@ -36,6 +36,7 @@ let
       # The schema sidecars stamp the per-role contract versions into the
       # attested surface manifest (T683); keep this closure in sync with the
       # render script's sidecar imports.
+      (configRoot + "/src/schemas/cohortContract.ts")
       (configRoot + "/src/schemas/implement-conflict-resolver.ts")
       (configRoot + "/src/schemas/implement-reviewer.ts")
       (configRoot + "/src/schemas/implement-worker.ts")
@@ -73,7 +74,7 @@ pkgs.runCommand "cq-${validatedSurface}-prompt-root"
     passthru.promptCatalog = assets.catalog;
   }
   ''
-    test "$(find ${rendererSource} -type f | wc -l)" -eq 16
+    test "$(find ${rendererSource} -type f | wc -l)" -eq 17
     test "$(find ${filteredAssets} -type f | wc -l)" -eq ${toString expectedAssetFileCount}
     bun run ${rendererSource}/scripts/render-prompt-surface.ts \
       ${lib.escapeShellArg validatedSurface} \

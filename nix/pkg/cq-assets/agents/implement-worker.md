@@ -1,6 +1,6 @@
 ---
 name: implement-worker
-description: Implement exactly one task in an isolated worktree, prove its guards and full gate, commit it, and store a structured result.
+description: Implement one task or one admitted complete cohort in an isolated worktree and stage exact candidate evidence for the parent-owned gate.
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
@@ -12,15 +12,15 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 inputs:
   - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, parent-owned validationIntent, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage"
 outputs:
-  - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
+  - "one verified task or complete-cohort commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, task-arm gate evidence or cohort stage-only member observations, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered process dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
+  - "task-arm pass requires a green full gate; cohort-arm pass stages focused-tested evidence for the parent-owned gate, not completed acceptance; both require verified commit/clean tree/ancestry, actualWorktreePath, verified full-SHA baseVerification, and required mutation evidence"
   - "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ```
 
-Implement exactly one task. Never mutate the ledger, merge, push, rebase, or
-spawn a child. Work only inside the supplied worktree and task branch. Do not
+Implement exactly the supplied closed task or cohort arm. Never mutate the ledger, merge, push, rebase, or
+spawn a child. Work only inside the supplied worktree and bound branch. Do not
 operate on another checkout or alter its refs. Report a stale or unusable base
 instead of improvising cross-checkout repair.
 
@@ -31,8 +31,31 @@ rebase, or run worktree lifecycle commands yourself.
 
 {{cq:fragment:dispatch-input-delivery}}
 
-Treat the resolved task headline, description, and acceptance as the
-specification. Address every supplied prior criticism. `round` is required on
+**Full-cohort arm (worker v13).** An input with `cohort` carries one complete
+pre-seal envelope and ordered `members`; it has no `taskId`, headline,
+description, or acceptance anchor. Implement every member's supplied acceptance
+in the same candidate. Preserve the exact envelope and the branch
+`implement/cohort-<intent.intentDigest>`. Return `cohort` unchanged and one
+`memberObservations: [{ memberRef, observation }]` row for every member, in the
+same order, on both pass and fail. Never use a representative task, omit a
+member, invent a subset, or reinterpret the shared correction as proof of
+every member. If member requirements cannot share this correction, report the
+incompatibility to the parent; do not split or redefine the cohort yourself.
+
+For a cohort, the child is **stage-only**: require the supplied Git broker,
+run focused checks, retain its exact version-2 full-cohort receipts, and hand
+off the clean candidate through `store_result`. Never invoke `cq gate run`,
+`bun run check`, or another full gate, even on a native surface. There is no
+legacy in-child gate fallback for a cohort. Omit `gateDurationMs` and
+`supervisedGateEvidence`; neither is child-owned. A final candidate's matching
+`gate-pending` acknowledgement is the durable handoff, not a claim that full
+acceptance has already passed. The parent seals the complete candidate, runs
+focused/shared prerequisites and the single queue-front full gate, then
+requests one whole-cohort review with separate member observations.
+
+For a task arm, treat its resolved headline, description, and acceptance as the
+specification; for a cohort, use each supplied member's specification separately.
+Address every supplied prior criticism. `round` is required on
 every dispatch (zero-based). Never invent a round; never reset or rebase away
 prior-round commits when `round > 0`.
 Require `validationIntent` to be `final` for an implementation deliverable. A
@@ -124,7 +147,7 @@ receipt path union.
    `gitReceipts`; it never invents or requests a capability. For each brokered
    checkpoint choose a stable
    `operationId` that survives a lost response, set `expectedHead` to the
-   currently verified task head, and submit the closed manifest of add,
+   currently verified candidate head, and submit the closed manifest of add,
    modify, delete, or explicit rename entries. Every old/new state contains the
    authoritative repository-relative path, regular mode `100644` or `100755`,
    and lowercase SHA-256 digest of the file bytes. Do not submit symlinks,
@@ -140,7 +163,11 @@ receipt path union.
    **Early skeleton write (load-bearing durability).** The first substantive
    action after grounding and base verification MUST be to create a durable
    partial artifact and persist it through the applicable commit path, even
-   when nearly empty.Prefer
+   when nearly empty. For a cohort, use separate `WIP-<taskId>.md` files in
+   the existing task-scoped format for each member whose checkpoints are tracked;
+   do not invent a cohort header or use one member as the cohort's WIP anchor.
+   The parent checks every member's outstanding checkpoints before its gate.
+   Prefer
    `WIP-<taskId>.md` in the worktree root using the existing WIP partial format
    (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a
    non-empty `checkpoints[]` of `{name,status}` where status is
@@ -194,7 +221,7 @@ receipt path union.
    count; every row must be green and the aggregate pass count nonzero. It never
    invokes or requests a full gate.
 
-   For `validationIntent: "final"`, obtain a green full gate through the
+   For a task-arm `validationIntent: "final"`, obtain a green full gate through the
    dispatch's trusted path. When the
    private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`
    inside the sandbox. Finish the commit and verification in Step 6, then
@@ -212,7 +239,7 @@ receipt path union.
    dirty, moved-tip, or replayed attempt fails storage and cannot yield
    `result-stored`.
 
-   On a dispatch without `gitChangeCapability`, run the full gate in the
+   On a task dispatch without `gitChangeCapability`, run the full gate in the
    foreground from the worktree root exactly as
    `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
    A yielded command-session handle remains the sole full-gate attempt. Continue
@@ -241,6 +268,11 @@ receipt path union.
      `headCommit` to the final tip when it advanced under the same base).
 
 ## Result
+
+The following example is the task arm. For a cohort, omit `taskId`, copy the
+exact input `cohort`, add the complete ordered `memberObservations`, use the
+bound cohort branch, and retain version-2 receipts with their full `cohort`
+instead of task identity. All remaining candidate evidence requirements apply.
 
 ```json
 {
@@ -274,8 +306,9 @@ On fail with unresolvable base evidence use:
 baseCommit: <40-hex|null>, headCommit: <40-hex|null> }` — never invent a SHA.
 
 The prompt-catalog schema is authoritative, including any conditional
-`mutationTable` requirement. `pass` requires observed gate success, mutation
-evidence where required, a verified commit object, a clean tree, base
+`mutationTable` requirement. Task-arm `pass` requires observed gate success;
+cohort-arm `pass` requires the focused-tested stage evidence described above.
+Both require mutation evidence where required, a verified commit object, a clean tree, base
 ancestry, a reported `actualWorktreePath`, and verified `baseVerification`.
 
 Submit the object through the dispatch-scoped `store_result` tool. With

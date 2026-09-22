@@ -33,6 +33,8 @@ import {
   WORKSET_EXTERNAL_EFFECT_KINDS,
   WORKSET_LEDGER_MUTATION_KINDS,
   WorksetAdmissionError,
+  worksetExternalEffectTargets,
+  type WorksetExternalEffectRequest,
   canonicalizeWorksetRootReplacement,
   isTrustedWorksetManagementAuthority,
   registerLiveWorksetAdmission,
@@ -40,7 +42,6 @@ import {
   type WorksetAdministrativeEffectKind,
   type WorksetAdmissionCoordinatorHooks,
   type WorksetExternalEffectAdmission,
-  type WorksetExternalEffectKind,
   type WorksetLedgerMutationAdmission,
   type WorksetLedgerMutationKind,
   type WorksetProcessGroupRegistration,
@@ -788,10 +789,7 @@ export function createPostgresWorksetStore(
   }
 
   async function admitExternalEffectInternal(
-    input: {
-      readonly kind: WorksetExternalEffectKind;
-      readonly targetRef: string;
-    },
+    input: WorksetExternalEffectRequest,
     requireTargetAdmission: boolean,
   ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
@@ -800,6 +798,7 @@ export function createPostgresWorksetStore(
         `unknown external effect kind: ${String(input.kind)}`,
       );
     }
+    const targets = worksetExternalEffectTargets(input);
     const generationAtEntry = (await readRoots()).admitGeneration;
     for (;;) {
       await waitUntilNoExclusive();
@@ -836,7 +835,7 @@ export function createPostgresWorksetStore(
         if (exclusiveHeldFlag || (await exclusivePresent(tx))) {
           return { kind: "retry" };
         }
-        if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, locked.roots)) {
+        if (requireTargetAdmission && !targets.every((target) => isTargetAdmitted(target, locked.roots))) {
           return { kind: "target-excluded" };
         }
         const id = `ee-${++admissionSeq}-${randomUUID()}`;
@@ -854,7 +853,7 @@ export function createPostgresWorksetStore(
             ${"external-effect"},
             ${input.kind},
             ${input.targetRef},
-            ${JSON.stringify([input.targetRef])},
+            ${JSON.stringify(targets)},
             ${locked.epoch},
             ${hostId},
             ${identity.pid},
@@ -1044,10 +1043,7 @@ export function createPostgresWorksetStore(
     }
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffect(input: WorksetExternalEffectRequest): Promise<WorksetExternalEffectAdmission> {
     return admitExternalEffectInternal(input, true);
   }
 

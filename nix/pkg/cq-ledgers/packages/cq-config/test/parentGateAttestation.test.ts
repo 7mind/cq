@@ -16,7 +16,7 @@ import {
   validateParentGateAttestation,
   validateSupervisedWorkerGateEvidenceForReview,
   type ParentGateAttestation,
-  type ImplementWorkerSupervisedGateEvidence,
+  type ImplementTaskWorkerSupervisedGateEvidence,
 } from "@cq/config";
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../../../../../..");
@@ -70,8 +70,8 @@ function baseReviewerInput(
 }
 
 function supervisedEvidence(
-  overrides: Partial<ImplementWorkerSupervisedGateEvidence> = {},
-): ImplementWorkerSupervisedGateEvidence {
+  overrides: Partial<ImplementTaskWorkerSupervisedGateEvidence> = {},
+): ImplementTaskWorkerSupervisedGateEvidence {
   return {
     kind: "cq-supervised-gate-evidence",
     version: 1,
@@ -248,7 +248,7 @@ describe("T2081 supervised worker evidence reviewer handoff [BA]", () => {
     ]) {
       expect(
         validateSupervisedWorkerGateEvidenceForReview(
-          supervisedEvidence(substitution as Partial<ImplementWorkerSupervisedGateEvidence>),
+          supervisedEvidence(substitution as Partial<ImplementTaskWorkerSupervisedGateEvidence>),
           expected,
         ),
       ).toBe(false);

@@ -34,7 +34,10 @@ import {
 } from "./dispatchAttestation.js";
 import { consumedResultsComeFromDifferentBackendInstances } from "./dispatchAttestationBackend.js";
 import { isManagerOwnedReleaseResult } from "./internal/managedWorktreeReleaseAuthority.js";
-import { validateManagedWorktreeHandle, type ManagedWorktreeHandle } from "./managedWorktreeHandle.js";
+import { validateManagedWorktreeHandle, managedWorktreeHandlesEqual, type ManagedWorktreeHandle } from "./managedWorktreeHandle.js";
+import { resolveNativeManagedWorktreeSubject } from "./nativeManagedWorktreeSubject.js";
+import { implementationQueueSubjectsMatch } from "./implementationQueueIdentity.js";
+import type { CohortEffectEnvelopeV1 } from "@cq/process-control";
 
 export type NativeAdapterId = `${Harness}:native`;
 
@@ -143,6 +146,7 @@ export function isAbsoluteFilesystemPath(value: string): boolean {
 export type ClaudeNativeQualificationHandle = ManagedWorktreeHandle;
 
 export interface ClaudeNativeQualificationInput {
+  readonly cohort?: CohortEffectEnvelopeV1;
   /**
    * Manager-returned absolute worktree path (worktree_manage prepare evidence).
    * Required for K238 harness-owned qualification.
@@ -243,7 +247,8 @@ export interface CodexNativeQualificationInput {
   readonly cwd: string;
   readonly handle: ManagedWorktreeHandle;
   readonly repositoryRoot: string;
-  readonly taskId: string;
+  readonly taskId?: string;
+  readonly cohort?: CohortEffectEnvelopeV1;
   readonly workerGate: CodexProviderGateObservation;
   readonly resolverGate: CodexProviderGateObservation;
 }
@@ -284,13 +289,12 @@ function exactKnownSubset<T extends string>(
 }
 
 function sameManagedHandle(left: ManagedWorktreeHandle, right: ManagedWorktreeHandle): boolean {
-  return (
-    left.token === right.token &&
-    left.worktreeId === right.worktreeId &&
-    left.taskId === right.taskId &&
-    left.repositoryRoot === right.repositoryRoot &&
-    left.absolutePath === right.absolutePath
-  );
+  return managedWorktreeHandlesEqual(left, right);
+}
+
+function executionSubject(execution: CodexInstalledRoleBoundaryExecution) {
+  return resolveNativeManagedWorktreeSubject({ handle: execution.managedHandle,
+    ...(execution.cohort === undefined ? {} : { cohort: execution.cohort }) });
 }
 
 function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput) {
@@ -339,6 +343,8 @@ function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput
       !isRunnerOwnedCodexProviderSandboxControl(control) ||
       control.roleId !== input.execution.roleId ||
       !sameManagedHandle(control.managedHandle, input.execution.managedHandle) ||
+      !implementationQueueSubjectsMatch(resolveNativeManagedWorktreeSubject({ handle: control.managedHandle,
+        ...(control.cohort === undefined ? {} : { cohort: control.cohort }) }), executionSubject(input.execution), false) ||
       control.writableSandboxExitStatus !== 0 ||
       control.writableSandboxRefMatches !== true ||
       !/^[0-9a-f]{64}$/.test(control.writableSandboxStdoutDigest) ||
@@ -378,7 +384,7 @@ function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput
         (!sameManagedHandle(priorExecution.managedHandle, input.execution.managedHandle) ||
           !sameInstalledIdentity(priorExecution, input.execution))) ||
       (nativePrior && priorExecution.observation.agentType !== "implement-worker") ||
-      priorOutput?.["taskId"] !== input.execution.managedHandle.taskId ||
+      !implementationQueueSubjectsMatch(priorOutput, executionSubject(input.execution), true) ||
       priorOutput?.["actualWorktreePath"] !== input.execution.managedHandle.absolutePath ||
       !sameDispatchHandle(priorConsumed, priorExecution.handle)
     ) {
@@ -490,7 +496,7 @@ export function authenticateCodexProviderGateObservation(
   const managed = execution.managedHandle;
   if (
     output["status"] !== "pass" ||
-    output["taskId"] !== managed.taskId ||
+    !implementationQueueSubjectsMatch(output, executionSubject(execution), false) ||
     output["branch"] !== managed.branch ||
     output["actualWorktreePath"] !== managed.absolutePath ||
     typeof output["resultCommit"] !== "string"
@@ -518,14 +524,14 @@ export function authenticateCodexProviderGateObservation(
     const generation = receipt["generation"];
     if (
       receipt["kind"] !== expectedKind ||
-      receipt["version"] !== 1 ||
+      receipt["version"] !== (managed.version === 3 ? 2 : 1) ||
       receipt["attestationId"] !== execution.handle.attestationId ||
       typeof generation !== "number" ||
       !Number.isInteger(generation) ||
       generation < 1 ||
       generation > execution.handle.generation ||
       generation < previousGeneration ||
-      receipt["taskId"] !== managed.taskId ||
+      !implementationQueueSubjectsMatch(receipt, executionSubject(execution), generation < execution.handle.generation) ||
       typeof receipt["oldHead"] !== "string" ||
       typeof receipt["newHead"] !== "string" ||
       (previousHead !== undefined && receipt["oldHead"] !== previousHead)
@@ -592,7 +598,7 @@ export function authenticateCodexProviderGateObservation(
     input.release.idempotent !== false ||
     input.release.absolutePath !== managed.absolutePath ||
     input.release.handle.token !== managed.token ||
-    input.release.handle.taskId !== managed.taskId ||
+    !sameManagedHandle(input.release.handle, managed) ||
     input.release.handle.repositoryRoot !== managed.repositoryRoot ||
     input.release.handle.absolutePath !== managed.absolutePath
   ) {
@@ -725,6 +731,13 @@ export function qualifyClaudeNativeAdapter(
         `from worktree_manage (D287): ${handleValidation.detail}. Free-form boolean handoffs are refused. K170 did NOT ` +
         "accept write-confinement residual.",
     });
+  }
+
+  try { resolveNativeManagedWorktreeSubject(input); }
+  catch (error) {
+    return Object.freeze({ status: "incompatible", adapterId: "claude:native", targetHarness: "claude",
+      transport: "native", reason: "handle-invalid", confinement: "unproven", defect: "D263",
+      detail: `claude:native requires the exact closed task or full-cohort binding: ${String(error)}` });
   }
 
   if (!isManagedWorktreePath(input.cwd)) {
@@ -971,7 +984,7 @@ function codexProviderIdentityViolation(
   if (
     managed.token !== expected.handle.token ||
     managed.worktreeId !== expected.handle.worktreeId ||
-    managed.taskId !== expected.taskId ||
+    !implementationQueueSubjectsMatch(executionSubject(execution), resolveNativeManagedWorktreeSubject(expected), false) ||
     managed.repositoryRoot !== expected.repositoryRoot ||
     managed.absolutePath !== expected.cwd
   ) {
@@ -1047,10 +1060,15 @@ export function qualifyCodexNativeAdapter(
       "codex:native repositoryRoot must equal the repository identity bound into the managed handle.",
     );
   }
-  if (typeof input.taskId !== "string" || input.taskId !== input.handle.taskId) {
+  try {
+    resolveNativeManagedWorktreeSubject(input);
+    if (input.handle.version !== 3 && (typeof input.taskId !== "string" || input.taskId !== input.handle.taskId)) {
+      throw new Error("codex:native taskId differs from its managed handle");
+    }
+  } catch (error) {
     return codexIncompatible(
       "handle-task-mismatch",
-      "codex:native taskId must equal the task identity bound into the managed handle.",
+      `codex:native requires the exact closed task or full-cohort binding: ${String(error)}`,
     );
   }
   const workerViolation = codexProviderGateViolation(input.workerGate, "implement-worker");

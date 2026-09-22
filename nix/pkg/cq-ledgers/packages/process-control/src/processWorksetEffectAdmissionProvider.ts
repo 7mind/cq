@@ -10,8 +10,16 @@ import type {
   WorksetBrokerProcessGroupRegistration,
   WorksetEffectAdmissionProvider,
 } from "./worksetEffectProtocol.ts";
+import { assertCohortEffectEnvelopeV1, cohortEffectTargetRefV1, type CohortEffectEnvelopeV1 } from "./cohortEffectEnvelope.ts";
+import { assertInvestigationCohortLaunchBindingV1, assertInvestigationNativeDispatchIdentityV1, investigationCohortEffectTargetRefV1,
+  type InvestigationNativeDispatchIdentityV1, type InvestigationCohortLaunchBindingV1 } from "./investigationCohortLaunch.ts";
 
 export interface ProcessWorksetEffectAdmissionProviderOptions {
+  readonly investigationCohort?: InvestigationCohortLaunchBindingV1;
+  readonly investigationDispatch?: InvestigationNativeDispatchIdentityV1;
+  readonly cohort?: CohortEffectEnvelopeV1;
+  readonly cohortConflictStateDigest?: string;
+  readonly cohortRoleId?: "implement-conflict-resolver";
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string;
@@ -23,6 +31,11 @@ type ProviderRequest =
       readonly op: "acquire";
       readonly kind: WorksetBrokerAdmissionHandle["kind"];
       readonly targetRef: string;
+      readonly investigationCohort?: InvestigationCohortLaunchBindingV1;
+      readonly investigationDispatch?: InvestigationNativeDispatchIdentityV1;
+      readonly cohort?: CohortEffectEnvelopeV1;
+      readonly cohortConflictStateDigest?: string;
+      readonly cohortRoleId?: "implement-conflict-resolver";
     }
   | ({ readonly op: "register" | "share" } & WorksetBrokerProcessGroupRegistration)
   | { readonly op: "settle" | "release" | "abandon" };
@@ -232,14 +245,43 @@ class ProcessWorksetProviderSession {
 export function createProcessWorksetEffectAdmissionProvider(
   options: ProcessWorksetEffectAdmissionProviderOptions,
 ): WorksetEffectAdmissionProvider {
+  const cohort = options.cohort === undefined ? undefined : structuredClone(options.cohort);
+  const investigationCohort = options.investigationCohort === undefined ? undefined : structuredClone(options.investigationCohort);
+  const investigationDispatch = options.investigationDispatch === undefined ? undefined : structuredClone(options.investigationDispatch);
+  if (investigationDispatch !== undefined) {
+    assertInvestigationNativeDispatchIdentityV1(investigationDispatch);
+    if (cohort !== undefined || investigationCohort !== undefined) throw new Error("ordinary investigation dispatch cannot carry another cohort authority arm");
+  }
+  if (investigationCohort !== undefined) {
+    assertInvestigationCohortLaunchBindingV1(investigationCohort);
+    if (cohort !== undefined) throw new Error("investigation and implementation cohort authority cannot be combined");
+  }
+  if (cohort !== undefined) assertCohortEffectEnvelopeV1(cohort);
+  const conflictDigest = options.cohortConflictStateDigest;
+  if (conflictDigest === undefined ? options.cohortRoleId !== undefined :
+      cohort === undefined || options.cohortRoleId !== "implement-conflict-resolver" || !/^[0-9a-f]{64}$/u.test(conflictDigest)) {
+    throw new Error("detached cohort admission requires one exact conflict-resolver binding");
+  }
   return {
     acquire: async (input) => {
+      if (investigationDispatch !== undefined && input.kind !== "child-dispatch") throw new Error("investigation dispatch admission is child-dispatch only");
+      if (investigationCohort !== undefined && (input.kind !== "child-dispatch" || input.targetRef !== investigationCohortEffectTargetRefV1(investigationCohort))) {
+        throw new Error("investigation admission requires its exact all-member child-dispatch target");
+      }
+      if (conflictDigest !== undefined && input.kind !== "child-dispatch") throw new Error("cohort conflict-resolver admission is child-dispatch only");
+      if (cohort !== undefined && input.targetRef !== cohortEffectTargetRefV1(cohort)) {
+        throw new Error("process workset provider target differs from its complete cohort envelope");
+      }
       const session = new ProcessWorksetProviderSession(options);
       const response = await session.request(
         {
           op: "acquire",
           kind: input.kind,
           targetRef: input.targetRef,
+          ...(investigationCohort === undefined ? {} : { investigationCohort }),
+          ...(investigationDispatch === undefined ? {} : { investigationDispatch }),
+          ...(cohort === undefined ? {} : { cohort }),
+          ...(conflictDigest === undefined ? {} : { cohortConflictStateDigest: conflictDigest, cohortRoleId: "implement-conflict-resolver" as const }),
         },
         false,
         input.launchDeadlineMs,

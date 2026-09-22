@@ -29,6 +29,7 @@ import {
 } from "@cq/config";
 
 type TrustedQueueActor = EnqueueImplementationCandidateRequest["actor"];
+type QueueAuthorityOmitted<T> = T extends unknown ? Omit<T, "namespace" | "actor"> : never;
 type QueueCandidate = Omit<EnqueueImplementationCandidateRequest, "namespace" | "actor">;
 type AcquireRequest = Omit<
   Parameters<typeof acquireImplementationCandidateOn>[1],
@@ -166,7 +167,11 @@ export class ImplementationCandidateQueueAdapter {
   inspectLease(lease: ImplementationQueueLeaseBinding): Promise<ImplementationQueueControl> {
     return this.backend.transact({ kind: "handle", handle: lease }, (store) => {
       const row = store.read(lease);
-      if (row === undefined || isAttestationTombstone(row) || row.implementationQueue === undefined) {
+      if (
+        row === undefined ||
+        isAttestationTombstone(row) ||
+        row.implementationQueue === undefined
+      ) {
         throw new Error("implementation candidate lease no longer has a live queue row");
       }
       const control = row.implementationQueue;
@@ -289,7 +294,7 @@ export class ImplementationCandidateQueueAdapter {
   }
 
   reserveCompletion(
-    request: Omit<ReserveImplementationCompletionLeaseRequest, "namespace" | "actor">,
+    request: QueueAuthorityOmitted<ReserveImplementationCompletionLeaseRequest>,
   ) {
     return reserveImplementationCompletionLeaseOn(
       this.backend,
@@ -299,7 +304,7 @@ export class ImplementationCandidateQueueAdapter {
   }
 
   releaseCompletion(
-    request: Omit<ReleaseImplementationCompletionLeaseRequest, "namespace" | "actor">,
+    request: QueueAuthorityOmitted<ReleaseImplementationCompletionLeaseRequest>,
   ): Promise<ImplementationQueueControl> {
     return releaseImplementationCompletionLeaseOn(
       this.backend,
@@ -332,9 +337,7 @@ export class ImplementationCandidateQueueAdapter {
     );
   }
 
-  applyHeadOfLineDisposition(
-    request: ApplyImplementationCandidateHeadOfLineDispositionRequest,
-  ) {
+  applyHeadOfLineDisposition(request: ApplyImplementationCandidateHeadOfLineDispositionRequest) {
     const action = IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES[request.disposition];
     const transition = {
       ...request.lease,
@@ -418,9 +421,7 @@ export class ImplementationCandidateCoordinator {
     private readonly operations: ImplementationCandidateCoordinatorOperations,
   ) {}
 
-  async run(
-    request: AcquireRequest,
-  ): Promise<CoordinateImplementationCandidateOutcome> {
+  async run(request: AcquireRequest): Promise<CoordinateImplementationCandidateOutcome> {
     const pending = await this.queue.inspectPendingStagedRebase(request.partitionKey);
     if (pending !== undefined) {
       if (pending.source.successor !== undefined) {
@@ -442,6 +443,7 @@ export class ImplementationCandidateCoordinator {
           partitionRevision: parked.partitionRevision,
           front: Object.freeze({ ...pending.source.source }),
           frontState: "staged-rebase-retired" as const,
+          sourceReference: pending.source.sourceReference,
         });
       }
       return Object.freeze({
@@ -469,6 +471,7 @@ export class ImplementationCandidateCoordinator {
             partitionRevision: parked.partitionRevision,
             front: Object.freeze({ ...deferredConflict.source.source }),
             frontState: "staged-rebase-retired" as const,
+            sourceReference: deferredConflict.source.sourceReference,
           });
         }
         return Object.freeze({
@@ -516,10 +519,7 @@ export class ImplementationCandidateCoordinator {
     });
     if (retirement.conflictPending === true) {
       const retired = await this.queue.inspectPendingStagedRebase(request.partitionKey);
-      if (
-        retired === undefined ||
-        retired.source.sourceReference !== retirement.sourceReference
-      ) {
+      if (retired === undefined || retired.source.sourceReference !== retirement.sourceReference) {
         throw new Error("conflicted staged-rebase retirement lost its durable checkpoint");
       }
       const parked = await this.queue.parkRetiredStagedRebaseConflict(retired);
@@ -529,6 +529,7 @@ export class ImplementationCandidateCoordinator {
         partitionRevision: parked.partitionRevision,
         front: Object.freeze({ ...retired.source.source }),
         frontState: "staged-rebase-retired" as const,
+        sourceReference: retired.source.sourceReference,
       });
     }
     const operationId = `implementation-rebase-${dispatchPayloadDigest({

@@ -318,6 +318,7 @@ async function stageCandidate(input: {
       },
     ],
   });
+  if (receipt.version !== 1) throw new Error("task fixture received a cohort receipt");
   const output = {
     taskId: input.taskId,
     status: "pass",

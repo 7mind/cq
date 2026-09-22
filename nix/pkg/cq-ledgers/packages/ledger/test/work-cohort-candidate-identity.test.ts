@@ -24,6 +24,7 @@ import {
   constructCohortDecisionsV1,
   createCohortDefinitionIdentityV1,
   createCohortEffectEnvelopeV1,
+  createCohortCandidateIntentV1,
   createCohortEvidenceReceiptV1,
   createCohortEvidenceSubjectV1,
   createPendingCohortCandidateAttemptV1,
@@ -89,6 +90,11 @@ interface CandidateEnvelopeInput {
 }
 
 function candidateEnvelope(input: CandidateEnvelopeInput) {
+  const output = {
+    taskId: input.dispatch.taskId, branch: input.dispatch.branch,
+    resultCommit: input.result, gitReceipts: input.receipts,
+    filesTouched: input.outputFilesTouched ?? input.repositoryDiff.map((entry) => entry.path),
+  };
   const gitEffectBinding = {
     taskId: input.dispatch.taskId,
     handleToken: "worktree-token",
@@ -109,6 +115,7 @@ function candidateEnvelope(input: CandidateEnvelopeInput) {
     receipts: input.receipts,
     ...(input.attempt === undefined ? {} : { attempt: input.attempt }),
     managedWorktreeBindingDigest: sha256(gitEffectBinding),
+    outputDigest: sha256(output),
   });
   const row = {
     kind: "envelope",
@@ -131,14 +138,7 @@ function candidateEnvelope(input: CandidateEnvelopeInput) {
     gitEffectBinding,
     implementationQueue: queue,
     stagedCompletionQualification: queue.qualification,
-    output: {
-      taskId: input.dispatch.taskId,
-      branch: input.dispatch.branch,
-      resultCommit: input.result,
-      gitReceipts: input.receipts,
-      filesTouched:
-        input.outputFilesTouched ?? input.repositoryDiff.map((entry) => entry.path),
-    },
+    output,
   } as unknown as AttestationEnvelope;
   return { queue, row };
 }
@@ -215,15 +215,16 @@ async function identityFixture() {
   const dispatch = {
     attestationId: "att-test",
     generation: 1,
-    taskId: "T-test",
-    branch: "implement/T-test",
+    taskId: "T1",
+    branch: "implement/T1",
     startingCommit: commit("base"),
   };
   const base = dispatch.startingCommit;
   const result = commit("result");
   const tree = commit("result-tree");
   const receipts = [receipt({ base, result, tree })];
-  const pending = createPendingCohortCandidateAttemptV1(definition, dispatch);
+  const pending = createPendingCohortCandidateAttemptV1(definition, dispatch,
+    createCohortCandidateIntentV1(definition, "candidate:identity"));
   const repositoryDiff = [
     { path: "src/result.ts", mode: "100644" as const, blobDigest: sha256("result blob") },
   ];
@@ -256,6 +257,25 @@ async function identityFixture() {
 }
 
 describe("cohort candidate identity", () => {
+  test("rejects missing task identities instead of treating undefined as a shared authority [Blackbox-Group]", async () => {
+    const fixture = await identityFixture();
+    const source = structuredClone(fixture.sourceRow);
+    const binding = { ...source.gitEffectBinding! };
+    Reflect.deleteProperty(binding, "taskId");
+    const attempt = { ...source.implementationQueue!.attempt };
+    Reflect.deleteProperty(attempt, "taskId");
+    const output = { ...source.output as Record<string, unknown> };
+    Reflect.deleteProperty(output, "taskId");
+    const row = { ...source, gitEffectBinding: binding, output,
+      implementationQueue: { ...source.implementationQueue!, attempt: {
+        ...attempt, managedWorktreeBindingDigest: sha256(binding),
+      } } } as unknown as AttestationEnvelope;
+    const authenticator = new G213CandidateAuthenticatorV1({
+      store: new ManualCandidateAttestationStore([row]),
+      repository: { resolveWholeDiff: async () => fixture.row.repositoryDiff },
+    });
+    await expect(authenticator.resolve(fixture.dispatch)).rejects.toThrow();
+  });
   for (const storeCase of candidateStoreCases) {
     test(`resolves only a live qualified row through the ${storeCase.name}`, async () => {
       const fixture = await identityFixture();
@@ -552,7 +572,8 @@ describe("cohort candidate identity", () => {
     const subject = createCohortEvidenceSubjectV1(fixture.definition, seal);
     const firstEnvelope = createCohortEffectEnvelopeV1({
       definition: fixture.definition,
-      attempt: fixture.staged,
+      intent: fixture.staged.intent,
+      observation: fixture.observation,
       evidenceSubject: subject,
       executionEpoch: "epoch:1",
     });
@@ -564,7 +585,8 @@ describe("cohort candidate identity", () => {
     });
     const restarted = createCohortEffectEnvelopeV1({
       definition: sameDefinition,
-      attempt: fixture.staged,
+      intent: fixture.staged.intent,
+      observation: fixture.observation,
       evidenceSubject: subject,
       executionEpoch: "epoch:2",
     });
@@ -611,7 +633,8 @@ describe("cohort candidate identity", () => {
       repositoryDiff: nextRepositoryDiff,
       attempt: "attempt:next",
     });
-    const nextPending = createPendingCohortCandidateAttemptV1(fixture.definition, nextDispatch);
+    const nextPending = createPendingCohortCandidateAttemptV1(fixture.definition, nextDispatch,
+      createCohortCandidateIntentV1(fixture.definition, "candidate:next"));
     const nextAttempt = nextAuthenticated.authenticator.stage(nextPending, {
       row: nextAuthenticated.row,
     });
@@ -806,7 +829,7 @@ describe("cohort candidate identity", () => {
   test("rejects an attestation substituted for the actual G213 row", async () => {
     const fixture = await identityFixture();
     const foreign = { ...fixture.dispatch, attestationId: "att-foreign" };
-    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign, fixture.pending.intent);
     expect(() =>
       fixture.authenticator.stage(pending, {
         row: fixture.row,
@@ -817,7 +840,7 @@ describe("cohort candidate identity", () => {
   test("rejects a generation substituted for the actual G213 row", async () => {
     const fixture = await identityFixture();
     const foreign = { ...fixture.dispatch, generation: 99 };
-    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign, fixture.pending.intent);
     expect(() =>
       fixture.authenticator.stage(pending, {
         row: fixture.row,
@@ -828,7 +851,7 @@ describe("cohort candidate identity", () => {
   test("rejects a branch substituted for the actual G213 row", async () => {
     const fixture = await identityFixture();
     const foreign = { ...fixture.dispatch, branch: "implement/T-foreign" };
-    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign);
+    const pending = createPendingCohortCandidateAttemptV1(fixture.definition, foreign, fixture.pending.intent);
     expect(() =>
       fixture.authenticator.stage(pending, {
         row: fixture.row,
@@ -857,8 +880,8 @@ describe("cohort candidate identity", () => {
     const dispatch = {
       attestationId: "att-test",
       generation: 1,
-      taskId: "T-test",
-      branch: "implement/T-test",
+      taskId: "T1",
+      branch: "implement/T1",
       startingCommit: commit("base"),
     };
     const result = commit("result");

@@ -25,7 +25,7 @@ import {
   sweepAttestationsOn,
   terminalizeImplementationCandidateOn,
   type AttestationNamespace,
-  type DispatchGitEffectBinding,
+  type DispatchTaskGitEffectBinding as DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
   type EnqueueImplementationCandidateRequest,

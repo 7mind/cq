@@ -15,6 +15,8 @@
  *   - `plan-lifecycle.json`          — durable verifier/replay state
  *   - `plan-lifecycle.pending.json`  — recoverable filesystem commit decision
  *   - `archive-commit.pending.json`  — recoverable archive commit pre-state
+ *   - `workset-roots.json`           — portable workset roots/epoch document
+ *   - `work-cohort.json`             — portable work-cohort state
  *   - `archive/**`                   — archived milestone groups
  *   - `logs/**`                      — portable session logs (travel with the ledger tree)
  *   - `.locks/`, `.backup/`          — ephemeral runtime dirs (NEVER travel)
@@ -40,6 +42,24 @@ export const ARCHIVE_COMMIT_PENDING_FILENAME = "archive-commit.pending.json";
  * Portable workset roots/epoch document (T1956), containing one complete batch.
  */
 export const WORKSET_ROOTS_FILENAME = "workset-roots.json";
+/** Portable work-cohort state exported by every capable backend. */
+export const WORK_COHORT_STATE_FILENAME = "work-cohort.json";
+/** Durable state files included in the portable ledger tree. */
+export const LEDGER_PORTABLE_STATE_FILENAMES = [
+  PLAN_LIFECYCLE_STATE_FILENAME,
+  WORKSET_ROOTS_FILENAME,
+  WORK_COHORT_STATE_FILENAME,
+] as const;
+/** Recoverable local decisions which never travel with the ledger tree. */
+export const LEDGER_EPHEMERAL_STATE_FILENAMES = [
+  PLAN_LIFECYCLE_PENDING_FILENAME,
+  ARCHIVE_COMMIT_PENDING_FILENAME,
+] as const;
+/** Every ledger-owned top-level state file removed by destructive lifecycle operations. */
+export const LEDGER_OWN_STATE_FILENAMES = [
+  ...LEDGER_PORTABLE_STATE_FILENAMES,
+  ...LEDGER_EPHEMERAL_STATE_FILENAMES,
+] as const;
 /**
  * Filesystem workset state directory under `.cq/` (T1955/T1959). Holds live
  * `roots.json` + process admissions. Erase removes the whole directory; the
@@ -139,12 +159,7 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
   }
 
   const lifecycleFiles: string[] = [];
-  for (const filename of [
-    PLAN_LIFECYCLE_STATE_FILENAME,
-    PLAN_LIFECYCLE_PENDING_FILENAME,
-    ARCHIVE_COMMIT_PENDING_FILENAME,
-    WORKSET_ROOTS_FILENAME,
-  ]) {
+  for (const filename of LEDGER_OWN_STATE_FILENAMES) {
     const p = path.join(docsDir, filename);
     if (await exists(p)) lifecycleFiles.push(p);
   }
@@ -174,19 +189,9 @@ export async function ledgerTreePaths(docsDir: string): Promise<string[]> {
   const rel: string[] = [];
   if (art.registryFile !== null) rel.push(LEDGER_REGISTRY_FILENAME);
   for (const f of art.ledgerFiles) rel.push(path.basename(f));
-  if (
-    art.lifecycleFiles.some(
-      (file) => path.basename(file) === PLAN_LIFECYCLE_STATE_FILENAME,
-    )
-  ) {
-    rel.push(PLAN_LIFECYCLE_STATE_FILENAME);
-  }
-  if (
-    art.lifecycleFiles.some(
-      (file) => path.basename(file) === WORKSET_ROOTS_FILENAME,
-    )
-  ) {
-    rel.push(WORKSET_ROOTS_FILENAME);
+  const lifecycleFileNames = new Set(art.lifecycleFiles.map((file) => path.basename(file)));
+  for (const filename of LEDGER_PORTABLE_STATE_FILENAMES) {
+    if (lifecycleFileNames.has(filename)) rel.push(filename);
   }
   if (art.archiveDir !== null) await collectFilesRel(art.archiveDir, LEDGER_ARCHIVE_DIRNAME, rel);
   for (const dirName of LEDGER_PORTABLE_RUNTIME_DIRNAMES) {

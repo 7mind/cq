@@ -69,7 +69,7 @@ async function seed(
   stateDir: string;
   worktreePath: string;
   worktreeMergeSentinel: string | null;
-  authorization: DispatchBoundGitAuthorization;
+  authorization: Extract<DispatchBoundGitAuthorization, { readonly taskId: string }>;
 }> {
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2043-continuation-"));
   roots.push(repositoryRoot);

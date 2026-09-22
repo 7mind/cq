@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { PlanOperationReplayRecordSchema, PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
 import { LedgerError } from "../../types.js";
+import type { ArchivePointer } from "../../types.js";
 import type { LifecycleGroup, LifecycleRowRepository } from "../lifecycleRowRepository.js";
 import { claimScopeKey, operationScopeKey } from "../planLifecycleDump.js";
 import { createSqliteGenericMutationDataSource } from "./genericMutationDataSource.js";
@@ -15,8 +16,7 @@ export function createSqliteLifecycleRowRepository(
   db: Database,
   measurement: SqliteOperationMeasurement | null,
 ): LifecycleRowRepository {
-  const { listLedgers, fetchActiveItem, fetchArchivedItem, referenceTargets, referenceSources } =
-    createSqliteGenericMutationDataSource(db, measurement ?? undefined);
+  const publicRows = createSqliteGenericMutationDataSource(db, measurement ?? undefined);
   const record = (table: string, mode: "read" | "write", key: string, rowKeys: readonly string[]): void => {
     if (measurement === null) return;
     measurement.recordAccess({
@@ -30,7 +30,14 @@ export function createSqliteLifecycleRowRepository(
     return row === null ? undefined : PlanPrivateClaimRecordSchema.parse(JSON.parse(row.record_json));
   };
   return {
-    publicRows: { listLedgers, fetchActiveItem, fetchArchivedItem, referenceTargets, referenceSources },
+    publicRows,
+    fetchArchivePointer(ledgerId, pointerId) {
+      const row = db.query("SELECT id, summary, title, status FROM archive_pointers WHERE ledger = ? AND id = ?")
+        .get(ledgerId, pointerId) as Omit<ArchivePointer, "path"> | null;
+      const key = `${ledgerId}/${pointerId}`;
+      record("archive_pointers", "read", key, row === null ? [] : [key]);
+      return row === null ? undefined : { ...row, path: `./archive/${ledgerId}/${pointerId}.md` };
+    },
     fetchGroup(ledgerId, groupId) {
       const row = db.query("SELECT id, title, description FROM groups WHERE ledger = ? AND id = ?")
         .get(ledgerId, groupId) as LifecycleGroup | null;

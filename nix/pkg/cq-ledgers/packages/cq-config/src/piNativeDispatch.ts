@@ -10,6 +10,7 @@
  */
 
 import type { DispatchHandle, NativeCompletionProof } from "./compactDispatchProtocol.js";
+import type { CohortEffectEnvelopeV1 } from "@cq/process-control";
 import {
   createNativeDispatchAdapter,
   type DispatchAdapterCompletion,
@@ -81,6 +82,7 @@ export interface PiNativeAdapterBinding {
    * claudeNativeWorktree) and fails closed on mutation.
    */
   readonly worktree?: {
+    readonly cohort?: CohortEffectEnvelopeV1;
     readonly absolutePath?: string;
     readonly baseCommit?: string;
     readonly headCommit?: string;
@@ -133,7 +135,7 @@ export function createPiNativeDispatchAdapter(
         wt.absolutePath !== undefined ||
         wt.baseCommit !== undefined ||
         wt.headCommit !== undefined ||
-        wt.handle !== undefined;
+        wt.handle !== undefined || wt.cohort !== undefined;
       if (hasPreflightInput) {
         if (
           wt.absolutePath === undefined ||
@@ -155,6 +157,7 @@ export function createPiNativeDispatchAdapter(
           baseCommit: wt.baseCommit,
           headCommit: wt.headCommit,
           ...(wt.handle === undefined ? {} : { handle: wt.handle }),
+          ...(wt.cohort === undefined ? {} : { cohort: wt.cohort }),
         });
         if (preflight.status === "refused") {
           return {
@@ -186,6 +189,7 @@ export function createPiNativeDispatchAdapter(
             ...(wt.baseCommit === undefined ? {} : { baseCommit: wt.baseCommit }),
             ...(wt.headCommit === undefined ? {} : { headCommit: wt.headCommit }),
             ...(wt.handle === undefined ? {} : { handle: wt.handle }),
+            ...(wt.cohort === undefined ? {} : { cohort: wt.cohort }),
           });
         } catch (error) {
           return {

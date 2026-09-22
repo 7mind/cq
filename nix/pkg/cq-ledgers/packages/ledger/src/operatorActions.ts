@@ -10,6 +10,9 @@ import type { Item } from "./types.js";
 import { ItemNotFoundError, LedgerError, SchemaValidationError } from "./types.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import type { DirectOwnedMutation } from "./store/directOwnedMutation.js";
+import { cohortValueDigestV1 } from "./workCohort.js";
+import { readAuthorizedCohortOperatorActionV1, type AuthorizedCohortOperatorActionV1 } from "./implementationEvidence.js";
+import type { DirectOwnedWriteTx } from "./store/directOwnedMutation.js";
 
 export { operatorActionRevision } from "./store/operatorActionLifecycle.js";
 
@@ -125,6 +128,63 @@ export function isAuthorizedOperatorActionSupersessionPatch(patch: object): bool
 /** Internal authority for canonical operatorActions creates/updates. */
 export function isAuthorizedOperatorActionMutation(mutation: object): boolean {
   return authorizedActionMutations.has(mutation);
+}
+
+export function assertOperatorActionSubject(fields: Readonly<Record<string, unknown>>): void {
+  if (fields["cohortBatchDigest"] === undefined) {
+    if (typeof fields["taskRef"] !== "string" || !/^tasks:T[0-9]+$/u.test(fields["taskRef"]) ||
+        typeof fields["goalRef"] !== "string" || !/^goals:G[0-9]+$/u.test(fields["goalRef"]) ||
+        fields["cohortMemberRefs"] !== undefined || fields["cohortGoalRefs"] !== undefined) throw new SchemaValidationError("operator action requires one exact task/goal subject");
+    return;
+  }
+  const members = fields["cohortMemberRefs"];
+  const goals = fields["cohortGoalRefs"];
+  if (typeof fields["cohortBatchDigest"] !== "string" || !/^[0-9a-f]{64}$/u.test(fields["cohortBatchDigest"]) ||
+      fields["taskRef"] !== undefined || fields["goalRef"] !== undefined ||
+      !Array.isArray(members) || members.length === 0 || new Set(members).size !== members.length || members.some((ref) => typeof ref !== "string" || !/^tasks:T[0-9]+$/u.test(ref)) ||
+      !Array.isArray(goals) || goals.length === 0 || new Set(goals).size !== goals.length || goals.some((ref) => typeof ref !== "string" || !/^goals:G[0-9]+$/u.test(ref))) {
+    throw new SchemaValidationError("operator action requires one complete cohort subject without a task/goal anchor");
+  }
+}
+
+export async function materializeCohortOperatorAction(store: LedgerStore,
+  authority: AuthorizedCohortOperatorActionV1): Promise<MaterializedOperatorAction> {
+  const batch = readAuthorizedCohortOperatorActionV1(authority);
+  if (batch.deploymentPlan === null) throw new Error("non-deployment cohort cannot materialize an operator action");
+  const expectedOutputIdentity = cohortValueDigestV1(batch.deploymentPlan.packagedBuildIdentity);
+  const expectedEvidence = batch.deploymentPlan.members.map((probe) => JSON.stringify(probe));
+  const atomic = store as LedgerStore & { runAtomicOwnedMutation<T>(mutate: (tx: DirectOwnedWriteTx) => T, context: DirectOwnedMutation): Promise<T> };
+  return await atomic.runAtomicOwnedMutation((tx) => {
+    const prior = tx.findCohortOperatorAction(batch.batchDigest);
+    if (prior !== undefined) return { state: "existing", ...prior };
+    const memberRefs = batch.members.map(({ taskRef }) => taskRef);
+    const goalRefs = [...new Set(batch.envelope.memberAuthorities.map(({ goalRef }) => goalRef))];
+    const init = { status: "pending", fields: { actionKey: "deploy-cohort", summary: `Deploy cohort ${batch.envelope.definition.cohortId}`,
+      cohortBatchDigest: batch.batchDigest, cohortMemberRefs: memberRefs, cohortGoalRefs: goalRefs,
+      expectedOutputIdentity, expectedEvidence, revision: "1", ledgerRefs: [...memberRefs, ...goalRefs] },
+      author: batch.author, session: batch.session };
+    authorizedActionMutations.add(init);
+    const action = tx.createItemOwnerless(OPERATOR_ACTIONS_LEDGER, "M-AMBIENT", init);
+    const handoff = tx.createItemOwnerless(HANDOFFS_LEDGER, "M-AMBIENT", { status: "user-action-required", fields: {
+      summary: `Deploy sealed cohort ${batch.acceptance.sealDigest}`, flow: "implement",
+      ledgerRefs: [...memberRefs, ...goalRefs, `${OPERATOR_ACTIONS_LEDGER}:${action.id}`],
+      handoffReasons: [`Deploy ${JSON.stringify(batch.deploymentPlan!.packagedBuildIdentity)} and acknowledge ${action.id}`],
+      tags: ["cohort-deployment", batch.batchDigest],
+    }, author: batch.author, session: batch.session });
+    return { state: "created", action, handoff };
+  }, { direct: { kind: "materialize-cohort-operator", batch } });
+}
+
+export function findCohortOperatorActionInItems(actions: readonly Item[], handoffs: readonly Item[], batchDigest: string):
+  { readonly action: Item; readonly handoff: Item } | undefined {
+  const matches = actions.filter((item) => item.fields["cohortBatchDigest"] === batchDigest);
+  if (matches.length === 0) return undefined;
+  if (matches.length !== 1) throw new LedgerError("cohort deployment has ambiguous operator actions");
+  const action = matches[0]!;
+  const linked = handoffs.filter((item) => Array.isArray(item.fields["ledgerRefs"]) &&
+    item.fields["ledgerRefs"].includes(`${OPERATOR_ACTIONS_LEDGER}:${action.id}`));
+  if (linked.length !== 1) throw new LedgerError("cohort deployment action lacks one exact handoff");
+  return { action: structuredClone(action), handoff: structuredClone(linked[0]!) };
 }
 
 export function parseOperatorActionEnvelope(description: string): OperatorActionDirective | null {

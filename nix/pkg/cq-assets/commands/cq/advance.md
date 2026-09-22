@@ -64,13 +64,43 @@ the cycle; record third-party package faults on the `upstream` ledger and run
 narrative needed by the selected action. Never reimplement readiness by scanning
 entire ledgers or parsing a child command's report.
 
+## Always-on cohort admission
+
+Ordinary investigation and implementation use **mandatory safe fusion**. There
+is no fusion setting. Before selecting work, read `ledger::get_cohort_status()`
+and its authoritative `readyBoundaries`; use a bounded ready observation of at
+most 256 members from one admitted phase/authority boundary. Preserve explicit
+total and unexamined counts: an oversized boundary is not permission to silently
+partition correlated work into singletons. Do not scan historical ledgers to
+estimate readiness or include unrelated goals merely because they share a file.
+
+Each selected set must be phase-homogeneous and share one complete common atom:
+causal/repository witness, focused acceptance provenance, selected regression,
+canonical gate, reviewer class, deployment class, finalization class, and split
+conditions. Pairwise compatibility is not transitive; correlated labels alone
+do not prove a common atom. Novel work is eligible on the same evidence basis.
+The child flow calls `ledger::cohort_advance` with its explicit frozen proposal;
+the server re-derives admission from the current primary workset and Git and
+records either a fused definition or an explicit singleton with its reason.
+Missing evidence is not permission to invent compatibility or bypass admission.
+
+Retain definitions, pending attempts, candidate seals, and evidence subjects
+across rounds. Resume only through current execution-epoch authority; retained
+metadata and earlier capabilities do not authorize effects. Reuse exact green
+evidence for the unchanged sealed candidate, never by patch similarity. Status
+and `cq ledger cohort status --json` expose retained metadata and actual counters;
+remote metadata visibility does not create a local executor.
+
 ## Cycle
 
 Repeat the following order. Re-read predicates after each numbered stage.
 
-1. **Investigate.** For every id currently returned by `pInvestigate.items`,
-   run `CQ::investigate/advance <defect-id>` INLINE. Continue past one parked
-   defect; another defect may remain actionable.
+1. **Investigate.** For each bounded ready investigation boundary, run
+   `CQ::investigate/advance <defect-id ...>` INLINE with its ordered candidate
+   members. The child owns phase-homogeneous cohort admission and per-member
+   adjudication. Continue past a parked cohort; independent admitted work may
+   remain actionable. Never split the input into eager per-defect dispatches
+   before the common-atom decision.
 
 2. **Seed fixes.** For `pSeed.items`, fetch the full root-caused defects and
    separate guarded bootstrap-repair blockers from ordinary unowned defects.
@@ -112,7 +142,7 @@ Repeat the following order. Re-read predicates after each numbered stage.
 
 5. **Implement.** If `pImplement.value` or `pOperatorAction.value`, run
    `CQ::implement/advance` INLINE once. It owns worker dispatch/review/merge for
-   ordinary tasks and the parent-only operator-action lifecycle for
+   admitted implementation cohorts and the parent-only operator-action lifecycle for
    `pOperatorAction.items`; an operator action never dispatches a worker.
 
 6. **Re-check investigation.** Re-read predicates and run newly actionable
@@ -151,15 +181,19 @@ they explain inactive work.
 
 After quiescence:
 
-1. For each active non-goal milestone whose referenced items are all terminal,
-   mark it `done` and archive it. Never auto-close goals.
+1. For each touched, admitted non-goal milestone, require its complete inventory
+   to be terminal and eligible before an exact archive. Reuse the cohort's
+   atomic sweep result; never follow it with a broad historical/completed-item
+   sweep. Preserve unrelated active items and external owners. Never auto-close goals.
 2. Inspect implementation worktrees. Remove only a task worktree when
    `decideWorktreeSweep` returns `remove`: the tip is an ancestor of the
    integration base, `git cherry <base> <tip>` reports every commit as
    patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the
    associated task is `done`/`abandoned`. Preserve any worktree carrying novel
    commits (`git cherry` `+` lines), report it, then prune stale worktree
-   metadata. Never infer safety from a branch name alone.
+   metadata. Never infer safety from a branch name alone. A cohort worktree
+   requires its whole member set's released completion and an installed guarded
+   cohort-release interface; never substitute a first-task release or raw Git.
 3. Make no git commit or push for ledger mutations; the configured ledger
    backend owns persistence.
 
@@ -182,5 +216,12 @@ Then report:
 - required user answers/actions, if any;
 - below-floor, parked, drifted, or preserved-worktree diagnostics;
 - the handoff id.
+
+Include durable cohort definitions/member refs, pending versus sealed candidates,
+current recovery state, exact completion/sweep results, and measured counter
+deltas from `get_cohort_status`. Distinguish executed, reused, rejected, and
+unexamined work; never report task count as validation count or derive invented
+savings. Bootstrap-repair isolation, external-upstream handling, and user-only
+deployment/goal closure authority are unchanged.
 
 Before returning, perform the surface-specific run-guard cleanup stated above.

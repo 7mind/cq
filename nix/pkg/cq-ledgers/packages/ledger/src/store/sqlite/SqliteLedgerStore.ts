@@ -47,6 +47,7 @@
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type { Database } from "bun:sqlite";
+import { assertCohortCompletionPrimaryFenceV1 } from "../directOwnedMutation.js";
 import { randomUUID } from "node:crypto";
 import type {
   ArchivePointer,
@@ -238,6 +239,8 @@ import { closedGraphIsTargetAdmitted } from "../../worksetAccess.js";
 import { createSqliteGenericMutationDataSource } from "./genericMutationDataSource.js";
 import { createSqliteLifecycleRowRepository } from "./lifecycleRowRepository.js";
 import { loadPlanLifecycleRowPlan, type PlanLifecycleRowRequest } from "../planLifecycleRowPlan.js";
+import type { WorkCohortStore } from "../../workCohortStore.js";
+import { createSqliteWorkCohortStore } from "./sqliteWorkCohortStore.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -408,6 +411,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private initialised = false;
   /** T1957 project workset capability; created in {@link init}, cleared on dispose. */
   private worksetHandle: SqliteWorksetStore | null = null;
+  private workCohortHandle: WorkCohortStore | null = null;
   /**
    * Worker-owned derived projection. Commands are ordered after commit;
    * MiniSearch indexing and whole-index reclamation never run on this thread.
@@ -539,6 +543,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
             db.transaction(() => {
               const removed = db.query("SELECT name FROM ledgers").all() as Array<{ name: string }>;
               db.exec("DELETE FROM workset_admissions");
+              db.exec("DELETE FROM work_cohort_state");
               db.exec("DELETE FROM implementation_completion_bindings");
               db.exec("DELETE FROM plan_operations");
               db.exec("DELETE FROM plan_claims");
@@ -596,6 +601,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       isTargetAdmitted: closedGraphIsTargetAdmitted(this),
       ...this.worksetOptions,
     });
+    this.workCohortHandle = await createSqliteWorkCohortStore(db);
 
     this.searchProjection = this.searchProjectionFactory();
     this.projectionRecovery = new SearchProjectionRecovery(
@@ -625,6 +631,18 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       throw new LedgerError("SqliteLedgerStore workset capability is not mounted");
     }
     return this.worksetHandle;
+  }
+
+  workCohortStore(): WorkCohortStore {
+    this.assertInit();
+    if (this.workCohortHandle === null) {
+      throw new LedgerError("SqliteLedgerStore work cohort capability is not mounted");
+    }
+    return this.workCohortHandle;
+  }
+
+  async exportWorkCohortState(): Promise<string> {
+    return await this.workCohortStore().exportPortableState();
   }
 
   replaceWorksetRoots(roots: readonly string[]) {
@@ -944,6 +962,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.projectionListeners.clear();
     this.pendingNotifications.clear();
     this.worksetHandle = null;
+    this.workCohortHandle = null;
     if (this.handle !== null) {
       this.handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       this.handle.close();
@@ -1892,13 +1911,19 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         const initialState = admitted === null ? null : this.loadOwnedAdmissionState(admitted, measurement);
         const rows = createSqliteLifecycleRowRepository(this.db(), measurement ?? null);
         const directOperation = context !== null && "direct" in context ? context.direct : null;
+        if (directOperation !== null && directOperation.kind === "cohort-completion" && directOperation.fence !== null) {
+          const current = this.db().query("SELECT revision, execution_epoch FROM work_cohort_state WHERE id = 1")
+            .get() as { revision: number; execution_epoch: string } | null;
+          if (current === null) throw new LedgerError("cohort primary completion state is absent");
+          assertCohortCompletionPrimaryFenceV1(directOperation.fence, { revision: current.revision, executionEpoch: current.execution_epoch });
+        }
         const owned = createKeyedOwnedWriteTransaction(
           rows, initialState, directOperation, this.now,
         );
         const result = mutate(owned.tx);
         const delta = this.persistGenericMutationState({
-          ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: new Map(), beforeArchives: new Map(),
-        }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: new Set() }, measurement);
+          ledgers: owned.ledgers, beforeLedgers: owned.beforeLedgers, archives: owned.archives, beforeArchives: owned.beforeArchives,
+        }, { dirtyLedgers: owned.dirtyLedgers, dirtyArchives: owned.dirtyArchives }, measurement);
         rows.persistImplementationCompletionBindings(owned.implementationCompletionBindingChanges);
         if (admitted !== null) this.assertOwnedMutationDelta(admitted, owned.beforeLedgers, delta);
         const changes = this.coherenceChangesForDelta(delta);

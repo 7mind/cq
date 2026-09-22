@@ -14,6 +14,7 @@ import {
   type WorksetEffectBrokerOptions,
 } from "./worksetEffectBroker.js";
 import type { WorksetEffectAdmissionProvider } from "./worksetEffectProtocol.js";
+import { assertCohortEffectEnvelopeV1, cohortValueDigestV1, cohortEffectTargetRefV1, type CohortEffectEnvelopeV1 } from "./cohortEffectEnvelope.js";
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const ZERO_COMMIT = "0".repeat(40);
@@ -42,6 +43,7 @@ const STRIPPED_WORKSET_CREDENTIALS = [
 interface WorksetGitEffectBase {
   readonly targetRef: string;
   readonly repositoryRoot: string;
+  readonly cohort?: CohortEffectEnvelopeV1;
 }
 
 export interface WorktreeCreateEffectBinding extends WorksetGitEffectBase {
@@ -60,10 +62,23 @@ export interface WorktreeRemoveEffectBinding extends WorksetGitEffectBase {
 
 export interface BranchCreateEffectBinding extends WorksetGitEffectBase {
   readonly kind: "branch-create";
+  readonly mode?: never;
   readonly branch?: string;
   readonly reference?: string;
   readonly expectedReferenceCommit?: string;
   readonly commit: string;
+}
+
+export interface CohortBranchRenameEffectBinding extends WorksetGitEffectBase {
+  readonly kind: "branch-create";
+  readonly mode: "cohort-rebase-successor";
+  readonly cohort: CohortEffectEnvelopeV1;
+  readonly successor: CohortEffectEnvelopeV1;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly successorBranch: string;
+  readonly expectedCommit: string;
+  readonly guardedRebaseBridgeDigest: string;
 }
 
 export interface BranchRemoveEffectBinding extends WorksetGitEffectBase {
@@ -97,6 +112,7 @@ export type WorksetGitEffectBinding =
   | WorktreeCreateEffectBinding
   | WorktreeRemoveEffectBinding
   | BranchCreateEffectBinding
+  | CohortBranchRenameEffectBinding
   | BranchRemoveEffectBinding
   | RebaseEffectBinding
   | MergeEffectBinding;
@@ -144,10 +160,12 @@ function assertBranch(branch: string): void {
 }
 
 function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBinding {
-  if (!TASK_REF.test(binding.targetRef)) {
-    throw new Error("@cq/process-control: trusted Git effect target must be one canonical task ref");
+  if (binding.cohort === undefined ? !TASK_REF.test(binding.targetRef) :
+      binding.targetRef !== cohortEffectTargetRefV1(binding.cohort)) {
+    throw new Error("@cq/process-control: trusted Git effect target must bind one task or the complete cohort envelope");
   }
-  const taskId = binding.targetRef.slice("tasks:".length);
+  const subjectBranch = binding.cohort === undefined ? `implement/${binding.targetRef.slice("tasks:".length)}` :
+    `implement/cohort-${binding.cohort.intent.intentDigest}`;
   if (!isAbsolute(binding.repositoryRoot)) {
     throw new Error("@cq/process-control: trusted Git effect repository root must be absolute");
   }
@@ -157,11 +175,21 @@ function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBind
   }
   if ("branch" in binding && binding.branch !== undefined) {
     assertBranch(binding.branch);
-    if (binding.branch.startsWith("implement/") && binding.branch !== `implement/${taskId}`) {
+    if ((binding.cohort !== undefined || binding.branch.startsWith("implement/")) && binding.branch !== subjectBranch) {
       throw new Error("@cq/process-control: trusted Git effect branch does not match its task target");
     }
   }
-  if (binding.kind === "branch-create") {
+  if (binding.kind === "branch-create" && binding.mode === "cohort-rebase-successor") {
+    assertCohortEffectEnvelopeV1(binding.successor);
+    if (binding.cohort.state !== "sealed" || binding.successor.state !== "pre-seal" ||
+        binding.cohort.intent.intentDigest === binding.successor.intent.intentDigest ||
+        cohortValueDigestV1(binding.cohort.definition) !== cohortValueDigestV1(binding.successor.definition) ||
+        cohortValueDigestV1(binding.cohort.memberAuthorities) !== cohortValueDigestV1(binding.successor.memberAuthorities) ||
+        binding.successorBranch !== `implement/cohort-${binding.successor.intent.intentDigest}` ||
+        !/^[0-9a-f]{64}$/u.test(binding.guardedRebaseBridgeDigest)) {
+      throw new Error("@cq/process-control: cohort branch rename requires an exact distinct guarded successor");
+    }
+  } else if (binding.kind === "branch-create") {
     if ((binding.branch === undefined) === (binding.reference === undefined)) {
       throw new Error("@cq/process-control: trusted branch creation must name exactly one branch or recovery ref");
     }
@@ -174,7 +202,7 @@ function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBind
     }
     if (
       binding.reference !== undefined &&
-      binding.reference !== `refs/cq-managed-recovery/implement/${taskId}`
+      binding.reference !== `refs/cq-managed-recovery/${subjectBranch}`
     ) {
       throw new Error("@cq/process-control: trusted Git effect recovery ref is invalid");
     }
@@ -186,7 +214,7 @@ function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBind
     "branchCommit" in binding ? binding.branchCommit : undefined,
     "headCommit" in binding ? binding.headCommit : undefined,
     "expectedCommit" in binding ? binding.expectedCommit : undefined,
-    binding.kind === "branch-create" ? binding.expectedReferenceCommit : undefined,
+    binding.kind === "branch-create" && binding.mode === undefined ? binding.expectedReferenceCommit : undefined,
   ]) {
     if (commit !== undefined && !FULL_COMMIT.test(commit)) {
       throw new Error("@cq/process-control: trusted Git effect coordinate must be one full SHA");
@@ -238,6 +266,9 @@ function bindingIdentity(binding: WorksetGitEffectBinding): readonly string[] {
         binding.headCommit,
       ];
     case "branch-create":
+      if (binding.mode === "cohort-rebase-successor") return [binding.kind, binding.mode, binding.targetRef,
+        binding.repositoryRoot, binding.worktreePath, binding.branch, binding.successorBranch, binding.expectedCommit,
+        binding.guardedRebaseBridgeDigest, cohortValueDigestV1(binding.successor)];
       return [
         binding.kind,
         binding.targetRef,
@@ -295,6 +326,9 @@ function command(binding: WorksetGitEffectBinding): { readonly cwd: string; read
         argv: ["git", "worktree", "remove", "--force", binding.worktreePath],
       };
     case "branch-create":
+      if (binding.mode === "cohort-rebase-successor") return {
+        cwd: binding.worktreePath, argv: ["git", "branch", "-m", binding.branch, binding.successorBranch],
+      };
       return binding.branch === undefined
         ? {
             cwd: binding.repositoryRoot,

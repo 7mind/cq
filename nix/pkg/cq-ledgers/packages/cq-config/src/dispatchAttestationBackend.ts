@@ -62,6 +62,10 @@
  * REGISTRATION, before a dispatch is ever prepared, rather than half-working.
  */
 
+import { implementationQueueSubjectsMatch } from "./implementationQueueIdentity.js";
+import { assertDispatchGuardedRebaseBridge } from "./guardedRebaseBridge.js";
+import { assertDispatchCohortRebaseTransition, cohortRebaseTransitionMatches, type DispatchCohortRebaseTransition } from "./cohortRebaseTransition.js";
+import type { CohortEffectEnvelopeV1 } from "@cq/process-control";
 import {
   AttestationContractError,
   AttestationNamespaceError,
@@ -1371,7 +1375,12 @@ function isStoredGitReceiptPath(value: unknown): value is string {
   );
 }
 
-function assertStoredInheritedGitReceipts(value: unknown): void {
+function storedGitSubjectValid(record: Readonly<Record<string, unknown>>): boolean {
+  return Object.hasOwn(record, "cohort") ? implementationQueueSubjectsMatch(record, record, false) :
+    typeof record["taskId"] === "string" && /^T[0-9]+$/u.test(record["taskId"]);
+}
+
+function assertStoredInheritedGitReceipts(value: unknown, binding: Readonly<Record<string, unknown>>): void {
   if (!Array.isArray(value) || value.length === 0) {
     throw new AttestationStorageError(
       'stored attestation envelope has malformed "gitEffectBinding"',
@@ -1384,17 +1393,18 @@ function assertStoredInheritedGitReceipts(value: unknown): void {
       );
     }
     const receiptRecord = receipt as Readonly<Record<string, unknown>>;
+    const cohort = Object.hasOwn(receiptRecord, "cohort");
     if (
       Object.keys(receiptRecord).sort().join(",") !==
-        [...STORED_GIT_RECEIPT_FIELDS].sort().join(",") ||
+        [...STORED_GIT_RECEIPT_FIELDS.filter((field) => field !== "taskId"), cohort ? "cohort" : "taskId"].sort().join(",") ||
       receiptRecord["kind"] !== "cq-git-change-receipt" ||
-      receiptRecord["version"] !== 1 ||
+      receiptRecord["version"] !== (cohort ? 2 : 1) ||
       typeof receiptRecord["attestationId"] !== "string" ||
       receiptRecord["attestationId"].length === 0 ||
       !Number.isInteger(receiptRecord["generation"]) ||
       Number(receiptRecord["generation"]) < 1 ||
-      typeof receiptRecord["taskId"] !== "string" ||
-      !/^T[0-9]+$/.test(receiptRecord["taskId"]) ||
+      !storedGitSubjectValid(receiptRecord) ||
+      !implementationQueueSubjectsMatch(receiptRecord, binding, true) ||
       typeof receiptRecord["operationId"] !== "string" ||
       receiptRecord["operationId"].length === 0 ||
       typeof receiptRecord["requestDigest"] !== "string" ||
@@ -1421,44 +1431,9 @@ function assertStoredInheritedGitReceipts(value: unknown): void {
   }
 }
 
-const STORED_GUARDED_REBASE_BRIDGE_FIELDS = [
-  "guardedRebase",
-  "operationId",
-  "requestDigest",
-  "oldResultCommit",
-  "ontoCommit",
-  "rebasedStartCommit",
-  "outcome",
-  "exactTip",
-  "finalizedAt",
-] as const;
-
 function assertStoredGuardedRebaseBridge(value: unknown): void {
-  const malformed = (): AttestationStorageError =>
-    new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding"');
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw malformed();
-  const bridge = value as Readonly<Record<string, unknown>>;
-  if (
-    Object.keys(bridge).sort().join(",") !==
-      [...STORED_GUARDED_REBASE_BRIDGE_FIELDS].sort().join(",") ||
-    typeof bridge["guardedRebase"] !== "string" ||
-    !/^cq-guarded-rebase:v1:[0-9a-f]{64}$/.test(bridge["guardedRebase"]) ||
-    typeof bridge["operationId"] !== "string" ||
-    !/^[A-Za-z0-9_-]{1,128}$/.test(bridge["operationId"]) ||
-    typeof bridge["requestDigest"] !== "string" ||
-    !STORED_SHA256_HEX.test(bridge["requestDigest"]) ||
-    typeof bridge["oldResultCommit"] !== "string" ||
-    !/^[0-9a-f]{40}$/.test(bridge["oldResultCommit"]) ||
-    typeof bridge["ontoCommit"] !== "string" ||
-    !/^[0-9a-f]{40}$/.test(bridge["ontoCommit"]) ||
-    typeof bridge["rebasedStartCommit"] !== "string" ||
-    !/^[0-9a-f]{40}$/.test(bridge["rebasedStartCommit"]) ||
-    (bridge["outcome"] !== "clean" && bridge["outcome"] !== "conflicted") ||
-    typeof bridge["exactTip"] !== "boolean" ||
-    typeof bridge["finalizedAt"] !== "string" ||
-    bridge["finalizedAt"].length === 0
-  ) {
-    throw malformed();
+  try { assertDispatchGuardedRebaseBridge(value); } catch {
+    throw new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding"');
   }
 }
 
@@ -1638,6 +1613,29 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
     }
     const hasGitHash = hasGitChangeHash || hasGitConflictHash;
     const hasGitBinding = Object.hasOwn(record, "gitEffectBinding");
+    if (Object.hasOwn(record, "cohortParentExecutionEpoch")) {
+      const binding = record["gitEffectBinding"];
+      if (typeof record["cohortParentExecutionEpoch"] !== "string" || record["cohortParentExecutionEpoch"].length === 0 ||
+          typeof record["parentGateCapabilityHash"] !== "string" || !STORED_SHA256_HEX.test(record["parentGateCapabilityHash"]) ||
+          binding === null || typeof binding !== "object" || !Object.hasOwn(binding, "cohort")) {
+        throw new AttestationStorageError("stored cohort parent execution grant is malformed or task-bound");
+      }
+    }
+    if (Object.hasOwn(record, "cohortRebaseExecution")) {
+      const grant = record["cohortRebaseExecution"];
+      const binding = record["gitEffectBinding"];
+      const queue = record["implementationQueue"];
+      if (grant === null || typeof grant !== "object" || Array.isArray(grant) ||
+          Object.keys(grant).sort().join(",") !== "executionEpoch,successorIntentDigest,transitionDigest" ||
+          !("executionEpoch" in grant) || typeof grant.executionEpoch !== "string" || grant.executionEpoch.length === 0 ||
+          !("transitionDigest" in grant) || typeof grant.transitionDigest !== "string" || !STORED_SHA256_HEX.test(grant.transitionDigest) ||
+          !("successorIntentDigest" in grant) || typeof grant.successorIntentDigest !== "string" || !STORED_SHA256_HEX.test(grant.successorIntentDigest) ||
+          binding === null || typeof binding !== "object" || !Object.hasOwn(binding, "cohort") ||
+          queue === null || typeof queue !== "object" || !("state" in queue) || queue.state !== "staged-rebase-retired" ||
+          !Object.hasOwn(record, "stagedRebaseSourceBinding")) {
+        throw new AttestationStorageError("stored cohort transfer execution grant is malformed or not retired-source-bound");
+      }
+    }
     if (hasGitHash !== hasGitBinding) {
       throw new AttestationStorageError(
         "stored attestation envelope must carry both Git capability hash and effect binding",
@@ -1662,8 +1660,8 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         );
       }
       const bindingRecord = binding as Readonly<Record<string, unknown>>;
+      const cohort = Object.hasOwn(bindingRecord, "cohort");
       const fields = [
-        "taskId",
         "handleToken",
         "handleFingerprint",
         "repositoryRoot",
@@ -1676,19 +1674,23 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       ] as const;
       const hasInheritedGitReceipts = Object.hasOwn(bindingRecord, "inheritedGitReceipts");
       const hasGuardedRebaseBridge = Object.hasOwn(bindingRecord, "guardedRebaseBridge");
+      const hasCohortRebaseTransition = Object.hasOwn(bindingRecord, "cohortRebaseTransition");
       const hasReceiptChainTransition = Object.hasOwn(bindingRecord, "receiptChainTransition");
       const hasReceiptChainTransitions = Object.hasOwn(bindingRecord, "receiptChainTransitions");
       const expectedFields = hasGitConflictHash
-        ? [...fields, "conflictStateDigest"]
+        ? [...fields, cohort ? "cohort" : "taskId", "conflictStateDigest"]
         : [
             ...fields,
+            cohort ? "cohort" : "taskId",
             ...(hasInheritedGitReceipts ? ["inheritedGitReceipts"] : []),
             ...(hasGuardedRebaseBridge ? ["guardedRebaseBridge"] : []),
+            ...(hasCohortRebaseTransition ? ["cohortRebaseTransition"] : []),
             ...(hasReceiptChainTransition ? ["receiptChainTransition"] : []),
             ...(hasReceiptChainTransitions ? ["receiptChainTransitions"] : []),
           ];
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
+        !storedGitSubjectValid(bindingRecord) ||
         fields.some(
           (field) => typeof bindingRecord[field] !== "string" || bindingRecord[field].length === 0,
         ) ||
@@ -1706,11 +1708,29 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
           'stored attestation envelope has malformed "gitEffectBinding"',
         );
       }
+      if (cohort) {
+        const envelope = bindingRecord["cohort"] as CohortEffectEnvelopeV1;
+        if (bindingRecord["branch"] !== `implement/cohort-${envelope.intent.intentDigest}` ||
+            bindingRecord["ref"] !== `refs/heads/implement/cohort-${envelope.intent.intentDigest}` ||
+            bindingRecord["repositoryId"] !== envelope.definition.repository.repositoryId) {
+          throw new AttestationStorageError("stored cohort Git binding has substituted repository or branch coordinates");
+        }
+      }
       if (hasInheritedGitReceipts) {
-        assertStoredInheritedGitReceipts(bindingRecord["inheritedGitReceipts"]);
+        assertStoredInheritedGitReceipts(bindingRecord["inheritedGitReceipts"], bindingRecord);
       }
       if (hasGuardedRebaseBridge) {
         assertStoredGuardedRebaseBridge(bindingRecord["guardedRebaseBridge"]);
+        const bridge = bindingRecord["guardedRebaseBridge"] as Record<string, unknown>;
+        if ((bridge["version"] === 2) !== cohort) throw new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding"');
+      }
+      if (hasCohortRebaseTransition) {
+        const proof = bindingRecord["cohortRebaseTransition"] as DispatchCohortRebaseTransition;
+        try { assertDispatchCohortRebaseTransition(proof); }
+        catch { throw new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding" cohort transition'); }
+        if (!cohort || !cohortRebaseTransitionMatches(proof.sourceBinding, bindingRecord as unknown as DispatchGitEffectBinding, proof.source)) {
+          throw new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding" cohort transition');
+        }
       }
       if (hasReceiptChainTransition) {
         assertStoredReceiptChainTransition(bindingRecord["receiptChainTransition"]);
@@ -1806,6 +1826,44 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       );
     }
   }
+  if (Object.hasOwn(record, "gateRejectedCorrectionClaim")) {
+    const claim = record["gateRejectedCorrectionClaim"];
+    if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "gateRejectedCorrectionClaim"',
+      );
+    }
+    const claimRecord = claim as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(claimRecord).sort().join(",") !==
+        "fenceRef,gitReceiptLineageDigest,guardedRebaseBridgeDigest,resultCommit,source" ||
+      typeof claimRecord["fenceRef"] !== "string" ||
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/.test(claimRecord["fenceRef"]) ||
+      typeof claimRecord["resultCommit"] !== "string" ||
+      !STORED_GIT_OBJECT_ID.test(claimRecord["resultCommit"]) ||
+      typeof claimRecord["gitReceiptLineageDigest"] !== "string" ||
+      !STORED_SHA256_HEX.test(claimRecord["gitReceiptLineageDigest"]) ||
+      (claimRecord["guardedRebaseBridgeDigest"] !== null &&
+        (typeof claimRecord["guardedRebaseBridgeDigest"] !== "string" ||
+          !STORED_SHA256_HEX.test(claimRecord["guardedRebaseBridgeDigest"])))
+    ) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "gateRejectedCorrectionClaim"',
+      );
+    }
+    try {
+      assertDispatchHandle(
+        claimRecord["source"] as never,
+        "storedRow.gateRejectedCorrectionClaim.source",
+      );
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "gateRejectedCorrectionClaim": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   if (Object.hasOwn(record, "dispatchJournalRecoveryClaim")) {
     const claim = record["dispatchJournalRecoveryClaim"];
     if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
@@ -1814,11 +1872,10 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       );
     }
     const claimRecord = claim as Readonly<Record<string, unknown>>;
+    const cohortClaim = Object.hasOwn(claimRecord, "cohort");
     const expectedKeys = [
       "fenceRef",
-      "finalizedManifestDigest",
       "gitReceiptsDigest",
-      "goalRef",
       "kind",
       "lineageMaximumGeneration",
       "liveTip",
@@ -1828,8 +1885,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       "selectedSource",
       "source",
       "sourceTerminalDigest",
-      "taskDigest",
-      "taskId",
+      ...(cohortClaim ? ["cohort"] : ["taskId", "goalRef", "taskDigest", "finalizedManifestDigest"]),
       "version",
     ].sort().join(",");
     const source = claimRecord["source"];
@@ -1850,7 +1906,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
     if (
       Object.keys(claimRecord).sort().join(",") !== expectedKeys ||
       claimRecord["kind"] !== "cq-dispatch-journal-recovery-claim" ||
-      claimRecord["version"] !== 1 ||
+      claimRecord["version"] !== (cohortClaim ? 2 : 1) ||
       typeof claimRecord["fenceRef"] !== "string" ||
       !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(claimRecord["fenceRef"]) ||
       typeof claimRecord["sealReference"] !== "string" ||
@@ -1858,18 +1914,15 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       typeof claimRecord["lineageMaximumGeneration"] !== "number" ||
       !Number.isInteger(claimRecord["lineageMaximumGeneration"]) ||
       claimRecord["lineageMaximumGeneration"] < 1 ||
-      typeof claimRecord["taskId"] !== "string" ||
-      !/^T[0-9]+$/u.test(claimRecord["taskId"]) ||
-      typeof claimRecord["goalRef"] !== "string" ||
-      !/^goals:[A-Za-z0-9-]+$/u.test(claimRecord["goalRef"]) ||
+      !storedGitSubjectValid(claimRecord) ||
+      (!cohortClaim && (typeof claimRecord["goalRef"] !== "string" || !/^goals:[A-Za-z0-9-]+$/u.test(claimRecord["goalRef"]))) ||
       typeof claimRecord["liveTip"] !== "string" ||
       !/^[0-9a-f]{40}$/u.test(claimRecord["liveTip"]) ||
       !sourceIsValid ||
       [
         "sealDigest",
         "sourceTerminalDigest",
-        "taskDigest",
-        "finalizedManifestDigest",
+        ...(cohortClaim ? [] : ["taskDigest", "finalizedManifestDigest"]),
         "managedFingerprint",
         "gitReceiptsDigest",
       ].some(

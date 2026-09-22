@@ -78,7 +78,7 @@ describe.skipIf(!PG_URL)("postgres schema (T572)", () => {
       `;
       expect(metaRows).toHaveLength(1);
       expect(metaRows[0]?.value).toBe(String(PG_SCHEMA_VERSION));
-      expect(PG_SCHEMA_VERSION).toBe(3);
+      expect(PG_SCHEMA_VERSION).toBe(5);
     } finally {
       await pool.close();
     }

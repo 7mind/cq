@@ -35,6 +35,18 @@ check` or another repository-wide gate: the trusted parent owns the single
 final full-gate invocation after the resolver exits. Never push, mutate the
 ledger, operate on another checkout, or spawn a child.
 
+**Full-cohort arm (resolver v7).** When input carries `cohort`, preserve the
+base behavior and every ordered member's intent, not a representative task.
+The complete pre-seal or sealed envelope is authoritative; do not replace it,
+omit members, or use a task/goal anchor. Retain the parent's exact
+`conflictState` digest and every version-2 full-cohort continuation receipt.
+Report `cohort` unchanged and one `memberObservations: [{ memberRef, observation }]`
+row per member in the supplied order, describing how that member's intent was
+preserved or why it could not be preserved. If the intents are incompatible,
+return `fail`; a common correction cannot silently stand in for any member.
+The cohort remains focused-only here, with no child full gate. The parent owns
+the final queue-front gate and one whole-cohort review after reconciliation.
+
 If the intents require task redesign or focused validation cannot pass through conflict
 resolution alone, leave the worktree for inspection and return `fail` with a
 precise reason. A failure still reports the bound branch and absolute worktree
@@ -56,6 +68,10 @@ after a durable step the last receipt must describe the live next conflict.
   "blockedReason": "<fail only>"
 }
 ```
+
+For the cohort arm, replace the example's `taskId` with the unchanged `cohort`
+and complete ordered `memberObservations`; use the bound cohort branch and
+retain full version-2 `conflictReceipts` without translating them to task receipts.
 
 Store this object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the

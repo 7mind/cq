@@ -89,4 +89,6 @@ bun test \
   packages/cq-config/test/attestation-queue-upgrade.test.ts \
   packages/cq-config/test/attestationStore-postgres.test.ts \
   packages/ledger-mcp/test/implementation-candidate-coordinator-race-postgres.test.ts \
-  packages/ledger/test/attestationConstruction-postgresHub.test.ts
+  packages/ledger/test/attestationConstruction-postgresHub.test.ts \
+  packages/ledger/test/work-cohort-postgres.test.ts \
+  packages/ledger/test/work-cohort-completion-postgres.test.ts

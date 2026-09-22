@@ -474,6 +474,7 @@ describe("canonical implementation queue capstone [Behavioral-Active Blackbox-Gr
           },
         ],
       });
+      if (receipt.version !== 1) throw new Error("task fixture received a cohort receipt");
       expect(
         await seed.storeResult({
           resultCapability: prepared.prepared.resultCapability,

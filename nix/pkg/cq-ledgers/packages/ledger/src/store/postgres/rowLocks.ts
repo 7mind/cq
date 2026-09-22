@@ -3,6 +3,7 @@ import { decodePostgresPlanScope, encodePostgresPlanScope } from "../planLifecyc
 import { PostgresOperationQueries, type PostgresQueryParameter, type PostgresRowLockMode } from "./operationAccess.js";
 
 export type PostgresLockTarget =
+  | { readonly table: "work_cohort_state" }
   | { readonly table: "workset_roots" }
   | { readonly table: "workset_admissions"; readonly id: string }
   | { readonly table: "ledgers"; readonly ledgerId: string }
@@ -27,6 +28,7 @@ interface LockCoordinates {
 
 function coordinates(target: PostgresLockTarget): LockCoordinates {
   switch (target.table) {
+    case "work_cohort_state": return { rank: -2, key: "cohort", columns: [], values: [] };
     case "workset_roots": return { rank: -1, key: "roots", columns: [], values: [] };
     case "workset_admissions": return { rank: 0, key: `lease:${target.id}`, columns: ["admission_id"], values: [target.id] };
     case "items": return {

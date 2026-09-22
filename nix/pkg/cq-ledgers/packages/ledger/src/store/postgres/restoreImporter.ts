@@ -67,6 +67,8 @@ import {
   type WorksetRootsEpoch,
 } from "../../worksetEffectAdmission.js";
 import { createPostgresWorksetStore } from "./worksetStore.js";
+import { emptyWorkCohortPortableStateV1, parseWorkCohortPortableStateV1 } from "../../workCohortStore.js";
+import { replacePostgresWorkCohortPortableState } from "./postgresWorkCohortStore.js";
 
 /**
  * True iff `pool`'s tenant `projectKey` currently holds nothing but the
@@ -83,6 +85,17 @@ import { createPostgresWorksetStore } from "./worksetStore.js";
  * empty too (zero `ledgers` rows).
  */
 export async function isPostgresTenantEmpty(pool: SQL, projectKey: string): Promise<boolean> {
+  const cohortRows = await pool<Array<{ state_json: string }>>`
+    SELECT state_json FROM work_cohort_state WHERE project_key = ${projectKey}
+  `;
+  for (const row of cohortRows) {
+    if (
+      JSON.stringify(parseWorkCohortPortableStateV1(row.state_json)) !==
+      JSON.stringify(emptyWorkCohortPortableStateV1())
+    ) {
+      return false;
+    }
+  }
   const worksetRows = await pool<Array<{ roots_json: string; epoch: number }>>`
     SELECT roots_json, epoch FROM workset_roots WHERE project_key = ${projectKey}
   `;
@@ -245,6 +258,7 @@ export async function restoreDumpToPostgres(opts: {
               AND form NOT IN ('exclusive-set', 'exclusive-administrative')
           `;
           await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
+          await tx`DELETE FROM work_cohort_state WHERE project_key = ${pk}`;
 
           await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
           await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
@@ -329,6 +343,11 @@ export async function restoreDumpToPostgres(opts: {
             INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
             VALUES (${pk}, ${JSON.stringify(restoredRoots.roots.slice())}, ${restoredRoots.epoch}, ${0})
           `;
+          await replacePostgresWorkCohortPortableState(
+            tx,
+            pk,
+            parsed.workCohort ?? emptyWorkCohortPortableStateV1(),
+          );
           await recordPostgresCoherence(new PostgresOperationQueries(tx, pk, "restore", null, () => performance.now(), null), randomUUID(),
             [{ ledger: MILESTONES_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
         });

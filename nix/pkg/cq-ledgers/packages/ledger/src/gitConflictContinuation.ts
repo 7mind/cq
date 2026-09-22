@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
-import type { RebaseContinueEffectBinding } from "@cq/process-control";
-import type { GitPathState, GitRegularMode, DispatchBoundGitAuthorization } from "./gitChangeBroker.js";
+import { cohortEffectTargetRefV1, type RebaseContinueEffectBinding } from "@cq/process-control";
+import { assertGitBrokerBindingLive, assertGitBrokerReceiptSubject, gitBrokerSubjectsMatch, gitBrokerReceiptSubject,
+  assertGitBrokerJournalSubject, gitBrokerJournalSubject,
+  type GitBrokerManagedBinding, type GitBrokerSubject, type GitBrokerReceiptSubject,
+  type GitPathState, type GitRegularMode, type DispatchBoundGitAuthorization } from "./gitChangeBroker.js";
 import {
-  assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
   type ManagedWorktreeDeps,
-  type ManagedWorktreeDispatchBinding,
+  type ManagedCohortWorktreeAuthority,
 } from "./managedWorktree.js";
 
 const FULL_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -62,12 +64,10 @@ export type GitConflictContinuationOutcome =
   | { readonly kind: "terminal"; readonly tip: string }
   | { readonly kind: "conflict"; readonly tip: string; readonly state: GitRebaseConflictState };
 
-export interface GitConflictContinuationReceipt {
+export type GitConflictContinuationReceipt = GitBrokerReceiptSubject & {
   readonly kind: "cq-git-conflict-continuation-receipt";
-  readonly version: 1;
   readonly attestationId: string;
   readonly generation: number;
-  readonly taskId: string;
   readonly operationId: string;
   readonly requestDigest: string;
   readonly oldHead: string;
@@ -78,8 +78,7 @@ export interface GitConflictContinuationReceipt {
   readonly continuedAt: string;
 }
 
-export interface GitConflictContinuationResultEvidence {
-  readonly taskId: string;
+export type GitConflictContinuationResultEvidence = GitBrokerSubject & {
   readonly resultCommit: string | null;
   readonly branch: string;
   readonly actualWorktreePath: string;
@@ -90,6 +89,7 @@ export interface GitConflictContinuationResultEvidence {
 export interface GitConflictContinuationDeps
   extends Pick<ManagedWorktreeDeps, "stateDir" | "lockfile"> {
   readonly authorize: (authorization: DispatchBoundGitAuthorization) => void | Promise<void>;
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
   readonly now?: () => Date;
   readonly runRebaseContinue?: (
     expected: RebaseContinueEffectBinding,
@@ -98,7 +98,9 @@ export interface GitConflictContinuationDeps
   ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
 }
 
-export type GitConflictContinuationEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir">;
+export type GitConflictContinuationEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir"> & {
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
+};
 
 type JournalState =
   | "intent"
@@ -121,6 +123,7 @@ interface ConflictJournal {
   readonly version: 1;
   readonly requestDigest: string;
   readonly createdAt: string;
+  readonly cohortEnvelopeDigest?: string;
   readonly state: JournalState;
   readonly privateIndex?: string;
   readonly privateIndexDigest?: string;
@@ -323,7 +326,7 @@ async function assertAncestry(
 }
 
 async function observeConflictUnchecked(
-  authorization: ManagedWorktreeDispatchBinding,
+  authorization: GitBrokerManagedBinding,
 ): Promise<GitRebaseConflictState> {
   const gitDir = await gitDirectory(authorization.worktreePath);
   const sequencerDir = join(gitDir, "rebase-merge");
@@ -416,7 +419,7 @@ async function observeConflictUnchecked(
 /** Trusted parent observation of every coordinate later bound to one continuation request. */
 export async function observeManagedRebaseConflict(
   authorization: DispatchBoundGitAuthorization,
-  deps: Pick<ManagedWorktreeDeps, "stateDir">,
+  deps: GitConflictContinuationEvidenceDeps,
 ): Promise<GitRebaseConflictState> {
   if (authorization.roleId !== "implement-conflict-resolver") {
     throw new Error("rebase conflict observation is reserved for implement-conflict-resolver");
@@ -426,10 +429,10 @@ export async function observeManagedRebaseConflict(
 
 /** Trusted-manager observation used to bind a resolver dispatch before capability minting. */
 export async function observeManagedWorktreeConflictState(
-  binding: ManagedWorktreeDispatchBinding,
-  deps: Pick<ManagedWorktreeDeps, "stateDir">,
+  binding: GitBrokerManagedBinding,
+  deps: GitConflictContinuationEvidenceDeps,
 ): Promise<GitRebaseConflictState> {
-  await assertManagedWorktreeConflictDispatchBindingLive(binding, deps);
+  await assertGitBrokerBindingLive(binding, deps, true);
   return await observeConflictUnchecked(binding);
 }
 
@@ -927,14 +930,16 @@ async function runAuthorizedContinue(
   };
   const expected: RebaseContinueEffectBinding = {
     kind: "rebase",
-    targetRef: `tasks:${request.authorization.taskId}`,
+    ...(request.authorization.cohort === undefined ? { targetRef: `tasks:${request.authorization.taskId}` } : {
+      targetRef: cohortEffectTargetRefV1(request.authorization.cohort), cohort: request.authorization.cohort,
+    }),
     repositoryRoot: request.authorization.repositoryRoot,
     worktreePath: request.authorization.worktreePath,
     continueAtHead: request.expectedState.currentHead,
   };
   const resolveBinding = async (): Promise<RebaseContinueEffectBinding> => {
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeConflictDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     if (
       canonical(await observeConflictUnchecked(request.authorization)) !==
       canonical(request.expectedState)
@@ -1006,7 +1011,7 @@ async function currentOutcome(
 }
 
 async function transactionCoordinatesChanged(
-  authorization: ManagedWorktreeDispatchBinding,
+  authorization: GitBrokerManagedBinding,
   expected: GitRebaseConflictState,
 ): Promise<boolean> {
   const gitDir = await gitDirectory(authorization.worktreePath);
@@ -1058,12 +1063,12 @@ function assertReceiptMatchesRequest(
   request: GitConflictContinuationRequest,
   paths: readonly string[],
 ): void {
+  assertGitBrokerJournalSubject(receipt, journal.cohortEnvelopeDigest);
   if (
     receipt.kind !== "cq-git-conflict-continuation-receipt" ||
-    receipt.version !== 1 ||
     receipt.attestationId !== request.authorization.attestationId ||
     receipt.generation !== request.authorization.generation ||
-    receipt.taskId !== request.authorization.taskId ||
+    !gitBrokerSubjectsMatch(receipt, request.authorization, false) ||
     receipt.operationId !== request.operationId ||
     receipt.requestDigest !== journal.requestDigest ||
     receipt.oldHead !== request.expectedState.currentHead ||
@@ -1131,11 +1136,15 @@ async function completePrepared(
   }
   const objectOids = await quarantineOids(quarantine);
   if (state === "git-finished") {
+    await deps.authorize(request.authorization);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     await installObjects(request.authorization, quarantine, objectOids);
     state = "objects-installed";
     await writeJournal(journalFile, { ...journal, state });
   }
   if (state === "objects-installed") {
+    await deps.authorize(request.authorization);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     await installIndex(request.authorization, privateIndex);
     state = "index-installed";
     await writeJournal(journalFile, { ...journal, state });
@@ -1143,10 +1152,9 @@ async function completePrepared(
   const outcome = await currentOutcome(request.authorization);
   const receipt: GitConflictContinuationReceipt = Object.freeze({
     kind: "cq-git-conflict-continuation-receipt" as const,
-    version: 1 as const,
+    ...gitBrokerReceiptSubject(request.authorization),
     attestationId: request.authorization.attestationId,
     generation: request.authorization.generation,
-    taskId: request.authorization.taskId,
     operationId: request.operationId,
     requestDigest: journal.requestDigest,
     oldHead: request.expectedState.currentHead,
@@ -1172,6 +1180,9 @@ export async function continueManagedWorktreeRebase(
   if (request.authorization.roleId !== "implement-conflict-resolver") {
     throw new Error("conflict continuation is authorized only for implement-conflict-resolver");
   }
+  if (request.authorization.cohort !== undefined && deps.runRebaseContinue === undefined) {
+    throw new Error("cohort conflict continuation requires its registered all-member effect runner");
+  }
   const now = (deps.now ?? (() => new Date()))();
   const deadline = Date.parse(request.authorization.childCancelAt);
   if (!Number.isFinite(deadline) || now.getTime() > deadline) {
@@ -1183,7 +1194,7 @@ export async function continueManagedWorktreeRebase(
   const journalFile = join(root, "journal.json");
   return await withManagedWorktreeEffectLock(request.authorization, deps, async () => {
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeConflictDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     let journal = await readJournal(journalFile);
     if (journal !== null) {
       if (journal.requestDigest !== digest) {
@@ -1211,11 +1222,11 @@ export async function continueManagedWorktreeRebase(
       }
     }
     if (journal === null) {
-      journal = { version: 1, requestDigest: digest, createdAt: now.toISOString(), state: "intent" };
+      journal = { version: 1, requestDigest: digest, createdAt: now.toISOString(), state: "intent", ...gitBrokerJournalSubject(request.authorization) };
       await writeJournal(journalFile, journal);
     }
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeConflictDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     const observed = await observeConflictUnchecked(request.authorization);
     if (canonical(observed) !== canonical(request.expectedState)) {
       throw new Error("parent-observed rebase transaction no longer matches current state");
@@ -1231,7 +1242,7 @@ export async function continueManagedWorktreeRebase(
     journal = { ...journal, state: "prepared", ...prepared };
     await writeJournal(journalFile, journal);
     await deps.authorize(request.authorization);
-    await assertManagedWorktreeConflictDispatchBindingLive(request.authorization, deps);
+    await assertGitBrokerBindingLive(request.authorization, deps, true);
     if (canonical(await observeConflictUnchecked(request.authorization)) !== canonical(request.expectedState)) {
       throw new Error("rebase transaction changed after private index construction");
     }
@@ -1239,7 +1250,7 @@ export async function continueManagedWorktreeRebase(
   });
 }
 
-function brokerRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
+function brokerRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
   return stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
 }
 
@@ -1272,14 +1283,13 @@ function assertDurableReceiptMatchesJournal(
   receipt: GitConflictContinuationReceipt,
   journal: ConflictJournal,
 ): void {
+  assertGitBrokerJournalSubject(receipt, journal.cohortEnvelopeDigest);
   if (
     receipt.kind !== "cq-git-conflict-continuation-receipt" ||
-    receipt.version !== 1 ||
     typeof receipt.attestationId !== "string" ||
     receipt.attestationId.length === 0 ||
     !Number.isSafeInteger(receipt.generation) ||
     receipt.generation < 1 ||
-    !/^T[0-9]+$/u.test(receipt.taskId) ||
     !OPERATION_ID.test(receipt.operationId) ||
     receipt.requestDigest !== journal.requestDigest ||
     receipt.continuedAt !== journal.createdAt ||
@@ -1393,7 +1403,7 @@ function selectGuardedRebaseReceiptComponent(
 }
 
 async function collectDurableReceipts(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   deps: GitConflictContinuationEvidenceDeps,
   predicate: (receipt: GitConflictContinuationReceipt) => boolean,
 ): Promise<readonly GitConflictContinuationReceipt[]> {
@@ -1435,7 +1445,7 @@ async function durableReceipts(
       (receipt) =>
         receipt.attestationId === authorization.attestationId &&
         receipt.generation === authorization.generation &&
-        receipt.taskId === authorization.taskId,
+        gitBrokerSubjectsMatch(receipt, authorization, true),
     ),
   );
 }
@@ -1446,14 +1456,14 @@ async function durableReceipts(
  * this to reconcile a conflicted rebase to its verified terminal tip (D334).
  */
 export async function durableHandleConflictContinuationReceipts(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   deps: GitConflictContinuationEvidenceDeps,
   transaction?: GuardedRebaseReceiptTransaction,
 ): Promise<readonly GitConflictContinuationReceipt[]> {
   const receipts = await collectDurableReceipts(
     binding,
     deps,
-    (receipt) => receipt.taskId === binding.taskId,
+    (receipt) => gitBrokerSubjectsMatch(receipt, binding, true),
   );
   return transaction === undefined
     ? orderReceiptChain(receipts)
@@ -1472,7 +1482,7 @@ export async function validateGitConflictContinuationResultEvidence(
   if (evidence.resultCommit !== null && !FULL_OID.test(evidence.resultCommit)) {
     throw new Error("conflict receipt resultCommit must be null or a full oid");
   }
-  if (evidence.taskId !== authorization.taskId || evidence.branch !== authorization.branch) {
+  if (!gitBrokerSubjectsMatch(evidence, authorization, false) || evidence.branch !== authorization.branch) {
     throw new Error("conflict receipt result identity does not match the dispatch binding");
   }
   if (!isAbsolute(evidence.actualWorktreePath) || resolve(evidence.actualWorktreePath) !== resolve(authorization.worktreePath)) {
@@ -1491,7 +1501,8 @@ export async function validateGitConflictContinuationResultEvidence(
   let previous: string | undefined;
   const paths = new Set<string>();
   for (const [index, receipt] of evidence.conflictReceipts.entries()) {
-    if (receipt.kind !== "cq-git-conflict-continuation-receipt" || receipt.version !== 1) {
+    assertGitBrokerReceiptSubject(receipt);
+    if (receipt.kind !== "cq-git-conflict-continuation-receipt") {
       throw new Error(`conflict receipt ${index} has an unsupported kind or version`);
     }
     if (previous !== undefined && receipt.oldHead !== previous) {

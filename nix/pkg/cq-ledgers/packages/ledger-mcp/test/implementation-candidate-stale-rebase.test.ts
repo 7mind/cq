@@ -176,18 +176,15 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
         },
       }),
     } as unknown as ConstructorParameters<typeof ImplementationCandidateCoordinator>[0];
-    const conflicted = new ImplementationCandidateCoordinator(
-      conflictedQueue,
-      {
-        reconcileRetiredSource: async () => ({ state: "conflict-pending" as const }),
-        observeProtectedHead: async (laterControl: typeof laterQualified.queue) =>
-          laterControl.attempt.observedBaseCommit,
-        finalizeQualifiedFront: async () => {
-          laterGateCalls += 1;
-        },
-        confirmQualifiedFront: async () => undefined,
-      } as unknown as ImplementationCandidateCoordinatorOperations,
-    );
+    const conflicted = new ImplementationCandidateCoordinator(conflictedQueue, {
+      reconcileRetiredSource: async () => ({ state: "conflict-pending" as const }),
+      observeProtectedHead: async (laterControl: typeof laterQualified.queue) =>
+        laterControl.attempt.observedBaseCommit,
+      finalizeQualifiedFront: async () => {
+        laterGateCalls += 1;
+      },
+      confirmQualifiedFront: async () => undefined,
+    } as unknown as ImplementationCandidateCoordinatorOperations);
     expect(
       await conflicted.run({
         partitionKey: qualified.queue.partition.partitionKey,
@@ -199,6 +196,7 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
       partitionRevision: control.partitionRevision + 1,
       front: source.source,
       frontState: "staged-rebase-retired",
+      sourceReference,
     });
     expect(conflictParkCalls).toBe(1);
     expect(acquireCalls).toBe(0);
@@ -229,6 +227,7 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
       partitionRevision: control.partitionRevision + 1,
       front: source.source,
       frontState: "staged-rebase-retired",
+      sourceReference,
     });
     expect(acquireCalls).toBe(2);
     expect(conflictParkCalls).toBe(2);
@@ -278,11 +277,13 @@ describe("implementation candidate stale-base routing [Behavioral-Active, Blackb
       },
     });
     expect(
-      backend.storedRows().find(
-        (row) =>
-          row.attestationId === first.prepared.attestationId &&
-          row.generation === first.prepared.generation,
-      ),
+      backend
+        .storedRows()
+        .find(
+          (row) =>
+            row.attestationId === first.prepared.attestationId &&
+            row.generation === first.prepared.generation,
+        ),
     ).toMatchObject({
       state: "aborted",
       abortReason: "native-failure",

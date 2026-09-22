@@ -478,8 +478,11 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
   fields: {
     actionKey: { type: "string", required: true },
     summary: { type: "string", required: true },
-    taskRef: { type: "id", required: true },
-    goalRef: { type: "id", required: true },
+    taskRef: { type: "id", required: false },
+    goalRef: { type: "id", required: false },
+    cohortBatchDigest: { type: "string", required: false },
+    cohortMemberRefs: { type: "id[]", required: false },
+    cohortGoalRefs: { type: "id[]", required: false },
     expectedOutputIdentity: { type: "string", required: true },
     expectedEvidence: { type: "string[]", required: true },
     revision: { type: "string", required: false },

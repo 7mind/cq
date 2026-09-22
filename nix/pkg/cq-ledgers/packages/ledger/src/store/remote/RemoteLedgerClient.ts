@@ -47,7 +47,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ArchivePointer, FieldValue, Item, LedgerSchema } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
-import type { FinalizeBatchOperation } from "../../finalize.js";
+import { finalizeBatchOperationWire, type FinalizeBatchOperation } from "../../finalize.js";
 import type { BackupDumpFile } from "../backupExporter.js";
 import type {
   CompactItemDto,
@@ -1091,15 +1091,7 @@ export class RemoteLedgerClient {
     operations: readonly FinalizeBatchOperation[],
   ): Promise<{ applied: number }> {
     return await this.call<{ applied: number }>("execute_finalize", {
-      operations: operations.map((operation) => ({
-        id: operation.id,
-        target_id: operation.targetId,
-        action: operation.action,
-        ...(operation.targetStatus === undefined
-          ? {}
-          : { target_status: operation.targetStatus }),
-        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
-      })),
+      operations: operations.map(finalizeBatchOperationWire),
     });
   }
 

@@ -48,6 +48,7 @@ import {
   WorksetOwnershipFieldError,
 } from "./worksetOwnerEdges.js";
 import type { FinalizeBatchOperation } from "./finalize.js";
+import { ledgerItemRevisionV1 } from "./itemRevision.js";
 import {
   createInMemoryWorksetStore,
   readWorksetRootsEpoch,
@@ -217,7 +218,7 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES: readonly WorksetGeneric
       kind: "execute-finalize",
       method: "executeFinalize",
       restrictive: "require-affected-targets-in-graph",
-      exemptions: [],
+      exemptions: ["idea-only"],
       unrestricted: "allow",
     },
     {
@@ -770,6 +771,9 @@ class AdmittedGenericMutationBindingOwner {
     scope: SqliteOperationAccessScope,
     allocation: AdmittedGenericMutation["allocation"],
   ): AdmittedGenericMutation {
+    Object.freeze(admission.roots);
+    Object.freeze(admission.targets);
+    Object.freeze(admission);
     const boundScope: SqliteOperationAccessScope = Object.freeze({
       ...scope,
       targetRefs: Object.freeze([...scope.targetRefs]),
@@ -1267,8 +1271,25 @@ export function createWorksetGenericMutationGateway(
     },
 
     async executeFinalize(operations, measurement) {
-      const admissionTargets = operations.flatMap((operation) => {
+      const exactRefs = new Set<string>();
+      const wholeMilestones = new Set(operations
+        .filter((operation) => operation.action === "archive-milestone")
+        .map((operation) => operation.targetId));
+      for (const operation of operations) {
+        if (operation.action !== "archive-terminal-item") continue;
+        if (operation.version !== 1 || operation.targetId.split(":").length !== 2 ||
+            operation.targetId.startsWith(`${MILESTONES_LEDGER}:`)) {
+          throw new LedgerError("exact terminal archive requires a versioned non-milestone ref");
+        }
+        if (exactRefs.has(operation.targetId) || wholeMilestones.has(operation.expectedMilestoneId)) {
+          throw new LedgerError("exact terminal archive selections overlap");
+        }
+        exactRefs.add(operation.targetId);
+      }
+      const scopeTargetRefs = operations.flatMap((operation) => {
         switch (operation.action) {
+          case "archive-terminal-item":
+            return [operation.targetId];
           case "close-milestone":
             return [itemRef(MILESTONES_LEDGER, operation.targetId)];
           case "close-goal":
@@ -1279,7 +1300,10 @@ export function createWorksetGenericMutationGateway(
           }
         }
       });
-      const accessClass = operations.some(({ action }) => action === "archive-milestone")
+      const admissionTargets = scopeTargetRefs.filter((ref) =>
+        !(exactRefs.has(ref) && ref.startsWith(`${IDEAS_LEDGER}:`)));
+      const accessClass = operations.some(({ action }) =>
+        action === "archive-milestone" || action === "archive-terminal-item")
         ? "archive_milestone"
         : "ordinary";
       return withGenericAdmission(
@@ -1298,6 +1322,20 @@ export function createWorksetGenericMutationGateway(
             }
             ids.add(operation.id);
             switch (operation.action) {
+              case "archive-terminal-item": {
+                const separator = operation.targetId.indexOf(":");
+                const ledgerId = operation.targetId.slice(0, separator);
+                const itemId = operation.targetId.slice(separator + 1);
+                if (ledgerId !== IDEAS_LEDGER) assertTargetInGraph(ctx, operation.targetId);
+                const item = tx.fetchItem(ledgerId, itemId);
+                if (item.milestoneId !== operation.expectedMilestoneId ||
+                    item.updatedAt !== operation.expectedUpdatedAt ||
+                    ledgerItemRevisionV1(operation.targetId, item) !== operation.expectedItemDigest) {
+                  throw new LedgerError(`exact terminal archive item "${operation.targetId}" changed`);
+                }
+                tx.archiveTerminalItems([ledgerId], operation.summary, "fail-on-active-gate", [operation.targetId]);
+                break;
+              }
               case "close-milestone":
                 assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, operation.targetId));
                 if (operation.targetStatus === undefined) {
@@ -1335,17 +1373,20 @@ export function createWorksetGenericMutationGateway(
           return { applied: operations.length };
         },
         {
+          scopeTargetRefs,
           accessScope: {
             ledgerIds: [
               ...new Set(
-                operations.map(({ action }) =>
-                  action === "close-goal" ? GOALS_LEDGER : MILESTONES_LEDGER,
+                operations.map((operation) =>
+                  operation.action === "archive-terminal-item"
+                    ? operation.targetId.slice(0, operation.targetId.indexOf(":"))
+                    : operation.action === "close-goal" ? GOALS_LEDGER : MILESTONES_LEDGER,
                 ),
               ),
             ],
-            milestoneIds: operations
-              .filter(({ action }) => action === "archive-milestone")
-              .map(({ targetId }) => targetId),
+            milestoneIds: operations.flatMap((operation) =>
+              operation.action === "archive-terminal-item" ? [operation.expectedMilestoneId]
+                : operation.action === "archive-milestone" ? [operation.targetId] : []),
             referenceCandidates: [],
           },
         },

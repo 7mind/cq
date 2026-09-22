@@ -10,12 +10,16 @@
 
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { finalizeBatchOperationWire } from "@cq/ledger/finalize";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   createEmbeddedStore,
   createProductionImplementationEvidenceService,
+  createCohortCompletionRuntimeV1,
+  createCohortAdvanceRuntimeV1,
+  createCohortInvestigationAdvanceRuntimeV1,
   createManagementLedgerMcpServer,
   createSingleProjectDispatchRuntime,
   resolvePromptSurface,
@@ -74,6 +78,7 @@ export interface EmbeddedContext {
   readonly resolved: ResolvedLedgerStore;
   /** The durable dispatch backend owned by this embedded server. */
   readonly dispatchRuntime: DispatchRuntime;
+  readonly cohortCancellation: AbortController;
 }
 
 export function createEmbeddedTuiImplementationEvidenceService(
@@ -172,6 +177,20 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
             ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
           })
         : undefined;
+    const cohortCancellation = new AbortController();
+    const cohortAdvance = dispatchRuntime.kind === "available" && promptSurface !== undefined
+      ? await createCohortAdvanceRuntimeV1({ resolved, promptArtifacts: promptSurface.store, dispatch: dispatchRuntime.capability })
+      : undefined;
+    const cohortCompletion = dispatchRuntime.kind === "available" && promptSurface !== undefined
+      ? createCohortCompletionRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+        promptArtifacts: promptSurface.store, cancellationSignal: cohortCancellation.signal,
+        ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace) })
+      : undefined;
+    const cohortInvestigation = dispatchRuntime.kind === "available" && promptSurface !== undefined
+      ? await createCohortInvestigationAdvanceRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+        dispatch: dispatchRuntime.capability, promptArtifacts: promptSurface.store,
+        cancellationSignal: cohortCancellation.signal })
+      : undefined;
     const server = createManagementLedgerMcpServer({
       store,
       displayName: path.basename(cwd),
@@ -182,6 +201,9 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
         ? { dispatchCapability: dispatchRuntime.capability }
         : {}),
       ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
+      ...(cohortCompletion === undefined ? {} : { cohortCompletion }),
+      ...(cohortAdvance === undefined ? {} : { cohortAdvance }),
+      ...(cohortInvestigation === undefined ? {} : { cohortInvestigation }),
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -190,7 +212,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
       { capabilities: {} },
     );
     await client.connect(clientTransport);
-    return new McpLedgerClient(client, { store, cwd, resolved, dispatchRuntime });
+    return new McpLedgerClient(client, { store, cwd, resolved, dispatchRuntime, cohortCancellation });
   }
 
   /** The in-process context when running embedded, else null (HTTP mode). */
@@ -371,15 +393,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
     operations: readonly FinalizeBatchOperation[],
   ): Promise<{ applied: number }> {
     return await this.call<{ applied: number }>("execute_finalize", {
-      operations: operations.map((operation) => ({
-        id: operation.id,
-        target_id: operation.targetId,
-        action: operation.action,
-        ...(operation.targetStatus === undefined
-          ? {}
-          : { target_status: operation.targetStatus }),
-        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
-      })),
+      operations: operations.map(finalizeBatchOperationWire),
     });
   }
 
@@ -396,6 +410,7 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
   }
 
   async close(): Promise<void> {
+    if (this.embeddedCtx !== null) this.embeddedCtx.cohortCancellation.abort();
     await this.client.close();
     // Embedded mode owns the in-process store; dispose it so its watcher /
     // lockfile are released. HTTP mode owns no store here.

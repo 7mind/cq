@@ -439,6 +439,7 @@ function ledgerRows(view: FetchedLedger): Row[] {
 function asWorksetClient(client: LedgerClient | null): WorksetCapableLedgerClient | null {
   if (client === null) return null;
   if (typeof (client as { readonly workset?: unknown }).workset !== "function") return null;
+  if (typeof (client as { readonly getCohortStatus?: unknown }).getCohortStatus !== "function") return null;
   return client as WorksetCapableLedgerClient;
 }
 

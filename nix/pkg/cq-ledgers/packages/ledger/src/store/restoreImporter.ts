@@ -61,6 +61,13 @@ import {
   serializeReconciledOwnershipDump,
   type ImportedOwnershipMode,
 } from "../importedOwnership.js";
+import {
+  WORK_COHORT_DUMP_PATH,
+  emptyWorkCohortPortableStateV1,
+  parseWorkCohortPortableStateV1,
+  type WorkCohortPortableStateV1,
+} from "../workCohortStore.js";
+import { replaceSqliteWorkCohortPortableState } from "./sqlite/sqliteWorkCohortStore.js";
 
 export class RestoreTargetChangedError extends LedgerError {
   constructor(target: string) {
@@ -70,6 +77,13 @@ export class RestoreTargetChangedError extends LedgerError {
 }
 
 function isSqliteRestoreTargetEmpty(db: import("bun:sqlite").Database): boolean {
+  const cohort = db
+    .query<{ state_json: string }, []>("SELECT state_json FROM work_cohort_state WHERE id = 1")
+    .get();
+  if (cohort !== null) {
+    const state = parseWorkCohortPortableStateV1(cohort.state_json);
+    if (JSON.stringify(state) !== JSON.stringify(emptyWorkCohortPortableStateV1())) return false;
+  }
   const workset = db
     .query<{ roots_json: string; epoch: number }, []>(
       "SELECT roots_json, epoch FROM workset_state WHERE id = 1",
@@ -180,6 +194,8 @@ export interface ParsedDump {
    * — restore treats that as explicit unrestricted empty roots (epoch 0).
    */
   worksetRoots: WorksetRootsEpoch | null;
+  /** Portable cohort history; ephemeral execution authority is never present. */
+  workCohort: WorkCohortPortableStateV1 | null;
 }
 
 /**
@@ -243,7 +259,11 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const worksetSrc = byPath.get(WORKSET_ROOTS_FILENAME);
   const worksetRoots = worksetSrc === undefined ? null : parseWorksetRootsDocument(worksetSrc);
 
-  return { registry, ledgers, archives, logs, planLifecycle, worksetRoots };
+  const workCohortSrc = byPath.get(WORK_COHORT_DUMP_PATH);
+  const workCohort =
+    workCohortSrc === undefined ? null : parseWorkCohortPortableStateV1(workCohortSrc);
+
+  return { registry, ledgers, archives, logs, planLifecycle, worksetRoots, workCohort };
 }
 
 /** One pure contextual reconciliation result, reusable by a later importer. */
@@ -331,6 +351,7 @@ export async function restoreDumpToXdg(opts: {
         }
         immediateWriteTransaction(db, () => {
           db.exec("DELETE FROM workset_admissions");
+          db.exec("DELETE FROM work_cohort_state");
           db.exec("DELETE FROM implementation_completion_bindings");
           db.exec("DELETE FROM plan_operations");
           db.exec("DELETE FROM plan_claims");
@@ -453,6 +474,10 @@ export async function restoreDumpToXdg(opts: {
           db.query("UPDATE workset_state SET epoch = ?, roots_json = ? WHERE id = 1").run(
             restoredRoots.epoch,
             JSON.stringify(restoredRoots.roots.slice()),
+          );
+          replaceSqliteWorkCohortPortableState(
+            db,
+            parsed.workCohort ?? emptyWorkCohortPortableStateV1(),
           );
         });
         if (opts.logsDir !== null) {

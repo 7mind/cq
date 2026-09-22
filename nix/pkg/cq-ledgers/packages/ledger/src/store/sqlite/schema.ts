@@ -34,8 +34,10 @@ import { ensurePlanRecordTables } from "./planRecordSchema.js";
  * - v6: normalized active-item reference edges for keyed closure/incident reads.
  * - v7: one domain-transaction version and a cursor-safe latest-version vector.
  * - v8: stored private lifecycle identities and unique keyed replay/claim indexes.
+ * - v9 (T6560): portable work-cohort state plus separately fenced ephemeral runtime authority.
+ * - v10 (T6560): explicit restored-state resume-revalidation fence.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 10;
 
 const COHERENCE_TABLES = [
   "ledgers",
@@ -204,7 +206,24 @@ export function ensureSchema(db: Database): void {
       started_at  INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS work_cohort_state (
+      id                     INTEGER PRIMARY KEY CHECK (id = 1),
+      state_json             TEXT NOT NULL,
+      execution_epoch        TEXT NOT NULL,
+      resume_required        INTEGER NOT NULL DEFAULT 0,
+      lease_json             TEXT,
+      resume_validation_json TEXT,
+      revision               INTEGER NOT NULL
+    );
+
   `);
+  const cohortColumns = db
+    .query<{ name: string }, []>("PRAGMA table_info(work_cohort_state)")
+    .all()
+    .map(({ name }) => name);
+  if (!cohortColumns.includes("resume_required")) {
+    db.exec("ALTER TABLE work_cohort_state ADD COLUMN resume_required INTEGER NOT NULL DEFAULT 0");
+  }
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS item_references_items_delete
     AFTER DELETE ON items BEGIN

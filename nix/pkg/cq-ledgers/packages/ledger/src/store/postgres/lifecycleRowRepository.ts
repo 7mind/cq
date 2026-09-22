@@ -4,6 +4,7 @@ import type { ImplementationCompletionBindingRecord, LifecycleGroup, LifecyclePr
 import { claimScopeKey, decodePostgresPlanScope, encodePostgresPlanScope, operationScopeKey } from "../planLifecycleDump.js";
 import { createPostgresGenericMutationDataSource } from "./genericMutationDataSource.js";
 import { PostgresOperationQueries, type PostgresStatement } from "./operationAccess.js";
+import type { ArchivePointer } from "../../types.js";
 
 interface PlanRecordRow {
   readonly scope: string;
@@ -21,6 +22,15 @@ export function createPostgresLifecycleRowRepository(queries: PostgresOperationQ
   };
   return {
     publicRows: createPostgresGenericMutationDataSource(queries),
+    async fetchArchivePointer(ledgerId, pointerId) {
+      queries.recordReadTarget({ table: "archive_pointers", ledgerId, id: pointerId });
+      const rows = await read<Omit<ArchivePointer, "path">>("archive_pointers", [`${ledgerId}/${pointerId}`], {
+        sql: "SELECT id, summary, title, status FROM archive_pointers WHERE project_key = $1 AND ledger = $2 AND id = $3",
+        parameters: [projectKey, ledgerId, pointerId],
+      }, ({ id }) => `${ledgerId}/${id}`);
+      const row = rows[0];
+      return row === undefined ? undefined : { ...row, path: `./archive/${ledgerId}/${pointerId}.md` };
+    },
     async fetchGroup(ledgerId, groupId) {
       queries.recordReadTarget({ table: "groups", ledgerId, id: groupId });
       const rows = await read<LifecycleGroup>("groups", [`${ledgerId}:${groupId}`], {

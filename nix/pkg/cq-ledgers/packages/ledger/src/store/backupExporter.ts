@@ -65,6 +65,7 @@ import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
 import { serializeWorksetRootsDocument } from "../worksetRootsDocument.js";
 import type { WorksetStore } from "../worksetStore.js";
 import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
+import { WORK_COHORT_DUMP_PATH } from "../workCohortStore.js";
 
 /** The backup targets this exporter can write (the non-`none` modes of Q244). */
 export type BackupTarget = "in-tree" | "orphan-branch";
@@ -129,6 +130,13 @@ async function exportWorksetRootsOf(store: LedgerStore): Promise<string | null> 
     return serializeWorksetRootsDocument(snap);
   }
   return null;
+}
+
+async function exportWorkCohortOf(store: LedgerStore): Promise<string | null> {
+  const candidate = (store as { exportWorkCohortState?: unknown }).exportWorkCohortState;
+  if (typeof candidate !== "function") return null;
+  const fn = candidate as () => string | null | Promise<string | null>;
+  return await fn.call(store);
 }
 
 /**
@@ -205,6 +213,11 @@ export async function buildBackupDump(
   const worksetRoots = await exportWorksetRootsOf(store);
   if (worksetRoots !== null) {
     files.push({ path: WORKSET_ROOTS_FILENAME, content: worksetRoots });
+  }
+
+  const workCohort = await exportWorkCohortOf(store);
+  if (workCohort !== null) {
+    files.push({ path: WORK_COHORT_DUMP_PATH, content: workCohort });
   }
 
   const listLogs = listLogsOf(store);

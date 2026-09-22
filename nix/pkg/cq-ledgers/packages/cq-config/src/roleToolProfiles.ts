@@ -6,7 +6,7 @@ import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
  *
  * `@cq/config` cannot import `@cq/ledger` because the dependency runs in the
  * other direction. `roleToolProfiles.test.ts` therefore guards this inventory
- * against the prompt catalogue and the maintained 61-tool domain/control surface. T1327 owns
+ * against the prompt catalogue and the maintained domain/control surface. T1327 owns
  * moving tool specifications behind one canonical filtered registry.
  */
 export const LEDGER_CAPABILITY_TOOL_NAMES = [
@@ -71,6 +71,12 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "prepare_implementation_completion",
   "record_implementation_completion",
   "record_implementation_adoption",
+  "record_cohort_review",
+  "complete_cohort",
+  "cohort_advance",
+  "cohort_investigation_advance",
+  "get_cohort_completion_status",
+  "get_cohort_status",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];
@@ -95,6 +101,8 @@ const NON_DOMAIN_LEDGER_TOOL_NAMES = new Set<LedgerCapabilityToolName>([
   "mint_plan_claim_authority",
   "git_commit",
   "git_resolve_continue",
+  "get_cohort_completion_status",
+  "get_cohort_status",
 ]);
 
 /** Tools that read or mutate ledger domain state, excluding config/catalog/transport plumbing. */

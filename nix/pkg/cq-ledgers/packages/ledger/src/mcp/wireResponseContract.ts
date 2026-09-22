@@ -317,7 +317,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
       "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
   ),
   worktree_manage: purposeBuiltSmall(
-    "`prepared|resume-required|refused`, `conflict-observed`, or " +
+    "`prepared|resume-required|refused`, `conflict-observed`, staged-rebase recovery, or " +
       "`released|refused`; typed acknowledgements only.",
   ),
   git_commit: purposeBuiltSmall(
@@ -374,15 +374,19 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "Exactly one continued or existing activation-continuation acknowledgement.",
   ),
   get_implementation_evidence_service_status: purposeBuiltSmall("One typed service-status object."),
+  record_cohort_review: purposeBuiltSmall("One authenticated all-member review reference."),
+  complete_cohort: purposeBuiltSmall("One resumable cohort handoff or executor/deployment requirement."),
+  cohort_advance: purposeBuiltSmall("Observed decisions and definitions, or one full-cohort managed worktree result."),
+  cohort_investigation_advance: purposeBuiltSmall("Retained investigation state, exact prepared native launches, per-member adjudication requests and authenticated probe receipts."),
+  get_cohort_status: purposeBuiltSmall("Cohort metadata and durable measured counts; no live lease authority."),
+  get_cohort_completion_status: purposeBuiltSmall("One retained cohort handoff and executor availability."),
   prepare_implementation_completion: purposeBuiltSmall(
     "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
   ),
   record_implementation_completion: purposeBuiltSmall(
     "Completion acknowledgement: merge-required, reprepare-required, recorded, or existing.",
   ),
-  record_implementation_adoption: purposeBuiltSmall(
-    "Operator-adoption acknowledgement.",
-  ),
+  record_implementation_adoption: purposeBuiltSmall("Operator-adoption acknowledgement."),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

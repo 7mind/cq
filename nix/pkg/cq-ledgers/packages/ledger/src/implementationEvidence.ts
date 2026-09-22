@@ -25,6 +25,11 @@ import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
 import { DEFECTS_LEDGER, GOALS_LEDGER, QUESTIONS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
+import {
+  isBoundAdmittedGenericMutation,
+  type AdmittedGenericMutation,
+  type AdmittedGenericMutationBinding,
+} from "./worksetGenericMutation.js";
 import type {
   SqliteOperationAccessScope,
   SqliteOperationMeasurement,
@@ -33,6 +38,14 @@ import { isLiveWorksetAdmission, type WorksetLedgerMutationAdmission, type Works
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import type { DirectOwnedMutation, DirectOwnedWriteTx } from "./store/directOwnedMutation.js";
 import { ItemNotFoundError, LedgerError, type Item } from "./types.js";
+import { defectFixTaskIds } from "./relationships.js";
+import { cohortValueDigestV1 } from "./workCohort.js";
+import { parseGoalFinalizedManifest } from "./worksetGraph.js";
+import { CohortPrimaryCompletionMissingError, assertCohortCompletionBatchV1, readAuthorizedCohortCompletionV1,
+  type AuthorizedCohortCompletionV1, type CohortCompletionBatchV1, type CohortCompletionLedgerResultV1,
+  type CohortDeploymentIdentityV1, type CohortDeploymentProbeV1 } from "./workCohortCompletion.js";
+import { readAuthorizedCohortReviewV1, type AuthorizedCohortReviewV1, type CohortReviewReceiptV1 } from "./workCohortCompletionEvidence.js";
+import { ledgerItemRevisionV1 } from "./itemRevision.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 2 as const;
 export const IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION = 2 as const;
@@ -539,6 +552,8 @@ export interface ImplementationEvidenceSnapshot {
   readonly panels: Readonly<Record<string, ImplementationReviewPanelRecord>>;
   readonly attempts: Readonly<Record<string, ImplementationReviewAttemptRecord>>;
   readonly completions: Readonly<Record<string, ImplementationCompletionRecord>>;
+  readonly cohortReviews: Readonly<Record<string, CohortReviewReceiptV1>>;
+  readonly cohortCompletions: Readonly<Record<string, CohortCompletionJournalRecordV1>>;
   readonly adoptions: Readonly<Record<string, ImplementationAdoptionRecord>>;
   readonly auditPanels: Readonly<Record<string, ImplementationAuditPanelRecord>>;
   readonly auditAttempts: Readonly<Record<string, ImplementationAuditAttemptRecord>>;
@@ -561,6 +576,8 @@ interface MutableImplementationEvidenceSnapshot {
   panels: Record<string, ImplementationReviewPanelRecord>;
   attempts: Record<string, ImplementationReviewAttemptRecord>;
   completions: Record<string, ImplementationCompletionRecord>;
+  cohortReviews: Record<string, CohortReviewReceiptV1>;
+  cohortCompletions: Record<string, CohortCompletionJournalRecordV1>;
   adoptions: Record<string, ImplementationAdoptionRecord>;
   auditPanels: Record<string, ImplementationAuditPanelRecord>;
   auditAttempts: Record<string, ImplementationAuditAttemptRecord>;
@@ -594,14 +611,85 @@ type AtomicGenericLedgerStore = LedgerStore & {
     readRoots?: () => Promise<WorksetRootsEpoch>,
     measurement?: SqliteOperationMeasurement,
     accessScope?: SqliteOperationAccessScope,
+    context?: AdmittedGenericMutation,
+    binding?: AdmittedGenericMutationBinding,
   ): Promise<T>;
 };
+
+function exactStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function canonicalNonTaskRef(value: string): boolean {
+  const separator = value.indexOf(":");
+  return separator > 0 && separator < value.length - 1 && value.slice(0, separator) !== TASKS_LEDGER;
+}
+
+function admittedGenericMutationCannotAccessTasks(
+  accessScope: SqliteOperationAccessScope | undefined,
+  context: AdmittedGenericMutation | undefined,
+  binding: AdmittedGenericMutationBinding | undefined,
+): boolean {
+  if (
+    accessScope === undefined ||
+    context === undefined ||
+    binding === undefined ||
+    !isBoundAdmittedGenericMutation(binding, context) ||
+    !Object.isFrozen(context) ||
+    !Object.isFrozen(context.admission) ||
+    !Object.isFrozen(context.admission.roots) ||
+    !Object.isFrozen(context.admission.targets) ||
+    !Object.isFrozen(context.scope) ||
+    !Object.isFrozen(context.scope.targetRefs) ||
+    !Object.isFrozen(context.scope.ledgerIds) ||
+    !Object.isFrozen(context.scope.milestoneIds) ||
+    !Object.isFrozen(context.scope.referenceCandidates) ||
+    (context.allocation !== null && !Object.isFrozen(context.allocation)) ||
+    accessScope !== context.scope ||
+    typeof context.scope.operation !== "string" ||
+    context.scope.operation.length === 0 ||
+    typeof context.scope.accessClass !== "string" ||
+    context.scope.accessClass.length === 0 ||
+    !exactStringArray(accessScope.targetRefs, context.scope.targetRefs) ||
+    !exactStringArray(accessScope.ledgerIds, context.scope.ledgerIds) ||
+    !exactStringArray(accessScope.milestoneIds, context.scope.milestoneIds) ||
+    !exactStringArray(accessScope.referenceCandidates, context.scope.referenceCandidates)
+  ) {
+    return false;
+  }
+  const scopedLedgers = new Set(context.scope.ledgerIds);
+  if (scopedLedgers.size !== context.scope.ledgerIds.length || scopedLedgers.has(TASKS_LEDGER)) {
+    return false;
+  }
+  const refs = [
+    ...context.admission.targets,
+    ...context.scope.targetRefs,
+    ...context.scope.referenceCandidates,
+  ];
+  if (refs.some((ref) => typeof ref !== "string" || !canonicalNonTaskRef(ref))) return false;
+  if (
+    context.scope.targetRefs.some(
+      (ref) => !scopedLedgers.has(ref.slice(0, ref.indexOf(":"))),
+    )
+  ) {
+    return false;
+  }
+  return (
+    context.allocation === null ||
+    (context.allocation.ledgerId !== TASKS_LEDGER &&
+      scopedLedgers.has(context.allocation.ledgerId) &&
+      (context.allocation.requestedId === null ||
+        typeof context.allocation.requestedId === "string"))
+  );
+}
 
 function implementationTaskIsActivated(
   snapshot: ImplementationEvidenceSnapshot,
   taskRef: string,
 ): boolean {
   return (
+    Object.values(snapshot.cohortReviews).some((review) => review.envelope.memberAuthorities.some((member) => member.taskRef === taskRef)) ||
+    Object.values(snapshot.cohortCompletions).some((completion) => completion.batch.members.some((member) => member.taskRef === taskRef)) ||
     Object.values(snapshot.panels).some((panel) => panel.taskRef === taskRef) ||
     Object.values(snapshot.completions).some((completion) => completion.taskRef === taskRef) ||
     Object.values(snapshot.adoptions).some((adoption) => adoption.taskRef === taskRef) ||
@@ -674,8 +762,16 @@ export function protectLedgerStoreWithImplementationEvidence(
           readRoots?: () => Promise<WorksetRootsEpoch>,
           measurement?: SqliteOperationMeasurement,
           accessScope?: SqliteOperationAccessScope,
+          context?: AdmittedGenericMutation,
+          binding?: AdmittedGenericMutationBinding,
         ): Promise<T> => {
-          const snapshot = await evidenceStore.snapshot();
+          const snapshot = admittedGenericMutationCannotAccessTasks(
+            accessScope,
+            context,
+            binding,
+          )
+            ? null
+            : await evidenceStore.snapshot();
           return (await rawAtomicGenericMutation.call(
             target,
             (tx, roots) =>
@@ -684,6 +780,11 @@ export function protectLedgerStoreWithImplementationEvidence(
                   ...tx,
                   updateItem: (ledgerId, itemId, patch) => {
                     if (ledgerId === TASKS_LEDGER) {
+                      if (snapshot === null) {
+                        throw new LedgerError(
+                          "Authenticated non-task mutation descriptor attempted a task write",
+                        );
+                      }
                       assertGenericImplementationTaskMutationAllowed(
                         snapshot,
                         tx.fetchItem(ledgerId, itemId),
@@ -698,6 +799,8 @@ export function protectLedgerStoreWithImplementationEvidence(
             readRoots,
             measurement,
             accessScope,
+            context,
+            binding,
           )) as T;
         };
       }
@@ -713,6 +816,8 @@ function emptyState(): MutableImplementationEvidenceSnapshot {
     panels: {},
     attempts: {},
     completions: {},
+    cohortReviews: {},
+    cohortCompletions: {},
     adoptions: {},
     auditPanels: {},
     auditAttempts: {},
@@ -777,6 +882,8 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     !object(value["panels"]) ||
     !object(value["attempts"]) ||
     !object(value["completions"]) ||
+    (value["cohortReviews"] !== undefined && !object(value["cohortReviews"])) ||
+    (value["cohortCompletions"] !== undefined && !object(value["cohortCompletions"])) ||
     (value["version"] === IMPLEMENTATION_EVIDENCE_VERSION && !object(value["adoptions"])) ||
     (value["version"] === 1 && value["adoptions"] !== undefined) ||
     (value["auditPanels"] !== undefined && !object(value["auditPanels"])) ||
@@ -799,6 +906,8 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     panels: stored.panels ?? {},
     attempts: stored.attempts ?? {},
     completions: stored.completions ?? {},
+    cohortReviews: stored.cohortReviews ?? {},
+    cohortCompletions: stored.cohortCompletions ?? {},
     adoptions: stored.adoptions ?? {},
     auditPanels: stored.auditPanels ?? {},
     auditAttempts: stored.auditAttempts ?? {},
@@ -814,7 +923,29 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
 export interface CreateFsImplementationEvidenceStoreOptions {
   readonly path: string;
   readonly lockfile?: LockfileOpts;
+  readonly faultInjector?: ImplementationEvidenceJournalFaultInjector;
 }
+
+export type ImplementationEvidenceJournalFaultBoundary =
+  | "after-temp-file-sync"
+  | "after-rename"
+  | "after-directory-sync";
+
+export type ImplementationEvidenceJournalPublication =
+  | "entry"
+  | "tip"
+  | "format-migrating"
+  | "format-active";
+
+export interface ImplementationEvidenceJournalFaultContext {
+  readonly publication: ImplementationEvidenceJournalPublication;
+  readonly target: string;
+}
+
+export type ImplementationEvidenceJournalFaultInjector = (
+  boundary: ImplementationEvidenceJournalFaultBoundary,
+  context: ImplementationEvidenceJournalFaultContext,
+) => void | Promise<void>;
 
 interface ImplementationEvidenceJournalPayload {
   readonly kind: "cq-implementation-evidence-journal-entry";
@@ -834,7 +965,31 @@ interface ImplementationEvidenceJournalTip {
   readonly digest: string | null;
 }
 
+interface ImplementationEvidenceJournalCache extends ImplementationEvidenceJournalTip {
+  readonly identities: ReadonlyMap<string, string>;
+}
+
+interface ImplementationEvidenceJournalTipPayload {
+  readonly kind: "cq-implementation-evidence-journal-tip";
+  readonly version: 1;
+  readonly sequence: number;
+  readonly digest: string | null;
+}
+
+interface ImplementationEvidenceJournalStoredTip extends ImplementationEvidenceJournalTipPayload {
+  readonly authentication: string;
+}
+
+interface ImplementationEvidenceJournalFormat {
+  readonly kind: "cq-implementation-evidence-journal-format";
+  readonly version: 1;
+  readonly state: "migrating" | "active";
+}
+
 const IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY = /^([0-9]{16})-([0-9a-f]{64})\.json$/u;
+const IMPLEMENTATION_EVIDENCE_JOURNAL_FORMAT = ".format";
+const IMPLEMENTATION_EVIDENCE_JOURNAL_TIP = ".tip";
+const IMPLEMENTATION_EVIDENCE_JOURNAL_TEMP = /^\.tmp-(?:entry|tip|format|[0-9]+)-/u;
 
 function parseJournalEntry(value: unknown, filename: string): ImplementationEvidenceJournalEntry {
   if (
@@ -867,6 +1022,47 @@ function parseJournalEntry(value: unknown, filename: string): ImplementationEvid
   return { ...payload, digest: expectedDigest };
 }
 
+function parseJournalFormat(value: unknown): ImplementationEvidenceJournalFormat {
+  if (
+    !object(value) ||
+    !exactKeys(value, ["kind", "version", "state"]) ||
+    value["kind"] !== "cq-implementation-evidence-journal-format" ||
+    value["version"] !== 1 ||
+    (value["state"] !== "migrating" && value["state"] !== "active")
+  ) {
+    throw new Error("implementation evidence journal format marker is malformed");
+  }
+  return value as unknown as ImplementationEvidenceJournalFormat;
+}
+
+function parseJournalTip(value: unknown): ImplementationEvidenceJournalStoredTip {
+  if (
+    !object(value) ||
+    !exactKeys(value, ["kind", "version", "sequence", "digest", "authentication"]) ||
+    value["kind"] !== "cq-implementation-evidence-journal-tip" ||
+    value["version"] !== 1 ||
+    typeof value["sequence"] !== "number" ||
+    !Number.isSafeInteger(value["sequence"]) ||
+    value["sequence"] < 0 ||
+    (typeof value["digest"] !== "string" && value["digest"] !== null) ||
+    (value["sequence"] === 0) !== (value["digest"] === null) ||
+    (typeof value["digest"] === "string" && !/^[0-9a-f]{64}$/u.test(value["digest"])) ||
+    typeof value["authentication"] !== "string"
+  ) {
+    throw new Error("implementation evidence journal tip is malformed");
+  }
+  const payload: ImplementationEvidenceJournalTipPayload = {
+    kind: "cq-implementation-evidence-journal-tip",
+    version: 1,
+    sequence: value["sequence"],
+    digest: value["digest"],
+  };
+  if (value["authentication"] !== digest(payload)) {
+    throw new Error("implementation evidence journal tip failed authentication");
+  }
+  return { ...payload, authentication: value["authentication"] };
+}
+
 /** Protected append-only journal adapter; generic ledger fields cannot reach its entries. */
 export function createFsImplementationEvidenceStore(
   options: CreateFsImplementationEvidenceStoreOptions,
@@ -875,28 +1071,89 @@ export function createFsImplementationEvidenceStore(
   const lockfile = new Lockfile(options.lockfile);
   const parent = dirname(options.path);
   const locks = join(parent, ".locks");
-  const read = async (): Promise<ImplementationEvidenceJournalTip> => {
-    let names: string[];
+  const fault = options.faultInjector ?? (() => undefined);
+  let cache: ImplementationEvidenceJournalCache | null = null;
+
+  const syncDirectory = async (): Promise<void> => {
+    const directory = await fs.open(options.path, "r");
+    try { await directory.sync(); }
+    finally { await directory.close(); }
+  };
+
+  const atomicPublish = async (
+    name: string,
+    body: string,
+    kind: "entry" | "tip" | "format",
+    publication: ImplementationEvidenceJournalPublication,
+  ): Promise<void> => {
+    const context: ImplementationEvidenceJournalFaultContext = {
+      publication,
+      target: name,
+    };
+    const temporary = join(options.path, `.tmp-${kind}-${process.pid}-${randomUUID()}`);
+    const handle = await fs.open(temporary, "wx", 0o600);
     try {
-      names = await fs.readdir(options.path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { state: emptyState(), sequence: 0, digest: null };
-      }
-      throw error;
+      await handle.writeFile(body, "utf8");
+      await handle.sync();
+      await fault("after-temp-file-sync", context);
+    } finally {
+      await handle.close();
     }
-    const unexpected = names.filter(
-      (name) => !IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name) && !name.startsWith(".tmp-"),
+    await fs.rename(temporary, join(options.path, name));
+    await fault("after-rename", context);
+    await syncDirectory();
+    await fault("after-directory-sync", context);
+  };
+
+  const publishFormat = async (state: "migrating" | "active"): Promise<void> => {
+    const marker: ImplementationEvidenceJournalFormat = {
+      kind: "cq-implementation-evidence-journal-format",
+      version: 1,
+      state,
+    };
+    await atomicPublish(
+      IMPLEMENTATION_EVIDENCE_JOURNAL_FORMAT,
+      `${JSON.stringify(marker)}\n`,
+      "format",
+      state === "migrating" ? "format-migrating" : "format-active",
     );
-    if (unexpected.length !== 0) {
-      throw new Error(
-        `implementation evidence journal contains unexpected entries: ${unexpected.join(", ")}`,
-      );
+  };
+
+  const publishTip = async (tip: ImplementationEvidenceJournalTip): Promise<void> => {
+    const payload: ImplementationEvidenceJournalTipPayload = {
+      kind: "cq-implementation-evidence-journal-tip",
+      version: 1,
+      sequence: tip.sequence,
+      digest: tip.digest,
+    };
+    const stored: ImplementationEvidenceJournalStoredTip = {
+      ...payload,
+      authentication: digest(payload),
+    };
+    await atomicPublish(
+      IMPLEMENTATION_EVIDENCE_JOURNAL_TIP,
+      `${JSON.stringify(stored)}\n`,
+      "tip",
+      "tip",
+    );
+  };
+
+  const entryIdentity = async (filename: string): Promise<string> => {
+    const stat = await fs.stat(join(options.path, filename), { bigint: true });
+    if (!stat.isFile()) {
+      throw new Error(`implementation evidence journal entry ${filename} is not a regular file`);
     }
-    const entries = names.filter((name) => IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name)).sort();
-    let sequence = 0;
-    let priorDigest: string | null = null;
-    let state = emptyState();
+    return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
+  };
+
+  const authenticate = async (
+    entries: readonly string[],
+    initial: ImplementationEvidenceJournalTip,
+  ): Promise<{ readonly tip: ImplementationEvidenceJournalTip; readonly digests: ReadonlyMap<number, string | null> }> => {
+    let sequence = initial.sequence;
+    let priorDigest = initial.digest;
+    let state = initial.state;
+    const digests = new Map<number, string | null>([[sequence, priorDigest]]);
     for (const filename of entries) {
       const match = IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.exec(filename);
       if (match === null)
@@ -917,14 +1174,120 @@ export function createFsImplementationEvidenceStore(
       sequence = entry.sequence;
       priorDigest = entry.digest;
       state = entry.snapshot;
+      digests.set(sequence, priorDigest);
     }
-    return { state, sequence, digest: priorDigest };
+    return { tip: { state, sequence, digest: priorDigest }, digests };
+  };
+
+  const reconcile = async (): Promise<ImplementationEvidenceJournalTip> => {
+    await fs.mkdir(options.path, { recursive: true });
+    const names = await fs.readdir(options.path);
+    const temporary = names.filter((name) => IMPLEMENTATION_EVIDENCE_JOURNAL_TEMP.test(name));
+    const unexpected = names.filter(
+      (name) =>
+        !IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name) &&
+        name !== IMPLEMENTATION_EVIDENCE_JOURNAL_FORMAT &&
+        name !== IMPLEMENTATION_EVIDENCE_JOURNAL_TIP &&
+        !IMPLEMENTATION_EVIDENCE_JOURNAL_TEMP.test(name),
+    );
+    if (unexpected.length !== 0) {
+      throw new Error(
+        `implementation evidence journal contains unexpected entries: ${unexpected.join(", ")}`,
+      );
+    }
+    if (temporary.length > 0) {
+      await Promise.all(temporary.map(async (name) => await fs.rm(join(options.path, name))));
+      await syncDirectory();
+    }
+    const entries = names.filter((name) => IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name)).sort();
+    const identities = new Map<string, string>();
+    await Promise.all(entries.map(async (name) => identities.set(name, await entryIdentity(name))));
+    const hasFormat = names.includes(IMPLEMENTATION_EVIDENCE_JOURNAL_FORMAT);
+    const hasTip = names.includes(IMPLEMENTATION_EVIDENCE_JOURNAL_TIP);
+
+    if (!hasFormat && !hasTip) {
+      if (cache !== null) {
+        throw new Error(
+          "active implementation evidence journal format and tip disappeared behind the verified cache",
+        );
+      }
+      const authenticated = await authenticate(entries, { state: emptyState(), sequence: 0, digest: null });
+      await publishFormat("migrating");
+      await publishTip(authenticated.tip);
+      await publishFormat("active");
+      cache = { ...authenticated.tip, identities };
+      return authenticated.tip;
+    }
+    if (!hasFormat) {
+      throw new Error("implementation evidence journal tip exists without a format marker");
+    }
+    const format = parseJournalFormat(
+      JSON.parse(await fs.readFile(join(options.path, IMPLEMENTATION_EVIDENCE_JOURNAL_FORMAT), "utf8")),
+    );
+    if (format.state === "migrating") {
+      if (cache !== null) {
+        throw new Error(
+          "active implementation evidence journal format moved to migrating behind the verified cache",
+        );
+      }
+      const authenticated = await authenticate(entries, { state: emptyState(), sequence: 0, digest: null });
+      await publishTip(authenticated.tip);
+      await publishFormat("active");
+      cache = { ...authenticated.tip, identities };
+      return authenticated.tip;
+    }
+    if (!hasTip) {
+      throw new Error("active implementation evidence journal is missing its tip");
+    }
+    const durableTip = parseJournalTip(
+      JSON.parse(await fs.readFile(join(options.path, IMPLEMENTATION_EVIDENCE_JOURNAL_TIP), "utf8")),
+    );
+
+    let authenticated: {
+      readonly tip: ImplementationEvidenceJournalTip;
+      readonly digests: ReadonlyMap<number, string | null>;
+    };
+    if (cache === null) {
+      authenticated = await authenticate(entries, { state: emptyState(), sequence: 0, digest: null });
+    } else {
+      if (entries.length < cache.sequence || durableTip.sequence < cache.sequence) {
+        throw new Error("active implementation evidence journal tip or history moved behind the verified cache");
+      }
+      for (let index = 0; index < cache.sequence; index += 1) {
+        const filename = entries[index];
+        if (
+          filename === undefined ||
+          !cache.identities.has(filename) ||
+          cache.identities.get(filename) !== identities.get(filename)
+        ) {
+          throw new Error("implementation evidence journal retained entry identity changed");
+        }
+      }
+      authenticated = await authenticate(entries.slice(cache.sequence), cache);
+    }
+    const checkpointDigest = authenticated.digests.get(durableTip.sequence);
+    if (checkpointDigest === undefined || checkpointDigest !== durableTip.digest) {
+      throw new Error("active implementation evidence journal tip is ahead, forked, or outside its chain");
+    }
+    if (authenticated.tip.sequence > durableTip.sequence + 1) {
+      throw new Error("active implementation evidence journal has more than one unpublished suffix entry");
+    }
+    if (authenticated.tip.sequence === durableTip.sequence + 1) {
+      await publishTip(authenticated.tip);
+    }
+    cache = { ...authenticated.tip, identities };
+    return authenticated.tip;
+  };
+
+  const read = async (): Promise<ImplementationEvidenceJournalTip> => {
+    const release = await lockfile.acquire(locks, "implementation-evidence");
+    try { return await reconcile(); }
+    finally { await release(); }
   };
   const append = async (
     state: MutableImplementationEvidenceSnapshot,
     prior: ImplementationEvidenceJournalTip,
   ): Promise<void> => {
-    await fs.mkdir(options.path, { recursive: true });
     const payload: ImplementationEvidenceJournalPayload = {
       kind: "cq-implementation-evidence-journal-entry",
       version: 1,
@@ -934,25 +1297,17 @@ export function createFsImplementationEvidenceStore(
     };
     const entry: ImplementationEvidenceJournalEntry = { ...payload, digest: digest(payload) };
     const filename = `${String(entry.sequence).padStart(16, "0")}-${entry.digest}.json`;
-    const temporary = join(options.path, `.tmp-${process.pid}-${randomUUID()}`);
-    const handle = await fs.open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(`${JSON.stringify(entry)}\n`, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(temporary, join(options.path, filename));
-    const directory = await fs.open(options.path, "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
+    await atomicPublish(filename, `${JSON.stringify(entry)}\n`, "entry", "entry");
+    const next = { state, sequence: entry.sequence, digest: entry.digest };
+    await publishTip(next);
+    if (cache === null) throw new Error("implementation evidence journal cache disappeared");
+    const identities = new Map(cache.identities);
+    identities.set(filename, await entryIdentity(filename));
+    cache = { ...next, identities };
   };
   return {
     async snapshot() {
-      return cloneState((await read()).state);
+      return await boundary.run(async () => cloneState((await read()).state));
     },
     async [mutateEvidence]<T>(
       mutation: (draft: MutableImplementationEvidenceSnapshot) => T | Promise<T>,
@@ -960,7 +1315,7 @@ export function createFsImplementationEvidenceStore(
       return await boundary.run(async () => {
         const release = await lockfile.acquire(locks, "implementation-evidence");
         try {
-          const prior = await read();
+          const prior = await reconcile();
           const draft = cloneState(prior.state);
           const result = await mutation(draft);
           await append(draft, prior);
@@ -5464,6 +5819,7 @@ export async function assertImplementationCompletionMergeAdmission(
   if (!COMPLETION_REF.test(binding.completionRef))
     throw new Error("merge completionRef is malformed");
   const snapshot = await store.snapshot();
+  assertNoCohortCompletionMerge(snapshot);
   const completion = snapshot.completions[binding.completionRef];
   if (completion === undefined) throw new Error("merge completion journal is missing");
   if (
@@ -5492,6 +5848,11 @@ export async function assertImplementationCompletionMergeAdmission(
   return completion;
 }
 
+function assertNoCohortCompletionMerge(snapshot: ImplementationEvidenceSnapshot): void {
+  const blocking = Object.values(snapshot.cohortCompletions).find((entry) => entry.state === "merge-started" || entry.state === "merged");
+  if (blocking !== undefined) throw new Error(`cohort completion ${blocking.completionRef} blocks another repository merge until recording`);
+}
+
 export async function markImplementationCompletionMergeStarted(
   store: ImplementationEvidenceStore,
   completionRef: string,
@@ -5499,6 +5860,7 @@ export async function markImplementationCompletionMergeStarted(
   now: () => string = () => new Date().toISOString(),
 ): Promise<void> {
   const snapshot = await store.snapshot();
+  assertNoCohortCompletionMerge(snapshot);
   const retained = snapshot.completions[completionRef];
   if (retained !== undefined) {
     const blocking = Object.values(snapshot.completions).find(
@@ -5521,6 +5883,7 @@ export async function markImplementationCompletionMergeStarted(
     }
   }
   await store[mutateEvidence](async (state) => {
+    assertNoCohortCompletionMerge(state);
     const completion = state.completions[completionRef];
     if (completion === undefined) throw new Error("merge completion journal disappeared");
     const blocking = Object.values(state.completions).find(
@@ -5766,25 +6129,393 @@ export async function recordProtectedImplementationCompletion(
     const reviewRef = `${REVIEWS_LEDGER}:${review.id}`;
     tx.bindImplementationCompletionReview(taskId, reviewRef);
     tx.updateItem(TASKS_LEDGER, taskId, patch);
-    const defectRefs = currentTask.fields["ledgerRefs"];
-    if (Array.isArray(defectRefs)) {
-      for (const defectRef of new Set(defectRefs)) {
-        if (!defectRef.startsWith(`${DEFECTS_LEDGER}:`)) continue;
-        const defectId = defectRef.slice(DEFECTS_LEDGER.length + 1);
-        let defect;
-        try {
-          defect = tx.fetchItem(DEFECTS_LEDGER, defectId);
-        } catch (error) {
-          if (error instanceof ItemNotFoundError) continue;
-          throw error;
-        }
-        if (defect.status === "root-caused") {
-          tx.updateItem(DEFECTS_LEDGER, defectId, defectPatch);
-        }
+    for (const { defect, fixTasks } of tx.implementationCompletionDefectFixes(taskId)) {
+      if (defect.status !== "root-caused") continue;
+      const requiredIds = defectFixTaskIds(defect.id, [defect], fixTasks);
+      const tasksById = new Map(fixTasks.map((candidate) => [candidate.id, candidate]));
+      if (
+        requiredIds.length > 0 &&
+        requiredIds.every((requiredId) => tasksById.get(requiredId)?.status === "done")
+      ) {
+        tx.updateItem(DEFECTS_LEDGER, defect.id, defectPatch);
       }
     }
     return { reviewRef };
   }, { direct: { kind: "implementation-completion", taskId, reviewInit, taskPatch: patch, defectPatch } });
+}
+
+export interface CohortDeploymentProbeReceiptV1 extends CohortDeploymentProbeV1 {
+  readonly command: NonNullable<CohortCompletionBatchV1["deploymentPlan"]>["members"][number];
+  readonly execution: { readonly executionId: string; readonly outputDigest: string; readonly outputTail: string;
+    readonly capturedAt: string; readonly exitCode: number };
+}
+
+const COHORT_PROBE_DIAGNOSTIC_LIMIT = 32_768;
+
+function assertCohortDeploymentProbeReceipt(batch: CohortCompletionBatchV1, probe: CohortDeploymentProbeReceiptV1): void {
+  const { receiptDigest, ...payload } = probe;
+  const command = batch.deploymentPlan?.members.find(({ taskRef }) => taskRef === probe.taskRef);
+  if (command === undefined || digest(probe.command) !== digest(command) || probe.execution === undefined ||
+      probe.execution.executionId.trim() === "" || !/^[0-9a-f]{64}$/u.test(probe.execution.outputDigest) ||
+      !Number.isFinite(Date.parse(probe.execution.capturedAt)) || !Number.isInteger(probe.execution.exitCode) ||
+      probe.execution.exitCode < 0 || probe.passed !== (probe.execution.exitCode === 0) ||
+      typeof probe.execution.outputTail !== "string" || probe.execution.outputTail.length > COHORT_PROBE_DIAGNOSTIC_LIMIT ||
+      digest(payload) !== receiptDigest) throw new Error("cohort probe lacks exact command and execution diagnostics");
+}
+
+export interface CohortCompletionJournalRecordV1 {
+  readonly kind: "cq-cohort-completion-journal";
+  readonly version: 1;
+  readonly completionRef: string;
+  readonly batch: CohortCompletionBatchV1;
+  readonly repositoryHead: string;
+  readonly mergeOperationId: string;
+  readonly state: "prepared" | "merge-started" | "merged" | "ledger-recorded" | "released";
+  readonly mergeReceiptDigest: string | null;
+  readonly deployments: readonly CohortDeploymentIdentityV1[];
+  readonly probes: readonly CohortDeploymentProbeReceiptV1[];
+  readonly ledgerResult: CohortCompletionLedgerResultV1 | null;
+}
+
+class IssuedCohortOperatorActionV1 {
+  readonly #batch: CohortCompletionBatchV1;
+  constructor(batch: CohortCompletionBatchV1) { this.#batch = structuredClone(batch); }
+  batch(): CohortCompletionBatchV1 { return structuredClone(this.#batch); }
+}
+export type AuthorizedCohortOperatorActionV1 = IssuedCohortOperatorActionV1;
+export function readAuthorizedCohortOperatorActionV1(value: AuthorizedCohortOperatorActionV1): CohortCompletionBatchV1 {
+  if (!(value instanceof IssuedCohortOperatorActionV1)) throw new Error("cohort operator action requires merged journal authority");
+  return value.batch();
+}
+
+export class ProtectedCohortCompletionJournalV1 {
+  constructor(private readonly store: ImplementationEvidenceStore) {}
+
+  async authorizeDeployment(batch: CohortCompletionBatchV1): Promise<AuthorizedCohortOperatorActionV1> {
+    const record = await this.read(batch);
+    if (record.state !== "merged" || record.mergeReceiptDigest === null) throw new Error("cohort operator action requires its merged journal");
+    return new IssuedCohortOperatorActionV1(batch);
+  }
+
+  async recordReview(authority: AuthorizedCohortReviewV1): Promise<CohortReviewReceiptV1> {
+    const receipt = readAuthorizedCohortReviewV1(authority);
+    return await this.store[mutateEvidence]((state) => {
+      if (Object.values(state.cohortReviews).some((entry) => entry.recording.operationId === receipt.recording.operationId && entry.reviewRef !== receipt.reviewRef)) {
+        throw new Error("cohort review recording operation was rebound");
+      }
+      const prior = state.cohortReviews[receipt.reviewRef];
+      if (prior !== undefined && digest(prior) !== digest(receipt)) throw new Error("cohort review receipt changed");
+      state.cohortReviews[receipt.reviewRef] = structuredClone(receipt);
+      return structuredClone(receipt);
+    });
+  }
+
+  async reviews(batch: CohortCompletionBatchV1): Promise<readonly CohortReviewReceiptV1[]> {
+    assertCohortCompletionBatchV1(batch);
+    const snapshot = await this.store.snapshot();
+    const refs = [...new Set(batch.members.flatMap(({ reviewAttemptRefs }) => reviewAttemptRefs))];
+    return refs.map((ref) => {
+      const review = snapshot.cohortReviews[ref];
+      if (review === undefined || review.resultCommit !== batch.resultCommit ||
+          review.envelope.evidenceSubject.evidenceSubjectDigest !== batch.envelope.evidenceSubject.evidenceSubjectDigest ||
+          review.envelope.memberSetDigest !== batch.envelope.memberSetDigest ||
+          batch.members.some((member, index) => !member.reviewAttemptRefs.includes(ref) ||
+            review.memberObservations[index]?.memberRef !== member.taskRef)) {
+        throw new Error("cohort completion lacks an exact all-member authenticated review");
+      }
+      return structuredClone(review);
+    });
+  }
+
+  async prepare(batch: CohortCompletionBatchV1, repositoryHead: string): Promise<CohortCompletionJournalRecordV1> {
+    await this.reviews(batch);
+    const completionRef = `cq-implementation-completion:v1:${batch.batchDigest}`;
+    return await this.store[mutateEvidence]((state) => {
+      const prior = state.cohortCompletions[completionRef];
+      if (prior !== undefined) {
+        if (prior.batch.batchDigest !== batch.batchDigest ||
+            (repositoryHead !== prior.repositoryHead && repositoryHead !== batch.resultCommit)) throw new Error("cohort completion journal changed");
+        return structuredClone(prior);
+      }
+      if (Object.values(state.cohortCompletions).some((entry) => entry.batch.operationId === batch.operationId)) {
+        throw new Error("cohort completion operation was rebound to another batch");
+      }
+      assertFullSha(repositoryHead, "cohort integration HEAD");
+      const record: CohortCompletionJournalRecordV1 = { kind: "cq-cohort-completion-journal", version: 1,
+        completionRef, batch: structuredClone(batch), repositoryHead, mergeOperationId: `cohort-${batch.batchDigest}`,
+        state: "prepared", mergeReceiptDigest: null, deployments: [], probes: [], ledgerResult: null };
+      state.cohortCompletions[completionRef] = record;
+      return structuredClone(record);
+    });
+  }
+
+  async read(batch: CohortCompletionBatchV1): Promise<CohortCompletionJournalRecordV1> {
+    const record = (await this.store.snapshot()).cohortCompletions[`cq-implementation-completion:v1:${batch.batchDigest}`];
+    if (record === undefined || record.batch.batchDigest !== batch.batchDigest) throw new Error("cohort completion journal is absent");
+    for (const probe of record.probes) assertCohortDeploymentProbeReceipt(batch, probe);
+    return structuredClone(record);
+  }
+
+  async mergeStarted(batch: CohortCompletionBatchV1, head: string): Promise<void> {
+    await this.change(batch, (record, state) => {
+      const singleton = Object.values(state.completions).find((entry) => ["merge-started", "merged", "recording"].includes(entry.state));
+      const cohort = Object.values(state.cohortCompletions).find((entry) => entry.completionRef !== record.completionRef &&
+        ["merge-started", "merged"].includes(entry.state));
+      if (singleton !== undefined || cohort !== undefined) throw new Error("another protected completion blocks the integration ref");
+      if (head !== record.repositoryHead && head !== batch.resultCommit) throw new Error("cohort integration ref moved before merge");
+      if (record.state === "prepared") return { ...record, state: "merge-started" };
+      if (record.state !== "merge-started" && record.state !== "merged") throw new Error("cohort journal is not merge-admissible");
+      return record;
+    });
+  }
+
+  async merged(batch: CohortCompletionBatchV1, head: string): Promise<CohortCompletionJournalRecordV1> {
+    return await this.change(batch, (record) => {
+      if (head !== batch.resultCommit || !["merge-started", "merged"].includes(record.state)) throw new Error("cohort merge did not settle at its journal-bound candidate");
+      const mergeReceiptDigest = digest({ completionRef: record.completionRef, batchDigest: batch.batchDigest,
+        repositoryHead: record.repositoryHead, resultCommit: batch.resultCommit, sealDigest: batch.acceptance.sealDigest,
+        mergeOperationId: record.mergeOperationId });
+      return { ...record, state: "merged", mergeReceiptDigest };
+    });
+  }
+
+  async deployment(batch: CohortCompletionBatchV1, identity: CohortDeploymentIdentityV1): Promise<void> {
+    await this.change(batch, (record) => {
+      if (record.state !== "merged") throw new Error("cohort deployment requires its merged candidate");
+      const prior = record.deployments.find((value) => value.probeEpoch === identity.probeEpoch);
+      if (prior !== undefined && digest(prior) !== digest(identity)) throw new Error("cohort deployment probe epoch changed identity");
+      return prior === undefined ? { ...record, deployments: [...record.deployments, structuredClone(identity)] } : record;
+    });
+  }
+
+  async probe(batch: CohortCompletionBatchV1, probe: CohortDeploymentProbeReceiptV1): Promise<void> {
+    assertCohortDeploymentProbeReceipt(batch, probe);
+    await this.change(batch, (record) => {
+      const deployment = record.deployments.find((entry) => entry.probeEpoch === probe.probeEpoch);
+      if (record.state !== "merged" || deployment === undefined || deployment.packagedBuildDigest !== probe.packagedBuildDigest ||
+          deployment.startupBuildCommit !== probe.startupBuildCommit || probe.sealDigest !== batch.acceptance.sealDigest ||
+          !batch.members.some(({ taskRef }) => taskRef === probe.taskRef)) throw new Error("cohort probe lacks its exact deployment and member");
+      const prior = record.probes.find(({ receiptDigest }) => receiptDigest === probe.receiptDigest);
+      if (prior !== undefined && digest(prior) !== digest(probe)) throw new Error("cohort probe receipt changed");
+      return prior === undefined ? { ...record, probes: [...record.probes, structuredClone(probe)] } : record;
+    });
+  }
+
+  async ledgerRecorded(batch: CohortCompletionBatchV1, result: CohortCompletionLedgerResultV1): Promise<void> {
+    await this.change(batch, (record) => {
+      if (result.batchDigest !== batch.batchDigest || !["merged", "ledger-recorded", "released"].includes(record.state) ||
+          (record.ledgerResult !== null && digest(record.ledgerResult) !== digest(result))) throw new Error("cohort journal terminal result changed");
+      return record.state === "released" ? record : { ...record, state: "ledger-recorded", ledgerResult: structuredClone(result) };
+    });
+  }
+
+  async released(batch: CohortCompletionBatchV1): Promise<void> {
+    await this.change(batch, (record) => {
+      if (record.state !== "ledger-recorded" && record.state !== "released") throw new Error("cohort journal release precedes primary recording");
+      return { ...record, state: "released" };
+    });
+  }
+
+  private async change(batch: CohortCompletionBatchV1,
+    mutate: (record: CohortCompletionJournalRecordV1, state: MutableImplementationEvidenceSnapshot) => CohortCompletionJournalRecordV1): Promise<CohortCompletionJournalRecordV1> {
+    return await this.store[mutateEvidence]((state) => {
+      const ref = `cq-implementation-completion:v1:${batch.batchDigest}`;
+      const record = state.cohortCompletions[ref];
+      if (record === undefined || record.batch.batchDigest !== batch.batchDigest) throw new Error("cohort completion journal is absent");
+      const updated = mutate(record, state);
+      state.cohortCompletions[ref] = updated;
+      return structuredClone(updated);
+    });
+  }
+}
+
+export async function recordProtectedCohortCompletion(
+  store: LedgerStore,
+  authorization: AuthorizedCohortCompletionV1,
+): Promise<CohortCompletionLedgerResultV1> {
+  const { batch, handoff, fence, mode, operatorSettlement } = readAuthorizedCohortCompletionV1(authorization);
+  if ((mode === "record" ? handoff.phase !== "ledger-recording" : !["ledger-recording", "ledger-recorded", "released"].includes(handoff.phase)) ||
+      handoff.batchDigest !== batch.batchDigest) {
+    throw new Error("protected cohort completion requires its exact durable recording handoff");
+  }
+  const members = batch.members.map((member, index) => {
+    const authority = batch.envelope.memberAuthorities[index];
+    if (authority === undefined || authority.taskRef !== member.taskRef) throw new Error("cohort completion member authority changed");
+    const implementationEvidence = JSON.stringify({ version: 1, kind: "cohort", batchDigest: batch.batchDigest,
+      operationId: batch.operationId, completionDigest: batch.acceptance.completionDigest, sealDigest: batch.acceptance.sealDigest,
+      taskRef: member.taskRef, resultCommit: batch.resultCommit, reviewAttemptRefs: member.reviewAttemptRefs });
+    const reviewInit: CreateItemInit = { status: "go-ahead", fields: {
+      summary: member.completion, implementationEvidence, ledgerRefs: [member.taskRef, authority.goalRef],
+      sourceRefs: [...member.reviewAttemptRefs], sessionLogs: [...member.logPaths],
+    }, author: batch.author, session: batch.session };
+    const taskPatch: UpdateItemPatch = { status: "done", fields: {
+      resultCommit: batch.resultCommit, completion: member.completion, sessionLogs: [...member.logPaths],
+    }, author: batch.author, session: batch.session };
+    const defectPatch: UpdateItemPatch = { status: "resolved", fields: {
+      fix: `Cohort completion ${batch.batchDigest} recorded at ${batch.resultCommit}.`,
+    }, author: batch.author, session: batch.session };
+    authorizedImplementationEvidenceMutations.add(reviewInit);
+    authorizedImplementationEvidenceMutations.add(taskPatch);
+    return { member, authority, implementationEvidence, operation: { kind: "implementation-completion" as const,
+      taskId: taskIdFromRef(member.taskRef), ownerGoalId: authority.goalRef.slice(`${GOALS_LEDGER}:`.length),
+      reviewInit, taskPatch, defectPatch } };
+  });
+  const atomic = store as LedgerStore & {
+    runAtomicOwnedMutation?<T>(mutate: (tx: DirectOwnedWriteTx) => T, context: DirectOwnedMutation): Promise<T>;
+  };
+  if (atomic.runAtomicOwnedMutation === undefined) throw new Error("protected cohort completion requires an atomic ledger adapter");
+  return await atomic.runAtomicOwnedMutation((tx) => {
+    if (operatorSettlement !== null) {
+      const action = tx.fetchItem("operatorActions", operatorSettlement.actionId);
+      const report = tx.fetchItem("handoffs", operatorSettlement.handoffId);
+      const plan = batch.deploymentPlan;
+      if (plan === null || handoff.deployment === null ||
+          handoff.deployment.operatorActionRef !== `operatorActions:${action.id}` || action.status !== "verified" ||
+          ledgerItemRevisionV1(`operatorActions:${action.id}`, action) !== operatorSettlement.actionRevision ||
+          ledgerItemRevisionV1(`handoffs:${report.id}`, report) !== operatorSettlement.handoffRevision ||
+          action.fields.cohortBatchDigest !== batch.batchDigest ||
+          action.fields.acknowledgedOutputIdentity !== cohortValueDigestV1(plan.packagedBuildIdentity) ||
+          cohortValueDigestV1(action.fields.cohortMemberRefs) !== cohortValueDigestV1(batch.members.map(({ taskRef }) => taskRef)) ||
+          report.status !== "user-action-required" ||
+          cohortValueDigestV1(report.fields.tags) !== cohortValueDigestV1(["cohort-deployment", batch.batchDigest]) ||
+          !Array.isArray(report.fields.ledgerRefs) || !report.fields.ledgerRefs.includes(`operatorActions:${action.id}`)) {
+        throw new Error("cohort deployment settlement differs from its exact verified operator action and handoff");
+      }
+    }
+    const reviews: { taskRef: string; reviewRef: string }[] = [];
+    let replayResult: CohortCompletionLedgerResultV1 | null = null;
+    const bound = members.map(({ operation }) => tx.fetchImplementationCompletionBinding(operation.taskId));
+    if (mode === "verify" && bound.every((value) => value === undefined)) throw new CohortPrimaryCompletionMissingError();
+    if (bound.some((value) => value !== undefined) && bound.some((value) => value === undefined)) {
+      throw new Error("cohort completion cannot adopt a terminal subset");
+    }
+    if (bound.every((value) => value === undefined)) for (const operation of batch.sweep.terminalItems) {
+      const colon = operation.targetId.indexOf(":");
+      const item = tx.fetchItem(operation.targetId.slice(0, colon), operation.targetId.slice(colon + 1));
+      if (item.milestoneId !== operation.expectedMilestoneId || item.updatedAt !== operation.expectedUpdatedAt ||
+          ledgerItemRevisionV1(operation.targetId, item) !== operation.expectedItemDigest) {
+        throw new Error(`cohort exact terminal sweep revision changed for ${operation.targetId}`);
+      }
+    }
+    for (const [index, { member, authority, operation, implementationEvidence }] of members.entries()) {
+      const task = tx.fetchImplementationCompletionItem(TASKS_LEDGER, operation.taskId);
+      const binding = bound[index];
+      if (binding !== undefined) {
+        if (!/^reviews:R[0-9]+$/u.test(binding)) throw new Error("cohort terminal review binding is malformed");
+        const review = tx.fetchImplementationCompletionItem(REVIEWS_LEDGER, binding.slice(`${REVIEWS_LEDGER}:`.length));
+        if (typeof review.fields.implementationEvidence !== "string") throw new Error("cohort terminal review evidence is malformed");
+        const recorded = JSON.parse(review.fields.implementationEvidence) as Record<string, unknown>;
+        const { ledgerResult, ...evidence } = recorded;
+        if (typeof ledgerResult !== "object" || ledgerResult === null || Array.isArray(ledgerResult)) throw new Error("cohort terminal review lacks its atomic batch result");
+        const result = ledgerResult as unknown as CohortCompletionLedgerResultV1;
+        if (result.batchDigest !== batch.batchDigest || (replayResult !== null && cohortValueDigestV1(result) !== cohortValueDigestV1(replayResult))) {
+          throw new Error("cohort terminal reviews disagree on their atomic batch result");
+        }
+        replayResult = result;
+        if (task.status !== "done" || task.fields.resultCommit !== batch.resultCommit || task.fields.completion !== member.completion ||
+            cohortValueDigestV1(task.fields.sessionLogs) !== cohortValueDigestV1(member.logPaths) ||
+            review.status !== "go-ahead" || cohortValueDigestV1(evidence) !== cohortValueDigestV1(JSON.parse(implementationEvidence)) ||
+            cohortValueDigestV1({ ...review.fields, implementationEvidence }) !== cohortValueDigestV1(operation.reviewInit.fields)) {
+          throw new Error("cohort terminal subset carries different completion evidence");
+        }
+        reviews.push({ taskRef: member.taskRef, reviewRef: binding });
+        continue;
+      }
+      const goal = tx.fetchItem(GOALS_LEDGER, operation.ownerGoalId);
+      const manifest = parseGoalFinalizedManifest(goal);
+      if (task.status !== "wip" || cohortValueDigestV1({ ref: member.taskRef, item: task }) !== authority.taskRevision ||
+          task.fields.worksetOwnerRef !== authority.goalRef || task.fields.worksetOwnerEdgeKind !== "finalized-manifest" ||
+          manifest === null || cohortValueDigestV1({ goalRef: authority.goalRef, manifest }) !== authority.finalizedManifestDigest ||
+          !manifest.tasks.some(({ id }) => id === task.id)) {
+        throw new Error(`cohort completion sealed task authority changed for ${member.taskRef}`);
+      }
+      const review = tx.createItemOwnerless(REVIEWS_LEDGER, task.milestoneId, operation.reviewInit);
+      const reviewRef = `${REVIEWS_LEDGER}:${review.id}`;
+      tx.bindImplementationCompletionReview(task.id, reviewRef);
+      tx.updateItem(TASKS_LEDGER, task.id, operation.taskPatch);
+      reviews.push({ taskRef: member.taskRef, reviewRef });
+    }
+    if (replayResult !== null) {
+      if (cohortValueDigestV1(replayResult.reviews) !== cohortValueDigestV1(reviews)) throw new Error("cohort atomic result differs from its exact member review bindings");
+      return replayResult;
+    }
+    const resolvedDefects = new Set<string>();
+    for (const { operation } of members) for (const { defect, fixTasks } of tx.implementationCompletionDefectFixes(operation.taskId)) {
+      const fix = operation.defectPatch.fields?.fix;
+      if (defect.status === "resolved" && defect.fields.fix === fix) {
+        resolvedDefects.add(`${DEFECTS_LEDGER}:${defect.id}`);
+        continue;
+      }
+      if (defect.status !== "root-caused") continue;
+      const requiredIds = defectFixTaskIds(defect.id, [defect], fixTasks);
+      if (requiredIds.length === 0 || !requiredIds.every((id) => fixTasks.some((task) => task.id === id && task.status === "done"))) continue;
+      tx.updateItem(DEFECTS_LEDGER, defect.id, operation.defectPatch);
+      resolvedDefects.add(`${DEFECTS_LEDGER}:${defect.id}`);
+    }
+    const goalRefs = [...new Set(members.map(({ authority }) => authority.goalRef))].sort();
+    const readyForUserClosureGoalRefs = goalRefs.filter((ref) => {
+      const goal = tx.fetchItem(GOALS_LEDGER, ref.slice(`${GOALS_LEDGER}:`.length));
+      const manifest = parseGoalFinalizedManifest(goal);
+      return manifest !== null && manifest.tasks.length > 0 &&
+        manifest.milestones.every(({ id }) => batch.sweep.milestones.some((selected) => selected.id === id)) && manifest.tasks.every(({ id }) =>
+        tx.fetchImplementationCompletionItem(TASKS_LEDGER, id).status === "done");
+    });
+    const archivedRefs = new Set(batch.sweep.terminalItems.map(({ targetId }) => targetId));
+    for (const ref of archivedRefs) if (!resolvedDefects.has(ref)) throw new Error("cohort terminal sweep selected a defect not wholly covered by this completion");
+    if (operatorSettlement !== null) archivedRefs.add(`handoffs:${operatorSettlement.handoffId}`);
+    if (batch.sweep.archiveCompletedMembers) {
+      for (const review of reviews) {
+        archivedRefs.add(review.taskRef);
+        archivedRefs.add(review.reviewRef);
+      }
+      for (const ref of resolvedDefects) archivedRefs.add(ref);
+    }
+    for (const milestone of batch.sweep.milestones) {
+        const item = tx.fetchItem("milestones", milestone.id);
+        const inventory = tx.completionArchive.collectArchiveSweepRefs(milestone.id);
+        const admitted = new Set([`milestones:${milestone.id}`, ...members.map(({ member }) => member.taskRef),
+          ...reviews.map(({ reviewRef }) => reviewRef), ...resolvedDefects]);
+        if (inventory.some((ref) => !admitted.has(ref))) throw new Error("cohort whole milestone inventory is not wholly admitted");
+        const eligible = new Set(tx.completionArchive.collectArchiveTerminalItemRefs(
+          [...new Set(inventory.filter((ref) => !ref.startsWith("milestones:")).map((ref) => ref.slice(0, ref.indexOf(":"))))], "retain-active-gates"));
+        if (inventory.some((ref) => !ref.startsWith("milestones:") && !eligible.has(ref))) {
+          throw new Error("cohort whole milestone contains retained gates, owners, or active items");
+        }
+        if (ledgerItemRevisionV1(`milestones:${milestone.id}`, item) !== milestone.expectedItemDigest ||
+            typeof item.fields.worksetOwnerRef !== "string" || !goalRefs.includes(item.fields.worksetOwnerRef) ||
+            item.fields.worksetOwnerEdgeKind !== "finalized-manifest" || milestone.id === "M-AMBIENT") {
+          throw new Error("cohort milestone archive is not an exact owned work milestone");
+        }
+        tx.completionArchive.updateMilestone(milestone.id, { status: "done", author: batch.author, session: batch.session });
+    }
+    const wholeMilestones = new Set(batch.sweep.milestones.map(({ id }) => id));
+    const terminalLedgerIds = [...new Set([...archivedRefs].map((ref) => ref.slice(0, ref.indexOf(":"))))];
+    const eligibleRefs = new Set(tx.completionArchive.collectArchiveTerminalItemRefs(terminalLedgerIds, "retain-active-gates"));
+    if (operatorSettlement !== null && !eligibleRefs.has(`handoffs:${operatorSettlement.handoffId}`)) {
+      throw new Error("cohort deployment handoff is not eligible for exact settlement archive");
+    }
+    for (const ref of archivedRefs) if (!eligibleRefs.has(ref)) archivedRefs.delete(ref);
+    const exact = [...archivedRefs].filter((ref) => {
+      const colon = ref.indexOf(":");
+      return !wholeMilestones.has(tx.fetchItem(ref.slice(0, colon), ref.slice(colon + 1)).milestoneId);
+    });
+    const result: CohortCompletionLedgerResultV1 = { batchDigest: batch.batchDigest, reviews,
+      resolvedDefectRefs: [...resolvedDefects].sort(), readyForUserClosureGoalRefs,
+      archivedRefs: [...archivedRefs].sort(), archivedMilestoneIds: batch.sweep.milestones.map(({ id }) => id).sort(),
+      operatorHandoffRef: operatorSettlement === null ? null : `handoffs:${operatorSettlement.handoffId}` };
+    for (const [index, review] of reviews.entries()) {
+      const member = members[index];
+      if (member === undefined) throw new Error("cohort review allocation lost a member");
+      const patch: UpdateItemPatch = { fields: { implementationEvidence: JSON.stringify({
+        ...JSON.parse(member.implementationEvidence) as Record<string, unknown>, ledgerResult: result,
+      }) }, author: batch.author, session: batch.session };
+      authorizedImplementationEvidenceMutations.add(patch);
+      tx.updateItem(REVIEWS_LEDGER, review.reviewRef.slice(`${REVIEWS_LEDGER}:`.length), patch);
+    }
+    if (exact.length > 0) tx.completionArchive.archiveTerminalItems(terminalLedgerIds, batch.sweep.summary, "retain-active-gates", exact);
+    for (const milestone of batch.sweep.milestones) tx.completionArchive.archiveMilestone(milestone.id, batch.sweep.summary);
+    return result;
+  }, { direct: { kind: "cohort-completion", members: members.map(({ operation }) => operation), sweep: batch.sweep, fence, operatorSettlement } });
 }
 
 export function canonicalImplementationCompletionMergeLine(

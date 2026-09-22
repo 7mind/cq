@@ -9,7 +9,11 @@ import { describe, it, expect, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { ledgerTreePaths, removeLedgerArtifacts } from "../src/store/ledgerArtifacts.js";
+import {
+  ledgerTreePaths,
+  removeLedgerArtifacts,
+  WORK_COHORT_STATE_FILENAME,
+} from "../src/store/ledgerArtifacts.js";
 import { LEDGER_STORAGE_DIRNAME } from "../src/constants.js";
 
 const dirs: string[] = [];
@@ -38,6 +42,7 @@ describe("ledgerTreePaths", () => {
     await fs.writeFile(path.join(storageDir, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n");
     await fs.writeFile(path.join(storageDir, "tasks.md"), "# tasks\n");
     await fs.writeFile(path.join(storageDir, "archive-commit.pending.json"), "{}\n");
+    await fs.writeFile(path.join(storageDir, WORK_COHORT_STATE_FILENAME), "{}\n");
 
     // Seed archive/** so we can confirm it is also included.
     await fs.mkdir(path.join(storageDir, "archive", "tasks"), { recursive: true });
@@ -64,6 +69,7 @@ describe("ledgerTreePaths", () => {
     expect(paths).toContain("ledgers.yaml");
     expect(paths).toContain("tasks.md");
     expect(paths).toContain("archive/tasks/M1.md");
+    expect(paths).toContain(WORK_COHORT_STATE_FILENAME);
     expect(paths).not.toContain("archive-commit.pending.json");
 
     // Ephemeral dirs must NOT appear.
@@ -128,6 +134,7 @@ describe("removeLedgerArtifacts", () => {
     await fs.writeFile(path.join(storageDir, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n");
     await fs.writeFile(path.join(storageDir, "tasks.md"), "# tasks\n");
     await fs.writeFile(path.join(storageDir, "archive-commit.pending.json"), "{}\n");
+    await fs.writeFile(path.join(storageDir, WORK_COHORT_STATE_FILENAME), "{}\n");
     await fs.mkdir(path.join(storageDir, "logs"), { recursive: true });
     await fs.writeFile(path.join(storageDir, "logs", "session.log"), "log\n");
     await fs.mkdir(path.join(storageDir, ".locks"), { recursive: true });
@@ -154,6 +161,7 @@ describe("removeLedgerArtifacts", () => {
     expect(await exists(path.join(storageDir, "ledgers.yaml"))).toBe(false);
     expect(await exists(path.join(storageDir, "tasks.md"))).toBe(false);
     expect(await exists(path.join(storageDir, "archive-commit.pending.json"))).toBe(false);
+    expect(await exists(path.join(storageDir, WORK_COHORT_STATE_FILENAME))).toBe(false);
 
     // Result records the removals.
     expect(result.removed.length).toBeGreaterThan(0);

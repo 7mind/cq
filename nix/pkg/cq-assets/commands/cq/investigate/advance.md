@@ -1,6 +1,6 @@
 ---
-description: "Advance one defect investigation round: extend its hypothesis tree, gather and validate evidence, adjudicate nodes, and hand a confirmed cause to planning."
-argument-hint: <defectId>
+description: "Advance an admitted investigation cohort: validate shared evidence and adjudicate each member's hypothesis tree separately."
+argument-hint: [defectId ...]
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
@@ -14,7 +14,7 @@ Effect-boundary authority follows this shared contract:
 ## Catalogue
 ```yaml
 inputs:
-  - "one defect id and its linked hypothesis/question/research state"
+  - "bounded ordered ready defect candidates and their linked hypothesis/question/research state"
 outputs:
   - "validated hypothesis evidence and status changes"
   - "optional execution probes or research escalation"
@@ -25,10 +25,79 @@ ioSchema:
   - "explorer/prober output: {hypothesisId,evidence[],lean,notes?,probeRequest?}"
 ```
 
-You own the investigation loop for one defect. Explorers and probers gather
+You own the investigation loop for an admitted cohort. Explorers and probers gather
 evidence; they never mutate the ledger or adjudicate. Re-derive state from the
 ledger on every invocation. A round must dispatch a child or make a durable
 mutation; otherwise stop with a handoff instead of rereading indefinitely.
+
+## Mandatory cohort admission
+
+Use mandatory safe fusion before per-node dispatch. Read authoritative
+`derive_predicates()` and `get_cohort_status().readyBoundaries`, then make a
+bounded observation of at most 256 ordered ready defects within one admitted
+investigation boundary. Preserve total/unexamined counts for oversized boundaries;
+never silently turn the remainder into singleton work. An explicit requested
+defect remains in scope; unrelated work and other phases do not become admitted.
+
+Call `cohort_advance({operation:"observe",plan,operation_id})` with the selected
+members, their exact investigation hypothesis refs and revision-bound acceptance
+provenance, and complete candidate atoms. The server must record a phase-homogeneous
+common atom or an explicit singleton with its reason. A shared label or pairwise
+overlap is insufficient; one complete witness/regression/gate/reviewer/deployment/
+finalization atom must cover the whole set. Novel work uses the same rule.
+No fusion setting or eager per-defect fallback exists.
+
+Use `cohort_investigation_advance({input:{operation:..., ...}})` for the following
+resumable parent operations; operation fields use the exact camelCase names below:
+
+- `prepare`: pass the same `admissionPlan`, observed `definitionDigest`,
+  `operationId`, and ordered `members` containing `defectRef`, `branchContext`,
+  and `leads`. The server derives canonical hypotheses, revisions, and role
+  contracts. Launch each returned `launches[].prepared` through the normal native
+  bridge with its exact investigation binding: pass
+  `investigationCohort: launch.nativeBinding` and
+  `effectTargetRef: "cq-cohort-effect:v1:<planDigest>"`, preserving the returned
+  role, handle, and capabilities. A prepared launch is not an executed role.
+  Never reconstruct dispatch capabilities or substitute a task.
+- `collect`: pass `planDigest` after native completion has been confirmed. The
+  server authenticates consumed role results, reopens citations, and returns
+  required prober preparations or per-member `adjudicationRequests`. Preparation,
+  result storage, and consumed native completion are distinct states.
+- `probe`: approve an explicit normalized `command` (`argv`, repository-relative
+  `cwd`, and `environment`) with exact `planDigest`, prober `preparedDigest`, and
+  `citation`. The server executes it under all-member admission. Never execute an
+  explorer's free-text `probeRequest` automatically. Retained `probeEvidence`
+  binds real execution identity, output digest, redacted diagnostics, and bounded
+  `completeOutput`; an unavailable complete range is not evidence.
+- `adjudicate`: pass `planDigest` and the selected members' exact returned
+  `evidenceDigest`, with explicit verdict, rationale, cause/correction-boundary
+  digests, and applicable common-atom digests. This is parent judgment over
+  authenticated evidence, not a worker verdict or implementation acceptance.
+  Preserve separate judgments for every member and honor a returned split.
+- `resume`: pass the unchanged `planDigest` only after an execution-epoch change.
+  The server reauthenticates retained evidence before renewing live authority;
+  the previous epoch's launch authority cannot be reused.
+
+Use only the installed cohort investigation operation and returned dispatch
+authority when available; observation alone is not execution authority. A missing
+cohort executor is `executor-unavailable`, never permission to substitute raw
+task-only dispatch or caller-authored evidence. Bind every local probe/effect to
+the current execution epoch; retained evidence is metadata, not a reusable lease.
+On unchanged restart, renew live authority explicitly and preserve only exactly
+matching durable evidence. A changed definition, member/hypothesis revision, or
+probe boundary invalidates affected evidence.
+
+Share gathering only while the complete common atom holds. Retain per-member
+citations, findings, hypotheses, causal conclusions, and adjudications; no majority
+vote or first-defect anchor replaces them. A divergent cause/probe requirement
+records an explicit split and preserves parent/member lineage. Aggregate only
+authenticated returned evidence, with no implementation acceptance, commit gate,
+review, or completion receipt inferred from an investigation result.
+
+Apply the following state, validation, and adjudication rules separately to every
+member. Park only the affected branch when a question/research gate appears;
+re-observe or split before changing admitted membership. Never mutate the sealed
+member set in place or broaden workset/user authority.
 
 ## State and invariants
 

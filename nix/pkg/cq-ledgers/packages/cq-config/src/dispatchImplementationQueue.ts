@@ -6,13 +6,16 @@ import {
   DispatchAuthorizationError,
   DispatchAttestationExtensionError,
   DispatchStateConflictError,
+  assertDispatchContinuationBinding,
   assertDispatchHandle,
+  assertDispatchRecoveryBinding,
   attestationRowDigest,
   attestationInstantMs,
   attestationNamespacesEqual,
   dispatchPayloadDigest,
   formatAttestationNamespace,
   isAttestationTombstone,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   type AttestationEnvelope,
   type AttestationNamespace,
   type AttestationRow,
@@ -22,8 +25,11 @@ import {
   type DispatchProvenanceBinding,
   type DispatchServiceDeps,
   type NativeChildIdentity,
+  type PrepareDispatchRequest,
 } from "./dispatchAttestation.js";
 import type { AttestationBackend } from "./dispatchAttestationBackend.js";
+import { cohortRebaseTransitionMatches } from "./cohortRebaseTransition.js";
+import { DISPATCH_OVERLAY_REGISTRY } from "./dispatchOverlays.js";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -37,6 +43,9 @@ import {
   isImplementWorkerSupervisedGateRejectionDetails,
 } from "./schemas/implement-worker.js";
 import { CODEX_STAGED_TIMING_BASIS } from "./codexStagedTiming.js";
+import { assertCohortEffectEnvelopeV1, type CohortEffectEnvelopeV1 } from "@cq/process-control";
+import { implementationQueueSubjectsMatch, cohortQueueProductionIdentity } from "./implementationQueueIdentity.js";
+export { implementationQueueSubjectsMatch, implementationQueueAuthoritiesMatch } from "./implementationQueueIdentity.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
@@ -99,32 +108,38 @@ export interface ImplementationQueuePartition {
   readonly integrationRef: string;
 }
 
-export interface ImplementationQueueAuthority {
+export interface ImplementationTaskQueueAuthority {
   readonly taskId: string;
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
+  readonly cohort?: never;
 }
+export type ImplementationQueueAuthority = ImplementationTaskQueueAuthority | {
+  readonly cohort: CohortEffectEnvelopeV1;
+  readonly taskId?: never;
+  readonly goalRef?: never;
+  readonly finalizedManifestDigest?: never;
+};
 
-export interface ImplementationQueueEnrollment extends ImplementationQueueAuthority {
+type VersionedImplementationQueueAuthority =
+  | (ImplementationTaskQueueAuthority & { readonly version: 1 })
+  | (Extract<ImplementationQueueAuthority, { readonly cohort: CohortEffectEnvelopeV1 }> & { readonly version: 2 });
+
+export type ImplementationQueueEnrollment = VersionedImplementationQueueAuthority & {
   readonly kind: "cq-implementation-queue-enrollment";
-  readonly version: 1;
   readonly enrollmentId: string;
   readonly partitionKey: string;
   readonly admissionOrdinal: number;
 }
 
-export interface ImplementationQueueAttempt {
+export type ImplementationQueueAttempt = VersionedImplementationQueueAuthority & {
   readonly kind: "cq-implementation-queue-attempt";
-  readonly version: 1;
   readonly attemptId: string;
   readonly observedBaseCommit: string;
   readonly resultCommit: string;
   readonly resultTree: string;
   readonly gateCommand: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
   readonly packagedEnvironmentDigest: string;
-  readonly taskId: string;
-  readonly goalRef: string;
-  readonly finalizedManifestDigest: string;
   readonly managedWorktreeBindingDigest: string;
   readonly gitReceiptLineageDigest: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
@@ -152,18 +167,28 @@ export interface ImplementationQueueLease {
   readonly acquiredAt: string;
 }
 
-export interface ImplementationCompletionLeaseReservation {
+export interface ImplementationCohortCompletionSubject {
+  readonly envelope: CohortEffectEnvelopeV1 & { readonly state: "sealed" };
+  readonly batchDigest: string;
+  readonly sealDigest: string;
+  readonly memberRefs: readonly string[];
+}
+
+type ImplementationCompletionSubject =
+  | { readonly taskRef: string; readonly cohort?: never }
+  | { readonly cohort: ImplementationCohortCompletionSubject; readonly taskRef?: never };
+
+export type ImplementationCompletionLeaseReservation = {
   readonly kind: "cq-implementation-completion-lease-reservation";
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly operationId: string;
   readonly requestDigest: string;
-  readonly taskRef: string;
   readonly completionRef: string;
   readonly mergeOperationId: string;
   readonly resultCommit: string;
   readonly qualificationDigest: string;
   readonly reservedAt: string;
-}
+} & ImplementationCompletionSubject;
 
 export interface DispatchStagedRebaseSourceBinding {
   readonly kind: "cq-staged-rebase-source-binding";
@@ -383,6 +408,8 @@ export type AcquireImplementationCandidateOutcome =
       readonly partitionRevision: number;
       readonly front: DispatchHandle;
       readonly frontState: ImplementationCandidateQueueState;
+      /** Present only for a staged-rebase-retired coordinator handoff. */
+      readonly sourceReference?: string;
     }
   | {
       readonly state: "leased";
@@ -398,24 +425,20 @@ export interface ImplementationQueueLeaseTransitionRequest extends Implementatio
   readonly detail?: DispatchJSONValue;
 }
 
-export interface ReserveImplementationCompletionLeaseRequest
-  extends ImplementationQueueLeaseTransitionRequest {
+export type ReserveImplementationCompletionLeaseRequest = ImplementationQueueLeaseTransitionRequest & ImplementationCompletionSubject & {
   readonly operationId: string;
-  readonly taskRef: string;
   readonly completionRef: string;
   readonly mergeOperationId: string;
   readonly resultCommit: string;
   readonly qualificationDigest: string;
-}
+};
 
-export interface ReleaseImplementationCompletionLeaseRequest
-  extends ImplementationQueueLeaseTransitionRequest {
+export type ReleaseImplementationCompletionLeaseRequest = ImplementationQueueLeaseTransitionRequest & ImplementationCompletionSubject & {
   readonly operationId: string;
-  readonly taskRef: string;
   readonly completionRef: string;
   readonly mergeOperationId: string;
   readonly resultCommit: string;
-}
+};
 
 export interface RecoverImplementationCandidateRequest extends DispatchHandle {
   readonly namespace: AttestationNamespace;
@@ -470,11 +493,12 @@ const FULL_GIT_SHA = /^[0-9a-f]{40}$/u;
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
 
 function assertCompletionLeaseCoordinates(
-  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+  request:
+    ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
 ): void {
   if (
     !IMPLEMENTATION_OPERATION_ID.test(request.operationId) ||
-    !IMPLEMENTATION_TASK_REF.test(request.taskRef) ||
+    (request.cohort === undefined && !IMPLEMENTATION_TASK_REF.test(request.taskRef)) ||
     !IMPLEMENTATION_COMPLETION_REF.test(request.completionRef) ||
     !IMPLEMENTATION_OPERATION_ID.test(request.mergeOperationId) ||
     !FULL_GIT_SHA.test(request.resultCommit)
@@ -484,10 +508,21 @@ function assertCompletionLeaseCoordinates(
       "expected exact task, completion, merge-operation, operation, and result coordinates",
     );
   }
+  if (request.cohort !== undefined) {
+    const subject = request.cohort;
+    assertCohortEffectEnvelopeV1(subject.envelope);
+    if (Object.hasOwn(request, "taskRef") || subject.envelope.state !== "sealed" || !SHA256_HEX.test(subject.batchDigest) ||
+        subject.sealDigest !== subject.envelope.evidenceSubject.sealDigest ||
+        request.completionRef !== `cq-implementation-completion:v1:${subject.batchDigest}` ||
+        digest(subject.memberRefs) !== digest(subject.envelope.memberAuthorities.map(({ taskRef }) => taskRef))) {
+      throw new AttestationContractError("implementationCompletionReservation", "expected one exact sealed all-member completion subject");
+    }
+  }
 }
 
 function completionLeaseRequestDigest(
-  request: ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
+  request:
+    ReserveImplementationCompletionLeaseRequest | ReleaseImplementationCompletionLeaseRequest,
 ): string {
   return digest({
     attestationId: request.attestationId,
@@ -498,7 +533,7 @@ function completionLeaseRequestDigest(
     holderId: request.holderId,
     leaseGeneration: request.leaseGeneration,
     operationId: request.operationId,
-    taskRef: request.taskRef,
+    ...(request.cohort === undefined ? { taskRef: request.taskRef } : { cohort: completionCohortIdentity(request.cohort) }),
     completionRef: request.completionRef,
     mergeOperationId: request.mergeOperationId,
     resultCommit: request.resultCommit,
@@ -509,6 +544,11 @@ function completionLeaseRequestDigest(
         }
       : {}),
   });
+}
+
+function completionCohortIdentity(subject: ImplementationCohortCompletionSubject) {
+  const { executionEpoch: _epoch, envelopeDigest: _digest, ...envelope } = subject.envelope;
+  return { ...subject, envelope };
 }
 
 function assertTrustedActor(actor: string): void {
@@ -553,7 +593,10 @@ function queueRows(store: AttestationStore, partitionKey?: string): AttestationR
     );
 }
 
-function currentPartitionRevision(store: AttestationStore, partitionKey: string): number {
+export function currentImplementationQueuePartitionRevision(
+  store: AttestationStore,
+  partitionKey: string,
+): number {
   return queueRows(store, partitionKey).reduce(
     (maximum, row) => Math.max(maximum, row.implementationQueue!.partitionRevision),
     0,
@@ -561,7 +604,7 @@ function currentPartitionRevision(store: AttestationStore, partitionKey: string)
 }
 
 function nextPartitionRevision(store: AttestationStore, partitionKey: string): number {
-  return currentPartitionRevision(store, partitionKey) + 1;
+  return currentImplementationQueuePartitionRevision(store, partitionKey) + 1;
 }
 
 function active(control: ImplementationQueueControl): boolean {
@@ -592,7 +635,7 @@ function isConsumedGuardedContinuationAncestor(
     return (
       tombstoneControl?.qualificationDigest !== undefined &&
       retained !== undefined &&
-      retained.gitEffectBinding.taskId === successorBinding.taskId &&
+      implementationQueueSubjectsMatch(retained.gitEffectBinding, successorBinding, true) &&
       retained.gitEffectBinding.repositoryId === successorBinding.repositoryId &&
       retained.gitEffectBinding.worktreePath === successorBinding.worktreePath &&
       (retained.liveTip === bridge.oldResultCommit ||
@@ -605,7 +648,7 @@ function isConsumedGuardedContinuationAncestor(
   const priorBinding = candidate.gitEffectBinding;
   return (
     liveControl.qualification !== undefined &&
-    liveControl.attempt.taskId === successorBinding.taskId &&
+    implementationQueueSubjectsMatch(liveControl.attempt, successorBinding, true) &&
     liveControl.attempt.repositoryId === successorBinding.repositoryId &&
     liveControl.attempt.worktreePath === successorBinding.worktreePath &&
     (liveControl.attempt.resultCommit === bridge.oldResultCommit ||
@@ -625,18 +668,20 @@ function isConsumedOrdinaryContinuationAncestor(
   const retainedBinding = retained?.gitEffectBinding;
   const sameManagerBinding =
     retainedBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => retainedBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(retainedBinding, successorBinding, true) : retainedBinding[field] === successorBinding[field]));
   const sameLineageBridge =
     retainedBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
@@ -679,6 +724,169 @@ function isConsumedOrdinaryContinuationAncestor(
   );
 }
 
+interface AuthenticatedUnenrolledConsumedFailure {
+  readonly binding: DispatchGitEffectBinding;
+  readonly continuation: NonNullable<AttestationEnvelope["dispatchContinuationBinding"]>;
+}
+
+function authenticatedUnenrolledConsumedFailure(
+  row: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): AuthenticatedUnenrolledConsumedFailure | undefined {
+  if (isAttestationTombstone(row)) return undefined;
+  const binding = row.gitEffectBinding;
+  const continuation = row.dispatchContinuationBinding;
+  const proof = row.nativeCompletion;
+  const input =
+    row.input !== null && typeof row.input === "object" && !Array.isArray(row.input)
+      ? (row.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const output =
+    row.output !== null && typeof row.output === "object" && !Array.isArray(row.output)
+      ? (row.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (
+    binding === undefined ||
+    continuation === undefined ||
+    proof === undefined ||
+    input === undefined ||
+    output === undefined ||
+    row.state !== "consumed" ||
+    row.consumedAt !== row.terminalAt ||
+    row.implementationQueue !== undefined ||
+    row.stagedCompletionQualification !== undefined ||
+    row.outputDigest === undefined ||
+    row.gateSubmittedOutputDigest !== row.outputDigest ||
+    row.outputDigest !== digest(row.output) ||
+    output["status"] !== "fail" ||
+    !implementationQueueSubjectsMatch(output, authority, true) ||
+    output["resultCommit"] !== null ||
+    continuation.currentRecoverySource?.kind !== "consumed-fail" ||
+    continuation.currentRecoverySource.status !== "fail" ||
+    continuation.attestationId !== row.attestationId ||
+    continuation.generation !== row.generation ||
+    continuation.terminalAt !== row.terminalAt ||
+    continuation.terminalDigest !== row.terminalDigest ||
+    continuation.callerLineage.actor !== proof.actor ||
+    continuation.callerLineage.childId !== proof.childId ||
+    continuation.callerLineage.runId !== proof.runId ||
+    row.terminalDigest !==
+      digest({
+        terminalKind: "consumed",
+        outputDigest: row.outputDigest,
+        childId: proof.childId,
+        runId: proof.runId,
+        completedAt: proof.completedAt,
+      }) ||
+    !implementationQueueSubjectsMatch(binding, authority, true) ||
+    binding.guardedRebaseBridge !== undefined ||
+    digest(continuation.gitEffectBinding) !== digest(binding)
+  ) {
+    return undefined;
+  }
+  try {
+    assertDispatchContinuationBinding(continuation);
+  } catch {
+    return undefined;
+  }
+  const inherited = binding.inheritedGitReceipts ?? [];
+  const receipts = continuation.gitReceipts;
+  if (
+    inherited.length > receipts.length ||
+    digest(inherited) !== digest(receipts.slice(0, inherited.length))
+  ) {
+    return undefined;
+  }
+  const suffix = receipts.slice(inherited.length);
+  const startingCommit = input["startingCommit"];
+  if (
+    typeof startingCommit !== "string" ||
+    digest(output["gitReceipts"] ?? []) !== digest(suffix) ||
+    !suffix.every((receipt, index) => {
+      const previousHead = index === 0 ? startingCommit : suffix[index - 1]?.newHead;
+      return (
+        receipt.attestationId === row.attestationId &&
+        receipt.generation === row.generation &&
+        implementationQueueSubjectsMatch(receipt, authority, true) &&
+        receipt.oldHead === previousHead
+      );
+    }) ||
+    continuation.liveTip !== (suffix.at(-1)?.newHead ?? startingCommit)
+  ) {
+    return undefined;
+  }
+  return { binding, continuation };
+}
+
+function isUnenrolledConsumedFailureContinuationAncestor(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  authority: ImplementationQueueAuthority,
+): boolean {
+  const authenticated = authenticatedUnenrolledConsumedFailure(candidate, authority);
+  const claim = successor.dispatchContinuationClaim;
+  const successorInput =
+    successor.input !== null &&
+    typeof successor.input === "object" &&
+    !Array.isArray(successor.input)
+      ? (successor.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  if (authenticated === undefined || claim === undefined || successorInput === undefined) {
+    return false;
+  }
+  const { binding, continuation } = authenticated;
+  const timeoutMs =
+    attestationInstantMs(successor.deadlines.childCancelAt, "deadlines.childCancelAt") -
+    attestationInstantMs(successor.createdAt, "createdAt");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) return false;
+  const prepareRequest: PrepareDispatchRequest = {
+    namespace: successor.namespace,
+    roleId: successor.promptProvenance.roleId,
+    surface: successor.promptProvenance.surface,
+    input: successor.input,
+    idempotencyKey: successor.idempotencyKey,
+    timeoutMs,
+    overlays: successor.overlays,
+    registry: DISPATCH_OVERLAY_REGISTRY,
+    promptDigest: successor.promptProvenance.promptDigest,
+    catalogHash: successor.promptProvenance.catalogHash,
+    expectedChild: successor.expectedChild,
+    reprepareOf: claim.source,
+    gitEffectBinding: successorBinding,
+    continuationClaim: {
+      continuationReference: claim.continuationReference,
+      actor: "trusted-parent",
+      liveTip: continuation.liveTip,
+    },
+    ...(successor.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: successor.implementationEvidenceBootstrapRef }),
+  };
+  return (
+    successorBinding.guardedRebaseBridge === undefined &&
+    candidate.attestationId === successor.attestationId &&
+    candidate.generation + 1 === successor.generation &&
+    claim.source.attestationId === candidate.attestationId &&
+    claim.source.generation === candidate.generation &&
+    claim.continuationReference === continuation.continuationReference &&
+    implementationQueueSubjectsMatch(successorBinding, authority, true) &&
+    binding.handleFingerprint === successorBinding.handleFingerprint &&
+    binding.repositoryId === successorBinding.repositoryId &&
+    binding.worktreePath === successorBinding.worktreePath &&
+    binding.branch === successorBinding.branch &&
+    binding.ref === successorBinding.ref &&
+    binding.baseCommit === successorBinding.baseCommit &&
+    implementationQueueSubjectsMatch(successorInput, authority, true) &&
+    successorInput["branch"] === successorBinding.branch &&
+    successorInput["startingCommit"] === continuation.liveTip &&
+    successorInput["priorResultCommit"] === continuation.liveTip &&
+    successor.promptProvenance.inputDigest === digest(successor.input) &&
+    digest(continuation.gitReceipts) === digest(successorBinding.inheritedGitReceipts ?? []) &&
+    prepareDispatchRequestDigestMatchesKnownFormat(prepareRequest, successor.prepareRequestDigest)
+  );
+}
+
 function isGateRejectedCorrectionAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -697,24 +905,37 @@ function isGateRejectedCorrectionAncestor(
       : undefined;
   const sameManagerBinding =
     sourceBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => sourceBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(sourceBinding, successorBinding, true) : sourceBinding[field] === successorBinding[field]));
   const sameLineageBridge =
     sourceBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
       : successorBinding.guardedRebaseBridge !== undefined &&
-        digest(sourceBinding.guardedRebaseBridge) ===
-          digest(successorBinding.guardedRebaseBridge);
+        digest(sourceBinding.guardedRebaseBridge) === digest(successorBinding.guardedRebaseBridge);
+  const sameReceiptTransition =
+    sourceBinding?.receiptChainTransition === undefined
+      ? successorBinding.receiptChainTransition === undefined
+      : successorBinding.receiptChainTransition !== undefined &&
+        digest(sourceBinding.receiptChainTransition) ===
+          digest(successorBinding.receiptChainTransition);
+  const sameReceiptTransitions =
+    sourceBinding?.receiptChainTransitions === undefined
+      ? successorBinding.receiptChainTransitions === undefined
+      : successorBinding.receiptChainTransitions !== undefined &&
+        digest(sourceBinding.receiptChainTransitions) ===
+          digest(successorBinding.receiptChainTransitions);
   if (
     control === undefined ||
     sourceBinding === undefined ||
@@ -734,15 +955,17 @@ function isGateRejectedCorrectionAncestor(
     candidate.stagedCompletionQualification?.qualificationDigest !==
       control.qualification.qualificationDigest ||
     output["status"] !== "pass" ||
-    output["taskId"] !== control.attempt.taskId ||
+    !implementationQueueSubjectsMatch(output, control.attempt, true) ||
     output["resultCommit"] !== control.attempt.resultCommit ||
     digest(output["gitReceipts"] ?? []) !== control.attempt.gitReceiptLineageDigest ||
     digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
-    control.attempt.taskId !== successorBinding.taskId ||
+    !implementationQueueSubjectsMatch(control.attempt, successorBinding, true) ||
     control.attempt.repositoryId !== successorBinding.repositoryId ||
     control.attempt.worktreePath !== successorBinding.worktreePath ||
     !sameManagerBinding ||
     !sameLineageBridge ||
+    !sameReceiptTransition ||
+    !sameReceiptTransitions ||
     successorResultCommit === control.attempt.resultCommit
   ) {
     return false;
@@ -751,28 +974,30 @@ function isGateRejectedCorrectionAncestor(
   const sourceInherited = sourceBinding.inheritedGitReceipts ?? [];
   const successorClosure = successorReceipts;
   const successorInherited = successorBinding.inheritedGitReceipts ?? [];
+  const sourceClosureEndsAtResult =
+    sourceClosure.length === 0 ||
+    sourceClosure.at(-1)?.newHead === control.attempt.resultCommit ||
+    (sourceBinding.receiptChainTransition !== undefined &&
+      sourceBinding.receiptChainTransition.receiptPrefixLength === sourceClosure.length &&
+      sourceBinding.receiptChainTransition.rebasedStartCommit === control.attempt.resultCommit);
   if (
     sourceInherited.length > sourceClosure.length ||
     digest(sourceInherited) !== digest(sourceClosure.slice(0, sourceInherited.length)) ||
     successorInherited.length > successorClosure.length ||
-    digest(successorInherited) !==
-      digest(successorClosure.slice(0, successorInherited.length)) ||
+    digest(successorInherited) !== digest(successorClosure.slice(0, successorInherited.length)) ||
     sourceClosure.length >= successorClosure.length ||
     digest(sourceClosure) !== digest(successorClosure.slice(0, sourceClosure.length)) ||
-    (sourceClosure.length > 0 &&
-      sourceClosure[sourceClosure.length - 1]?.newHead !== control.attempt.resultCommit)
+    !sourceClosureEndsAtResult
   ) {
     return false;
   }
   const changedSuffix = successorClosure.slice(sourceClosure.length);
   return changedSuffix.every((receipt, index) => {
     const previousHead =
-      index === 0
-        ? control.attempt.resultCommit
-        : changedSuffix[index - 1]?.newHead;
+      index === 0 ? control.attempt.resultCommit : changedSuffix[index - 1]?.newHead;
     return (
       receipt.attestationId === successor.attestationId &&
-      receipt.taskId === successorBinding.taskId &&
+      implementationQueueSubjectsMatch(receipt, successorBinding, true) &&
       receipt.generation > candidate.generation &&
       receipt.generation <= successor.generation &&
       receipt.oldHead === previousHead &&
@@ -797,18 +1022,20 @@ function isJournalRecoveryAncestor(
   const candidateBinding = candidate.gitEffectBinding;
   const sameManagerBinding =
     candidateBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => candidateBinding[field] === successorBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(candidateBinding, successorBinding, true) : candidateBinding[field] === successorBinding[field]));
   const sameLineageBridge =
     candidateBinding?.guardedRebaseBridge === undefined
       ? successorBinding.guardedRebaseBridge === undefined
@@ -817,16 +1044,20 @@ function isJournalRecoveryAncestor(
           digest(successorBinding.guardedRebaseBridge);
   const selected = claim === undefined ? undefined : store.read(claim.selectedSource);
   const stagedRecoverySources =
-    selected === undefined || isAttestationTombstone(selected) || selected.gitEffectBinding === undefined
+    selected === undefined ||
+    isAttestationTombstone(selected) ||
+    selected.gitEffectBinding === undefined
       ? []
-      : store.rows().filter(
-          (row) =>
-            row.implementationQueue?.stagedRebaseSource?.successor?.attestationId ===
-              selected.attestationId &&
-            row.implementationQueue.stagedRebaseSource.successor.generation ===
-              selected.generation &&
-            isRetiredGuardedRebaseAncestor(row, selected, selected.gitEffectBinding!),
-        );
+      : store
+          .rows()
+          .filter(
+            (row) =>
+              row.implementationQueue?.stagedRebaseSource?.successor?.attestationId ===
+                selected.attestationId &&
+              row.implementationQueue.stagedRebaseSource.successor.generation ===
+                selected.generation &&
+              isRetiredGuardedRebaseAncestor(row, selected, selected.gitEffectBinding!),
+          );
   const stagedRecoveryBridge =
     stagedRecoverySources.length === 1 &&
     selected !== undefined &&
@@ -834,20 +1065,78 @@ function isJournalRecoveryAncestor(
       ? selected.gitEffectBinding?.guardedRebaseBridge
       : undefined;
   const receiptChainTransition = successorBinding.receiptChainTransition;
-  const guardedRecoveryTipMatches =
-    stagedRecoveryBridge !== undefined &&
+  const directGuardedSource =
+    receiptChainTransition === undefined ? undefined : store.read(receiptChainTransition.source);
+  const directGuardedSuccessor =
+    receiptChainTransition === undefined ? undefined : store.read(receiptChainTransition.successor);
+  const directContinuationSource =
+    selected === undefined ||
+    isAttestationTombstone(selected) ||
+    selected.dispatchContinuationClaim === undefined
+      ? undefined
+      : store.read(selected.dispatchContinuationClaim.source);
+  const directGuardedBridge =
+    directGuardedSuccessor !== undefined && !isAttestationTombstone(directGuardedSuccessor)
+      ? directGuardedSuccessor.gitEffectBinding?.guardedRebaseBridge
+      : undefined;
+  const directGuardedRecoveryTipMatches =
+    directGuardedSource !== undefined &&
+    selected !== undefined &&
+    !isAttestationTombstone(selected) &&
+    directGuardedBridge !== undefined &&
     receiptChainTransition !== undefined &&
-    claim?.liveTip === stagedRecoveryBridge.rebasedStartCommit &&
-    receiptChainTransition.source.attestationId ===
-      stagedRecoverySources[0]?.attestationId &&
-    receiptChainTransition.source.generation === stagedRecoverySources[0]?.generation &&
-    receiptChainTransition.successor.attestationId === selected?.attestationId &&
-    receiptChainTransition.successor.generation === selected.generation &&
-    receiptChainTransition.guardedRebase === stagedRecoveryBridge.guardedRebase &&
-    receiptChainTransition.requestDigest === stagedRecoveryBridge.requestDigest &&
-    receiptChainTransition.oldResultCommit === stagedRecoveryBridge.oldResultCommit &&
-    receiptChainTransition.ontoCommit === stagedRecoveryBridge.ontoCommit &&
-    receiptChainTransition.rebasedStartCommit === stagedRecoveryBridge.rebasedStartCommit;
+    isComposedUnenrolledAbortedRecoveryAncestor(directGuardedSource, selected, authority, store) &&
+    claim?.liveTip === directGuardedBridge.rebasedStartCommit &&
+    receiptChainTransition.source.attestationId === directGuardedSource.attestationId &&
+    receiptChainTransition.source.generation === directGuardedSource.generation &&
+    directGuardedSuccessor !== undefined &&
+    receiptChainTransition.successor.attestationId === directGuardedSuccessor.attestationId &&
+    receiptChainTransition.successor.generation === directGuardedSuccessor.generation &&
+    receiptChainTransition.guardedRebase === directGuardedBridge.guardedRebase &&
+    receiptChainTransition.requestDigest === directGuardedBridge.requestDigest &&
+    receiptChainTransition.oldResultCommit === directGuardedBridge.oldResultCommit &&
+    receiptChainTransition.ontoCommit === directGuardedBridge.ontoCommit &&
+    receiptChainTransition.rebasedStartCommit === directGuardedBridge.rebasedStartCommit;
+  const continuedGuardedRecoveryTipMatches =
+    directGuardedSource !== undefined &&
+    directContinuationSource !== undefined &&
+    selected !== undefined &&
+    !isAttestationTombstone(selected) &&
+    !isAttestationTombstone(directContinuationSource) &&
+    directGuardedBridge !== undefined &&
+    receiptChainTransition !== undefined &&
+    directContinuationSource.gitEffectBinding !== undefined &&
+    isRetiredGuardedRebaseAncestor(
+      directGuardedSource,
+      directContinuationSource,
+      directContinuationSource.gitEffectBinding,
+    ) &&
+    isUnenrolledCancelledContinuationIntermediate(directContinuationSource, selected, authority) &&
+    claim?.liveTip === directGuardedBridge.rebasedStartCommit &&
+    receiptChainTransition.source.attestationId === directGuardedSource.attestationId &&
+    receiptChainTransition.source.generation === directGuardedSource.generation &&
+    receiptChainTransition.successor.attestationId === directContinuationSource.attestationId &&
+    receiptChainTransition.successor.generation === directContinuationSource.generation &&
+    receiptChainTransition.guardedRebase === directGuardedBridge.guardedRebase &&
+    receiptChainTransition.requestDigest === directGuardedBridge.requestDigest &&
+    receiptChainTransition.oldResultCommit === directGuardedBridge.oldResultCommit &&
+    receiptChainTransition.ontoCommit === directGuardedBridge.ontoCommit &&
+    receiptChainTransition.rebasedStartCommit === directGuardedBridge.rebasedStartCommit;
+  const guardedRecoveryTipMatches =
+    directGuardedRecoveryTipMatches ||
+    continuedGuardedRecoveryTipMatches ||
+    (stagedRecoveryBridge !== undefined &&
+      receiptChainTransition !== undefined &&
+      claim?.liveTip === stagedRecoveryBridge.rebasedStartCommit &&
+      receiptChainTransition.source.attestationId === stagedRecoverySources[0]?.attestationId &&
+      receiptChainTransition.source.generation === stagedRecoverySources[0]?.generation &&
+      receiptChainTransition.successor.attestationId === selected?.attestationId &&
+      receiptChainTransition.successor.generation === selected.generation &&
+      receiptChainTransition.guardedRebase === stagedRecoveryBridge.guardedRebase &&
+      receiptChainTransition.requestDigest === stagedRecoveryBridge.requestDigest &&
+      receiptChainTransition.oldResultCommit === stagedRecoveryBridge.oldResultCommit &&
+      receiptChainTransition.ontoCommit === stagedRecoveryBridge.ontoCommit &&
+      receiptChainTransition.rebasedStartCommit === stagedRecoveryBridge.rebasedStartCommit);
   const selectedTerminalMatches =
     selected !== undefined &&
     selected.terminalDigest === claim?.sourceTerminalDigest &&
@@ -869,20 +1158,21 @@ function isJournalRecoveryAncestor(
       )) &&
     candidate.attestationId === successor.attestationId &&
     successor.generation === claim.lineageMaximumGeneration + 1 &&
-    claim.taskId === successorBinding.taskId &&
-    claim.taskId === authority.taskId &&
+    implementationQueueSubjectsMatch(claim, successorBinding, true) &&
+    implementationQueueSubjectsMatch(claim, authority, true) &&
     claim.goalRef === authority.goalRef &&
     claim.finalizedManifestDigest === authority.finalizedManifestDigest &&
     claim.managedFingerprint === successorBinding.handleFingerprint &&
     claim.gitReceiptsDigest === digest(inheritedReceipts) &&
     inheritedReceipts.length <= successorReceipts.length &&
-    digest(inheritedReceipts) ===
-      digest(successorReceipts.slice(0, inheritedReceipts.length)) &&
+    digest(inheritedReceipts) === digest(successorReceipts.slice(0, inheritedReceipts.length)) &&
     sameManagerBinding &&
     selectedTerminalMatches &&
-    (claim.liveTip === inheritedReceipts.at(-1)?.newHead || guardedRecoveryTipMatches) &&
-    successorResultCommit !== claim.liveTip
+    (claim.liveTip === inheritedReceipts.at(-1)?.newHead || guardedRecoveryTipMatches)
   ) {
+    if (successorResultCommit === claim.liveTip) {
+      return successorReceipts.length === inheritedReceipts.length;
+    }
     const suffix = successorReceipts.slice(inheritedReceipts.length);
     return (
       suffix.length > 0 &&
@@ -890,7 +1180,7 @@ function isJournalRecoveryAncestor(
         const previousHead = index === 0 ? claim.liveTip : suffix[index - 1]?.newHead;
         return (
           receipt.attestationId === successor.attestationId &&
-          receipt.taskId === successorBinding.taskId &&
+          implementationQueueSubjectsMatch(receipt, successorBinding, true) &&
           receipt.generation === successor.generation &&
           receipt.oldHead === previousHead &&
           (index !== suffix.length - 1 || receipt.newHead === successorResultCommit)
@@ -906,22 +1196,21 @@ function isJournalRecoveryAncestor(
     candidate.generation > claim.selectedSource.generation ||
     claim.lineageMaximumGeneration < claim.selectedSource.generation ||
     successor.generation !== claim.lineageMaximumGeneration + 1 ||
-    claim.taskId !== successorBinding.taskId ||
-    claim.taskId !== authority.taskId ||
+    !implementationQueueSubjectsMatch(claim, successorBinding, true) ||
+    !implementationQueueSubjectsMatch(claim, authority, true) ||
     claim.goalRef !== authority.goalRef ||
     claim.finalizedManifestDigest !== authority.finalizedManifestDigest ||
     claim.managedFingerprint !== successorBinding.handleFingerprint ||
     (claim.liveTip !== inheritedReceipts.at(-1)?.newHead && !guardedRecoveryTipMatches) ||
     claim.gitReceiptsDigest !== digest(inheritedReceipts) ||
     inheritedReceipts.length > successorReceipts.length ||
-    digest(inheritedReceipts) !==
-      digest(successorReceipts.slice(0, inheritedReceipts.length)) ||
+    digest(inheritedReceipts) !== digest(successorReceipts.slice(0, inheritedReceipts.length)) ||
     !sameManagerBinding ||
     !sameLineageBridge ||
     control.state !== "terminal" ||
     control.qualification === undefined ||
     control.terminal?.reason === "gate-rejected" ||
-    control.attempt.taskId !== authority.taskId ||
+    !implementationQueueSubjectsMatch(control.attempt, authority, true) ||
     control.attempt.repositoryId !== successorBinding.repositoryId ||
     control.attempt.worktreePath !== successorBinding.worktreePath ||
     digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
@@ -942,15 +1231,14 @@ function isJournalRecoveryAncestor(
     return false;
   }
   return successorReceipts.slice(sourceClosure.length).every((receipt, index, suffix) => {
-    const previousHead =
-      index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
+    const previousHead = index === 0 ? control.attempt.resultCommit : suffix[index - 1]?.newHead;
     const crossesGuardedRecovery =
       stagedRecoveryBridge !== undefined &&
       previousHead === stagedRecoveryBridge.oldResultCommit &&
       receipt.oldHead === stagedRecoveryBridge.rebasedStartCommit;
     return (
       receipt.attestationId === successor.attestationId &&
-      receipt.taskId === successorBinding.taskId &&
+      implementationQueueSubjectsMatch(receipt, successorBinding, true) &&
       receipt.generation > candidate.generation &&
       receipt.generation <= successor.generation &&
       (receipt.oldHead === previousHead || crossesGuardedRecovery)
@@ -979,11 +1267,11 @@ function isQualifiedJournalRecoveryIntermediate(
     intermediate.stagedCompletionQualification?.qualificationDigest !==
       control.qualification.qualificationDigest ||
     output["status"] !== "pass" ||
-    output["taskId"] !== control.attempt.taskId ||
+    !implementationQueueSubjectsMatch(output, control.attempt, true) ||
     output["resultCommit"] !== control.attempt.resultCommit ||
     digest(output["gitReceipts"] ?? []) !== control.attempt.gitReceiptLineageDigest ||
     digest(control.attempt.gitReceipts) !== control.attempt.gitReceiptLineageDigest ||
-    control.enrollment.taskId !== control.attempt.taskId ||
+    !implementationQueueSubjectsMatch(control.enrollment, control.attempt, true) ||
     control.enrollment.goalRef !== control.attempt.goalRef ||
     control.enrollment.finalizedManifestDigest !== control.attempt.finalizedManifestDigest
   ) {
@@ -995,11 +1283,7 @@ function isQualifiedJournalRecoveryIntermediate(
     binding,
     control.attempt.gitReceipts,
     control.attempt.resultCommit,
-    {
-      taskId: control.enrollment.taskId,
-      goalRef: control.enrollment.goalRef,
-      finalizedManifestDigest: control.enrollment.finalizedManifestDigest,
-    },
+    queueAuthorityIdentity(control.enrollment),
     store,
   );
 }
@@ -1033,18 +1317,20 @@ function isLegacyRetiredJournalRecoveryIntermediate(
   const sameManagerBinding =
     candidateBinding !== undefined &&
     intermediateBinding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => candidateBinding[field] === intermediateBinding[field]);
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(candidateBinding, intermediateBinding, true) : candidateBinding[field] === intermediateBinding[field]));
   const sameLineageBridge =
     candidateBinding?.guardedRebaseBridge === undefined
       ? intermediateBinding?.guardedRebaseBridge === undefined
@@ -1058,12 +1344,11 @@ function isLegacyRetiredJournalRecoveryIntermediate(
         !isAttestationTombstone(row) &&
         (row.attestationId !== successor.attestationId || row.generation !== successor.generation),
     ),
-  ]
-    .filter(
-      (row) =>
-        row.gitEffectBinding !== undefined &&
-        isRetiredGuardedRebaseAncestor(intermediate, row, row.gitEffectBinding),
-    );
+  ].filter(
+    (row) =>
+      row.gitEffectBinding !== undefined &&
+      isRetiredGuardedRebaseAncestor(intermediate, row, row.gitEffectBinding),
+  );
   if (
     candidateControl === undefined ||
     intermediateControl === undefined ||
@@ -1095,7 +1380,7 @@ function isLegacyRetiredJournalRecoveryIntermediate(
     candidate.stagedCompletionQualification?.qualificationDigest !==
       candidateControl.qualification.qualificationDigest ||
     candidateOutput["status"] !== "pass" ||
-    candidateOutput["taskId"] !== candidateControl.attempt.taskId ||
+    !implementationQueueSubjectsMatch(candidateOutput, candidateControl.attempt, true) ||
     candidateOutput["resultCommit"] !== candidateControl.attempt.resultCommit ||
     digest(candidateOutput["gitReceipts"] ?? []) !==
       candidateControl.attempt.gitReceiptLineageDigest ||
@@ -1105,24 +1390,22 @@ function isLegacyRetiredJournalRecoveryIntermediate(
     intermediate.stagedCompletionQualification?.qualificationDigest !==
       intermediateControl.qualification.qualificationDigest ||
     intermediateOutput["status"] !== "pass" ||
-    intermediateOutput["taskId"] !== intermediateControl.attempt.taskId ||
+    !implementationQueueSubjectsMatch(intermediateOutput, intermediateControl.attempt, true) ||
     intermediateOutput["resultCommit"] !== intermediateControl.attempt.resultCommit ||
     digest(intermediateOutput["gitReceipts"] ?? []) !==
       intermediateControl.attempt.gitReceiptLineageDigest ||
     digest(intermediateControl.attempt.gitReceipts) !==
       intermediateControl.attempt.gitReceiptLineageDigest ||
-    candidateControl.enrollment.taskId !== authority.taskId ||
+    !implementationQueueSubjectsMatch(candidateControl.enrollment, authority, true) ||
     candidateControl.enrollment.goalRef !== authority.goalRef ||
-    candidateControl.enrollment.finalizedManifestDigest !==
-      authority.finalizedManifestDigest ||
-    intermediateControl.enrollment.taskId !== authority.taskId ||
+    candidateControl.enrollment.finalizedManifestDigest !== authority.finalizedManifestDigest ||
+    !implementationQueueSubjectsMatch(intermediateControl.enrollment, authority, true) ||
     intermediateControl.enrollment.goalRef !== authority.goalRef ||
-    intermediateControl.enrollment.finalizedManifestDigest !==
-      authority.finalizedManifestDigest ||
-    candidateControl.attempt.taskId !== authority.taskId ||
+    intermediateControl.enrollment.finalizedManifestDigest !== authority.finalizedManifestDigest ||
+    !implementationQueueSubjectsMatch(candidateControl.attempt, authority, true) ||
     candidateControl.attempt.repositoryId !== intermediateBinding.repositoryId ||
     candidateControl.attempt.worktreePath !== intermediateBinding.worktreePath ||
-    intermediateControl.attempt.taskId !== authority.taskId ||
+    !implementationQueueSubjectsMatch(intermediateControl.attempt, authority, true) ||
     intermediateControl.attempt.repositoryId !== intermediateBinding.repositoryId ||
     intermediateControl.attempt.worktreePath !== intermediateBinding.worktreePath ||
     !sameManagerBinding ||
@@ -1137,13 +1420,11 @@ function isLegacyRetiredJournalRecoveryIntermediate(
   const intermediateInherited = intermediateBinding.inheritedGitReceipts ?? [];
   if (
     candidateInherited.length > candidateClosure.length ||
-    digest(candidateInherited) !==
-      digest(candidateClosure.slice(0, candidateInherited.length)) ||
+    digest(candidateInherited) !== digest(candidateClosure.slice(0, candidateInherited.length)) ||
     digest(candidateClosure) !== digest(intermediateInherited) ||
     candidateClosure.at(-1)?.newHead !== candidateControl.attempt.resultCommit ||
     intermediateClosure.length <= candidateClosure.length ||
-    digest(candidateClosure) !==
-      digest(intermediateClosure.slice(0, candidateClosure.length)) ||
+    digest(candidateClosure) !== digest(intermediateClosure.slice(0, candidateClosure.length)) ||
     intermediateClosure.at(-1)?.newHead !== intermediateControl.attempt.resultCommit
   ) {
     return false;
@@ -1153,7 +1434,7 @@ function isLegacyRetiredJournalRecoveryIntermediate(
       index === 0 ? candidateControl.attempt.resultCommit : suffix[index - 1]?.newHead;
     return (
       receipt.attestationId === intermediate.attestationId &&
-      receipt.taskId === authority.taskId &&
+      implementationQueueSubjectsMatch(receipt, authority, true) &&
       receipt.generation === intermediate.generation &&
       receipt.oldHead === previousHead
     );
@@ -1178,18 +1459,20 @@ function isRetiredGuardedRebaseAncestor(
       : undefined;
   const sameManagerBinding =
     binding !== undefined &&
-    ([
-      "taskId",
-      "handleToken",
-      "handleFingerprint",
-      "repositoryRoot",
-      "repositoryId",
-      "commonDir",
-      "worktreePath",
-      "branch",
-      "ref",
-      "baseCommit",
-    ] as const).every((field) => binding[field] === successorBinding[field]);
+    (cohortRebaseTransitionMatches(binding, successorBinding, candidate) || (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(binding, successorBinding, true) : binding[field] === successorBinding[field])));
   const retainedSource = candidate.stagedRebaseSourceBinding;
   const candidateContinuation = candidate.dispatchContinuationBinding;
   const sourceBindingAuthentic =
@@ -1197,11 +1480,7 @@ function isRetiredGuardedRebaseAncestor(
     retainedSource !== undefined &&
     digest(source) === digest(retainedSource) &&
     (() => {
-      const {
-        serverBindingDigest,
-        successor: _successor,
-        ...unsignedSource
-      } = retainedSource;
+      const { serverBindingDigest, successor: _successor, ...unsignedSource } = retainedSource;
       return digest(unsignedSource) === serverBindingDigest;
     })();
   const consumedRetirementAuthentic =
@@ -1209,8 +1488,7 @@ function isRetiredGuardedRebaseAncestor(
     candidateContinuation !== undefined &&
     control !== undefined &&
     candidateContinuation.liveTip === control.attempt.resultCommit &&
-    digest(candidateContinuation.gitReceipts) ===
-      control.attempt.gitReceiptLineageDigest;
+    digest(candidateContinuation.gitReceipts) === control.attempt.gitReceiptLineageDigest;
   const abortedRetirementAuthentic =
     candidate.state === "aborted" &&
     candidate.abortReason === "staged-rebase" &&
@@ -1240,11 +1518,11 @@ function isRetiredGuardedRebaseAncestor(
     candidate.stagedCompletionQualification?.qualificationDigest ===
       control.qualification.qualificationDigest &&
     output["status"] === "pass" &&
-    output["taskId"] === control.attempt.taskId &&
+    implementationQueueSubjectsMatch(output, control.attempt, true) &&
     output["resultCommit"] === control.attempt.resultCommit &&
     digest(output["gitReceipts"] ?? []) === control.attempt.gitReceiptLineageDigest &&
     digest(control.attempt.gitReceipts) === control.attempt.gitReceiptLineageDigest &&
-    control.enrollment.taskId === control.attempt.taskId &&
+    implementationQueueSubjectsMatch(control.enrollment, control.attempt, true) &&
     control.enrollment.goalRef === control.attempt.goalRef &&
     control.enrollment.finalizedManifestDigest === control.attempt.finalizedManifestDigest &&
     source.source.attestationId === candidate.attestationId &&
@@ -1263,6 +1541,540 @@ function isRetiredGuardedRebaseAncestor(
   );
 }
 
+type UnenrolledAbortedRecoveryInspection =
+  { readonly accepted: true } | { readonly accepted: false; readonly rejection: string };
+
+function inspectUnenrolledAbortedRecoveryIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): UnenrolledAbortedRecoveryInspection {
+  if (isAttestationTombstone(candidate) || isAttestationTombstone(intermediate)) {
+    return { accepted: false, rejection: "tombstone" };
+  }
+  if (
+    candidate.attestationId !== intermediate.attestationId ||
+    candidate.generation + 1 !== intermediate.generation
+  ) {
+    return { accepted: false, rejection: "nonconsecutive-handle" };
+  }
+  const candidateBinding = candidate.gitEffectBinding;
+  const intermediateBinding = intermediate.gitEffectBinding;
+  const claim = intermediate.dispatchJournalRecoveryClaim;
+  const candidateClaim = candidate.dispatchJournalRecoveryClaim;
+  const bridge = intermediateBinding?.guardedRebaseBridge;
+  const candidateControl = candidate.implementationQueue;
+  const candidateOutput =
+    candidate.output !== null &&
+    typeof candidate.output === "object" &&
+    !Array.isArray(candidate.output)
+      ? (candidate.output as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const candidateInput =
+    candidate.input !== null &&
+    typeof candidate.input === "object" &&
+    !Array.isArray(candidate.input)
+      ? (candidate.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const input =
+    intermediate.input !== null &&
+    typeof intermediate.input === "object" &&
+    !Array.isArray(intermediate.input)
+      ? (intermediate.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const sameManagerBinding =
+    candidateBinding !== undefined &&
+    intermediateBinding !== undefined &&
+    (
+      [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const
+    ).every((field) => (field === "taskId" ? implementationQueueSubjectsMatch(candidateBinding, intermediateBinding, true) : candidateBinding[field] === intermediateBinding[field]));
+  const abortedTerminalAuthentic = (row: AttestationEnvelope): boolean => {
+    const detailsDigest = row.abortDetails === undefined ? null : digest(row.abortDetails);
+    return (
+      row.state === "aborted" &&
+      row.abortReason !== undefined &&
+      row.abortedAt === row.terminalAt &&
+      (row.abortDetailsDigest === undefined || row.abortDetailsDigest === detailsDigest) &&
+      row.terminalDigest ===
+        digest({
+          terminalKind: "aborted",
+          reason: row.abortReason,
+          detailsDigest,
+        })
+    );
+  };
+  const candidateTerminal = candidateControl?.terminal;
+  const candidateQueueTerminalAuthentic =
+    candidateControl !== undefined &&
+    candidateBinding !== undefined &&
+    candidateOutput !== undefined &&
+    candidateControl.state === "terminal" &&
+    candidateTerminal !== undefined &&
+    candidateTerminal.reason === candidate.abortReason &&
+    candidateTerminal.terminalAt === candidate.terminalAt &&
+    candidateTerminal.detailsDigest === digest(candidate.abortDetails ?? null) &&
+    candidateControl.qualification !== undefined &&
+    candidate.stagedCompletionQualification?.qualificationDigest ===
+      candidateControl.qualification.qualificationDigest &&
+    implementationQueueSubjectsMatch(candidateControl.enrollment, authority, true) &&
+    candidateControl.enrollment.goalRef === authority.goalRef &&
+    candidateControl.enrollment.finalizedManifestDigest === authority.finalizedManifestDigest &&
+    implementationQueueSubjectsMatch(candidateControl.attempt, authority, true) &&
+    candidateControl.attempt.repositoryId === candidateBinding.repositoryId &&
+    candidateControl.attempt.worktreePath === candidateBinding.worktreePath &&
+    candidateOutput["status"] === "pass" &&
+    implementationQueueSubjectsMatch(candidateOutput, candidateControl.attempt, true) &&
+    candidateOutput["resultCommit"] === candidateControl.attempt.resultCommit &&
+    digest(candidateOutput["gitReceipts"] ?? []) ===
+      candidateControl.attempt.gitReceiptLineageDigest &&
+    digest(candidateControl.attempt.gitReceipts) ===
+      candidateControl.attempt.gitReceiptLineageDigest;
+  const consumedFailure = authenticatedUnenrolledConsumedFailure(intermediate, authority);
+  const consumedFailureAuthentic =
+    claim !== undefined && consumedFailure?.continuation.liveTip === claim.liveTip;
+  const consumedFailureSourceAuthentic =
+    consumedFailureAuthentic &&
+    (candidateQueueTerminalAuthentic ||
+      (candidateControl === undefined &&
+        (candidate.dispatchContinuationClaim !== undefined ||
+          candidate.dispatchJournalRecoveryClaim !== undefined ||
+          candidateBinding?.guardedRebaseBridge !== undefined)));
+  const timeoutMs =
+    attestationInstantMs(intermediate.deadlines.childCancelAt, "deadlines.childCancelAt") -
+    attestationInstantMs(intermediate.createdAt, "createdAt");
+  const prepareRequest: PrepareDispatchRequest | undefined =
+    intermediateBinding === undefined || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0
+      ? undefined
+      : {
+          namespace: intermediate.namespace,
+          roleId: intermediate.promptProvenance.roleId,
+          surface: intermediate.promptProvenance.surface,
+          input: intermediate.input,
+          idempotencyKey: intermediate.idempotencyKey,
+          timeoutMs,
+          overlays: intermediate.overlays,
+          registry: DISPATCH_OVERLAY_REGISTRY,
+          promptDigest: intermediate.promptProvenance.promptDigest,
+          catalogHash: intermediate.promptProvenance.catalogHash,
+          expectedChild: intermediate.expectedChild,
+          reprepareOf: {
+            attestationId: candidate.attestationId,
+            generation: candidate.generation,
+          },
+          gitEffectBinding: intermediateBinding,
+          ...(claim === undefined
+            ? {}
+            : {
+                journalRecoveryReservation: {
+                  fenceRef: claim.fenceRef,
+                  sourceAttestationId: claim.selectedSource.attestationId,
+                  selectedSourceGeneration: claim.selectedSource.generation,
+                  lineageMaximumGeneration: claim.lineageMaximumGeneration,
+                },
+                journalRecoveryClaim: claim,
+              }),
+          ...(intermediate.implementationEvidenceBootstrapRef === undefined
+            ? {}
+            : {
+                implementationEvidenceBootstrapRef: intermediate.implementationEvidenceBootstrapRef,
+              }),
+        };
+  if (
+    candidateBinding === undefined ||
+    intermediateBinding === undefined ||
+    input === undefined ||
+    prepareRequest === undefined
+  ) {
+    return { accepted: false, rejection: "missing-binding-input-or-prepare" };
+  }
+  if (intermediate.implementationQueue !== undefined) {
+    return { accepted: false, rejection: "target-enrolled" };
+  }
+  if (!abortedTerminalAuthentic(candidate)) {
+    return { accepted: false, rejection: "source-terminal-inauthentic" };
+  }
+  if (!(
+    (abortedTerminalAuthentic(intermediate) &&
+      (intermediate.abortReason === "cancelled" || intermediate.abortReason === "parent-lost")) ||
+    consumedFailureSourceAuthentic
+  )) {
+    return { accepted: false, rejection: "target-terminal-inauthentic" };
+  }
+  if (candidate.abortReason !== "parent-lost" && candidate.abortReason !== "cancelled") {
+    return { accepted: false, rejection: "source-terminal-ineligible" };
+  }
+  if (!sameManagerBinding) {
+    return { accepted: false, rejection: "manager-binding-mismatch" };
+  }
+  if (
+    !implementationQueueSubjectsMatch(candidateBinding, authority, true) ||
+    !implementationQueueSubjectsMatch(intermediateBinding, authority, true) ||
+    !implementationQueueSubjectsMatch(input, authority, true) ||
+    input["branch"] !== intermediateBinding.branch
+  ) {
+    return { accepted: false, rejection: "task-or-branch-mismatch" };
+  }
+  if (intermediate.promptProvenance.inputDigest !== digest(intermediate.input)) {
+    return { accepted: false, rejection: "input-digest-mismatch" };
+  }
+  if (
+    !prepareDispatchRequestDigestMatchesKnownFormat(
+      prepareRequest,
+      intermediate.prepareRequestDigest,
+    )
+  ) {
+    return { accepted: false, rejection: "prepare-request-digest-mismatch" };
+  }
+  if (bridge === undefined) {
+    const inherited = intermediateBinding.inheritedGitReceipts;
+    const accepted =
+      claim !== undefined &&
+      inherited !== undefined &&
+      claim.selectedSource.attestationId === candidate.attestationId &&
+      claim.selectedSource.generation === candidate.generation &&
+      claim.lineageMaximumGeneration === candidate.generation &&
+      claim.sourceTerminalDigest === candidate.terminalDigest &&
+      claim.source.kind === "aborted" &&
+      claim.source.abortReason === candidate.abortReason &&
+      implementationQueueSubjectsMatch(claim, authority, true) &&
+      claim.goalRef === authority.goalRef &&
+      claim.finalizedManifestDigest === authority.finalizedManifestDigest &&
+      claim.managedFingerprint === intermediateBinding.handleFingerprint &&
+      claim.gitReceiptsDigest === digest(inherited) &&
+      input["startingCommit"] === claim.liveTip &&
+      input["priorResultCommit"] === claim.liveTip;
+    return accepted
+      ? { accepted: true }
+      : { accepted: false, rejection: "ordinary-recovery-claim-mismatch" };
+  }
+  const recoveryClaim = claim ?? candidateClaim;
+  const sourceInherited = candidateBinding.inheritedGitReceipts;
+  if (recoveryClaim === undefined || sourceInherited === undefined) {
+    return { accepted: false, rejection: "guarded-source-claim-or-receipts-missing" };
+  }
+  if (
+    !implementationQueueSubjectsMatch(recoveryClaim, authority, true) ||
+    recoveryClaim.goalRef !== authority.goalRef ||
+    recoveryClaim.finalizedManifestDigest !== authority.finalizedManifestDigest
+  ) {
+    return { accepted: false, rejection: "guarded-source-authority-mismatch" };
+  }
+  if (recoveryClaim.managedFingerprint !== intermediateBinding.handleFingerprint) {
+    return { accepted: false, rejection: "guarded-manager-fingerprint-mismatch" };
+  }
+  if (recoveryClaim.gitReceiptsDigest !== digest(sourceInherited)) {
+    return { accepted: false, rejection: "guarded-receipt-closure-mismatch" };
+  }
+  const sourceRecovery = candidate.dispatchRecoveryBinding;
+  let sourceRecoveryBindingAuthentic = false;
+  if (sourceRecovery !== undefined) {
+    try {
+      assertDispatchRecoveryBinding(sourceRecovery);
+      sourceRecoveryBindingAuthentic = true;
+    } catch {
+      sourceRecoveryBindingAuthentic = false;
+    }
+  }
+  const sourceRecoveryClosure = sourceRecovery?.gitReceipts ?? [];
+  const sourceFreshReceipts = sourceRecoveryClosure.slice(sourceInherited.length);
+  const sourceOutputReceipts = candidateOutput?.["gitReceipts"];
+  const advancedSourceTipRejection = (() => {
+    if (candidate.abortReason !== "parent-lost") return "source-not-parent-lost";
+    if (candidateInput === undefined || candidateOutput === undefined) {
+      return "source-input-or-output-missing";
+    }
+    if (sourceRecovery === undefined || !sourceRecoveryBindingAuthentic) {
+      return "source-recovery-binding-missing-or-inauthentic";
+    }
+    if (
+      sourceRecovery.attestationId !== candidate.attestationId ||
+      sourceRecovery.generation !== candidate.generation ||
+      sourceRecovery.terminalDigest !== candidate.terminalDigest ||
+      sourceRecovery.terminalAt !== candidate.terminalAt
+    ) {
+      return "source-recovery-terminal-mismatch";
+    }
+    if (digest(sourceRecovery.gitEffectBinding) !== digest(candidateBinding)) {
+      return "source-recovery-manager-mismatch";
+    }
+    if (sourceRecovery.liveTip !== bridge.oldResultCommit) {
+      return "source-recovery-live-tip-mismatch";
+    }
+    if (
+      sourceFreshReceipts.length === 0 ||
+      sourceInherited.length >= sourceRecoveryClosure.length ||
+      digest(sourceInherited) !== digest(sourceRecoveryClosure.slice(0, sourceInherited.length))
+    ) {
+      return "source-recovery-prefix-mismatch";
+    }
+    const freshReceiptsAuthentic = sourceFreshReceipts.every((receipt, index) => {
+      const previousHead =
+        index === 0 ? recoveryClaim.liveTip : sourceFreshReceipts[index - 1]?.newHead;
+      return (
+        receipt.attestationId === candidate.attestationId &&
+        receipt.generation === candidate.generation &&
+        implementationQueueSubjectsMatch(receipt, authority, true) &&
+        receipt.oldHead === previousHead
+      );
+    });
+    if (!freshReceiptsAuthentic || sourceFreshReceipts.at(-1)?.newHead !== bridge.oldResultCommit) {
+      return "source-fresh-receipts-inauthentic";
+    }
+    if (
+      candidate.promptProvenance.inputDigest !== digest(candidate.input) ||
+      !implementationQueueSubjectsMatch(candidateInput, authority, true) ||
+      candidateInput["branch"] !== candidateBinding.branch ||
+      candidateInput["startingCommit"] !== recoveryClaim.liveTip
+    ) {
+      return "source-input-lineage-mismatch";
+    }
+    if (
+      candidate.outputDigest === undefined ||
+      candidate.outputDigest !== digest(candidate.output)
+    ) {
+      return "source-output-digest-mismatch";
+    }
+    if (
+      candidateOutput["status"] !== "pass" ||
+      !implementationQueueSubjectsMatch(candidateOutput, authority, true) ||
+      candidateOutput["resultCommit"] !== bridge.oldResultCommit
+    ) {
+      return "source-output-identity-mismatch";
+    }
+    if (!Array.isArray(sourceOutputReceipts)) {
+      return "source-output-receipts-missing";
+    }
+    if (digest(sourceOutputReceipts) !== digest(sourceRecoveryClosure)) {
+      return "source-output-receipts-mismatch";
+    }
+    return undefined;
+  })();
+  if (
+    recoveryClaim.liveTip !== bridge.oldResultCommit &&
+    advancedSourceTipRejection !== undefined
+  ) {
+    return { accepted: false, rejection: advancedSourceTipRejection };
+  }
+  if (
+    input["baseCommit"] !== bridge.ontoCommit ||
+    input["startingCommit"] !== bridge.rebasedStartCommit ||
+    input["priorResultCommit"] !== bridge.oldResultCommit
+  ) {
+    return { accepted: false, rejection: "guarded-input-lineage-mismatch" };
+  }
+  return { accepted: true };
+}
+
+function isUnenrolledAbortedRecoveryIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): boolean {
+  return inspectUnenrolledAbortedRecoveryIntermediate(candidate, intermediate, authority).accepted;
+}
+
+function isComposedUnenrolledAbortedRecoveryAncestor(
+  candidate: AttestationRow,
+  successor: AttestationRow,
+  authority: ImplementationQueueAuthority,
+  store: AttestationStore,
+): boolean {
+  if (
+    isAttestationTombstone(candidate) ||
+    isAttestationTombstone(successor) ||
+    candidate.attestationId !== successor.attestationId ||
+    candidate.generation >= successor.generation
+  ) {
+    return false;
+  }
+  let source: AttestationRow = candidate;
+  for (
+    let generation = candidate.generation + 1;
+    generation <= successor.generation;
+    generation += 1
+  ) {
+    const matches = store
+      .rows()
+      .filter(
+        (row) => row.attestationId === candidate.attestationId && row.generation === generation,
+      );
+    if (
+      matches.length !== 1 ||
+      !isUnenrolledAbortedRecoveryIntermediate(source, matches[0]!, authority)
+    ) {
+      return false;
+    }
+    source = matches[0]!;
+  }
+  return true;
+}
+
+function isUnenrolledCancelledContinuationIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  authority: ImplementationQueueAuthority,
+): boolean {
+  if (isAttestationTombstone(candidate) || isAttestationTombstone(intermediate)) return false;
+  const candidateBinding = candidate.gitEffectBinding;
+  const intermediateBinding = intermediate.gitEffectBinding;
+  const retained = candidate.dispatchContinuationBinding;
+  const claim = intermediate.dispatchContinuationClaim;
+  const input =
+    intermediate.input !== null &&
+    typeof intermediate.input === "object" &&
+    !Array.isArray(intermediate.input)
+      ? (intermediate.input as Readonly<Record<string, DispatchJSONValue>>)
+      : undefined;
+  const timeoutMs =
+    attestationInstantMs(intermediate.deadlines.childCancelAt, "deadlines.childCancelAt") -
+    attestationInstantMs(intermediate.createdAt, "createdAt");
+  const prepareRequest: PrepareDispatchRequest | undefined =
+    intermediateBinding === undefined ||
+    retained === undefined ||
+    claim === undefined ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0
+      ? undefined
+      : {
+          namespace: intermediate.namespace,
+          roleId: intermediate.promptProvenance.roleId,
+          surface: intermediate.promptProvenance.surface,
+          input: intermediate.input,
+          idempotencyKey: intermediate.idempotencyKey,
+          timeoutMs,
+          overlays: intermediate.overlays,
+          registry: DISPATCH_OVERLAY_REGISTRY,
+          promptDigest: intermediate.promptProvenance.promptDigest,
+          catalogHash: intermediate.promptProvenance.catalogHash,
+          expectedChild: intermediate.expectedChild,
+          reprepareOf: claim.source,
+          gitEffectBinding: intermediateBinding,
+          continuationClaim: {
+            continuationReference: claim.continuationReference,
+            actor: "trusted-parent",
+            liveTip: retained.liveTip,
+          },
+          ...(intermediate.implementationEvidenceBootstrapRef === undefined
+            ? {}
+            : {
+                implementationEvidenceBootstrapRef: intermediate.implementationEvidenceBootstrapRef,
+              }),
+        };
+  const detailsDigest =
+    intermediate.abortDetails === undefined ? null : digest(intermediate.abortDetails);
+  const candidateQueueAuthorityAuthentic =
+    candidate.implementationQueue !== undefined &&
+    implementationQueueSubjectsMatch(candidate.implementationQueue.enrollment, authority, true) &&
+    candidate.implementationQueue.enrollment.goalRef === authority.goalRef &&
+    candidate.implementationQueue.enrollment.finalizedManifestDigest ===
+      authority.finalizedManifestDigest;
+  const candidateConsumedFailureAuthentic =
+    authenticatedUnenrolledConsumedFailure(candidate, authority) !== undefined;
+  if (
+    candidateBinding === undefined ||
+    intermediateBinding === undefined ||
+    retained === undefined ||
+    claim === undefined ||
+    input === undefined ||
+    prepareRequest === undefined ||
+    intermediate.implementationQueue !== undefined ||
+    candidate.attestationId !== intermediate.attestationId ||
+    candidate.generation + 1 !== intermediate.generation ||
+    intermediate.state !== "aborted" ||
+    intermediate.abortReason !== "cancelled" ||
+    intermediate.abortedAt !== intermediate.terminalAt ||
+    (intermediate.abortDetailsDigest !== undefined &&
+      intermediate.abortDetailsDigest !== detailsDigest) ||
+    intermediate.terminalDigest !==
+      digest({
+        terminalKind: "aborted",
+        reason: "cancelled",
+        detailsDigest,
+      }) ||
+    !implementationQueueSubjectsMatch(candidateBinding, authority, true) ||
+    !implementationQueueSubjectsMatch(intermediateBinding, authority, true) ||
+    !(candidateQueueAuthorityAuthentic || candidateConsumedFailureAuthentic) ||
+    !implementationQueueSubjectsMatch(input, authority, true) ||
+    input["branch"] !== intermediateBinding.branch ||
+    input["startingCommit"] !== retained.liveTip ||
+    input["priorResultCommit"] !== retained.liveTip ||
+    intermediate.promptProvenance.inputDigest !== digest(intermediate.input) ||
+    !prepareDispatchRequestDigestMatchesKnownFormat(
+      prepareRequest,
+      intermediate.prepareRequestDigest,
+    )
+  ) {
+    return false;
+  }
+  return (
+    isConsumedOrdinaryContinuationAncestor(candidate, intermediate, intermediateBinding) ||
+    isUnenrolledConsumedFailureContinuationAncestor(
+      candidate,
+      intermediate,
+      intermediateBinding,
+      authority,
+    )
+  );
+}
+
+function isComposedTerminalIntermediate(
+  candidate: AttestationRow,
+  intermediate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  authority: ImplementationQueueAuthority,
+  priorEnrollment: readonly AttestationRow[],
+  store: AttestationStore,
+): intermediate is AttestationEnvelope {
+  if (
+    isAttestationTombstone(intermediate) ||
+    intermediate.attestationId !== candidate.attestationId ||
+    intermediate.generation <= candidate.generation ||
+    intermediate.generation >= successor.generation ||
+    intermediate.gitEffectBinding === undefined
+  ) {
+    return false;
+  }
+  return (
+    isUnenrolledAbortedRecoveryIntermediate(candidate, intermediate, authority) ||
+    isUnenrolledCancelledContinuationIntermediate(candidate, intermediate, authority) ||
+    isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) ||
+    isLegacyRetiredJournalRecoveryIntermediate(
+      candidate,
+      intermediate,
+      successor,
+      successorBinding,
+      authority,
+      priorEnrollment,
+    ) ||
+    isGateRejectedCorrectionAncestor(
+      candidate,
+      intermediate,
+      intermediate.gitEffectBinding,
+      intermediate.implementationQueue?.attempt.gitReceipts ?? [],
+      intermediate.implementationQueue?.attempt.resultCommit ?? "",
+    ) ||
+    isConsumedGuardedContinuationAncestor(candidate, intermediate, intermediate.gitEffectBinding) ||
+    isConsumedOrdinaryContinuationAncestor(
+      candidate,
+      intermediate,
+      intermediate.gitEffectBinding,
+    ) ||
+    isRetiredGuardedRebaseAncestor(candidate, intermediate, intermediate.gitEffectBinding)
+  );
+}
+
 function isComposedTerminalAncestor(
   candidate: AttestationRow,
   successor: AttestationEnvelope,
@@ -1278,6 +2090,12 @@ function isComposedTerminalAncestor(
   if (visited.has(candidateKey)) return false;
   const nextVisited = new Set(visited).add(candidateKey);
   if (
+    isUnenrolledConsumedFailureContinuationAncestor(
+      candidate,
+      successor,
+      successorBinding,
+      authority,
+    ) ||
     isConsumedGuardedContinuationAncestor(candidate, successor, successorBinding) ||
     isConsumedOrdinaryContinuationAncestor(candidate, successor, successorBinding) ||
     isRetiredGuardedRebaseAncestor(candidate, successor, successorBinding) ||
@@ -1302,42 +2120,15 @@ function isComposedTerminalAncestor(
   }
   return priorEnrollment.some((intermediate) => {
     if (
-      isAttestationTombstone(intermediate) ||
-      intermediate.attestationId !== candidate.attestationId ||
-      intermediate.generation <= candidate.generation ||
-      intermediate.generation >= successor.generation ||
-      intermediate.gitEffectBinding === undefined ||
-      (!isQualifiedJournalRecoveryIntermediate(candidate, intermediate, store) &&
-        !isLegacyRetiredJournalRecoveryIntermediate(
-          candidate,
-          intermediate,
-          successor,
-          successorBinding,
-          authority,
-          priorEnrollment,
-        ) &&
-        !isGateRejectedCorrectionAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-          intermediate.implementationQueue?.attempt.gitReceipts ?? [],
-          intermediate.implementationQueue?.attempt.resultCommit ?? "",
-        ) &&
-        !isConsumedGuardedContinuationAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ) &&
-        !isConsumedOrdinaryContinuationAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ) &&
-        !isRetiredGuardedRebaseAncestor(
-          candidate,
-          intermediate,
-          intermediate.gitEffectBinding,
-        ))
+      !isComposedTerminalIntermediate(
+        candidate,
+        intermediate,
+        successor,
+        successorBinding,
+        authority,
+        priorEnrollment,
+        store,
+      )
     ) {
       return false;
     }
@@ -1353,6 +2144,123 @@ function isComposedTerminalAncestor(
       nextVisited,
     );
   });
+}
+
+function qualificationRefusalDiagnostic(
+  candidate: AttestationRow,
+  successor: AttestationEnvelope,
+  successorBinding: DispatchGitEffectBinding,
+  authority: ImplementationQueueAuthority,
+  priorEnrollment: readonly AttestationRow[],
+  store: AttestationStore,
+): string {
+  const intermediates = priorEnrollment
+    .filter(
+      (intermediate) =>
+        intermediate.attestationId === candidate.attestationId &&
+        intermediate.generation > candidate.generation &&
+        intermediate.generation < successor.generation,
+    )
+    .sort((left, right) => left.generation - right.generation);
+  const boundIntermediates = intermediates.filter(
+    (intermediate): intermediate is AttestationEnvelope =>
+      !isAttestationTombstone(intermediate) && intermediate.gitEffectBinding !== undefined,
+  );
+  const admittedFirstHops = boundIntermediates.filter((intermediate) =>
+    isComposedTerminalIntermediate(
+      candidate,
+      intermediate,
+      successor,
+      successorBinding,
+      authority,
+      priorEnrollment,
+      store,
+    ),
+  );
+  const reason =
+    intermediates.length === 0
+      ? "no-intermediate"
+      : boundIntermediates.length === 0
+        ? "no-bound-intermediate"
+        : admittedFirstHops.length === 0
+          ? "first-hop-rejected"
+          : "downstream-rejected";
+  const firstIntermediate = intermediates[0];
+  const firstAdmitted = admittedFirstHops[0];
+  const reachable: AttestationRow[] = [candidate];
+  let firstUnreachable:
+    | {
+        readonly generation: number;
+        readonly predecessor: AttestationRow | undefined;
+        readonly row: AttestationEnvelope;
+      }
+    | undefined;
+  for (const intermediate of boundIntermediates) {
+    let ingress: AttestationRow | undefined;
+    for (let index = reachable.length - 1; index >= 0; index -= 1) {
+      const source = reachable[index]!;
+      if (
+        isComposedTerminalIntermediate(
+          source,
+          intermediate,
+          successor,
+          successorBinding,
+          authority,
+          priorEnrollment,
+          store,
+        )
+      ) {
+        ingress = source;
+        break;
+      }
+    }
+    if (ingress === undefined) {
+      firstUnreachable ??= {
+        generation: intermediate.generation,
+        predecessor: boundIntermediates.find(
+          (candidatePredecessor) => candidatePredecessor.generation === intermediate.generation - 1,
+        ),
+        row: intermediate,
+      };
+    } else {
+      reachable.push(intermediate);
+    }
+  }
+  const firstUnreachableRecoveryInspection =
+    firstUnreachable?.predecessor === undefined
+      ? undefined
+      : inspectUnenrolledAbortedRecoveryIntermediate(
+          firstUnreachable.predecessor,
+          firstUnreachable.row,
+          authority,
+        );
+  const firstUnreachablePredecessorBinding =
+    firstUnreachable?.predecessor === undefined ||
+    isAttestationTombstone(firstUnreachable.predecessor)
+      ? undefined
+      : firstUnreachable.predecessor.gitEffectBinding;
+  return (
+    `[qualification-refusal:v1 reason=${reason} ` +
+    `scope=${candidate.attestationId === successor.attestationId ? "same-attestation" : "different-attestation"} ` +
+    `source-generation=${String(candidate.generation)} ` +
+    `source-state=${candidate.implementationQueue?.state ?? "missing"} ` +
+    `source-terminal=${candidate.implementationQueue?.terminal?.reason ?? "none"} ` +
+    `target-generation=${String(successor.generation)} ` +
+    `intermediate-count=${String(intermediates.length)} ` +
+    `bound-intermediate-count=${String(boundIntermediates.length)} ` +
+    `admitted-first-hop-count=${String(admittedFirstHops.length)} ` +
+    `first-intermediate-generation=${firstIntermediate === undefined ? "none" : String(firstIntermediate.generation)} ` +
+    `first-intermediate-state=${firstIntermediate?.implementationQueue?.state ?? "none"} ` +
+    `first-intermediate-terminal=${firstIntermediate?.implementationQueue?.terminal?.reason ?? "none"} ` +
+    `first-admitted-generation=${firstAdmitted === undefined ? "none" : String(firstAdmitted.generation)} ` +
+    `first-unreachable-generation=${firstUnreachable === undefined ? "none" : String(firstUnreachable.generation)} ` +
+    `first-unreachable-predecessor-generation=${firstUnreachable?.predecessor === undefined ? "none" : String(firstUnreachable.predecessor.generation)} ` +
+    `first-unreachable-source-recovery-claim=${firstUnreachable?.predecessor?.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
+    `first-unreachable-target-recovery-claim=${firstUnreachable?.row.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
+    `first-unreachable-target-guarded-bridge=${firstUnreachable?.row.gitEffectBinding?.guardedRebaseBridge === undefined ? "none" : "present"} ` +
+    `first-unreachable-manager-base-match=${firstUnreachablePredecessorBinding?.baseCommit === firstUnreachable?.row.gitEffectBinding?.baseCommit ? "yes" : "no"} ` +
+    `first-unreachable-recovery-rejection=${firstUnreachableRecoveryInspection === undefined || firstUnreachableRecoveryInspection.accepted ? "none" : firstUnreachableRecoveryInspection.rejection}]`
+  );
 }
 
 function runnable(control: ImplementationQueueControl): boolean {
@@ -1422,7 +2330,7 @@ function assertExpectedRevision(
   expected: number | undefined,
 ): void {
   if (expected === undefined) return;
-  const current = currentPartitionRevision(store, partitionKey);
+  const current = currentImplementationQueuePartitionRevision(store, partitionKey);
   if (current !== expected) {
     throw new ImplementationQueueConflictError(
       "partition-revision",
@@ -1464,7 +2372,22 @@ export function implementationQueuePartition(input: {
   });
 }
 
+
+function queueAuthorityIdentity(authority: ImplementationQueueAuthority): ImplementationQueueAuthority {
+  return authority.cohort === undefined ? { taskId: authority.taskId, goalRef: authority.goalRef,
+    finalizedManifestDigest: authority.finalizedManifestDigest } : { cohort: structuredClone(authority.cohort) };
+}
+
 function assertAuthority(authority: ImplementationQueueAuthority): ImplementationQueueAuthority {
+  if (authority.cohort !== undefined) {
+    if (Object.hasOwn(authority, "taskId") || Object.hasOwn(authority, "goalRef") || Object.hasOwn(authority, "finalizedManifestDigest")) {
+      throw new AttestationContractError("authority", "cohort queue authority cannot carry an anchor task or goal");
+    }
+    assertCohortEffectEnvelopeV1(authority.cohort);
+    if (authority.cohort.state !== "pre-seal") throw new AttestationContractError("authority.cohort", "candidate production requires pre-seal cohort authority");
+    return Object.freeze(queueAuthorityIdentity(authority));
+  }
+  if (Object.hasOwn(authority, "cohort")) throw new AttestationContractError("authority", "expected one closed queue authority");
   if (!/^T[0-9]+$/u.test(authority.taskId)) {
     throw new AttestationContractError("authority.taskId", "expected a task id");
   }
@@ -1477,7 +2400,7 @@ function assertAuthority(authority: ImplementationQueueAuthority): Implementatio
       "expected a lowercase SHA-256 finalized-manifest digest",
     );
   }
-  return Object.freeze({ ...authority });
+  return Object.freeze(queueAuthorityIdentity(authority));
 }
 
 function enrollmentId(
@@ -1486,9 +2409,7 @@ function enrollmentId(
 ): string {
   return `cq-implementation-enrollment:v1:${digest({
     partitionKey: partition.partitionKey,
-    taskId: authority.taskId,
-    goalRef: authority.goalRef,
-    finalizedManifestDigest: authority.finalizedManifestDigest,
+    ...(authority.cohort === undefined ? queueAuthorityIdentity(authority) : { cohort: cohortQueueProductionIdentity(authority.cohort) }),
   })}`;
 }
 
@@ -1581,7 +2502,7 @@ export function enqueueImplementationCandidate(
     );
   }
   const authority = assertAuthority(request.authority);
-  if (authority.taskId !== binding.taskId) {
+  if (!implementationQueueSubjectsMatch(authority, binding, false)) {
     throw new AttestationBindingError(
       "authority.taskId",
       "queue authority does not match the managed task",
@@ -1604,13 +2525,23 @@ export function enqueueImplementationCandidate(
     );
   }
   const output = outputRecord(row);
-  if (output["taskId"] !== authority.taskId || output["resultCommit"] !== request.resultCommit) {
+  if (!implementationQueueSubjectsMatch(output, authority, false) || output["resultCommit"] !== request.resultCommit) {
     throw new AttestationBindingError(
       "resultCommit",
       "queue attempt does not match the staged worker result",
     );
   }
   const preparedInput = row.input as Readonly<Record<string, DispatchJSONValue>>;
+  if (
+    !implementationQueueSubjectsMatch(preparedInput, authority, false) ||
+    preparedInput["branch"] !== binding.branch ||
+    row.promptProvenance.inputDigest !== digest(row.input)
+  ) {
+    throw new AttestationBindingError(
+      "input",
+      "queue enrollment does not match the authenticated dispatch input",
+    );
+  }
   if (preparedInput["baseCommit"] !== request.observedBaseCommit) {
     throw new AttestationBindingError(
       "observedBaseCommit",
@@ -1623,11 +2554,22 @@ export function enqueueImplementationCandidate(
       "queue attempt does not match the verified broker receipt lineage",
     );
   }
+  if (authority.cohort !== undefined && request.gitReceipts.some((receipt) =>
+    receipt.version !== 2 || !implementationQueueSubjectsMatch(receipt, authority, true))) {
+    throw new AttestationBindingError("gitReceipts", "cohort queue attempt substituted its full producing receipt subject");
+  }
 
   const stableEnrollmentId = enrollmentId(partition, authority);
   const priorEnrollment = queueRows(deps.store, partition.partitionKey).filter(
     (candidate) => persistedEnrollmentId(candidate.implementationQueue!) === stableEnrollmentId,
   );
+  const lineageAttestationIds = new Set([
+    row.attestationId,
+    ...priorEnrollment.map((candidate) => candidate.attestationId),
+  ]);
+  const composedLineage = deps.store
+    .rows()
+    .filter((candidate) => lineageAttestationIds.has(candidate.attestationId));
   const activePrior = priorEnrollment.find(
     (candidate) =>
       !isAttestationTombstone(candidate) &&
@@ -1642,8 +2584,7 @@ export function enqueueImplementationCandidate(
   }
   const terminalPrior = priorEnrollment.find(
     (candidate) =>
-      (candidate.attestationId !== row.attestationId ||
-        candidate.generation !== row.generation) &&
+      (candidate.attestationId !== row.attestationId || candidate.generation !== row.generation) &&
       candidate.implementationQueue!.state !== "staged-rebase-retired" &&
       !isComposedTerminalAncestor(
         candidate,
@@ -1652,28 +2593,27 @@ export function enqueueImplementationCandidate(
         request.gitReceipts,
         request.resultCommit,
         authority,
-        priorEnrollment,
+        composedLineage,
         deps.store,
       ),
   );
   if (terminalPrior !== undefined) {
     throw new ImplementationQueueConflictError(
       "already-terminal",
-      `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected`,
+      `terminal enrollment authority on ${terminalPrior.attestationId}#${String(terminalPrior.generation)} cannot be resurrected ${qualificationRefusalDiagnostic(terminalPrior, row, binding, authority, composedLineage, deps.store)}`,
     );
   }
-  const retiredSourceRows = priorEnrollment.filter(
-    (candidate) => {
-      const control = candidate.implementationQueue!;
-      const claimed = control.stagedRebaseSource?.successor;
-      return (
-        control.state === "staged-rebase-retired" &&
-        control.stagedRebaseSource !== undefined &&
-        (claimed === undefined ||
-          (claimed.attestationId === row.attestationId && claimed.generation === row.generation))
-      );
-    },
-  );
+  const retiredSourceRows = deps.store.rows().filter((candidate) => {
+    if (!priorEnrollment.includes(candidate) && !isRetiredGuardedRebaseAncestor(candidate, row, binding)) return false;
+    const control = candidate.implementationQueue!;
+    const claimed = control.stagedRebaseSource?.successor;
+    return (
+      control.state === "staged-rebase-retired" &&
+      control.stagedRebaseSource !== undefined &&
+      (claimed === undefined ||
+        (claimed.attestationId === row.attestationId && claimed.generation === row.generation))
+    );
+  });
   const successorSource = request.stagedRebaseSource;
   if (retiredSourceRows.length > 0 && successorSource === undefined) {
     throw new DispatchStagedRebaseSourceError(
@@ -1743,13 +2683,14 @@ export function enqueueImplementationCandidate(
         Math.max(maximum, persistedAdmissionOrdinal(candidate.implementationQueue!)),
       0,
     ) + 1;
+  const versionedAuthority: VersionedImplementationQueueAuthority = authority.cohort === undefined
+    ? { ...authority, version: 1 } : { ...authority, version: 2 };
   const enrollment: ImplementationQueueEnrollment = Object.freeze({
     kind: "cq-implementation-queue-enrollment" as const,
-    version: 1 as const,
     enrollmentId: stableEnrollmentId,
     partitionKey: partition.partitionKey,
     admissionOrdinal,
-    ...authority,
+    ...versionedAuthority,
   });
   const attemptPayload = {
     observedBaseCommit: request.observedBaseCommit,
@@ -1757,20 +2698,17 @@ export function enqueueImplementationCandidate(
     resultTree: request.resultTree,
     gateCommand: request.gateCommand,
     packagedEnvironmentDigest: request.packagedEnvironmentDigest,
-    taskId: authority.taskId,
-    goalRef: authority.goalRef,
-    finalizedManifestDigest: authority.finalizedManifestDigest,
     managedWorktreeBindingDigest: digest(binding),
     gitReceiptLineageDigest: digest(request.gitReceipts),
-    gitReceipts: Object.freeze(request.gitReceipts.map((receipt) => Object.freeze({ ...receipt }))),
+    gitReceipts: Object.freeze(request.gitReceipts.map((receipt) => Object.freeze(structuredClone(receipt)))),
     worktreePath: binding.worktreePath,
     repositoryId: binding.repositoryId,
   };
   const attempt: ImplementationQueueAttempt = Object.freeze({
     kind: "cq-implementation-queue-attempt" as const,
-    version: 1 as const,
-    attemptId: `cq-implementation-attempt:v1:${digest(attemptPayload)}`,
+    attemptId: `cq-implementation-attempt:v1:${digest({ ...attemptPayload, ...queueAuthorityIdentity(authority) })}`,
     ...attemptPayload,
+    ...versionedAuthority,
   });
   const candidate: ImplementationQueueControl = Object.freeze({
     kind: "cq-implementation-queue-control" as const,
@@ -2085,7 +3023,7 @@ export function acquireImplementationCandidate(
     throw new AttestationContractError("holderId", "expected a non-empty lease holder identity");
   }
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
-  let revision = currentPartitionRevision(deps.store, request.partitionKey);
+  let revision = currentImplementationQueuePartitionRevision(deps.store, request.partitionKey);
   let front = frontRow(deps.store, request.partitionKey);
   while (front !== undefined) {
     const control = front.implementationQueue;
@@ -2109,7 +3047,7 @@ export function acquireImplementationCandidate(
       { qualificationDeadline: control.qualificationDeadline },
       deps,
     );
-    revision = currentPartitionRevision(deps.store, request.partitionKey);
+    revision = currentImplementationQueuePartitionRevision(deps.store, request.partitionKey);
     front = frontRow(deps.store, request.partitionKey);
   }
   if (front === undefined) {
@@ -2119,25 +3057,25 @@ export function acquireImplementationCandidate(
       partitionRevision: revision,
     });
   }
-  if (
-    request.expectedCandidate !== undefined &&
-    (front.attestationId !== request.expectedCandidate.attestationId ||
-      front.generation !== request.expectedCandidate.generation)
-  ) {
-    return Object.freeze({
-      state: "blocked" as const,
-      partitionKey: request.partitionKey,
-      partitionRevision: revision,
-      front: Object.freeze({
-        attestationId: front.attestationId,
-        generation: front.generation,
-      }),
-      frontState: front.implementationQueue!.state,
-    });
-  }
   const leased = livePartitionLease(deps.store, request.partitionKey);
   if (leased !== undefined) {
     const leasedControl = leased.implementationQueue!;
+    if (
+      request.expectedCandidate !== undefined &&
+      (leased.attestationId !== request.expectedCandidate.attestationId ||
+        leased.generation !== request.expectedCandidate.generation)
+    ) {
+      return Object.freeze({
+        state: "blocked" as const,
+        partitionKey: request.partitionKey,
+        partitionRevision: revision,
+        front: Object.freeze({
+          attestationId: leased.attestationId,
+          generation: leased.generation,
+        }),
+        frontState: "leased" as const,
+      });
+    }
     if (leasedControl.lease?.holderId === request.holderId) {
       return Object.freeze({
         state: "leased" as const,
@@ -2155,6 +3093,22 @@ export function acquireImplementationCandidate(
         generation: leased.generation,
       }),
       frontState: "leased" as const,
+    });
+  }
+  if (
+    request.expectedCandidate !== undefined &&
+    (front.attestationId !== request.expectedCandidate.attestationId ||
+      front.generation !== request.expectedCandidate.generation)
+  ) {
+    return Object.freeze({
+      state: "blocked" as const,
+      partitionKey: request.partitionKey,
+      partitionRevision: revision,
+      front: Object.freeze({
+        attestationId: front.attestationId,
+        generation: front.generation,
+      }),
+      frontState: front.implementationQueue!.state,
     });
   }
   const control = front.implementationQueue!;
@@ -2252,7 +3206,9 @@ export function reserveImplementationCompletionLease(
   if (
     control.qualification === undefined ||
     control.qualification.qualificationDigest !== request.qualificationDigest ||
-    control.attempt.taskId !== request.taskRef.slice("tasks:".length) ||
+    (request.cohort === undefined
+      ? control.attempt.cohort !== undefined || control.attempt.taskId !== request.taskRef.slice("tasks:".length)
+      : !implementationQueueSubjectsMatch(control.attempt, { cohort: request.cohort.envelope }, true)) ||
     control.attempt.resultCommit !== request.resultCommit
   ) {
     throw new ImplementationQueueConflictError(
@@ -2273,10 +3229,10 @@ export function reserveImplementationCompletionLease(
   }
   const reservation: ImplementationCompletionLeaseReservation = Object.freeze({
     kind: "cq-implementation-completion-lease-reservation" as const,
-    version: 1 as const,
+    version: request.cohort === undefined ? 1 as const : 2 as const,
     operationId: request.operationId,
     requestDigest,
-    taskRef: request.taskRef,
+    ...(request.cohort === undefined ? { taskRef: request.taskRef } : { cohort: structuredClone(request.cohort) }),
     completionRef: request.completionRef,
     mergeOperationId: request.mergeOperationId,
     resultCommit: request.resultCommit,
@@ -2302,7 +3258,9 @@ export function releaseImplementationCompletionLease(
   if (
     reservation === undefined ||
     reservation.operationId !== request.operationId ||
-    reservation.taskRef !== request.taskRef ||
+    (request.cohort === undefined
+      ? reservation.cohort !== undefined || reservation.taskRef !== request.taskRef
+      : reservation.cohort === undefined || digest(completionCohortIdentity(reservation.cohort)) !== digest(completionCohortIdentity(request.cohort))) ||
     reservation.completionRef !== request.completionRef ||
     reservation.mergeOperationId !== request.mergeOperationId ||
     reservation.resultCommit !== request.resultCommit
@@ -2489,15 +3447,7 @@ export function terminalizeImplementationCandidate(
     );
   }
   assertExpectedRevision(deps.store, request.partitionKey, request.expectedPartitionRevision);
-  return queuedAbort(
-    row,
-    control,
-    deps.now(),
-    reason,
-    terminalReason,
-    details,
-    deps,
-  );
+  return queuedAbort(row, control, deps.now(), reason, terminalReason, details, deps);
 }
 
 export function retireDispatchStagedRebaseSource(

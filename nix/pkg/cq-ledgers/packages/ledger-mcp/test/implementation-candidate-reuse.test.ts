@@ -97,6 +97,158 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
     });
   });
 
+  // regression: T6573 — an older stable enrollment can qualify a correction
+  // while another candidate's completed lease remains the partition authority.
+  test("a retained completion lease remains authoritative when an older enrollment reenters the partition [Behavioral-Active Blackbox-Group]", async () => {
+    const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const common = {
+      repositoryId: "a".repeat(64),
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: "b".repeat(64),
+    } as const;
+    const complete = async (
+      staged: Awaited<ReturnType<typeof fixture.stage>>,
+      holderId: string,
+    ) => {
+      const qualified = await fixture.adapter.qualifyNativeCompletion({
+        candidate: staged.candidate,
+        ...staged.qualification,
+      });
+      const acquired = await fixture.adapter.acquire({
+        partitionKey: qualified.queue.partition.partitionKey,
+        holderId,
+        expectedCandidate: staged.prepared,
+      });
+      if (acquired.state !== "leased") throw new Error("expected exact candidate lease");
+      if (staged.prepared.parentGateCapability === undefined) {
+        throw new Error("managed candidate omitted parent gate capability");
+      }
+      const claimed = await claimQualifiedParentGateOn(
+        backend,
+        { ...staged.prepared, queueLease: acquired.lease },
+        { now: fixture.clock.now },
+      );
+      if (claimed.state !== "gate-running") throw new Error("expected claimed parent gate");
+      await completeQualifiedParentGateOn(
+        backend,
+        {
+          ...staged.prepared,
+          queueLease: acquired.lease,
+          gateEpoch: claimed.gateEpoch,
+          output: {
+            ...(claimed.output as Readonly<Record<string, DispatchJSONValue>>),
+            supervisedGateEvidence: {
+              kind: "cq-supervised-gate-evidence",
+              version: 1,
+              attestationId: staged.prepared.attestationId,
+              generation: staged.prepared.generation,
+              roleId: "implement-worker",
+              roleVersion: staged.prepared.promptProvenance.version,
+              surface: "codex",
+              promptDigest: staged.prepared.promptProvenance.promptDigest,
+              catalogHash: staged.prepared.promptProvenance.catalogHash,
+              inputDigest: staged.prepared.promptProvenance.inputDigest,
+              taskId: staged.binding.taskId,
+              worktreePath: staged.binding.worktreePath,
+              branch: staged.binding.branch,
+              baseCommit: staged.binding.baseCommit,
+              startingCommit: staged.binding.baseCommit,
+              resultCommit: staged.candidate.resultCommit,
+              clean: true,
+              command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+              gateExitCode: 0,
+              passCount: 1,
+              failCount: 0,
+              gateDurationMs: 1,
+              capturedAt: fixture.clock.now(),
+              filesTouchedDigest: "1".repeat(64),
+              gitReceiptsDigest: "2".repeat(64),
+              mutationTableDigest: "3".repeat(64),
+            },
+          },
+        },
+        { now: fixture.clock.now },
+      );
+      const control = await fixture.adapter.inspectLease(acquired.lease);
+      if (control.qualification === undefined) {
+        throw new Error("completed candidate lost its qualification");
+      }
+      await confirmDispatchCompletionOn(
+        backend,
+        {
+          namespace,
+          ...staged.prepared,
+          nativeCompletion: control.qualification.nativeCompletion,
+          expectedProvenance: control.qualification.expectedProvenance,
+          continuationContext: {
+            liveTip: staged.candidate.resultCommit,
+            gitReceipts: staged.candidate.gitReceipts,
+          },
+        },
+        { now: fixture.clock.now },
+      );
+      return { acquired, control };
+    };
+
+    const older = await fixture.stage({
+      ...common,
+      taskId: "T6573",
+      resultCommit: "1".repeat(40),
+      resultTree: "2".repeat(40),
+    });
+    await complete(older, "older-completion");
+    const correction = await fixture.stage({
+      ...common,
+      taskId: "T6573",
+      reprepareOf: older,
+      resultCommit: "2".repeat(40),
+      resultTree: "3".repeat(40),
+    });
+    const retained = await fixture.stage({
+      ...common,
+      taskId: "T6574",
+      resultCommit: "3".repeat(40),
+      resultTree: "4".repeat(40),
+    });
+    const retainedCompletion = await complete(retained, "retained-completion");
+    const correctionQualified = await fixture.adapter.qualifyNativeCompletion({
+      candidate: correction.candidate,
+      ...correction.qualification,
+    });
+    expect(correctionQualified.queue.enrollment.admissionOrdinal).toBeLessThan(
+      retainedCompletion.control.enrollment.admissionOrdinal,
+    );
+
+    expect(
+      await fixture.adapter.acquire({
+        partitionKey: correctionQualified.queue.partition.partitionKey,
+        holderId: "retained-completion",
+        expectedCandidate: correction.prepared,
+      }),
+    ).toMatchObject({
+      state: "blocked",
+      front: {
+        attestationId: retained.prepared.attestationId,
+        generation: retained.prepared.generation,
+      },
+      frontState: "leased",
+    });
+
+    expect(
+      await fixture.adapter.acquire({
+        partitionKey: correctionQualified.queue.partition.partitionKey,
+        holderId: "retained-completion",
+        expectedCandidate: retained.prepared,
+      }),
+    ).toMatchObject({
+      state: "leased",
+      replayed: true,
+      lease: retainedCompletion.acquired.lease,
+    });
+  });
+
   // regression: T6520 round 11 — the prior canonical test stopped after
   // reacquiring the lease and did not carry the counted gate through settlement.
   test("one unchanged exact candidate uses one gate through review retry, ff-only merge, completion, and replay with zero post-merge gates [Behavioral-Active Blackbox-Group]", async () => {

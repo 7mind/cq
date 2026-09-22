@@ -3,6 +3,7 @@ import type { Item, WorksetCapableLedgerClient } from "./types.js";
 import type { WorksetProjectedGraph, WorksetProjectedNode } from "@cq/ledger";
 import { summarize } from "@cq/ledger/summarize";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
+import { CohortStatus } from "./CohortStatus.js";
 
 type WorksetPhase = "loading" | "idle" | "previewing" | "applying" | "refreshing";
 
@@ -324,6 +325,7 @@ export function WorksetManager({
                   <WorksetGraphView graph={state.current} scope="current" />
                 )}
               </section>
+              <CohortStatus client={client} />
               <section className="lw-workset-editor">
                 <h3>Draft roots</h3>
                 <form

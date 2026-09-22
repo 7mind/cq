@@ -42,6 +42,18 @@ function candidate(
   return { ...defaults, taskId, ...overrides };
 }
 
+async function captureImplementationQueueConflict(
+  operation: () => Promise<unknown>,
+): Promise<ImplementationQueueConflictError> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof ImplementationQueueConflictError) return error;
+    throw error;
+  }
+  throw new Error("expected an implementation queue conflict");
+}
+
 type DirectTerminalReason = Parameters<
   ImplementationCandidateQueueFixture["adapter"]["terminalize"]
 >[0]["reason"];
@@ -326,7 +338,7 @@ describe("ledger-MCP implementation candidate queue", () => {
   // regression: T6518 review round 3 — terminal enrollment was treated as reusable authority.
   test("cancelled enrollment authority cannot be resurrected", async () => {
     const subject = fixture();
-    const first = await subject.stage(candidate("T6518"));
+    const first = await subject.stage(candidate("T6518", { withReceipt: true }));
     const qualified = await subject.adapter.qualifyNativeCompletion({
       candidate: first.candidate,
       ...first.qualification,
@@ -342,12 +354,35 @@ describe("ledger-MCP implementation candidate queue", () => {
     });
     const resurrected = await subject.stage(candidate("T6518"));
 
-    await expect(
+    const rejection = await captureImplementationQueueConflict(() =>
       subject.adapter.qualifyNativeCompletion({
         candidate: resurrected.candidate,
         ...resurrected.qualification,
       }),
-    ).rejects.toThrow(ImplementationQueueConflictError);
+    );
+    expect(rejection.message).toContain(
+      "[qualification-refusal:v1 reason=no-intermediate scope=different-attestation " +
+        `source-generation=${String(first.prepared.generation)} source-state=terminal ` +
+        `source-terminal=cancelled target-generation=${String(resurrected.prepared.generation)} ` +
+        "intermediate-count=0 bound-intermediate-count=0 admitted-first-hop-count=0 " +
+        "first-intermediate-generation=none first-intermediate-state=none " +
+        "first-intermediate-terminal=none first-admitted-generation=none]",
+    );
+    const receipt = first.candidate.gitReceipts[0];
+    if (receipt === undefined)
+      throw new Error("receipt-bearing diagnostic fixture lost its receipt");
+    for (const forbidden of [
+      first.binding.handleToken,
+      first.binding.handleFingerprint,
+      first.binding.repositoryRoot,
+      first.binding.commonDir,
+      first.binding.worktreePath,
+      receipt.requestDigest,
+      receipt.tree,
+      ...receipt.objectOids,
+    ]) {
+      expect(rejection.message).not.toContain(forbidden);
+    }
   });
 
   test("cancelled enrollment authority cannot be resurrected by a later generation of the same attestation", async () => {
@@ -376,12 +411,164 @@ describe("ledger-MCP implementation candidate queue", () => {
       attestationId: first.prepared.attestationId,
       generation: first.prepared.generation + 1,
     });
-    await expect(
+    const rejection = await captureImplementationQueueConflict(() =>
       subject.adapter.qualifyNativeCompletion({
         candidate: resurrected.candidate,
         ...resurrected.qualification,
       }),
-    ).rejects.toThrow(ImplementationQueueConflictError);
+    );
+    expect(rejection.message).toContain(
+      "[qualification-refusal:v1 reason=no-intermediate scope=same-attestation " +
+        `source-generation=${String(first.prepared.generation)} source-state=terminal ` +
+        `source-terminal=cancelled target-generation=${String(resurrected.prepared.generation)} ` +
+        "intermediate-count=0 bound-intermediate-count=0 admitted-first-hop-count=0 " +
+        "first-intermediate-generation=none first-intermediate-state=none " +
+        "first-intermediate-terminal=none first-admitted-generation=none]",
+    );
+  });
+
+  // regression: tasks:T6573 — qualification refusals expose only bounded ancestry diagnostics.
+  test("a composed enrollment refusal identifies its first rejected ancestry relation", async () => {
+    const subject = fixture();
+    const exactTipBinding: DispatchGitEffectBinding = {
+      taskId: "T6518",
+      handleToken: "diagnostic-manager-token",
+      handleFingerprint: "4".repeat(64),
+      repositoryRoot: "/diagnostic-repository",
+      repositoryId: repositoryA,
+      commonDir: "/diagnostic-repository/.git",
+      worktreePath: "/diagnostic-repository/.claude/worktrees/T6518",
+      branch: "implement/T6518",
+      ref: "refs/heads/implement/T6518",
+      baseCommit: "4".repeat(40),
+    };
+    const first = await subject.stage(
+      candidate("T6518", {
+        gitEffectBinding: exactTipBinding,
+        resultCommit: exactTipBinding.baseCommit,
+      }),
+    );
+    const firstQualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: first.candidate,
+      ...first.qualification,
+    });
+    const firstLease = await subject.adapter.acquire({
+      partitionKey: firstQualified.queue.partition.partitionKey,
+      holderId: "diagnostic-first-gate",
+    });
+    if (firstLease.state !== "leased") throw new Error("expected first diagnostic lease");
+    if (first.prepared.parentGateCapability === undefined) {
+      throw new Error("diagnostic source omitted parent gate capability");
+    }
+    const claimed = await claimParentGateOn(
+      subject.backend,
+      {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        parentGateCapability: first.prepared.parentGateCapability,
+        queueLease: firstLease.lease,
+      },
+      { now: subject.clock.now },
+    );
+    if (claimed.state !== "gate-running") throw new Error("expected diagnostic gate claim");
+    await completeParentGateOn(
+      subject.backend,
+      {
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        parentGateCapability: first.prepared.parentGateCapability,
+        queueLease: firstLease.lease,
+        gateEpoch: claimed.gateEpoch,
+        output: {
+          ...(claimed.output as Readonly<Record<string, DispatchJSONValue>>),
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            version: 1,
+            attestationId: first.prepared.attestationId,
+            generation: first.prepared.generation,
+            roleId: "implement-worker",
+            roleVersion: first.prepared.promptProvenance.version,
+            surface: "codex",
+            promptDigest: first.prepared.promptProvenance.promptDigest,
+            catalogHash: first.prepared.promptProvenance.catalogHash,
+            inputDigest: first.prepared.promptProvenance.inputDigest,
+            taskId: first.binding.taskId,
+            worktreePath: first.binding.worktreePath,
+            branch: first.binding.branch,
+            baseCommit: first.binding.baseCommit,
+            startingCommit: first.binding.baseCommit,
+            resultCommit: first.candidate.resultCommit,
+            clean: true,
+            command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 1,
+            capturedAt: subject.clock.now(),
+            filesTouchedDigest: "1".repeat(64),
+            gitReceiptsDigest: "2".repeat(64),
+            mutationTableDigest: "3".repeat(64),
+          },
+        },
+      },
+      { now: subject.clock.now },
+    );
+    await confirmDispatchCompletionOn(
+      subject.backend,
+      {
+        namespace,
+        attestationId: first.prepared.attestationId,
+        generation: first.prepared.generation,
+        nativeCompletion: first.qualification.nativeCompletion,
+        expectedProvenance: first.qualification.expectedProvenance,
+        continuationContext: {
+          liveTip: first.candidate.resultCommit,
+          gitReceipts: [],
+        },
+      },
+      { now: subject.clock.now },
+    );
+
+    const intermediate = await subject.stage(candidate("T6518", { reprepareOf: first }));
+    const intermediateQualified = await subject.adapter.qualifyNativeCompletion({
+      candidate: intermediate.candidate,
+      ...intermediate.qualification,
+    });
+    await subject.adapter.terminalize({
+      attestationId: intermediate.prepared.attestationId,
+      generation: intermediate.prepared.generation,
+      partitionKey: intermediateQualified.queue.partition.partitionKey,
+      enrollmentId: intermediateQualified.queue.enrollment.enrollmentId,
+      attemptId: intermediateQualified.queue.attempt.attemptId,
+      expectedPartitionRevision: intermediateQualified.queue.partitionRevision,
+      reason: "cancelled",
+    });
+    const rejected = await subject.stage(candidate("T6518", { reprepareOf: intermediate }));
+
+    const rejection = await captureImplementationQueueConflict(() =>
+      subject.adapter.qualifyNativeCompletion({
+        candidate: rejected.candidate,
+        ...rejected.qualification,
+      }),
+    );
+    expect(rejection.message).toContain(
+      "[qualification-refusal:v1 reason=first-hop-rejected scope=same-attestation " +
+        `source-generation=${String(first.prepared.generation)} source-state=terminal ` +
+        `source-terminal=superseded target-generation=${String(rejected.prepared.generation)} ` +
+        "intermediate-count=1 bound-intermediate-count=1 admitted-first-hop-count=0 " +
+        `first-intermediate-generation=${String(intermediate.prepared.generation)} ` +
+        "first-intermediate-state=terminal first-intermediate-terminal=cancelled " +
+        "first-admitted-generation=none]",
+    );
+    for (const forbidden of [
+      exactTipBinding.handleToken,
+      exactTipBinding.handleFingerprint,
+      exactTipBinding.repositoryRoot,
+      exactTipBinding.commonDir,
+      exactTipBinding.worktreePath,
+    ]) {
+      expect(rejection.message).not.toContain(forbidden);
+    }
   });
 
   for (const terminalReason of [

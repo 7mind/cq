@@ -17,12 +17,15 @@ import {
   rehydrateAttestationRow,
   sequentialDispatchRandomBytes,
   storeDispatchResult,
+  type AttestationEnvelope,
   type AttestationRow,
   type DispatchJSONValue,
 } from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,
+  createCurrentRecoverySeal,
+  createDispatchLineageCutoverFence,
   currentRecoveryStatus,
   dispatchLineageFenceFromRecoveryJournal,
   type LedgerStore,
@@ -32,6 +35,7 @@ import {
   authenticateResolvedRecoveryReceiptClosureWithForm,
   captureCurrentRecoverySeal,
   currentRecoveryTaskSpecificationDigest,
+  currentRecoveryGuardedRebaseBridge,
   currentRecoveryTaskEvidence,
   readCurrentDispatchRecoveryStatusForLineage,
 } from "../src/dispatchRecoverySeal.js";
@@ -59,9 +63,85 @@ const coordinates = {
   finalizedManifestDigest: "c".repeat(64),
 } as const;
 
+function guardedBridge(digestCharacter: string) {
+  const requestDigest = digestCharacter.repeat(64);
+  return {
+    guardedRebase: `cq-guarded-rebase:v1:${requestDigest}`,
+    operationId: `guarded-${digestCharacter}`,
+    requestDigest,
+    oldResultCommit: RECOVERY_BASE,
+    ontoCommit: "a".repeat(40),
+    rebasedStartCommit: RECOVERY_MIDDLE,
+    outcome: "clean" as const,
+    exactTip: false,
+    finalizedAt: RECOVERY_NOW,
+  };
+}
+
+function guardedRecoveryRow(generation: number, bridge = guardedBridge("a")): AttestationEnvelope {
+  const row = abortedEnvelope({ generation });
+  return {
+    ...row,
+    gitEffectBinding: { ...RECOVERY_BINDING, guardedRebaseBridge: bridge },
+  };
+}
+
+async function bridgeLessCommittedJournal(rows: readonly AttestationRow[]) {
+  const captured = new InMemoryCurrentRecoverySealJournalStore();
+  await captureCurrentRecoverySeal(coordinates, {
+    journal: captured,
+    snapshot: async () => rows,
+    resolveReceipts: async () => RECOVERY_RECEIPTS,
+    revalidateBinding: async () => {},
+    observeLiveTip: async () => RECOVERY_TIP,
+    now: () => RECOVERY_NOW,
+  });
+  const committed = await captured.read(RECOVERY_TASK);
+  if (
+    committed?.state !== "committed" ||
+    committed.version !== 1 ||
+    !("guardedRebaseBridge" in committed.seal.seed.gitBinding) ||
+    committed.fence === undefined
+  ) {
+    throw new Error("guarded recovery fixture did not commit one bridged v1 journal");
+  }
+  const { guardedRebaseBridge: _bridge, ...managerBinding } = committed.seal.seed.gitBinding;
+  const legacySeal = createCurrentRecoverySeal({
+    ...committed.seal.seed,
+    gitBinding: managerBinding,
+  });
+  if (legacySeal.version !== 1) throw new Error("bridge-less fixture changed seal version");
+  const journal = new InMemoryCurrentRecoverySealJournalStore();
+  await journal.put({
+    ...committed,
+    seal: legacySeal,
+    fence: createDispatchLineageCutoverFence({
+      namespace: legacySeal.seed.namespace,
+      taskId: legacySeal.seed.taskId,
+      managedFingerprint: legacySeal.seed.managedFingerprint,
+      sourceAttestationId: legacySeal.seed.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: legacySeal.seed.selectedSourceHandle.generation,
+      lineageMaximumGeneration: legacySeal.seed.lineageMaximumGeneration,
+      recoverySeedRef: legacySeal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: RECOVERY_BINDING.handleToken,
+      },
+      installedAt: committed.fence.installedAt,
+    }),
+  });
+  const legacy = await journal.read(RECOVERY_TASK);
+  if (legacy?.state !== "committed") throw new Error("bridge-less fixture did not persist");
+  return legacy;
+}
+
 function authenticatedConsumedResult(
   status: "pass" | "fail",
-  options: { readonly collapse?: boolean; readonly randomSeed?: number; readonly rejectGate?: boolean } = {},
+  options: {
+    readonly collapse?: boolean;
+    readonly randomSeed?: number;
+    readonly rejectGate?: boolean;
+  } = {},
 ) {
   const namespace = { backend: "xdg" as const, projectKey: "project" };
   const clock = new FakeDispatchClock(RECOVERY_NOW);
@@ -153,14 +233,30 @@ function authenticatedConsumedResult(
   );
   if (claimed.state !== "gate-running") throw new Error("fixture parent gate did not stage");
   if (options.rejectGate === true) {
-    abortDispatch({ namespace, actor: "trusted-parent", attestationId: handle.attestationId,
-      generation: handle.generation, reason: "gate-rejected", details: {
-        kind: "cq-supervised-gate-rejection", version: 1,
-        command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
-        gateExitCode: 1, passCount: 1, failCount: 1, outputTail: "known red candidate",
-      } }, { store, now: clock.now });
+    abortDispatch(
+      {
+        namespace,
+        actor: "trusted-parent",
+        attestationId: handle.attestationId,
+        generation: handle.generation,
+        reason: "gate-rejected",
+        details: {
+          kind: "cq-supervised-gate-rejection",
+          version: 1,
+          command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          gateExitCode: 1,
+          passCount: 1,
+          failCount: 1,
+          outputTail: "known red candidate",
+        },
+      },
+      { store, now: clock.now },
+    );
     const row = store.rows()[0]!;
-    return { receipts, row: rehydrateAttestationRow(namespace, JSON.stringify(row), attestationRowDigest(row)) };
+    return {
+      receipts,
+      row: rehydrateAttestationRow(namespace, JSON.stringify(row), attestationRowDigest(row)),
+    };
   }
   completeParentGate(
     {
@@ -314,19 +410,119 @@ describe("protected current dispatch-recovery capture", () => {
       }),
     ).toBeUndefined();
   });
-
-  test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
+  test("sealed recovery selects its exact authenticated source bridge", async () => {
+    const olderBridge = guardedBridge("b");
+    const selectedBridge = guardedBridge("c");
+    const rows = [guardedRecoveryRow(1, olderBridge), guardedRecoveryRow(2, selectedBridge)];
     const journal = new InMemoryCurrentRecoverySealJournalStore();
-    const rejected = authenticatedConsumedResult("pass", { rejectGate: true });
-    const earlier = abortedEnvelope({ generation: 2, reason: "missing-result" });
-    await expect(captureCurrentRecoverySeal(coordinates, {
-      journal, snapshot: async () => [earlier, rejected.row],
+
+    await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => rows,
       resolveReceipts: async () => RECOVERY_RECEIPTS,
-      revalidateBinding: async () => {}, observeLiveTip: async () => RECOVERY_TIP,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
       now: () => RECOVERY_NOW,
-    })).rejects.toThrow("gate-rejected");
-    expect(await journal.read(RECOVERY_TASK)).toBeNull();
+    });
+
+    const committed = await journal.read(RECOVERY_TASK);
+    if (committed?.state !== "committed") {
+      throw new Error("sealed bridge fixture did not commit its recovery journal");
+    }
+    expect(
+      "guardedRebaseBridge" in committed.seal.seed.gitBinding
+        ? committed.seal.seed.gitBinding.guardedRebaseBridge
+        : undefined,
+    ).toEqual(selectedBridge);
+    expect(currentRecoveryGuardedRebaseBridge(committed, rows, RECOVERY_BINDING)).toEqual(
+      selectedBridge,
+    );
+    expect(() =>
+      currentRecoveryGuardedRebaseBridge(
+        committed,
+        [rows[0]!, guardedRecoveryRow(2, guardedBridge("d"))],
+        RECOVERY_BINDING,
+      ),
+    ).toThrow("original journal");
   });
+
+  test("bridge-less committed epochs recover only one authenticated same-attestation guarded ancestor", async () => {
+    const bridge = guardedBridge("a");
+    const row = guardedRecoveryRow(2, bridge);
+    const legacy = await bridgeLessCommittedJournal([row]);
+
+    expect(currentRecoveryGuardedRebaseBridge(legacy, [row], RECOVERY_BINDING)).toEqual(bridge);
+    expect(() =>
+      createCurrentRecoverySeal({
+        ...legacy.seal.seed,
+        gitBinding: {
+          ...legacy.seal.seed.gitBinding,
+          guardedRebaseBridge: {
+            ...bridge,
+            guardedRebase: `cq-guarded-rebase:v1:${"d".repeat(64)}`,
+          },
+        },
+      }),
+    ).toThrow("inconsistent seed bindings");
+    expect(() => currentRecoveryGuardedRebaseBridge(legacy, [], RECOVERY_BINDING)).toThrow(
+      "original journal",
+    );
+    expect(() =>
+      currentRecoveryGuardedRebaseBridge(
+        legacy,
+        [
+          {
+            ...row,
+            gitEffectBinding: {
+              ...row.gitEffectBinding!,
+              guardedRebaseBridge: { ...bridge, ontoCommit: "b".repeat(40) },
+            },
+          },
+        ],
+        RECOVERY_BINDING,
+      ),
+    ).toThrow("original journal");
+    expect(() =>
+      currentRecoveryGuardedRebaseBridge(
+        legacy,
+        [
+          {
+            ...row,
+            gitEffectBinding: {
+              ...row.gitEffectBinding!,
+              repositoryId: "f".repeat(64),
+            },
+          },
+        ],
+        RECOVERY_BINDING,
+      ),
+    ).toThrow("foreign managed binding");
+
+    const competingRows = [
+      guardedRecoveryRow(1, guardedBridge("b")),
+      guardedRecoveryRow(2, guardedBridge("c")),
+    ];
+    const ambiguous = await bridgeLessCommittedJournal(competingRows);
+    expect(() =>
+      currentRecoveryGuardedRebaseBridge(ambiguous, competingRows, RECOVERY_BINDING),
+    ).toThrow("multiple authenticated guarded ancestors");
+  });
+  test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
+  const journal = new InMemoryCurrentRecoverySealJournalStore();
+  const rejected = authenticatedConsumedResult("pass", { rejectGate: true });
+  const earlier = abortedEnvelope({ generation: 2, reason: "missing-result" });
+  await expect(
+    captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => [earlier, rejected.row],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    }),
+  ).rejects.toThrow("gate-rejected");
+  expect(await journal.read(RECOVERY_TASK)).toBeNull();
+});
 
   test("task evidence requires membership in the exact finalized manifest", () => {
     let manifestTaskId = RECOVERY_TASK;

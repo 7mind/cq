@@ -28,7 +28,7 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function handle(overrides: Partial<ClaudeNativeManagedWorktreeHandle> = {}): ClaudeNativeManagedWorktreeHandle {
+function handle(overrides: Partial<Extract<ClaudeNativeManagedWorktreeHandle, { version: 1 }>> = {}): Extract<ClaudeNativeManagedWorktreeHandle, { version: 1 }> {
   return {
     kind: "cq-managed-worktree-handle",
     version: 1,
@@ -46,7 +46,7 @@ function handle(overrides: Partial<ClaudeNativeManagedWorktreeHandle> = {}): Cla
 }
 
 function adoptedHandle(
-  overrides: Partial<ClaudeNativeManagedWorktreeHandle> = {},
+  overrides: Partial<Extract<ClaudeNativeManagedWorktreeHandle, { version: 2 }>> = {},
 ): ClaudeNativeManagedWorktreeHandle {
   return {
     ...handle(),

@@ -150,6 +150,9 @@ export async function prepareAsyncOperatorActionLifecycleRows(
 export function* operatorActionReads(mutation: OperatorActionLifecycleMutation, now: () => string): OperatorReadProgram<PreparedOperatorMutation> {
   assertRevision(mutation.expectedRevision);
   const action = yield* findMutableItem(OPERATOR_ACTIONS_LEDGER, mutation.actionId);
+  if (action.fields["cohortBatchDigest"] !== undefined && mutation.kind !== "acknowledge" && mutation.kind !== "record-evidence") {
+    throw new LedgerError("cohort operator action rejects task-only completion, revision, and supersession");
+  }
   const revision = operatorActionRevision(action);
   if (revision !== mutation.expectedRevision) {
     throw new LedgerError(

@@ -6,6 +6,11 @@
  * No MCP/transport concerns (that lands in T171).
  */
 
+export { assertTaskGitEffectBinding, requireTaskGitEffectBinding, dispatchGitEffectSubject, dispatchGitEffectSubjectsEqual } from "./dispatchAttestation.js";
+export { assertDispatchGuardedRebaseBridge } from "./guardedRebaseBridge.js";
+export { assertDispatchCohortRebaseTransition, cohortRebaseTransitionMatches, cohortRebaseManagerBinding } from "./cohortRebaseTransition.js";
+export type { DispatchCohortRebaseTransition, CohortRebaseManagerBinding } from "./cohortRebaseTransition.js";
+
 export type {
   Harness,
   ActiveHarness,
@@ -152,13 +157,23 @@ export type {
   ManagedWorktreeHandle,
   ManagedWorktreeHandleV1,
   ManagedWorktreeHandleV2,
+  ManagedWorktreeHandleV3,
+  ManagedTaskWorktreeHandle,
+  ManagedTaskWorktreeHandleValidation,
   ManagedWorktreeHandleValidation,
 } from "./managedWorktreeHandle.js";
+export { resolveNativeManagedWorktreeSubject, nativeManagedWorktreeEffectTarget } from "./nativeManagedWorktreeSubject.js";
+export type {
+  CohortRepositoryIdentityV1, CohortEnvironmentIdentityV1, CohortDefinitionIdentityV1,
+  CohortCandidateIntentV1, CohortEvidenceSubjectV1, CohortMemberTaskAuthorityV1, CohortEffectEnvelopeV1, CohortWorktreeIdentityV1,
+} from "./cohortEffectEnvelope.js";
 export {
   MANAGED_WORKTREE_HANDLE_KIND,
   isManagedWorktreeHandle,
   managedWorktreeHandlesEqual,
   validateManagedWorktreeHandle,
+  validateManagedTaskWorktreeHandle,
+  isManagedTaskWorktreeHandle,
 } from "./managedWorktreeHandle.js";
 export type {
   ClaudeNativeManagedWorktreeHandle,
@@ -468,6 +483,8 @@ export type {
 export type {
   ImplementWorkerBaseUnresolvableReason,
   ImplementWorkerSupervisedGateEvidence,
+  ImplementTaskWorkerSupervisedGateEvidence,
+  ImplementCohortWorkerSupervisedGateEvidence,
 } from "./schemas/implement-worker.js";
 export {
   implementReviewerSidecar,
@@ -687,6 +704,9 @@ export type {
   NativeChildIdentity,
   DispatchProvenanceBinding,
   DispatchGitEffectBinding,
+  DispatchGitChangeReceipt,
+  DispatchTaskGitEffectBinding,
+  DispatchCohortGitEffectBinding,
   DispatchReceiptChainTransition,
   DispatchRecoveryContext,
   DispatchRecoveryBinding,
@@ -704,6 +724,9 @@ export type {
   ResolveDispatchContinuationRequest,
   DispatchContinuationFailureReason,
   DispatchGuardedRebaseBridge,
+  DispatchGuardedRebaseBridgeFields,
+  DispatchGuardedRebaseSourceBinding,
+  DispatchCohortGuardedRebaseJournalBridge,
   AuthorizedDispatchGitEffect,
   AuthorizedSupervisedWorkerGateContext,
   AttestationEnvelope,
@@ -716,6 +739,8 @@ export type {
   PrepareDispatchDeps,
   PrepareDispatchRequest,
   DispatchJournalRecoveryReservation,
+  DispatchJournalRecoveryClaim,
+  DispatchGateRejectedCorrectionClaim,
   DispatchPrepareAccepted,
   PrepareDispatchOutcome,
   StoreDispatchResultOutcome,
@@ -817,6 +842,7 @@ export {
   assertDispatchHandle,
   prepareDispatch,
   prepareDispatchRequestDigest,
+  prepareDispatchRequestDigestMatchesKnownFormat,
   fetchDispatchInput,
   authorizeDispatchGitEffect,
   authorizeDispatchGitConflict,
@@ -854,6 +880,7 @@ export type {
   ImplementationCandidateTerminalReason,
   ImplementationQueuePartition,
   ImplementationQueueAuthority,
+  ImplementationTaskQueueAuthority,
   ImplementationQueueEnrollment,
   ImplementationQueueAttempt,
   ImplementationStagedCompletionQualification,
@@ -891,10 +918,12 @@ export {
   IMPLEMENTATION_QUEUE_ROLLOUT_CONTRACT,
   upgradeLiveImplementationQueueRows,
 } from "./dispatchImplementationQueueUpgrade.js";
+export { implementationQueueSubjectsMatch, implementationQueueAuthoritiesMatch } from "./implementationQueueIdentity.js";
 export {
   ImplementationQueueConflictError,
   DispatchStagedRebaseSourceError,
   implementationQueuePartition,
+  currentImplementationQueuePartitionRevision,
   enqueueImplementationCandidate,
   enqueueImplementationCandidateOn,
   qualifyDispatchStagedCompletion,

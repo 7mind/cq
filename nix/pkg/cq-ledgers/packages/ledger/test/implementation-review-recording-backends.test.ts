@@ -37,7 +37,9 @@ describe("implementation evidence store adapters [Behavioral-Active Blackbox-Ato
     const path = join(root, "implementation-evidence.journal");
     await contract(createFsImplementationEvidenceStore({ path }));
 
-    const entries = (await fs.readdir(path)).sort();
+    const entries = (await fs.readdir(path))
+      .filter((name) => /^[0-9]{16}-[0-9a-f]{64}\.json$/u.test(name))
+      .sort();
     expect(entries).toHaveLength(3);
     const records = await Promise.all(
       entries.map(

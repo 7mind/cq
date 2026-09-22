@@ -104,7 +104,21 @@ const promptProvenanceSchema = z
   })
   .strict();
 
-const gitBindingSchema = z
+const guardedRebaseBridgeSchema = z
+  .object({
+    guardedRebase: z.string().regex(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/u),
+    operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
+    requestDigest: z.string().regex(SHA256),
+    oldResultCommit: z.string().regex(FULL_COMMIT),
+    ontoCommit: z.string().regex(FULL_COMMIT),
+    rebasedStartCommit: z.string().regex(FULL_COMMIT),
+    outcome: z.enum(["clean", "conflicted"]),
+    exactTip: z.boolean(),
+    finalizedAt: z.string().regex(ISO_INSTANT),
+  })
+  .strict();
+
+const gitBindingBaseSchema = z
   .object({
     taskId: z.string().regex(TASK_ID),
     repositoryRoot: z.string().min(1),
@@ -116,6 +130,11 @@ const gitBindingSchema = z
     baseCommit: z.string().regex(FULL_COMMIT),
   })
   .strict();
+
+const gitBindingSchema = z.union([
+  gitBindingBaseSchema,
+  gitBindingBaseSchema.extend({ guardedRebaseBridge: guardedRebaseBridgeSchema }).strict(),
+]);
 
 const gitChangeReceiptSchema = z
   .object({
@@ -328,9 +347,7 @@ export const CurrentRecoveryStatusSchema = z.union([
 
 export type CurrentRecoverySeed = z.infer<typeof recoverySeedSchema>;
 export type CurrentRecoverySource = z.infer<typeof currentRecoverySourceSchema>;
-export type CurrentRecoveryGuardedTipTransition = z.infer<
-  typeof guardedTipTransitionSchema
->;
+export type CurrentRecoveryGuardedTipTransition = z.infer<typeof guardedTipTransitionSchema>;
 export type CurrentRecoverySeal = z.infer<typeof CurrentRecoverySealSchema>;
 export type CurrentRecoverySealJournal = z.infer<typeof CurrentRecoverySealJournalSchema>;
 export type CurrentRecoveryStatus = z.infer<typeof CurrentRecoveryStatusSchema>;
@@ -481,17 +498,12 @@ export interface CurrentRecoverySourceCandidate {
 
 function normalizedGuardedTipTransitions(input: {
   readonly guardedTipTransition?: CurrentRecoveryGuardedTipTransition | null | undefined;
-  readonly guardedTipTransitions?:
-    | readonly CurrentRecoveryGuardedTipTransition[]
-    | undefined;
+  readonly guardedTipTransitions?: readonly CurrentRecoveryGuardedTipTransition[] | undefined;
 }): readonly CurrentRecoveryGuardedTipTransition[] {
   const transition = input.guardedTipTransition ?? null;
   const transitions = input.guardedTipTransitions;
   if (transitions === undefined) return transition === null ? [] : [transition];
-  if (
-    transition === null ||
-    payloadDigest(transitions.at(-1)) !== payloadDigest(transition)
-  ) {
+  if (transition === null || payloadDigest(transitions.at(-1)) !== payloadDigest(transition)) {
     throw new CurrentRecoverySealError(
       "invalid",
       "recovery guarded-tip transition chain does not end at its current transition",
@@ -551,6 +563,34 @@ function isCommittedRecoveryEpochPromotion(
       (currentSeed.liveTip === nextSeed.liveTip ||
         (addedTransitions.length > 0 &&
           addedTransitions[0]!.oldResultCommit === currentSeed.liveTip)));
+  const currentGuardedRebaseBridge =
+    "guardedRebaseBridge" in currentSeed.gitBinding
+      ? currentSeed.gitBinding.guardedRebaseBridge
+      : undefined;
+  const nextGuardedRebaseBridge =
+    "guardedRebaseBridge" in nextSeed.gitBinding
+      ? nextSeed.gitBinding.guardedRebaseBridge
+      : undefined;
+  const currentManagerBinding =
+    "guardedRebaseBridge" in currentSeed.gitBinding
+      ? (({ guardedRebaseBridge: _bridge, ...manager }) => manager)(currentSeed.gitBinding)
+      : currentSeed.gitBinding;
+  const nextManagerBinding =
+    "guardedRebaseBridge" in nextSeed.gitBinding
+      ? (({ guardedRebaseBridge: _bridge, ...manager }) => manager)(nextSeed.gitBinding)
+      : nextSeed.gitBinding;
+  const guardedRebaseBridgePreserved =
+    currentGuardedRebaseBridge === undefined ||
+    (nextGuardedRebaseBridge !== undefined &&
+      payloadDigest(currentGuardedRebaseBridge) === payloadDigest(nextGuardedRebaseBridge)) ||
+    nextTransitions.some(
+      (transition) =>
+        transition.guardedRebase === currentGuardedRebaseBridge.guardedRebase &&
+        transition.requestDigest === currentGuardedRebaseBridge.requestDigest &&
+        transition.oldResultCommit === currentGuardedRebaseBridge.oldResultCommit &&
+        transition.ontoCommit === currentGuardedRebaseBridge.ontoCommit &&
+        transition.rebasedStartCommit === currentGuardedRebaseBridge.rebasedStartCommit,
+    );
   const guardedTransitionProgression =
     transitionsArePrefix(currentTransitions, nextTransitions) &&
     addedTransitions.every(
@@ -566,7 +606,8 @@ function isCommittedRecoveryEpochPromotion(
         currentSeed.taskDigest === nextSeed.taskDigest) &&
     currentSeed.finalizedManifestDigest === nextSeed.finalizedManifestDigest &&
     payloadDigest(currentSeed.namespace) === payloadDigest(nextSeed.namespace) &&
-    payloadDigest(currentSeed.gitBinding) === payloadDigest(nextSeed.gitBinding) &&
+    payloadDigest(currentManagerBinding) === payloadDigest(nextManagerBinding) &&
+    guardedRebaseBridgePreserved &&
     currentSeed.managedFingerprint === nextSeed.managedFingerprint &&
     currentSeed.selectedSourceHandle.attestationId ===
       nextSeed.selectedSourceHandle.attestationId &&
@@ -703,16 +744,16 @@ export function selectStrictMaximalRecoverySource(
 
 function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   const seed = seal.seed;
+  const guardedRebaseBridge =
+    "guardedRebaseBridge" in seed.gitBinding ? seed.gitBinding.guardedRebaseBridge : undefined;
   const guardedTipTransitions = currentRecoveryGuardedTipTransitions(seed);
   const guardedTipTransition = guardedTipTransitions.at(-1) ?? null;
   const selectedSourceClosesTransition =
     guardedTipTransition !== null &&
-    (guardedTipTransition.successor.attestationId ===
-      seed.selectedSourceHandle.attestationId &&
+    (guardedTipTransition.successor.attestationId === seed.selectedSourceHandle.attestationId &&
     guardedTipTransition.successor.generation <= seed.selectedSourceHandle.generation
       ? true
-      : seed.gitReceipts.at(-1)?.attestationId ===
-          seed.selectedSourceHandle.attestationId &&
+      : seed.gitReceipts.at(-1)?.attestationId === seed.selectedSourceHandle.attestationId &&
         seed.gitReceipts.at(-1)?.generation === seed.selectedSourceHandle.generation &&
         seed.gitReceipts.at(-1)?.newHead === seed.liveTip);
   if (
@@ -723,16 +764,14 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
       ? seed.liveTip !== seed.gitReceipts.at(-1)?.newHead
       : !selectedSourceClosesTransition) ||
     (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
-    seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
+    seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts) ||
+    (guardedRebaseBridge !== undefined &&
+      guardedRebaseBridge.guardedRebase !==
+        `cq-guarded-rebase:v1:${guardedRebaseBridge.requestDigest}`)
   ) {
     throw new CurrentRecoverySealError("invalid", "recovery seal has inconsistent seed bindings");
   }
-  assertReceiptChain(
-    seed.taskId,
-    seed.gitReceipts,
-    seed.liveTip,
-    guardedTipTransitions,
-  );
+  assertReceiptChain(seed.taskId, seed.gitReceipts, seed.liveTip, guardedTipTransitions);
   const sealDigest = payloadDigest(seed);
   const referencePrefix =
     seed.version === 1
@@ -1145,9 +1184,7 @@ interface CurrentRecoverySeedInputCommon {
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly liveTip: string;
   readonly guardedTipTransition?: CurrentRecoveryGuardedTipTransition | null | undefined;
-  readonly guardedTipTransitions?:
-    | readonly CurrentRecoveryGuardedTipTransition[]
-    | undefined;
+  readonly guardedTipTransitions?: readonly CurrentRecoveryGuardedTipTransition[] | undefined;
   readonly capturedAt: string;
 }
 
@@ -1189,6 +1226,9 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
       branch: gitBinding.branch,
       ref: gitBinding.ref,
       baseCommit: gitBinding.baseCommit,
+      ...("guardedRebaseBridge" in gitBinding
+        ? { guardedRebaseBridge: gitBinding.guardedRebaseBridge }
+        : {}),
     },
     gitReceiptsDigest: currentRecoveryReceiptClosureDigest(input.gitReceipts),
     managedFingerprint: gitBinding.handleFingerprint,

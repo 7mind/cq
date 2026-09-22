@@ -121,6 +121,52 @@ async function settleManagedRelease(
 
 export function runWorksetStoreContract(factory: WorksetStoreContractFactory): void {
   describe(`workset store contract [T1954] — ${factory.name} (${factory.classification})`, () => {
+    it("one cohort effect admission covers all members and excludes any non-admitted member", async () => {
+      const store = await factory.build();
+      const targetRef = `cq-cohort-effect:v1:${"a".repeat(64)}`;
+      await store.setRoots(["tasks:T1"]);
+      await expectRejection(store.admitExternalEffect({ kind: "child-dispatch", targetRef,
+        cohortTargets: ["tasks:T1", "tasks:T2"] }), "target-excluded");
+      expect(store.activeAdmissionCount()).toBe(0);
+      await store.setRoots(["tasks:T1", "tasks:T2"]);
+      const admission = await store.admitExternalEffect({ kind: "child-dispatch", targetRef,
+        cohortTargets: ["tasks:T1", "tasks:T2"] });
+      expect(store.activeAdmissionCount()).toBe(1);
+      expect(admission.targetRef).toBe(targetRef);
+      await Promise.resolve(admission.registerProcessGroup({ pgid: 4242, leaderPid: 4242 }));
+      await Promise.resolve(admission.markSettled());
+      await admission.releaseAfterSettlement();
+      expect(store.activeAdmissionCount()).toBe(0);
+    });
+
+    it("cohort target metadata cannot override a task target or omit, repeat, or mix member phases", async () => {
+      const store = await factory.build();
+      const targetRef = `cq-cohort-effect:v1:${"b".repeat(64)}`;
+      await expectRejection(store.admitExternalEffect({ kind: "child-dispatch", targetRef }), "invalid-replacement");
+      for (const cohortTargets of [[], ["tasks:T1", "tasks:T1"], ["tasks:T1", "defects:D1"], ["not-a-member"]]) {
+        await expectRejection(store.admitExternalEffect({ kind: "child-dispatch", targetRef, cohortTargets }), "invalid-replacement");
+      }
+      await expectRejection(store.admitExternalEffect({ kind: "child-dispatch", targetRef: "tasks:T2",
+        cohortTargets: ["tasks:T1"] }), "invalid-replacement");
+      expect(store.activeAdmissionCount()).toBe(0);
+    });
+
+    it("root replacement waits for the single complete cohort admission to settle", async () => {
+      const store = await factory.build();
+      await store.setRoots(["tasks:T1", "tasks:T2"]);
+      const held = await store.admitExternalEffect({ kind: "child-dispatch", targetRef: `cq-cohort-effect:v1:${"c".repeat(64)}`,
+        cohortTargets: ["tasks:T1", "tasks:T2"] });
+      let replaced = false;
+      const replacement = store.setRoots(["tasks:T3"]).then(() => { replaced = true; });
+      await Promise.resolve();
+      expect(replaced).toBe(false);
+      await Promise.resolve(held.registerProcessGroup({ pgid: 4242, leaderPid: 4242 }));
+      await Promise.resolve(held.markSettled());
+      await held.releaseAfterSettlement();
+      await replacement;
+      expect(await readWorksetRootsEpoch(store)).toEqual({ roots: ["tasks:T3"], epoch: 2 });
+    });
+
     it("starts unrestricted at epoch 0 with empty roots (complete pair)", async () => {
       const store = await factory.build();
       expect(await readWorksetRootsEpoch(store)).toEqual({ roots: [], epoch: 0 });

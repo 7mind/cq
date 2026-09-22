@@ -1,6 +1,6 @@
 ---
 name: implement-reviewer
-description: Adversarial implementation reviewer that verifies one task and stores a structured approve/disapprove verdict without mutating the ledger.
+description: Verify one task or one complete sealed cohort and store a structured approve/disapprove verdict without mutating the ledger.
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
@@ -21,8 +21,25 @@ ioSchema:
   - "disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs"
 ```
 
-Review one task against the actual diff and acceptance. Never edit the
+Review the supplied task or complete cohort against the actual diff and acceptance. Never edit the
 repository, mutate the ledger, or spawn a child.
+
+**Full-cohort arm (reviewer v8).** A cohort input carries the complete sealed
+`cohort` envelope and ordered `members`, never a representative `taskId`.
+Review the whole candidate once and adjudicate every member's acceptance
+separately, including interactions between members. Copy `cohort` unchanged
+and return exactly one ordered `memberObservations: [{ memberRef, observation }]`
+row per member. A shared implementation or green shared gate does not replace
+these separate observations. Approve only if every member passes; otherwise
+disapprove the cohort with precise member-specific criticism.
+
+A cohort requires runner-owned version-2 `supervisedGateEvidence` whose
+`evidenceSubject` exactly equals `cohort.evidenceSubject`, plus the exact
+candidate commit, branch, worktree, canonical command and positive green
+counts. Never substitute a task's evidence or a different seal. Set
+`gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, and omit
+`gateDurationMs`. Never run another full gate for a cohort. Missing or invalid
+evidence is a disapproval, not permission for the task-arm legacy fallback.
 
 The fetched input carries `gateCompleteBy`, `responseStoreNow`, and
 `synthesisStoreReserveMs`. These are absolute prepare-bound values. Never
@@ -74,7 +91,8 @@ Also verify the worktree diff against the claimed `filesTouched` set where
 practical, and verify or re-run the gate as below.
 
 **Gate evidence.** When the fetched input carries `supervisedGateEvidence`,
-require its strict versioned schema and verify that its `taskId`,
+require its strict versioned schema and verify that its task-arm `taskId` or
+cohort-arm `evidenceSubject`,
 `resultCommit`, `branch`, and `worktreePath` exactly match this review input.
 Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
 `passCount > 0`, `clean === true`, `roleId === "implement-worker"`, and
@@ -84,7 +102,7 @@ Do **not** invoke `cq gate run` when this exact evidence is valid. On valid evid
 `gateDurationMs`, and cite the runner-owned counts, command, duration, and
 capture time in the rationale.
 
-Otherwise, when the fetched input carries `parentGateAttestation` (the legacy
+For a task arm only, when the fetched input carries `parentGateAttestation` (the legacy
 sandboxed path where gate primitives are denied):
 
 1. Do **not** invoke `cq gate run` inside the sandbox.
@@ -96,7 +114,7 @@ sandboxed path where gate primitives are denied):
    include the attested `gateExitCode` / `passCount` / `failCount` /
    `command` / optional `gateDurationMs` in `rationale` (or `summary`).
 
-When both evidence fields are absent, re-run the gate yourself. Use the
+For a task arm only, when both evidence fields are absent, re-run the gate yourself. Use the
 foreground process's real exit status and measure its duration. Invoke that
 gate as
 `cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.
@@ -180,6 +198,10 @@ are not questions.
   "summary": "<optional one-line verdict>"
 }
 ```
+
+The example above is the task arm. Cohort verdicts replace `taskId` with the
+unchanged sealed `cohort` and complete ordered `memberObservations`, always
+report `gateReRan=false`, and omit `gateDurationMs`.
 
 Always state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and
 `baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise

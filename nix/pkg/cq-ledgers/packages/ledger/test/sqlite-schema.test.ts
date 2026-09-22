@@ -28,6 +28,7 @@ const NORMALIZED_TABLES = [
   "workset_state",
   "workset_admissions",
   "workset_exclusive",
+  "work_cohort_state",
 ];
 
 const dirs: string[] = [];

@@ -56,6 +56,7 @@ import {
 import {
   isAuthorizedOperatorActionCompletionPatch,
   isAuthorizedOperatorActionMutation,
+  assertOperatorActionSubject,
   isAuthorizedOperatorActionSupersessionPatch,
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
@@ -627,6 +628,7 @@ export function applyCreateItem(
   }
   assertStatusAllowed(ledger, init.status);
   validateFields(ledger, init.fields, /*creating*/ true);
+  if (ledger.id === OPERATOR_ACTIONS_LEDGER) assertOperatorActionSubject(init.fields);
   // T1951/T1962: caller-supplied ownership fields are always rejected; only the
   // library-derived sealedOwnership argument may establish the owner relation.
   assertWorksetOwnershipFieldsAbsent(init.fields);

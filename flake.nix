@@ -340,8 +340,8 @@
           # system. To add a system: set its entry to nixpkgs lib.fakeHash
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
-            "x86_64-linux" = "sha256-1sSfN/YXwqs/HiDqZO+r3dkb2C3WaSLbahw37DvYmjM=";
-            "aarch64-darwin" = "sha256-/WyRFJvv2P6u8304Td4UYwh1p9fEWqpfMWfULKyRVtc=";
+            "x86_64-linux" = "sha256-l1MIy30NiSIWkHyY0YHy/z9mCBnX64TtPLzs18kj5lI=";
+            "aarch64-darwin" = "sha256-AYfIohJG3e09YaCOFNu9fGdiG5yWtTS6OAwKZ/l2fj8=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 

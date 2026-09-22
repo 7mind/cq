@@ -23,6 +23,7 @@ import {
   type WorksetAdmissionCoordinatorHooks,
   type WorksetExternalEffectAdmission,
   type WorksetExternalEffectKind,
+  type WorksetExternalEffectRequest,
   type WorksetLedgerMutationAdmission,
   type WorksetLedgerMutationKind,
   type WorksetRootsEpoch,
@@ -60,10 +61,7 @@ export interface WorksetStore {
    * observable effect; the broker registers the process group and releases
    * only after settlement.
    */
-  admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission>;
+  admitExternalEffect(input: WorksetExternalEffectRequest): Promise<WorksetExternalEffectAdmission>;
   /** Manager-minted terminal teardown only; ordinary admission stays root-bound. */
   admitManagedTerminalReleaseEffect(
     input: ManagedTerminalReleaseAdmissionRequest,

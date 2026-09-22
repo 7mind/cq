@@ -66,8 +66,13 @@ export async function main(): Promise<void> {
   }
   const wireInvocation = parsed as CodexRoleBoundaryInvocation;
   const { effectTargetRef: untrustedEffectTargetRef, ...invocation } = wireInvocation;
-  const effectTargetRef = assertCodexBoundaryEffectTargetRef(untrustedEffectTargetRef);
+  const effectTargetRef = assertCodexBoundaryEffectTargetRef(untrustedEffectTargetRef, invocation.cohort, invocation.investigationCohort);
   const roleId = assertCodexDispatchedRoleId(invocation.roleId);
+  if (invocation.cohortConflictStateDigest !== undefined &&
+      (roleId !== "implement-conflict-resolver" || invocation.cohort === undefined ||
+       !/^[0-9a-f]{64}$/u.test(invocation.cohortConflictStateDigest))) {
+    throw new Error("codex-role-dispatch: detached admission requires an exact cohort conflict-resolver binding");
+  }
   const expectedRunId =
     roleId === "implement-worker" ? requiredEnvironment(CODEX_EXPECTED_RUN_ID_ENV) : undefined;
   delete process.env[CODEX_EXPECTED_RUN_ID_ENV];
@@ -120,10 +125,19 @@ export async function main(): Promise<void> {
         command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
         args: ["__workset-effect-provider", "--cwd", invocation.ledgerCwd],
         cwd: invocation.ledgerCwd,
-        env: process.env,
+        env: { ...process.env, CQ_PROMPT_SURFACE: "codex" },
+        ...(invocation.investigationCohort === undefined ? {} : { investigationCohort: invocation.investigationCohort }),
+        ...(invocation.investigationCohort === undefined && (roleId === "investigate-explorer" || roleId === "investigate-prober")
+          ? { investigationDispatch: { roleId, handle: invocation.handle } } : {}),
+        ...(invocation.cohort === undefined ? {} : { cohort: invocation.cohort }),
+        ...(invocation.cohortConflictStateDigest === undefined ? {} : {
+          cohortConflictStateDigest: invocation.cohortConflictStateDigest, cohortRoleId: "implement-conflict-resolver" as const,
+        }),
       }),
     ),
     targetRef: effectTargetRef,
+    ...(invocation.investigationCohort === undefined ? {} : { investigationCohort: invocation.investigationCohort }),
+    ...(invocation.cohort === undefined ? {} : { cohort: invocation.cohort }),
   };
   const execution =
     correlationId === undefined

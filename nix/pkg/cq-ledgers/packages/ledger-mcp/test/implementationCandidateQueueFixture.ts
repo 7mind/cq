@@ -9,7 +9,7 @@ import {
   sequentialDispatchRandomBytes,
   storeDispatchResultOn,
   type AttestationBackend,
-  type DispatchGitEffectBinding,
+  type DispatchTaskGitEffectBinding as DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
   type EnqueueImplementationCandidateRequest,

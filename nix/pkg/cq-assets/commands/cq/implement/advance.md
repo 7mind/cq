@@ -1,5 +1,5 @@
 ---
-description: "Advance implementation: dispatch DAG-ready tasks in isolated worktrees, review and correct them, then merge verified commits in dependency order."
+description: "Advance implementation through always-on safe cohorts, exact-candidate acceptance, whole-candidate review, and atomic completion."
 argument-hint: [milestoneId ...]
 # {{cq:fragment:host-tool-vocabulary}}
 ---
@@ -21,9 +21,8 @@ outputs:
   - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
   - "standalone handoff"
 ioSchema:
-  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs?|supervisedGateEvidence?,summary,blockedReason?}"
-  - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}"
-  - "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
+  - "ordinary worker/reviewer/resolver: exact full cohort envelope plus ordered memberObservations; no taskId anchor"
+  - "bootstrap and retained historical task journals keep their exact task-scoped contracts"
 ```
 
 You orchestrate implementation. Children never mutate the ledger or merge.
@@ -48,12 +47,13 @@ the effect boundaries required by the shared contract.
   Workers use their task's `suggestedModel`; reviewers and conflict resolvers
   use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is
   absent, inherit the current model and report the missing configuration.
-- Run at most eight workers concurrently. Each task uses an isolated worktree
-  and branch `implement/<taskId>`.
-- **Managed worktrees.** ALL worktree lifecycle goes through
-  `ledger::worktree_manage` — never raw git worktree lifecycle commands
+- Run at most eight workers concurrently, one per independently admitted cohort.
+  Every cohort has one managed worktree and its server-derived cohort branch;
+  never manufacture a representative task or first-member anchor.
+- **Managed worktrees.** Ordinary preparation uses `ledger::cohort_advance`;
+  historical singleton lifecycle uses `ledger::worktree_manage`. Never raw git worktree lifecycle commands
   (add/remove/prune) on any active implement/advance surface. Before changing a
-  task to `wip` or launching a worker, call
+  bootstrap task to `wip` or launching its worker, call
   `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
   (or resume-by-handle with the retained opaque handle). Accept only a prepare
   result whose dependency-base evidence is verified. Pass the returned absolute
@@ -84,6 +84,25 @@ the effect boundaries required by the shared contract.
   recovery association from registry files, and never substitute raw
   attestation, repository, worktree, branch, base, tip, terminal, or receipt
   coordinates for the opaque reference.
+- **Retired staged-rebase handoff.** A coordinator result with
+  `state: "blocked"` and `frontState: "staged-rebase-retired"` is terminal for
+  that coordinator invocation. Retain its exact `front` dispatch handle and
+  `sourceReference`; never poll it again with the now-revoked parent-gate
+  capability. With the task's retained manager handle, call only
+  `worktree_manage({ operation: "resolve-staged-rebase", handle, sourceDispatch: front, sourceReference })`.
+  Accept `staged-rebase-conflict-pending` as the exact conflict handoff and use
+  `observe-conflict` plus the ordinary conflict-resolver path. After its
+  continuation receipts are terminal, replay the identical manager operation.
+  Accept `staged-rebase-preparation-ready` only when its task, live tip, source,
+  source reference, guarded-rebase reference, and nested `preparation.reprepareOf`
+  all equal the retained identities; then pass only
+  `preparation.reprepareOf` and `preparation.guardedRebase` to the ordinary
+  `prepare_dispatch` successor path. `staged-rebase-successor-bound` is an
+  idempotent acknowledgement of the exact already-allocated successor, not
+  authority to allocate another. Never restore the retired parent capability,
+  use parent-lost recovery, read the private journal, reconstruct either opaque
+  reference, create a replacement rebase, or infer lineage from equivalent
+  patches.
 - **Deterministic gate failure.** `gate-rejected` is a completed deterministic gate
   failure, not lost transport or parent interruption. Reconcile a lost store/finalize
   acknowledgement against the durable terminal result and retain its bounded
@@ -269,6 +288,13 @@ or logs to reconstruct either recovery authority.
 
 ## 1. Derive the ready set
 
+Recover retained cohort operations using `get_cohort_status` and
+`get_cohort_completion_status({operation_id})` before selecting new work. A
+durable cohort merge or recording handoff must finish through the identical
+`complete_cohort({batch})`; never replace it with the singleton journal API.
+The task-journal recovery below applies only to already-retained historical
+singleton journals and manifest-derived bootstrap work.
+
 Before selecting or dispatching work, recover every active implementation
 completion journal by calling `record_implementation_completion` for its task
 with the exact observed integration head and a stable recovery operation id.
@@ -337,6 +363,126 @@ Terminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not
 satisfy dependencies. Advisory or unresolvable free-text references do.
 
 If no task is ready and no task awaits review or merge, report and stop.
+
+## 1a. Canonical ordinary cohort delivery
+
+This section is mandatory for ordinary Git-producing work; §§3–7 below retain
+only the manifest-derived bootstrap mode and existing historical singleton
+journal protocol. An ordinary explicit singleton still uses this cohort path.
+No fusion setting, opt-out, manual first-task proxy, or eager per-task gate
+fallback exists.
+
+1. Read `derive_predicates()` and `get_cohort_status().readyBoundaries`. Construct
+   a bounded ready observation within one phase and admitted owner boundary,
+   with at most 256 ordered members. Preserve an oversized boundary's explicit
+   unexamined count and stop that boundary for a justified bounded plan rather
+   than silently dispatching its members independently. Fetch full records only
+   for selected acceptance/ownership/dependency details.
+2. Before observation, transition the complete selected boundary's planned tasks
+   to `wip` and planned owning goals to `building` through existing owner-scoped
+   lifecycle writes. These are parent actions, not automatic host transitions.
+   Requery readiness after these writes; an ineligible member requires a new
+   admission decision, not omission. Then propose a strict
+   `cq-cohort-admission-plan` version 1 with each `memberRef`
+   and complete `boundaryCandidates`: one repository-node or confirmed-cause
+   witness, shared-regression and canonical-full-gate command boundaries,
+   reviewer/deployment/finalization classes, explicit split conditions, and
+   each distinct focused command with exact source ref/revision provenance.
+   Command boundaries bind normalized argv, repository-relative cwd, and
+   environment; never infer executable commands from vague prose.
+3. Call `cohort_advance({operation:"observe",plan,operation_id})`. Retain its
+   server-derived phase-homogeneous common-atom decisions, definition digest,
+   definition generation, ordered members, frozen acceptance matrix, and
+   explicit singleton reasons. Fusion is required when the whole set shares a
+   common atom; shared labels or pairwise/non-transitive compatibility are not
+   enough. Exclude unrelated, unavailable, externally gated, or mixed-phase
+   members with recorded reasons. Novel tasks require the same evidence, not a
+   pre-existing duplicate-defect label.
+4. Call `cohort_advance({operation:"prepare",plan,definition_digest,operation_id})`
+   for the selected implementation definition. Accept only its managed
+   worktree, verified dependency base, and complete returned cohort envelope.
+   The host requires the already-`wip` task/manifest revisions observed above;
+   never change a frozen member and reuse its old envelope. Keep one
+   parent-owned pending candidate attempt for the exact
+   full member set; do not invent a candidate seal from a proposed commit.
+5. Prepare the installed `implement-worker` cohort contract with `cohort`, the
+   complete ordered `members`, exact managed branch/path/base/starting commit,
+   round, and parent-owned validation intent. Children stage the whole candidate
+   and use broker-issued version-2 Git receipts; they do not select members,
+   mutate the ledger, merge, or run a full gate. Require ordered distinct
+   `memberObservations`, exact receipt continuity and net diff, and the trusted
+   native terminal binding before qualification. Qualification seals the
+   immutable candidate seal and `evidenceSubject`; pending attempts cannot
+   authorize acceptance. The worker becomes consumed only after the trusted
+   queue-front ladder settles; a staged result is not an accepted result.
+   Source, schema, prompt, and generated files belong to this same candidate:
+   perform required regeneration before sealing, then rebuild/probe the exact
+   packaged artifact when acceptance requires it. Later generated/source edits
+   invalidate the earlier seal; never report an earlier artifact as final proof.
+6. The trusted queue-front coordinator runs the frozen ladder: every distinct
+   member-focused command, then the selected shared-regression command, then
+   one canonical full gate (`bun run check`). A shared boundary never collapses
+   different focused commands. Deduplicate only exact covered executions and
+   reuse only matching green sealed-subject receipts. Red focused/shared work
+   stops before the full gate; red canonical evidence routes to correction,
+   never an unchanged-candidate retry disguised as transport recovery.
+7. Retain exact authenticated evidence across unchanged restart or review-only
+   retry. For unchanged preparation or a sealed candidate, call
+   `cohort_advance({operation:"resume",plan,definition_digest,intent_digest,operation_id})`;
+   add the exact producing `worker_dispatch` only when renewing its parent gate
+   grant. For an interrupted retired guarded-rebase transfer, call
+   `cohort_advance({operation:"rebase-successor",operation_id,rebase:{source_dispatch,guarded_rebase,onto_commit,prior_result_commit}})`
+   with its retained checkpoint, not a plan, task anchor, or caller-minted lease.
+   This authorizes only the recorded successor transition, never the old worker.
+   If either capability is unavailable, stop effects and report it rather than
+   inventing an operation. Every effect requires the current execution epoch.
+   Durable evidence is not a live capability;
+   stale-epoch Git, dispatch, probe, gate, and release effects must reject.
+   A changed candidate, definition, matrix, owner/member revision, environment,
+   or receipt lineage requires the corresponding new seal and rejects affected
+   old evidence. Never mint a receipt bridge or copy a task receipt as cohort
+   acceptance. Corrections and conflict resolution keep every member's intent
+   and the full manager binding; incompatible intent records a split rather
+   than silently dropping a member. No raw Git or task-only recovery fallback.
+8. Review the whole-candidate diff once per required configured reviewer class,
+   with the sealed envelope, every member's separate acceptance, and exact
+   version-2 supervised gate evidence. Reviewers return one whole verdict and
+   ordered `memberObservations`; no reviewer reruns the gate. Authenticate each
+   consumed approving review using `record_cohort_review({reviewer_dispatch,
+   envelope,operation_id,author,session})`; retain its opaque reference for every
+   covered member. Missing member observations, unresolved questions/criticism,
+   stale commit/ancestry, or substituted gate/dispatch evidence rejects the
+   whole approval. Do not reinterpret singleton panel receipts as cohort votes.
+9. Submit `complete_cohort({batch})` with one stable operation id, exact envelope,
+   aggregated acceptance receipt, result commit, every member's completion,
+   authenticated review refs and log paths, provenance, and an exact sweep.
+   For deployment, bind a closed compatible plan with immutable package/source
+   identity and an explicit ordered smoke command for every member; otherwise
+   use `deploymentPlan:null`. Never supply a caller lease or executable override.
+   The host journals one guarded ff-only merge, shared operator action, and
+   authenticated deployed build/probe epoch before one all-member primary
+   transaction. `deployment-required` parks for the user's exact acknowledgement;
+   do not deploy, switch, acknowledge, or invent successful probes yourself.
+10. Reuse the unchanged candidate's acceptance: **no post-merge validation** and
+    no duplicate gate. A changed runtime artifact for the same authenticated
+    source/seal reruns only deployment probes. Failure leaves every member
+    nonterminal; retain actual diagnostics. Recover `prepared`, `merged`,
+    `probes-complete`, `ledger-recording`, `ledger-recorded`, and `released`
+    handoffs honestly. Lost primary acknowledgement verifies the committed
+    protected batch before any effect or new mutation admission.
+11. Only the atomic completion writes all tasks and exact implementation
+    reviews, resolves wholly covered defects, merges exact partial archives,
+    and archives eligible fully covered non-coordination milestones and the
+    fulfilled canonical deployment handoff. Preserve unrelated/active/external
+    items and verified operator-action history. Queue/journal settlement is
+    separate and resumable, never evidence of an uncommitted terminal subset.
+    Never auto-close goals; report only exact ready-for-user-closure results.
+
+On `executor-unavailable`, keep metadata/status available and report the missing
+local XDG repository executor. Neither remote PostgreSQL metadata nor an observed
+status response authorizes effects. Bootstrap isolation, strict operator-action
+tasks, external-upstream work, and explicit user adoption/goal closure remain
+their existing closed authority boundaries; fusion cannot broaden them.
 
 ## 2. Operator-action tasks (parent only)
 
@@ -478,12 +624,12 @@ The downstream implementation consumer uses this contract; the queue rollout
 producer does not depend on that consumer.
 
 **Full-gate cardinality.** Worker and conflict-resolver children run typed
-focused checks only. For each candidate generation, trusted result storage runs
-the repository-wide full gate exactly once after the child exits and records
-the actual invocation count. Reviewers consume that bound evidence without a
-rerun. A correction or guarded-rebase successor is a new candidate generation
-and receives its own one parent-owned final gate; intermediate staging and
-resolver turns receive zero full-gate invocations.
+focused checks only. Trusted result storage stages candidates, not an eager
+per-task full gate. The queue-front coordinator owns exact-candidate acceptance
+and records actual invocation/reuse counts. Reviewers consume bound evidence
+without a rerun. An unchanged sealed subject receives no duplicate full gate;
+a changed candidate must satisfy its current ladder before one canonical gate.
+Intermediate staging and resolver turns receive zero full-gate invocations.
 
 ## 4. Review
 
@@ -531,15 +677,9 @@ or protected store state.
 **Reviewer gate evidence.** Pass a consumed worker's verified
 `supervisedGateEvidence` through to every protected `implement-reviewer` and require
 the reviewer to validate its exact bindings and green counts without rerunning
-the gate. For a legacy result without this evidence, when a surface's dispatch
-workflow requires parent-attested gate evidence (gate primitives denied), the
-parent MUST attach `parentGateAttestation` built from a just-run or freshly run
-full gate on the worker tip:
-`{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,
-capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
-`passCount > 0`. Do not escalate the child sandbox to gain gate primitives.
-Non-sandboxed reviewers use the same runner-owned evidence path. Every reviewer
-reruns the gate only when exact trusted evidence is absent or invalid.
+the gate. Missing or invalid evidence returns to the trusted candidate
+coordinator; neither a reviewer nor this parent manufactures a fallback gate
+attestation. Do not escalate the child sandbox to gain gate primitives.
 
 **External reviewer usable-verdict rule.** Fence-strip and validate stdout first.
 A complete, parseable verdict counts as a vote despite a non-zero shell exit;
@@ -717,7 +857,8 @@ back to raw Git, broadening the worker sandbox, or accepting caller-minted
 lineage or gate evidence. Only after the fresh gate and reviews pass does the
 existing ff-only guarded merge below run.
 
-On conflict, call `worktree_manage` with `operation: "observe-conflict"` and the
+On an ordinary parent-initiated guarded-rebase conflict, call `worktree_manage`
+with `operation: "observe-conflict"` and the
 manager handle. Supply its exact `conflictState` (original tip, onto, dispatch
 base, current HEAD and ancestry, sequencer identity/todo/current command, and
 every unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only
@@ -731,7 +872,9 @@ branch, absolute
 worktree path, and the complete durable receipt chain; after any continuation
 its last receipt must end at the exact live nonterminal conflict state. Then
 create a linked question, set the task `blocked`, keep the worktree/handle, and
-skip its dependants.
+skip its dependants. A coordinator-retired staged-rebase conflict instead uses
+only the manager-bound `resolve-staged-rebase` handoff above; do not replay the
+retired coordinator or its revoked authority through this ordinary arm.
 
 After the final checks and fresh approved panel, call
 `prepare_implementation_completion({ task_ref, expected_repository_head,

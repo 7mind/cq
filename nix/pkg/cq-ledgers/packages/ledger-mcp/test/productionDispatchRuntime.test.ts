@@ -298,6 +298,7 @@ describe("production dispatch runtime construction", () => {
         },
       ],
     });
+    if (receipt.version !== 1) throw new Error("task fixture received a cohort receipt");
     const output = {
       taskId,
       status: "pass",
@@ -383,6 +384,7 @@ describe("production dispatch runtime construction", () => {
         },
       ],
     });
+    if (staleReceipt.version !== 1) throw new Error("task fixture received a cohort receipt");
     const staleOutput = {
       taskId: staleTaskId,
       status: "pass",

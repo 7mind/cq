@@ -12,12 +12,20 @@ import type { AsyncLifecycleRowRepository } from "./asyncRowRepository.js";
 import type { GenericMutationLedgerMetadata } from "./genericMutationDataSource.js";
 import { repositoryRead, runRepositoryReads, runAsyncRepositoryReads, type RepositoryReadProgram } from "./readProgram.js";
 import type { DirectOwnedOperation, DirectOwnedWriteTx } from "./directOwnedMutation.js";
-import { actionIdForTask, handoffIdForTask, taskIdForAction } from "../operatorActions.js";
+import { directCompletionTaskIds } from "./directOwnedMutation.js";
+import { actionIdForTask, handoffIdForTask, taskIdForAction, findCohortOperatorActionInItems } from "../operatorActions.js";
+import { defectFixTaskIds } from "../relationships.js";
+import { parseGoalFinalizedManifest } from "../worksetGraph.js";
+import { createGenericMutationTransaction, genericArchiveKey, type GenericArchiveEntry } from "./genericMutationTransaction.js";
 
 export interface KeyedOwnedWriteTransaction {
   readonly tx: DirectOwnedWriteTx;
   readonly ledgers: Map<string, Ledger>;
   readonly beforeLedgers: Map<string, Ledger>;
+  readonly archives: Map<string, GenericArchiveEntry>;
+  readonly beforeArchives: Map<string, GenericArchiveEntry>;
+  readonly unloadedArchiveKeys: ReadonlySet<string>;
+  readonly dirtyArchives: ReadonlySet<string>;
   readonly dirtyLedgers: ReadonlySet<string>;
   readonly allocationLedgers: ReadonlySet<string>;
   readonly implementationCompletionBindingChanges: readonly ImplementationCompletionBindingRecord[];
@@ -74,9 +82,16 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
   const loaded = new Set<string>();
   const loadedGroups = new Set<string>();
   const archived = new Map<string, boolean>();
+  const archivedItems = new Map<string, Item>();
+  const archives = new Map<string, GenericArchiveEntry>();
+  const beforeArchives = new Map<string, GenericArchiveEntry>();
+  const unloadedArchiveKeys = new Set<string>();
+  const loadedArchives = new Set<string>();
   const allocationLedgers = new Set<string>();
   const completionBindings = new Map<string, string | undefined>();
   const completionBindingChanges = new Map<string, string>();
+  const completionDefectTaskRefs = new Map<string, readonly string[]>();
+  let cohortTaskIds: ReadonlySet<string> | null = null;
   const requireLedger = (source: ReadonlyMap<string, Ledger>, id: string): Ledger => {
     const ledger = source.get(id);
     if (ledger === undefined) throw new LedgerNotFoundError(id);
@@ -123,6 +138,30 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     completionBindings.set(taskId, reviewRef);
     return reviewRef;
   }
+  function* loadCompletionItem(ledgerId: string, itemId: string): OwnedReads<Item | undefined> {
+    const active = yield* loadItem(ledgerId, itemId);
+    if (active !== undefined) return active;
+    if (cohortTaskIds === null || (ledgerId === TASKS_LEDGER && !cohortTaskIds.has(itemId))) return undefined;
+    const ref = `${ledgerId}:${itemId}`;
+    if (!archived.has(ref)) {
+      const value = yield* rows.fetchArchivedItem(ref);
+      archived.set(ref, value !== undefined);
+      if (value !== undefined) archivedItems.set(ref, value.item);
+    }
+    return archivedItems.get(ref);
+  }
+  function* loadArchive(ledgerId: string, pointerId: string): OwnedReads<void> {
+    const key = genericArchiveKey(ledgerId, pointerId);
+    if (loadedArchives.has(key)) return;
+    loadedArchives.add(key);
+    const pointer = yield* repositoryRead((source: OwnedReadSource) => source.fetchArchivePointer(ledgerId, pointerId));
+    if (pointer === undefined) return;
+    for (const map of [beforeLedgers, ledgers]) requireLedger(map, ledgerId).archivePointers.push(structuredClone(pointer));
+    const entry = { ledgerId, pointerId, title: pointer.title, description: "", items: [] };
+    archives.set(key, entry);
+    beforeArchives.set(key, structuredClone(entry));
+    unloadedArchiveKeys.add(key);
+  }
   function* loadRef(raw: string, allowArchived: boolean): OwnedReads<void> {
     let ref: string;
     try { ref = canonicalizeRef(raw, registry); } catch (error) {
@@ -131,7 +170,9 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
     const colon = ref.indexOf(":");
     if ((yield* loadItem(ref.slice(0, colon), ref.slice(colon + 1))) !== undefined || !allowArchived || archived.has(ref)) return;
-    archived.set(ref, (yield* rows.fetchArchivedItem(ref)) !== undefined);
+    const value = yield* rows.fetchArchivedItem(ref);
+    archived.set(ref, value !== undefined);
+    if (value !== undefined) archivedItems.set(ref, value.item);
   }
   function* prepareFields(ledgerId: string, fields: Readonly<Record<string, FieldValue | undefined>>): OwnedReads<void> {
     for (const name of ["dependsOn", "blockedBy"]) {
@@ -208,6 +249,65 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
     }
   }
   function* prepareDirectOperation(operation: DirectOwnedOperation, now: () => string): OwnedReads<void> {
+    if (operation.kind === "materialize-cohort-operator") {
+      for (const member of operation.batch.members) {
+        yield* loadRef(member.taskRef, false);
+        for (const ref of yield* rows.referenceSources(member.taskRef, ["ledgerRefs"])) {
+          if (!ref.startsWith(`${OPERATOR_ACTIONS_LEDGER}:`)) continue;
+          yield* loadItem(OPERATOR_ACTIONS_LEDGER, ref.slice(OPERATOR_ACTIONS_LEDGER.length + 1));
+          for (const handoff of yield* rows.referenceSources(ref, ["ledgerRefs"])) {
+            if (handoff.startsWith(`${HANDOFFS_LEDGER}:`)) yield* loadRef(handoff, false);
+          }
+        }
+      }
+      yield* prepareCreate(OPERATOR_ACTIONS_LEDGER, MILESTONES_AMBIENT_ID, { fields: {
+        ledgerRefs: operation.batch.envelope.memberAuthorities.flatMap(({ taskRef, goalRef }) => [taskRef, goalRef]) } });
+      yield* prepareCreate(HANDOFFS_LEDGER, MILESTONES_AMBIENT_ID, { fields: {} });
+      return;
+    }
+    if (operation.kind === "cohort-completion") {
+      cohortTaskIds = directCompletionTaskIds(operation);
+      for (const member of operation.members) {
+        const goal = yield* loadItem(GOALS_LEDGER, member.ownerGoalId);
+        if (goal !== undefined) for (const task of parseGoalFinalizedManifest(goal)?.tasks ?? []) {
+          yield* loadCompletionItem(TASKS_LEDGER, task.id);
+        }
+        yield* loadCompletionItem(TASKS_LEDGER, member.taskId);
+        yield* prepareDirectOperation(member, now);
+      }
+      const reviews = requireLedger(ledgers, REVIEWS_LEDGER);
+      let next = reviews.counters.item;
+      for (const member of operation.members) {
+        if (completionBindings.get(member.taskId) !== undefined) continue;
+        while ((yield* loadItem(REVIEWS_LEDGER, `${reviews.schema.idPrefix ?? "R"}${++next}`)) !== undefined) { /* reserve a free allocation */ }
+      }
+      const candidates = new Set(operation.sweep.terminalItems.map(({ targetId }) => targetId));
+      if (operation.operatorSettlement !== null) {
+        yield* loadItem(OPERATOR_ACTIONS_LEDGER, operation.operatorSettlement.actionId);
+        candidates.add(`${HANDOFFS_LEDGER}:${operation.operatorSettlement.handoffId}`);
+      }
+      for (const defectId of completionDefectTaskRefs.keys()) candidates.add(`${DEFECTS_LEDGER}:${defectId}`);
+      for (const selected of operation.sweep.milestones) {
+        candidates.add(`${MILESTONES_LEDGER}:${selected.id}`);
+        for (const ref of yield* repositoryRead((source: OwnedReadSource) => source.publicRows.itemRefsByMilestone(selected.id))) candidates.add(ref);
+        for (const ledgerId of ledgers.keys()) yield* loadArchive(ledgerId, selected.id);
+      }
+      for (const member of operation.members) candidates.add(`${TASKS_LEDGER}:${member.taskId}`);
+      for (const ref of candidates) {
+        const colon = ref.indexOf(":");
+        const ledgerId = ref.slice(0, colon);
+        const item = yield* loadCompletionItem(ledgerId, ref.slice(colon + 1));
+        if (item !== undefined) {
+          yield* loadCompletionItem(MILESTONES_LEDGER, item.milestoneId);
+          yield* loadArchive(ledgerId, item.milestoneId);
+          if (ledgerId === TASKS_LEDGER) yield* loadArchive(REVIEWS_LEDGER, item.milestoneId);
+        }
+        for (const consumer of yield* rows.referenceSources(ref, ["worksetOwnerRef", "dependsOn", "blockedBy"])) {
+          yield* loadRef(consumer, false);
+        }
+      }
+      return;
+    }
     if (operation.kind === "implementation-adoption") {
       yield* loadItem(GOALS_LEDGER, operation.ownerGoalId);
       yield* loadItem(QUESTIONS_LEDGER, operation.approvalQuestionId);
@@ -240,16 +340,41 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
       }
       return;
     }
-    const task = yield* loadItem(TASKS_LEDGER, operation.taskId);
+    const task = yield* loadCompletionItem(TASKS_LEDGER, operation.taskId);
     if (task === undefined) return;
     const reviewBinding = yield* loadImplementationCompletionBinding(task.id);
     if (reviewBinding !== undefined) {
       if (typeof reviewBinding === "string" && /^reviews:R[0-9]+$/u.test(reviewBinding)) {
-        yield* loadItem(REVIEWS_LEDGER, reviewBinding.slice(`${REVIEWS_LEDGER}:`.length));
+        yield* loadCompletionItem(REVIEWS_LEDGER, reviewBinding.slice(`${REVIEWS_LEDGER}:`.length));
       }
-      return;
     }
-    if (task.status === "done") return;
+    const rawDefectRefs = task.fields.ledgerRefs;
+    if (Array.isArray(rawDefectRefs)) {
+      for (const rawRef of new Set(rawDefectRefs)) {
+        if (typeof rawRef !== "string") continue;
+        let defectRef: string;
+        try { defectRef = canonicalizeRef(rawRef, registry); }
+        catch (error) {
+          if (error instanceof RefParseError) continue;
+          throw error;
+        }
+        if (!defectRef.startsWith(`${DEFECTS_LEDGER}:`)) continue;
+        const defectId = defectRef.slice(DEFECTS_LEDGER.length + 1);
+        const defect = yield* loadCompletionItem(DEFECTS_LEDGER, defectId);
+        if (defect === undefined) continue;
+        const taskRefs = new Set(
+          defectFixTaskIds(defect.id, [defect], []).map((id) => `${TASKS_LEDGER}:${id}`),
+        );
+        for (const source of yield* rows.referenceSources(defectRef, ["ledgerRefs"])) {
+          if (source.startsWith(`${TASKS_LEDGER}:`)) taskRefs.add(source);
+        }
+        for (const ref of taskRefs) {
+          yield* loadCompletionItem(TASKS_LEDGER, ref.slice(TASKS_LEDGER.length + 1));
+        }
+        completionDefectTaskRefs.set(defectId, [...taskRefs]);
+      }
+    }
+    if (reviewBinding !== undefined || task.status === "done") return;
     yield* prepareCreate(REVIEWS_LEDGER, task.milestoneId, operation.reviewInit);
     if (task.status !== "done") yield* prepareUpdate(TASKS_LEDGER, task.id, operation.taskPatch);
     const defectRefs = task.fields.ledgerRefs;
@@ -266,20 +391,43 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
       ledgers, now,
       archivedRefExists: (ledgerId, itemId) => archived.get(`${ledgerId}:${itemId}`) === true,
     });
-    const completionTaskId = directOperation?.kind === "implementation-completion" ? directOperation.taskId : null;
+    const archiveTransaction = createGenericMutationTransaction({ ledgers, archives, unloadedArchiveKeys, now });
+    const assertCompletionArchive = (): void => {
+      if (directOperation === null || directOperation.kind !== "cohort-completion") throw new LedgerError("completion archive requires its exact cohort operation");
+    };
+    const completionTaskIds = directCompletionTaskIds(directOperation);
     const assertCompletionTask = (taskId: string): void => {
-      if (taskId !== completionTaskId) {
+      if (!completionTaskIds.has(taskId)) {
         throw new LedgerError("implementation completion bindings require their exact protected operation");
       }
     };
     return {
-      ledgers, beforeLedgers, allocationLedgers,
+      ledgers, beforeLedgers, archives, beforeArchives, unloadedArchiveKeys, allocationLedgers,
+      get dirtyArchives() { return archiveTransaction.dirtyArchives; },
       get implementationCompletionBindingChanges() {
         return [...completionBindingChanges].map(([taskId, reviewRef]) => ({ taskId, reviewRef }));
       },
-      get dirtyLedgers() { return new Set([...owned.dirtyLedgers, ...operatorDirty]); },
+      get dirtyLedgers() { return new Set([...owned.dirtyLedgers, ...operatorDirty, ...archiveTransaction.dirtyLedgers]); },
       tx: {
         ...owned.tx,
+        findCohortOperatorAction: (batchDigest) => {
+          if (directOperation?.kind !== "materialize-cohort-operator" || directOperation.batch.batchDigest !== batchDigest) {
+            throw new LedgerError("cohort operator lookup requires its exact materialization operation");
+          }
+          return findCohortOperatorActionInItems(requireLedger(ledgers, OPERATOR_ACTIONS_LEDGER).milestones.flatMap(({ items }) => items),
+            requireLedger(ledgers, HANDOFFS_LEDGER).milestones.flatMap(({ items }) => items), batchDigest);
+        },
+        fetchImplementationCompletionItem: (ledgerId, itemId) => {
+          const item = run(loadCompletionItem(ledgerId, itemId));
+          return item === undefined ? owned.tx.fetchItem(ledgerId, itemId) : structuredClone(item);
+        },
+        completionArchive: {
+          collectArchiveTerminalItemRefs: (...args) => { assertCompletionArchive(); return archiveTransaction.tx.collectArchiveTerminalItemRefs(...args); },
+          archiveTerminalItems: (...args) => { assertCompletionArchive(); return archiveTransaction.tx.archiveTerminalItems(...args); },
+          archiveMilestone: (...args) => { assertCompletionArchive(); return archiveTransaction.tx.archiveMilestone(...args); },
+          updateMilestone: (...args) => { assertCompletionArchive(); return archiveTransaction.tx.updateMilestone(...args); },
+          collectArchiveSweepRefs: (...args) => { assertCompletionArchive(); return archiveTransaction.tx.collectArchiveSweepRefs(...args); },
+        },
         fetchImplementationCompletionBinding: (taskId) => {
           assertCompletionTask(taskId);
           return run(loadImplementationCompletionBinding(taskId));
@@ -291,6 +439,21 @@ function prepareOwnedRows(metadata: readonly GenericMutationLedgerMetadata[]) {
           }
           completionBindings.set(taskId, reviewRef);
           completionBindingChanges.set(taskId, reviewRef);
+        },
+        implementationCompletionDefectFixes: (taskId) => {
+          assertCompletionTask(taskId);
+          const result: Array<{ defect: Item; fixTasks: Item[] }> = [];
+          for (const [defectId, taskRefs] of completionDefectTaskRefs) {
+            const defect = run(loadCompletionItem(DEFECTS_LEDGER, defectId));
+            if (defect === undefined) continue;
+            const fixTasks: Item[] = [];
+            for (const ref of taskRefs) {
+              const task = run(loadCompletionItem(TASKS_LEDGER, ref.slice(TASKS_LEDGER.length + 1)));
+              if (task !== undefined) fixTasks.push(task);
+            }
+            result.push({ defect, fixTasks });
+          }
+          return result;
         },
         activeState: () => {
           if (admittedState === null) throw new LedgerError("direct keyed owned transactions cannot enumerate active state");

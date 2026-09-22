@@ -29,6 +29,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   attachMcpHttp,
+  createCohortCompletionRuntimeV1,
+  createCohortAdvanceRuntimeV1,
+  createCohortInvestigationAdvanceRuntimeV1,
   changedFrame,
   createEmbeddedStore,
   createProductionImplementationEvidenceService,
@@ -416,6 +419,20 @@ async function serveEmbedded(
           ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
         })
       : undefined;
+  const cohortCancellation = new AbortController();
+  const cohortAdvance = dispatchRuntime.kind === "available" && promptSurface !== undefined
+    ? await createCohortAdvanceRuntimeV1({ resolved, promptArtifacts: promptSurface.store, dispatch: dispatchRuntime.capability })
+    : undefined;
+  const cohortCompletion = dispatchRuntime.kind === "available" && promptSurface !== undefined
+    ? createCohortCompletionRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+      promptArtifacts: promptSurface.store, cancellationSignal: cohortCancellation.signal,
+      ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace) })
+    : undefined;
+  const cohortInvestigation = dispatchRuntime.kind === "available" && promptSurface !== undefined
+    ? await createCohortInvestigationAdvanceRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+      dispatch: dispatchRuntime.capability, promptArtifacts: promptSurface.store,
+      cancellationSignal: cohortCancellation.signal })
+    : undefined;
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
     path.basename(opts.cwd),
@@ -431,6 +448,9 @@ async function serveEmbedded(
     "management",
     false,
     implementationEvidence,
+    cohortCompletion,
+    cohortAdvance,
+    cohortInvestigation,
   );
 
   const server = scanForPort(opts.port, (p) =>
@@ -465,6 +485,7 @@ async function serveEmbedded(
   // server.stop(true)); the return type stays the Bun server.
   const origStop = server.stop.bind(server);
   server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
+    cohortCancellation.abort();
     watcher.close();
     await origStop(closeActiveConnections);
     await dispatchRuntime.close();

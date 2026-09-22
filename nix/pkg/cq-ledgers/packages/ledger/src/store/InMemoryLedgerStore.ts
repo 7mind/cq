@@ -41,11 +41,14 @@ import {
 } from "./core.js";
 import { UsageTracker } from "../usageStats.js";
 import { assertOwnedMutationAdmission } from "../worksetOwnedLifecycle.js";
-import type { OwnedMutationContext } from "./directOwnedMutation.js";
+import type { DirectOwnedWriteTx, OwnedMutationContext } from "./directOwnedMutation.js";
+import { directCompletionTaskIds } from "./directOwnedMutation.js";
+import { findCohortOperatorActionInItems } from "../operatorActions.js";
+import { InMemoryWorkCohortPersistence, PersistentWorkCohortStore, type WorkCohortStore } from "../workCohortStore.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
 import { statusSatisfiesDependency } from "./core.js";
-import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
+import { buildPrefixRegistry, canonicalizeRef, normalizeStoredRefFields } from "../refs.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -105,7 +108,9 @@ import { AsyncMutex } from "./mutex.js";
 import {
   CANONICAL_LEDGERS,
   DECISIONS_LEDGER,
+  DEFECTS_LEDGER,
   GOALS_LEDGER,
+  HANDOFFS_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
   MILESTONES_AMBIENT_ID,
@@ -140,7 +145,7 @@ import type { WorksetAdmissionCoordinator } from "../worksetEffectAdmission.js";
  * T1962 — in-transaction ops for atomic owner-scoped writes / coordination
  * bundles. All mutations share one multi-ledger lock and roll back together.
  */
-export interface InMemoryOwnedWriteTx {
+export interface InMemoryOwnedWriteTx extends DirectOwnedWriteTx {
   activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
   createItemWithSealedOwnership(
@@ -163,6 +168,10 @@ export interface InMemoryOwnedWriteTx {
   mutateOperatorAction(mutation: OperatorActionLifecycleMutation): OperatorActionLifecycleMutationResult;
   fetchImplementationCompletionBinding(taskId: string): string | undefined;
   bindImplementationCompletionReview(taskId: string, reviewRef: string): void;
+  implementationCompletionDefectFixes(taskId: string): readonly {
+    readonly defect: Item;
+    readonly fixTasks: readonly Item[];
+  }[];
 }
 
 /**
@@ -211,6 +220,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
   private readonly implementationCompletionBindings = new Map<string, string>();
+  private readonly cohortPersistence = new InMemoryWorkCohortPersistence();
+  private readonly cohortHandle = new PersistentWorkCohortStore(this.cohortPersistence);
   private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
   private worksetHandle: WorksetAdmissionCoordinator | null = null;
@@ -340,6 +351,11 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       });
     }
     return this.worksetHandle;
+  }
+
+  workCohortStore(): WorkCohortStore {
+    this.assertInit();
+    return this.cohortHandle;
   }
 
   replaceWorksetRoots(roots: readonly string[]) {
@@ -679,17 +695,63 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     const outcome = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
         if (context !== null && "admission" in context) assertOwnedMutationAdmission(context);
+        if (context !== null && "direct" in context && context.direct.kind === "cohort-completion" && context.direct.fence !== null) {
+          this.cohortPersistence.assertPrimaryCompletionFence(context.direct.fence);
+        }
         const beforeLedgers = cloneLedgerMap(this.ledgers);
         const beforeCompletionBindings = new Map(this.implementationCompletionBindings);
+        const beforeArchives = new Map(this.archives);
+        const beforeItemArchives = new Map(this.itemArchives);
+        const archives = new Map<string, GenericArchiveEntry>();
+        const isCohort = context !== null && "direct" in context && context.direct.kind === "cohort-completion";
+        if (isCohort) {
+          for (const [key, group] of this.archives) {
+            const slash = key.indexOf("/");
+            archives.set(key, { ledgerId: key.slice(0, slash), pointerId: key.slice(slash + 1),
+              title: group.title, description: group.description, items: structuredClone(group.items) });
+          }
+          for (const [key, item] of this.itemArchives) archives.set(key, {
+            ledgerId: MILESTONES_LEDGER, pointerId: item.id, title: String(item.fields.title ?? ""),
+            description: String(item.fields.description ?? ""), items: [structuredClone(item)],
+          });
+        }
+        const archiveTransaction = createGenericMutationTransaction({ ledgers: this.ledgers, archives,
+          unloadedArchiveKeys: new Set(), now: this.now });
+        const assertCohortArchive = (): void => {
+          if (!isCohort) throw new LedgerError("completion archive requires its exact cohort operation");
+        };
         const dirty = new Set<string>();
-        const completionTaskId = context !== null && "direct" in context &&
-          context.direct.kind === "implementation-completion" ? context.direct.taskId : null;
+        const completionTaskIds = directCompletionTaskIds(context !== null && "direct" in context ? context.direct : null);
         const assertCompletionTask = (taskId: string): void => {
-          if (taskId !== completionTaskId) {
+          if (!completionTaskIds.has(taskId)) {
             throw new LedgerError("implementation completion bindings require their exact protected operation");
           }
         };
         const tx: InMemoryOwnedWriteTx = {
+          findCohortOperatorAction: (batchDigest) => {
+            if (context === null || !("direct" in context) || context.direct.kind !== "materialize-cohort-operator" || context.direct.batch.batchDigest !== batchDigest) {
+              throw new LedgerError("cohort operator lookup requires its exact protected operation");
+            }
+            return findCohortOperatorActionInItems(this.getLedger("operatorActions").milestones.flatMap(({ items }) => items),
+              this.getLedger(HANDOFFS_LEDGER).milestones.flatMap(({ items }) => items), batchDigest);
+          },
+          fetchImplementationCompletionItem: (ledgerId, itemId) => {
+            const active = this.getLedger(ledgerId).milestones.flatMap(({ items }) => items).find(({ id }) => id === itemId);
+            if (active !== undefined) return cloneItem(active);
+            for (const archive of archives.values()) {
+              if (archive.ledgerId !== ledgerId) continue;
+              const item = archive.items.find(({ id }) => id === itemId);
+              if (item !== undefined) return cloneItem(item);
+            }
+            return cloneItem(findItem(this.getLedger(ledgerId), itemId).item);
+          },
+          completionArchive: {
+            collectArchiveTerminalItemRefs: (...args) => { assertCohortArchive(); return archiveTransaction.tx.collectArchiveTerminalItemRefs(...args); },
+            archiveTerminalItems: (...args) => { assertCohortArchive(); return archiveTransaction.tx.archiveTerminalItems(...args); },
+            archiveMilestone: (...args) => { assertCohortArchive(); return archiveTransaction.tx.archiveMilestone(...args); },
+            updateMilestone: (...args) => { assertCohortArchive(); return archiveTransaction.tx.updateMilestone(...args); },
+            collectArchiveSweepRefs: (...args) => { assertCohortArchive(); return archiveTransaction.tx.collectArchiveSweepRefs(...args); },
+          },
           fetchImplementationCompletionBinding: (taskId) => {
             assertCompletionTask(taskId);
             return this.implementationCompletionBindings.get(taskId);
@@ -700,6 +762,32 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
               throw new LedgerError("terminal implementation review binding already exists");
             }
             this.implementationCompletionBindings.set(taskId, reviewRef);
+          },
+          implementationCompletionDefectFixes: (taskId) => {
+            assertCompletionTask(taskId);
+            const completingTask = tx.fetchImplementationCompletionItem(TASKS_LEDGER, taskId);
+            const registry = buildPrefixRegistry(
+              [...this.ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
+            );
+            const tasks = [...this.getLedger(TASKS_LEDGER).milestones.flatMap((group) => group.items),
+              ...[...archives.values()].filter(({ ledgerId }) => ledgerId === TASKS_LEDGER)
+                .flatMap(({ items }) => items.filter(({ id }) => completionTaskIds.has(id)))];
+            const result: Array<{ defect: Item; fixTasks: Item[] }> = [];
+            const refs = completingTask.fields.ledgerRefs;
+            if (!Array.isArray(refs)) return result;
+            for (const rawRef of new Set(refs)) {
+              if (typeof rawRef !== "string") continue;
+              let ref: string;
+              try { ref = canonicalizeRef(rawRef, registry); }
+              catch { continue; }
+              if (!ref.startsWith(`${DEFECTS_LEDGER}:`)) continue;
+              const defectId = ref.slice(DEFECTS_LEDGER.length + 1);
+              let defect: Item;
+              try { defect = tx.fetchImplementationCompletionItem(DEFECTS_LEDGER, defectId); }
+              catch { continue; }
+              result.push({ defect: cloneItem(defect), fixTasks: tasks.map(cloneItem) });
+            }
+            return result;
           },
           mutateOperatorAction: (mutation) => {
             const outcome = applyOperatorActionLifecycleMutation(this.ledgers, mutation, this.now);
@@ -814,16 +902,32 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         };
         try {
           const result = await mutate(tx);
-          return { result, dirtyLedgers: [...dirty] };
+          if (context !== null && "direct" in context && context.direct.kind === "cohort-completion" && context.direct.fence !== null) {
+            this.cohortPersistence.assertPrimaryCompletionFence(context.direct.fence);
+          }
+          for (const key of archiveTransaction.dirtyArchives) {
+            const entry = archives.get(key);
+            if (entry === undefined) throw new LedgerError("cohort completion cannot delete an archive");
+            if (entry.ledgerId === MILESTONES_LEDGER) {
+              const item = entry.items[0];
+              if (item === undefined) throw new LedgerError("cohort milestone archive is empty");
+              this.itemArchives.set(key, structuredClone(item));
+            } else this.archives.set(key, { id: entry.pointerId, title: entry.title,
+              description: entry.description, items: structuredClone(entry.items) });
+          }
+          return { result, dirtyLedgers: [...new Set([...dirty, ...archiveTransaction.dirtyLedgers])],
+            archivedChanged: archiveTransaction.dirtyArchives.size > 0 };
         } catch (error) {
           replaceMap(this.ledgers, beforeLedgers);
           replaceMap(this.implementationCompletionBindings, beforeCompletionBindings);
+          replaceMap(this.archives, beforeArchives);
+          replaceMap(this.itemArchives, beforeItemArchives);
           throw error;
         }
       }),
     );
     for (const ledgerId of outcome.dirtyLedgers) {
-      this.fireMutation(ledgerId, "create");
+      this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "create");
     }
     return outcome.result;
   }

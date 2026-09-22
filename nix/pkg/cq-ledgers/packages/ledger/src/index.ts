@@ -8,10 +8,17 @@ export * from "./recordUpstreamIssues.js";
 export * from "./usageStats.js";
 export * from "./planLifecycle.js";
 export * from "./operatorActions.js";
+export { ledgerItemRevisionV1 } from "./itemRevision.js";
 export * from "./currentRecoverySeal.js";
 export * from "./dispatchLineageCutoverFence.js";
 export * from "./implementationEvidence.js";
 export * from "./workCohort.js";
+export * from "./workCohortStore.js";
+export * from "./workCohortAcceptance.js";
+export * from "./workCohortGate.js";
+export * from "./workCohortInvestigation.js";
+export * from "./workCohortActivity.js";
+export * from "./workCohortInvestigationAdvance.js";
 export * from "./historicalImplementationEvidenceFixtures.js";
 export type {
   TaskAdoptionEligibilityFence,
@@ -420,6 +427,18 @@ export {
   nodeManagedWorktreeGitRunner,
   normalizeManagedPath,
   prepareManagedWorktree,
+  prepareManagedCohortWorktree,
+  resolveManagedCohortWorktreeDispatchBinding,
+  resolveRetainedManagedCohortAuthority,
+  readRetainedManagedCohortHandle,
+  prepareManagedCohortRebaseSuccessor,
+  resumeManagedCohortRebaseSuccessor,
+  readManagedCohortRebaseSuccessor,
+  resolveManagedCohortRebaseTransition,
+  retainManagedCohortAuthority,
+  bindRetainedManagedCohortSeal,
+  withManagedCohortAuthorityWriterLock,
+  assertManagedCohortWorktreeDispatchBindingLive,
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
@@ -432,19 +451,26 @@ export {
   validateManagedWorktreeInstallPlan,
   assertManagedWorktreeDispatchBindingLive,
   observeManagedWorktreeLiveTip,
+  observeManagedWorktreeRebaseTip,
   assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
 export {
   createManagedWorktreeGitEffectRunner,
+  createManagedCohortWorktreeGitEffectRunner,
   runLedgerWorksetGitEffect,
 } from "./worksetGitEffects.js";
+export { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.js";
 export type {
   ManagedWorktreeGitEffectRunnerOptions,
   RunLedgerWorksetGitEffectOptions,
 } from "./worksetGitEffects.js";
 export type {
   ManagedWorktreeDispatchBinding,
+  ManagedCohortWorktreeAuthority,
+  ManagedCohortWorktreeDispatchBinding,
+  PrepareManagedCohortWorktreeRequest,
+  PrepareManagedCohortWorktreeResult,
   ManagedWorktreeLineageBinding,
   ManagedWorktreeDeps,
   ManagedWorktreeFaultBoundary,
@@ -479,12 +505,17 @@ export {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   createNodeSupervisedWorkerGateRunner,
+  createNodeSupervisedWorkerCommandRunner,
   nodeSupervisedWorkerGateRunner,
   superviseImplementWorkerGate,
   SupervisedWorkerGateRejectedError,
+  SupervisedWorkerGatePreflightRejectedError,
 } from "./supervisedWorkerGate.js";
 export type {
   NodeSupervisedWorkerGateSettlement,
+  SupervisedWorkerCommandRunRequest,
+  SupervisedWorkerCommandRunResult,
+  SupervisedWorkerCommandRunner,
   SupervisedWorkerGateRunRequest,
   SupervisedWorkerGateRunResult,
   SupervisedWorkerGateRunner,
@@ -494,6 +525,8 @@ export type {
 // D342 settlement seam: ledger-mcp tests wrap these real helpers without a
 // direct @cq/process-control dependency.
 export { settleProcessGroups, settleWorktreeGateCommands } from "@cq/process-control";
+export { runWorksetGitEffectGate, cohortEffectTargetRefV1 } from "@cq/process-control";
+export type { MergeEffectBinding } from "@cq/process-control";
 export type {
   ProcessGroupRegistration,
   SettleProcessGroupsResult,
@@ -501,6 +534,7 @@ export type {
 } from "@cq/process-control";
 export type {
   DispatchBoundGitAuthorization,
+  GitBrokerSubject,
   GitChangeBrokerDeps,
   GitChangeBrokerEvidenceDeps,
   GitChangeBrokerReceipt,
@@ -510,6 +544,7 @@ export type {
   GitPathState,
   GitRegularMode,
 } from "./gitChangeBroker.js";
+export { gitBrokerSubjectsMatch, assertGitBrokerSubject } from "./gitChangeBroker.js";
 export {
   assessLegacyReconciliationActivity,
   assessLegacyReconciliationHistory,
@@ -572,14 +607,18 @@ export {
   GuardedRebaseRejection,
   guardedRebaseReference,
   materializeGuardedRebaseBridge,
+  resolveUniquePendingGuardedRebaseConflict,
   reverifyGuardedRebaseBridge,
+  verifyHistoricalCohortGuardedRebaseBridge,
   runGuardedRebase,
+  runGuardedRebaseUnderManagedLock,
 } from "./guardedRebaseContinuation.js";
 export type {
   GuardedRebaseEffectResult,
   GuardedRebaseJournal,
   GuardedRebaseRunOutcome,
   MaterializeGuardedRebaseBridgeOptions,
+  PendingGuardedRebaseConflict,
   ReverifyGuardedRebaseBridgeOptions,
   RunGuardedRebaseOptions,
 } from "./guardedRebaseContinuation.js";
@@ -788,6 +827,10 @@ export {
   LEDGER_EPHEMERAL_RUNTIME_DIRNAMES,
   ARCHIVE_COMMIT_PENDING_FILENAME,
   WORKSET_ROOTS_FILENAME,
+  WORK_COHORT_STATE_FILENAME,
+  LEDGER_PORTABLE_STATE_FILENAMES,
+  LEDGER_EPHEMERAL_STATE_FILENAMES,
+  LEDGER_OWN_STATE_FILENAMES,
 } from "./store/ledgerArtifacts.js";
 export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledgerArtifacts.js";
 export {
@@ -923,6 +966,7 @@ export type {
   DispatchWorktreeActivityObservation,
   DispatchRecoveryResolution,
   DispatchContinuationResolution,
+  DispatchStagedRebaseResolution,
   FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
   QualifyImplementationCandidateInput,
@@ -1026,3 +1070,7 @@ export {
 export type { ParsedRef } from "./refs.js";
 export { FINALIZE_PRESENTATION, describeFinalizeEmptyPlan } from "./finalizePresentation.js";
 export type { FinalizePresentation, FinalizeScope } from "./finalizePresentation.js";
+export * from "./workCohortCompletion.js";
+export * from "./workCohortCompletionEvidence.js";
+export * from "./workCohortAdvance.js";
+export * from "./workCohortPrimary.js";

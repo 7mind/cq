@@ -8,9 +8,10 @@
     "types": ["bun-types"],
     "paths": {
       "@cq/config": ["../cq-config/src/index.ts"],
-      "@cq/ledger": ["../ledger/src/index.ts"]
+      "@cq/ledger": ["../ledger/src/index.ts"],
+      "@cq/process-control": ["../process-control/src/index.ts"]
     }
   },
-  "references": [{ "path": "../cq-config" }, { "path": "../ledger" }],
+  "references": [{ "path": "../cq-config" }, { "path": "../ledger" }, { "path": "../process-control" }],
   "include": ["scripts", "src", "test"]
 }

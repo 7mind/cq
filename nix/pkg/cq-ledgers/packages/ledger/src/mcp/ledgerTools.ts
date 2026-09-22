@@ -34,6 +34,8 @@
  */
 
 import { z } from "zod";
+import { COHORT_ADMISSION_PLAN_SCHEMA, parseCohortAdmissionPlanV1, readCohortAdvanceStatusV1, readCohortReadyBoundariesV1, type CohortAdvanceCapabilityV1 } from "../workCohortAdvance.js";
+import { COHORT_INVESTIGATION_ADVANCE_SCHEMA, type CohortInvestigationAdvanceCapabilityV1 } from "../workCohortInvestigationAdvance.js";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -143,6 +145,8 @@ import {
 import { parseRef } from "../refs.js";
 import type { WorksetStore } from "../worksetStore.js";
 import type { ImplementationEvidenceService } from "../implementationEvidence.js";
+import { assertCohortCompletionBatchV1, type CohortCompletionBatchV1, type CohortCompletionCapabilityV1 } from "../workCohortCompletion.js";
+import { assertCohortEffectEnvelopeV1, type CohortEffectEnvelopeV1 } from "../workCohort.js";
 import {
   extraWithMeasurement,
   measurementFromExtra,
@@ -210,6 +214,10 @@ export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "prepare_implementation_completion",
   "record_implementation_completion",
   "record_implementation_adoption",
+  "record_cohort_review",
+  "complete_cohort",
+  "cohort_advance",
+  "cohort_investigation_advance",
 ] as const satisfies readonly LedgerToolName[];
 
 const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
@@ -630,6 +638,9 @@ export function createLedgerMcpToolSpecifications(
   implementationEvidence?: ImplementationEvidenceService,
   exposeImplementationEvidence = isTrustedWorksetManagementAuthority(worksetAuthority),
   planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): LedgerToolSpecification[] {
   let genericMutations: WorksetGenericMutationGateway | null = null;
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
@@ -1094,11 +1105,11 @@ export function createLedgerMcpToolSpecifications(
 
   const executeFinalizeTool = tool(
     "execute_finalize",
-    "Atomically execute an ordered batch of milestone/goal closes and milestone archives under one workset admission.",
+    "Atomically execute milestone/goal closes, milestone archives, or versioned exact terminal-item archives under one workset admission.",
     {
       operations: z
         .array(
-          z
+          z.union([z
             .object({
               id: z.string().min(1),
               target_id: safeIdSchema,
@@ -1106,7 +1117,16 @@ export function createLedgerMcpToolSpecifications(
               target_status: z.string().min(1).optional(),
               summary: z.string().optional(),
             })
-            .strict(),
+            .strict(), z.object({
+              id: z.string().min(1),
+              action: z.literal("archive-terminal-item"),
+              version: z.literal(1),
+              target_id: z.string().regex(/^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/),
+              expected_milestone_id: safeIdSchema,
+              expected_updated_at: z.string().min(1),
+              expected_item_digest: z.string().regex(/^[0-9a-f]{64}$/),
+              summary: z.string().min(1),
+            }).strict()]),
         )
         .min(1),
     } as const,
@@ -1114,7 +1134,16 @@ export function createLedgerMcpToolSpecifications(
       const measurement = measurementFromExtra(extra);
       assertOnlyToolArguments("execute_finalize", args, ["operations"]);
       const result = await mutationsFor("execute_finalize").executeFinalize(
-        args.operations.map((operation) => ({
+        args.operations.map((operation) => operation.action === "archive-terminal-item" ? {
+          id: operation.id,
+          targetId: operation.target_id,
+          action: operation.action,
+          version: operation.version,
+          expectedMilestoneId: operation.expected_milestone_id,
+          expectedUpdatedAt: operation.expected_updated_at,
+          expectedItemDigest: operation.expected_item_digest,
+          summary: operation.summary,
+        } : ({
           id: operation.id,
           targetId: operation.target_id,
           action: operation.action,
@@ -1873,6 +1902,88 @@ export function createLedgerMcpToolSpecifications(
 
   // ---- Filesystem read (1) -----------------------------------------------
 
+  const recordCohortReviewTool = tool("record_cohort_review",
+    "Authenticate one consumed whole-candidate reviewer dispatch and retain exact all-member observations.", {
+      reviewer_dispatch: dispatchHandle, envelope: z.unknown(),
+      operation_id: z.string().min(1), author: z.string().min(1), session: z.string().min(1),
+    }, async (args) => {
+      if (cohortCompletion === undefined) return jsonResult({ state: "executor-unavailable" });
+      const envelope = args.envelope as CohortEffectEnvelopeV1;
+      assertCohortEffectEnvelopeV1(envelope);
+      return jsonResult(await cohortCompletion.recordReview({ reviewerDispatch: args.reviewer_dispatch,
+        envelope, operationId: args.operation_id, author: args.author, session: args.session }));
+    });
+  const completeCohortTool = tool("complete_cohort",
+    "Merge, deploy and atomically record one exact accepted cohort; every member succeeds together.", {
+      batch: z.unknown(),
+    }, async (args) => {
+      if (cohortCompletion === undefined) return jsonResult({ state: "executor-unavailable" });
+      const batch = args.batch as CohortCompletionBatchV1;
+      assertCohortCompletionBatchV1(batch);
+      return jsonResult(await cohortCompletion.complete({ batch }));
+    });
+  const cohortAdvanceTool = tool("cohort_advance",
+    "Observe every proposed member against the primary workset and exact Git source, derive mandatory safe fusion, or prepare one complete implementation cohort. No task anchor or caller-minted authority.", {
+      operation: z.enum(["observe", "prepare", "resume", "rebase-successor"]), operation_id: z.string().min(1),
+      plan: COHORT_ADMISSION_PLAN_SCHEMA.optional(), definition_digest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+      intent_digest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+      worker_dispatch: z.object({ attestationId: z.string().min(1), generation: z.number().int().positive() }).strict().optional(),
+      rebase: z.object({ source_dispatch: dispatchHandle, guarded_rebase: z.string().min(1),
+        onto_commit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+        prior_result_commit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+      }).strict().optional(),
+    }, async (args) => {
+      if (cohortAdvance === undefined) return jsonResult({ state: "executor-unavailable" });
+      if (args.operation === "rebase-successor") {
+        if (args.plan !== undefined || args.definition_digest !== undefined || args.intent_digest !== undefined ||
+            args.worker_dispatch !== undefined || args.rebase === undefined) {
+          throw new Error("cohort rebase recovery requires only its exact retired checkpoint coordinates");
+        }
+        if (dispatchCapability?.resumeCohortRebaseSuccessor === undefined) return jsonResult({ state: "executor-unavailable" });
+        return jsonResult(await dispatchCapability.resumeCohortRebaseSuccessor({ source: args.rebase.source_dispatch,
+          guardedRebase: args.rebase.guarded_rebase, ontoCommit: args.rebase.onto_commit,
+          priorResultCommit: args.rebase.prior_result_commit, holderId: args.operation_id }));
+      }
+      if (args.plan === undefined || args.rebase !== undefined) throw new Error("cohort admission requires a plan without rebase checkpoint coordinates");
+      const plan = parseCohortAdmissionPlanV1(args.plan);
+      if (args.operation === "observe") {
+        if (args.definition_digest !== undefined || args.intent_digest !== undefined || args.worker_dispatch !== undefined) throw new Error("cohort observation cannot contain selected execution coordinates");
+        return jsonResult(await cohortAdvance.observe({ plan, operationId: args.operation_id }));
+      }
+      if (args.definition_digest === undefined) throw new Error("cohort preparation requires its exact observed definition");
+      if (args.operation === "resume") {
+        if (args.intent_digest === undefined) throw new Error("cohort resume requires its exact candidate intent");
+        return jsonResult(await cohortAdvance.resume({ plan, operationId: args.operation_id, definitionDigest: args.definition_digest,
+          intentDigest: args.intent_digest, ...(args.worker_dispatch === undefined ? {} : { workerDispatch: args.worker_dispatch }) }));
+      }
+      if (args.intent_digest !== undefined || args.worker_dispatch !== undefined) throw new Error("cohort prepare cannot renew existing execution coordinates");
+      return jsonResult(await cohortAdvance.prepare({ plan, operationId: args.operation_id, definitionDigest: args.definition_digest }));
+    });
+  const cohortInvestigationTool = tool("cohort_investigation_advance",
+    "Prepare or collect all-member investigation roles, resume retained evidence, execute an explicit parent-approved probe, or record separate member adjudications. Local management execution only.", {
+      input: COHORT_INVESTIGATION_ADVANCE_SCHEMA,
+    }, async (args) => {
+      if (cohortInvestigation === undefined) return jsonResult({ state: "executor-unavailable" });
+      return jsonResult(await cohortInvestigation.advance(args.input));
+    });
+  const getCohortStatusTool = tool("get_cohort_status",
+    "Read durable cohort definitions and measured receipt counts. Never returns live lease capabilities.", {}, async () => {
+      const cohorts = store.workCohortStore === undefined ? undefined : store.workCohortStore();
+      return jsonResult({ executor: cohortAdvance === undefined ? "unavailable" : "local",
+        status: cohorts === undefined ? null : await readCohortAdvanceStatusV1(cohorts),
+        readyBoundaries: await readCohortReadyBoundariesV1(store) });
+    });
+  const getCohortCompletionStatusTool = tool("get_cohort_completion_status",
+    "Read retained cohort completion metadata without requiring a local executor.", {
+      operation_id: z.string().min(1),
+    }, async (args) => {
+      if (cohortCompletion !== undefined) return jsonResult(await cohortCompletion.status({ operationId: args.operation_id }));
+      const cohorts = store.workCohortStore === undefined ? null : store.workCohortStore();
+      const handoff = cohorts === null ? null :
+        (await cohorts.snapshot()).portable.completionHandoffs.findLast((value) => value.operationId === args.operation_id) ?? null;
+      return jsonResult({ executor: "unavailable", handoff });
+    });
+
   const readLogTool = tool(
     "read_log",
     'Read a log file under the ledger\'s <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. "20260101-1200-session.md"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.',
@@ -2150,8 +2261,14 @@ export function createLedgerMcpToolSpecifications(
           prepareImplementationCompletionTool,
           recordImplementationCompletionTool,
           recordImplementationAdoptionTool,
+          recordCohortReviewTool,
+          completeCohortTool,
+          cohortAdvanceTool,
+          cohortInvestigationTool,
         ]
       : []),
+    getCohortCompletionStatusTool,
+    getCohortStatusTool,
   ] as unknown as AnyTool[];
 
   const registeredToolNames = (
@@ -2284,6 +2401,9 @@ export function createLedgerMcpTools(
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
   implementationEvidence?: ImplementationEvidenceService,
   planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): AnyTool[] {
   assertToolPrefix(toolPrefix);
   const specifications = selectLedgerMcpToolSpecifications(
@@ -2299,6 +2419,9 @@ export function createLedgerMcpTools(
       implementationEvidence,
       isTrustedWorksetManagementAuthority(worksetAuthority),
       planClaimAuthorityMinter,
+      cohortCompletion,
+      cohortAdvance,
+      cohortInvestigation,
     ),
     profileName,
   );
@@ -2325,6 +2448,9 @@ export function createManagementLedgerMcpTools(
   worktreeManage?: WorktreeManageCapability,
   implementationEvidence?: ImplementationEvidenceService,
   planClaimAuthorityMinter: PlanClaimAuthorityMinter = createNodeCryptoPlanClaimAuthorityMinter(),
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): AnyTool[] {
   return createLedgerMcpTools(
     store,
@@ -2339,6 +2465,9 @@ export function createManagementLedgerMcpTools(
     createTrustedWorksetManagementAuthority(),
     implementationEvidence,
     planClaimAuthorityMinter,
+    cohortCompletion,
+    cohortAdvance,
+    cohortInvestigation,
   );
 }
 

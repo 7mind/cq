@@ -108,6 +108,7 @@ export interface WorksetGenericMutationTx {
     ledgerIds: readonly string[],
     summary: string,
     gatePolicy: ArchiveTerminalItemsGatePolicy,
+    exactRefs?: readonly string[],
   ): ArchiveTerminalItemsResult;
   collectArchiveSweepRefs(milestoneId: string): readonly string[];
   archiveMilestone(milestoneId: string, summary: string): ArchivePointer;
@@ -413,7 +414,7 @@ export function createGenericMutationTransaction(
       }
       return affected.sort();
     },
-    archiveTerminalItems: (ledgerIds, summary, gatePolicy) => {
+    archiveTerminalItems: (ledgerIds, summary, gatePolicy, exactRefs) => {
       if (gatePolicy !== "fail-on-active-gate" && gatePolicy !== "retain-active-gates") {
         throw new LedgerError(`unknown terminal-item archive gate policy "${gatePolicy}"`);
       }
@@ -425,6 +426,25 @@ export function createGenericMutationTransaction(
       }
       for (const ledgerId of selectedLedgerIds) getLedger(ledgerId);
 
+      const selectedRefs = exactRefs === undefined ? null : new Set(exactRefs);
+      if (selectedRefs !== null) {
+        if (selectedRefs.size === 0 || selectedRefs.size !== exactRefs!.length) {
+          throw new LedgerError("exact terminal archive requires distinct non-empty refs");
+        }
+        for (const ref of selectedRefs) {
+          const [ledgerId, itemId, extra] = ref.split(":");
+          if (ledgerId === undefined || itemId === undefined || extra !== undefined ||
+              !selectedLedgerIds.includes(ledgerId)) {
+            throw new LedgerError(`invalid exact terminal archive ref "${ref}"`);
+          }
+          const ledger = getLedger(ledgerId);
+          const item = findItem(ledger, itemId).item;
+          if (!ledger.schema.terminalStatuses.includes(item.status)) {
+            throw new LedgerError(`exact archive requires terminal item "${ref}"`);
+          }
+        }
+      }
+
       const leavingUnsatisfied = new Map<string, string>();
       for (const ledgerId of selectedLedgerIds) {
         const ledger = getLedger(ledgerId);
@@ -433,6 +453,7 @@ export function createGenericMutationTransaction(
           for (const item of group.items) {
             if (
               terminal.has(item.status) &&
+              (selectedRefs === null || selectedRefs.has(`${ledgerId}:${item.id}`)) &&
               !statusSatisfiesDependency(ledger.schema, item.status)
             ) {
               leavingUnsatisfied.set(`${ledgerId}:${item.id}`, group.id);
@@ -468,7 +489,8 @@ export function createGenericMutationTransaction(
         for (const group of ledger.milestones) {
           for (const item of group.items) {
             const ref = `${ledgerId}:${item.id}`;
-            if (terminal.has(item.status) && ownersWithActiveChildren.has(ref)) {
+            if (terminal.has(item.status) && ownersWithActiveChildren.has(ref) &&
+                (selectedRefs === null || selectedRefs.has(ref))) {
               retainedActiveOwners.push(ref);
             }
           }
@@ -476,6 +498,9 @@ export function createGenericMutationTransaction(
       }
       retainedActiveOwners.sort();
       const retained = new Set([...retainedActiveGates, ...retainedActiveOwners]);
+      if (selectedRefs !== null && [...selectedRefs].some((ref) => retained.has(ref))) {
+        throw new LedgerError("exact terminal archive cannot remove an active gate or owner");
+      }
 
       const milestones = getLedger(MILESTONES_LEDGER);
       const byLedger: Record<string, number> = {};
@@ -487,7 +512,8 @@ export function createGenericMutationTransaction(
         for (const group of [...ledger.milestones]) {
           const leaving = group.items.filter(
             (item) =>
-              terminal.has(item.status) && !retained.has(`${ledgerId}:${item.id}`),
+              terminal.has(item.status) && !retained.has(`${ledgerId}:${item.id}`) &&
+              (selectedRefs === null || selectedRefs.has(`${ledgerId}:${item.id}`)),
           );
           if (leaving.length === 0) continue;
           const leavingIds = new Set(leaving.map((item) => item.id));

@@ -817,6 +817,7 @@ describe("dispatch-bound Git change capability", () => {
       ],
     });
     expect(incrementalReceipt.oldHead).toBe(receipt.newHead);
+    if (receipt.version !== 1 || incrementalReceipt.version !== 1) throw new Error("task fixture received a cohort receipt");
     expect(
       await git(managed.handle.absolutePath, ["rev-parse", `${incrementalReceipt.newHead}^`]),
     ).toBe(receipt.newHead);

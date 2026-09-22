@@ -1,6 +1,7 @@
 import type { PlanOperationReplayRecord, PlanPrivateClaimRecord } from "../planLifecycle.js";
 import type { GenericMutationDataSource } from "./genericMutationDataSource.js";
 import type { InMemoryPlanOperationRecord } from "./inMemoryPlanLifecycle.js";
+import type { ArchivePointer } from "../types.js";
 
 export type LifecycleClaimRequestKey = Pick<PlanPrivateClaimRecord, "goalId" | "claimRequestId">;
 export type LifecycleClaimKey = Pick<PlanPrivateClaimRecord, "goalId" | "claimId" | "generation">;
@@ -26,10 +27,8 @@ export interface ImplementationCompletionBindingRecord {
 }
 
 export interface LifecycleRowRepository {
-  readonly publicRows: Pick<
-    GenericMutationDataSource,
-    "listLedgers" | "fetchActiveItem" | "fetchArchivedItem" | "referenceTargets" | "referenceSources"
-  >;
+  readonly publicRows: GenericMutationDataSource;
+  fetchArchivePointer(ledgerId: string, pointerId: string): ArchivePointer | undefined;
   fetchGroup(ledgerId: string, groupId: string): LifecycleGroup | undefined;
   taskRefsByMilestones(milestoneIds: readonly string[]): readonly string[];
   fetchClaimByRequest(key: LifecycleClaimRequestKey): PlanPrivateClaimRecord | undefined;

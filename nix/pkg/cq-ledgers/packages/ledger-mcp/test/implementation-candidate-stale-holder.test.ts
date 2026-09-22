@@ -191,7 +191,199 @@ async function completeCandidate(
   );
 }
 
+async function exerciseCompletionAuthorityPartitionRevision(
+  backendKind: "in-memory" | "sqlite",
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), `cq-t6520-partition-revision-${backendKind}-`));
+  const stateDir = join(root, ".manager-state");
+  await git(root, ["init", "-q", "-b", "main"]);
+  await writeFile(join(root, "candidate.ts"), "export const candidate = false;\n");
+  await git(root, ["add", "candidate.ts"]);
+  await git(root, ["commit", "-q", "-m", "candidate base"]);
+  const baseCommit = await git(root, ["rev-parse", "HEAD"]);
+  const managed = await prepareManagedWorktree(
+    { repositoryRoot: root, taskId: "T6520", baseCommit },
+    { stateDir, skipInstall: true, bunWorkspaceRoot: root },
+  );
+  if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+  const gitEffectBinding = await resolveManagedWorktreeDispatchBinding(
+    {
+      repositoryRoot: root,
+      taskId: "T6520",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+    },
+    { stateDir },
+  );
+  if (gitEffectBinding === null) throw new Error("managed candidate binding did not resolve");
+  await writeFile(
+    join(managed.handle.absolutePath, "candidate.ts"),
+    "export const candidate = true;\n",
+  );
+  await git(managed.handle.absolutePath, ["add", "candidate.ts"]);
+  await git(managed.handle.absolutePath, ["commit", "-q", "-m", "candidate result"]);
+  const resultCommit = await git(managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+  const resultTree = await git(managed.handle.absolutePath, ["rev-parse", "HEAD^{tree}"]);
+  const backend =
+    backendKind === "in-memory"
+      ? new InMemoryAttestationBackend(
+          new InMemoryAttestationStore({
+            backend: "xdg",
+            projectKey: "candidate-completion-partition-revision-memory",
+          }),
+        )
+      : new SqliteAttestationBackend({
+          namespace: {
+            backend: "xdg",
+            projectKey: "candidate-completion-partition-revision-sqlite",
+          },
+          dbPath: join(root, "attestations.sqlite"),
+        });
+  try {
+    const ledgerStore = finalizedCandidateTaskStore();
+    const taskEvidence = currentRecoveryTaskEvidence(ledgerStore, "T6520");
+    const fixture = new ImplementationCandidateQueueFixture(backend);
+    const common = {
+      repositoryId: gitEffectBinding.repositoryId,
+      integrationRef: "refs/heads/main",
+      goalRef: "goals:G211",
+      finalizedManifestDigest: taskEvidence.finalizedManifestDigest,
+    } as const;
+    const front = await fixture.stage({
+      ...common,
+      taskId: "T6520",
+      idempotencyKey: `${backendKind}-completion-front`,
+      gitEffectBinding,
+      resultCommit,
+      resultTree,
+      withReceipt: true,
+    });
+    const qualifiedFront = await fixture.adapter.qualifyNativeCompletion({
+      candidate: front.candidate,
+      ...front.qualification,
+    });
+    const leasedFront = await fixture.adapter.acquire({
+      partitionKey: qualifiedFront.queue.partition.partitionKey,
+      holderId: `${backendKind}-completion-holder`,
+    });
+    if (leasedFront.state !== "leased") throw new Error("completion front did not lease");
+    await completeCandidate(
+      backend,
+      fixture,
+      front,
+      leasedFront.lease,
+      baseCommit,
+      baseCommit,
+      resultCommit,
+    );
+
+    const capability = createDispatchCapability({
+      backend,
+      promptArtifactStore: candidatePromptArtifacts(),
+      ledgerStore,
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+      repositoryRoot: root,
+      worktreeStateDir: stateDir,
+      now: fixture.clock.now,
+    });
+    if (
+      capability.resolveImplementationCandidateAuthority === undefined ||
+      capability.reserveImplementationCandidateAuthority === undefined ||
+      capability.releaseImplementationCandidateAuthority === undefined
+    ) {
+      throw new Error("completion candidate authority controls are unavailable");
+    }
+    const authority = await capability.resolveImplementationCandidateAuthority({
+      workerDispatch: front.prepared,
+      taskRef: "tasks:T6520",
+      resultCommit,
+    });
+    const binding = {
+      operationId: `${backendKind}-completion`,
+      completionRef: `cq-implementation-completion:v1:${"1".repeat(64)}`,
+      mergeOperationId: `${backendKind}-merge`,
+      taskRef: "tasks:T6520",
+      resultCommit,
+    } as const;
+
+    const qualifyTrailing = async (taskId: "T6521" | "T6522"): Promise<void> => {
+      const trailing = await fixture.stage({
+        ...common,
+        taskId,
+        idempotencyKey: `${backendKind}-completion-trailing-${taskId}`,
+      });
+      await fixture.adapter.qualifyNativeCompletion({
+        candidate: trailing.candidate,
+        ...trailing.qualification,
+      });
+    };
+
+    await qualifyTrailing("T6521");
+    await expect(
+      capability.reserveImplementationCandidateAuthority(
+        { ...authority, leaseHolderId: `${authority.leaseHolderId}-stale` },
+        binding,
+      ),
+    ).rejects.toThrow("authority changed before completion reservation");
+    await expect(
+      capability.reserveImplementationCandidateAuthority(
+        { ...authority, leaseGeneration: authority.leaseGeneration + 1 },
+        binding,
+      ),
+    ).rejects.toThrow("authority changed before completion reservation");
+    await expect(
+      capability.reserveImplementationCandidateAuthority(authority, {
+        ...binding,
+        resultCommit: baseCommit,
+      }),
+    ).rejects.toThrow("completion reservation does not match the qualified candidate");
+    await capability.reserveImplementationCandidateAuthority(authority, binding);
+    await capability.reserveImplementationCandidateAuthority(authority, binding);
+
+    await qualifyTrailing("T6522");
+    await expect(
+      capability.releaseImplementationCandidateAuthority(
+        { ...authority, leaseHolderId: `${authority.leaseHolderId}-stale` },
+        binding,
+      ),
+    ).rejects.toThrow("exact live lease");
+    await expect(
+      capability.releaseImplementationCandidateAuthority(
+        { ...authority, leaseGeneration: authority.leaseGeneration + 1 },
+        binding,
+      ),
+    ).rejects.toThrow("release coordinates changed");
+    await expect(
+      capability.releaseImplementationCandidateAuthority(authority, {
+        ...binding,
+        resultCommit: baseCommit,
+      }),
+    ).rejects.toThrow("does not match the durable lease reservation");
+    await capability.releaseImplementationCandidateAuthority(authority, binding);
+    await capability.releaseImplementationCandidateAuthority(authority, binding);
+    await expect(
+      capability.releaseImplementationCandidateAuthority(authority, {
+        ...binding,
+        mergeOperationId: `${binding.mergeOperationId}-altered`,
+      }),
+    ).rejects.toThrow("exact live lease");
+  } finally {
+    if (backend instanceof SqliteAttestationBackend) await backend.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 describe("implementation candidate stale-holder fencing [Behavioral-Active, Blackbox-Group]", () => {
+  // regression: T6560 generation 4 — row-local revisions become stale when a
+  // trailing candidate advances the partition before reserve or release.
+  for (const backendKind of ["in-memory", "sqlite"] as const) {
+    test(`production completion authority uses the current ${backendKind} partition revision [Behavioral-Active Blackbox-${
+      backendKind === "in-memory" ? "Group" : "GoodCommunication"
+    }]`, async () => {
+      await exerciseCompletionAuthorityPartitionRevision(backendKind);
+    });
+  }
+
   test("only the current resumed lease generation can attach gate evidence", async () => {
     const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
     const fixture = new ImplementationCandidateQueueFixture(backend);

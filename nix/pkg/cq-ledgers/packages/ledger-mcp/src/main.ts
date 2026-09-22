@@ -79,6 +79,9 @@ import {
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
   type ImplementationEvidenceService,
+  type CohortCompletionCapabilityV1,
+  type CohortAdvanceCapabilityV1,
+  type CohortInvestigationAdvanceCapabilityV1,
   type PlanClaimAuthorityMinter,
   createNodeCryptoPlanClaimAuthorityMinter,
 } from "@cq/ledger";
@@ -90,12 +93,20 @@ import {
 } from "@cq/config";
 import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
+import { createCohortCompletionRuntimeV1 } from "./workCohortCompletionRuntime.js";
+import { createCohortAdvanceRuntimeV1 } from "./workCohortAdvanceRuntime.js";
+import { createCohortInvestigationAdvanceRuntimeV1 } from "./workCohortInvestigationAdvanceRuntime.js";
 import {
   createProductionImplementationEvidenceService,
   type CreateProductionImplementationEvidenceServiceOptions,
 } from "./implementationEvidenceRuntime.js";
 
 export { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
+export { createCohortCompletionRuntimeV1 } from "./workCohortCompletionRuntime.js";
+export { createCohortAdvanceRuntimeV1 } from "./workCohortAdvanceRuntime.js";
+export { createCohortInvestigationAdvanceRuntimeV1 } from "./workCohortInvestigationAdvanceRuntime.js";
+export { createInvestigationNativeProviderHostV1, assertInvestigationNativeSingletonDispatchV1, type InvestigationNativeProviderHostV1 } from "./investigationNativeProviderHost.js";
+export type { CohortCompletionRuntimeOptionsV1 } from "./workCohortCompletionRuntime.js";
 export type { CreateProductionImplementationEvidenceServiceOptions } from "./implementationEvidenceRuntime.js";
 export {
   IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES,
@@ -580,7 +591,9 @@ export async function readImplementationCandidateCoordinateRequest(
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (buffered.length + bytes.length > PARENT_GATE_REQUEST_MAX_BYTES) {
         cleanup();
-        rejectInput(new Error("ledger-mcp: implementation coordinator request exceeds 16384 bytes"));
+        rejectInput(
+          new Error("ledger-mcp: implementation coordinator request exceeds 16384 bytes"),
+        );
         return;
       }
       buffered = Buffer.concat([buffered, bytes]);
@@ -619,8 +632,7 @@ export async function readImplementationCandidateCoordinateRequest(
   }
   const request = parsed as Record<string, unknown>;
   const parentGateCapability = request["parentGateCapability"] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   const successorLaunch = request["successorLaunch"] as Record<string, unknown> | undefined;
   const requestFields = Object.keys(request).sort().join(",");
   const baseFields = "attestationId,generation,holderId,parentGateCapability";
@@ -651,9 +663,7 @@ export async function readImplementationCandidateCoordinateRequest(
         typeof successorLaunch["reasoningEffort"] !== "string" ||
         successorLaunch["reasoningEffort"].trim() === "" ||
         typeof successorLaunch["sandboxMode"] !== "string" ||
-        !(CODEX_ROLE_SANDBOX_MODES as readonly string[]).includes(
-          successorLaunch["sandboxMode"],
-        )))
+        !(CODEX_ROLE_SANDBOX_MODES as readonly string[]).includes(successorLaunch["sandboxMode"])))
   ) {
     throw new Error("ledger-mcp: malformed implementation coordinator request");
   }
@@ -687,6 +697,14 @@ export function createImplementationSuccessorLauncher(
     if (correlationId.trim() === "" || expectedChild.runId.trim() === "") {
       throw new Error("implementation successor launch run identity is malformed");
     }
+    const { assertCodexBoundaryEffectTargetRef } = await import("@cq/config");
+    const { cohortEffectTargetRefV1 } = await import("@cq/process-control");
+    if (managed.cohort !== undefined && Object.hasOwn(managed, "taskId")) {
+      throw new Error("implementation cohort successor cannot carry a task anchor");
+    }
+    const effectTargetRef = managed.cohort === undefined
+      ? assertCodexBoundaryEffectTargetRef(`tasks:${managed.taskId}`)
+      : assertCodexBoundaryEffectTargetRef(cohortEffectTargetRefV1(managed.cohort), managed.cohort);
     const invocation = {
       roleId: "implement-worker",
       handle: {
@@ -697,7 +715,8 @@ export function createImplementationSuccessorLauncher(
       resultCapability: prepared.resultCapability,
       parentGateCapability: prepared.parentGateCapability,
       gitChangeCapability: prepared.gitChangeCapability,
-      effectTargetRef: `tasks:${managed.taskId}`,
+      effectTargetRef,
+      ...(managed.cohort === undefined ? {} : { cohort: managed.cohort }),
       cwd: managed.worktreePath,
       ledgerCwd: managed.repositoryRoot,
       model: profile.model,
@@ -1052,6 +1071,9 @@ export interface CreateLedgerMcpServerOptions {
   enableLogWrite?: boolean;
   /** Protected implementation review/completion evidence service. */
   implementationEvidence?: ImplementationEvidenceService;
+  cohortCompletion?: CohortCompletionCapabilityV1;
+  cohortAdvance?: CohortAdvanceCapabilityV1;
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1;
   /** Runtime source for plan-claim authority; production defaults to node:crypto. */
   planClaimAuthorityMinter?: PlanClaimAuthorityMinter;
 }
@@ -1111,6 +1133,9 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
           ...(opts.dispatchCapability?.resolveContinuation === undefined
             ? {}
             : { resolveDispatchContinuation: opts.dispatchCapability.resolveContinuation }),
+          ...(opts.dispatchCapability?.resolveStagedRebase === undefined
+            ? {}
+            : { resolveStagedRebase: opts.dispatchCapability.resolveStagedRebase }),
           deps: {
             adoptionActivityFence: createGitLegacyWorktreeActivityFence(
               opts.dispatchCapability?.observeWorktreeActivity,
@@ -1131,6 +1156,9 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       opts.implementationEvidence,
       isTrustedWorksetManagementAuthority(opts.worksetAuthority),
       opts.planClaimAuthorityMinter ?? createNodeCryptoPlanClaimAuthorityMinter(),
+      opts.cohortCompletion,
+      opts.cohortAdvance,
+      opts.cohortInvestigation,
     ),
     toolProfile,
   );
@@ -1196,6 +1224,9 @@ export function buildServer(
   dispatchCapability?: DispatchCapability,
   repositoryRoot?: string,
   implementationEvidence?: ImplementationEvidenceService,
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): McpServer {
   return createLedgerMcpServer({
     store,
@@ -1206,6 +1237,9 @@ export function buildServer(
     ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
     ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
     ...(implementationEvidence !== undefined ? { implementationEvidence } : {}),
+    ...(cohortCompletion !== undefined ? { cohortCompletion } : {}),
+    ...(cohortAdvance !== undefined ? { cohortAdvance } : {}),
+    ...(cohortInvestigation !== undefined ? { cohortInvestigation } : {}),
   });
 }
 
@@ -1348,6 +1382,9 @@ export function attachMcpHttp(
   trustedDefaultScope: McpSessionScope = "observe",
   enableLogWrite = false,
   implementationEvidence?: ImplementationEvidenceService,
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): McpHttpHandlers {
   assertMcpHttpCredentialSeparation(credentials);
   const sessions = new Map<string, McpSessionBinding>();
@@ -1413,6 +1450,9 @@ export function attachMcpHttp(
       toolProfile,
       ...(enableLogWrite ? { enableLogWrite: true } : {}),
       ...(implementationEvidence !== undefined ? { implementationEvidence } : {}),
+      ...(cohortCompletion !== undefined ? { cohortCompletion } : {}),
+      ...(cohortAdvance !== undefined ? { cohortAdvance } : {}),
+      ...(cohortInvestigation !== undefined ? { cohortInvestigation } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -1477,6 +1517,9 @@ export function serveHttp(
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   repositoryRoot?: string,
   implementationEvidence?: ImplementationEvidenceService,
+  cohortCompletion?: CohortCompletionCapabilityV1,
+  cohortAdvance?: CohortAdvanceCapabilityV1,
+  cohortInvestigation?: CohortInvestigationAdvanceCapabilityV1,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -1493,6 +1536,9 @@ export function serveHttp(
     "observe",
     false,
     implementationEvidence,
+    cohortCompletion,
+    cohortAdvance,
+    cohortInvestigation,
   );
 
   return Bun.serve({
@@ -1603,7 +1649,7 @@ export async function main(
     implementationCandidateCoordinateRequest?.successorLaunch === undefined ||
     resolvedPromptSurface === undefined
       ? undefined
-        : createImplementationSuccessorLauncher(
+      : createImplementationSuccessorLauncher(
           implementationCandidateCoordinateRequest.successorLaunch,
           resolvedPromptSurface.root,
           process.env,
@@ -1615,9 +1661,7 @@ export async function main(
       ? {}
       : { promptArtifactStore: resolvedPromptSurface.store }),
     environment: process.env,
-    ...(implementationSuccessorLauncher === undefined
-      ? {}
-      : { implementationSuccessorLauncher }),
+    ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
   });
   const dispatchCapability =
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
@@ -1630,6 +1674,20 @@ export async function main(
           ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
         })
       : undefined;
+  const cohortCancellation = new AbortController();
+  const cohortAdvance = dispatchRuntime.kind === "available" && resolvedPromptSurface !== undefined
+    ? await createCohortAdvanceRuntimeV1({ resolved, promptArtifacts: resolvedPromptSurface.store, dispatch: dispatchRuntime.capability })
+    : undefined;
+  const cohortCompletion = dispatchRuntime.kind === "available" && resolvedPromptSurface !== undefined
+    ? createCohortCompletionRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+      promptArtifacts: resolvedPromptSurface.store, cancellationSignal: cohortCancellation.signal,
+      ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace) })
+    : undefined;
+  const cohortInvestigation = dispatchRuntime.kind === "available" && resolvedPromptSurface !== undefined
+    ? await createCohortInvestigationAdvanceRuntimeV1({ resolved, backend: dispatchRuntime.backend,
+      dispatch: dispatchRuntime.capability, promptArtifacts: resolvedPromptSurface.store,
+      cancellationSignal: cohortCancellation.signal })
+    : undefined;
 
   if (implementationCandidateQualify) {
     try {
@@ -1704,6 +1762,9 @@ export async function main(
       toolProfile,
       cwd,
       implementationEvidence,
+      cohortCompletion,
+      cohortAdvance,
+      cohortInvestigation,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs after the XDG projection acknowledges each scoped change.
@@ -1711,6 +1772,7 @@ export async function main(
       server.publish(LEDGER_TOPIC, changedFrame(ledger));
     });
     const shutdown = (): void => {
+      cohortCancellation.abort();
       watcher.close();
       void (async () => {
         await server.stop(true);
@@ -1739,6 +1801,9 @@ export async function main(
     repositoryRoot: cwd,
     toolProfile,
     ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
+    ...(cohortCompletion === undefined ? {} : { cohortCompletion }),
+    ...(cohortAdvance === undefined ? {} : { cohortAdvance }),
+    ...(cohortInvestigation === undefined ? {} : { cohortInvestigation }),
   };
   const server = management
     ? createManagementLedgerMcpServer(serverOptions)
@@ -1753,6 +1818,7 @@ export async function main(
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    cohortCancellation.abort();
     stopParentWatch();
     stopStdinWatch();
     watcher.close();

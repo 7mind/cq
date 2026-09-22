@@ -219,6 +219,8 @@ import {
   type WorksetGenericMutationTx,
 } from "../genericMutationTransaction.js";
 import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
+import type { WorkCohortStore } from "../../workCohortStore.js";
+import { createPostgresWorkCohortStore } from "./postgresWorkCohortStore.js";
 
 export interface PostgresLedgerStoreOpts {
   readonly accessObserver?: PostgresAccessObserver;
@@ -413,6 +415,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private closing = false;
   /** Lazy T1958 workset roots/admission store for this tenant. */
   private workset: PostgresWorksetStore | null = null;
+  private workCohort: WorkCohortStore | null = null;
 
   constructor(opts: PostgresLedgerStoreOpts) {
     this.handle = opts.pool;
@@ -512,6 +515,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       await this.recordCoherence(tx, [{ ledger: IDEAS_LEDGER, documentId: POSTGRES_RESET_CONTROL_ID, scope: "control", kind: "upsert" }]);
       return true;
     });
+    this.workCohort = await createPostgresWorkCohortStore(pool, pk);
     this.searchProjection = this.searchProjectionFactory();
     this.projectionRecovery = new SearchProjectionRecovery(this.searchProjection, {
       load: (afterVersion, rebuild, signal) => this.loadProjectionFrame(afterVersion, rebuild, signal),
@@ -714,6 +718,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         SELECT ${shadowKey}, roots_json, epoch, admit_generation, updated_at
         FROM workset_roots WHERE project_key = ${pk}
       `;
+      await tx`
+        INSERT INTO work_cohort_state
+          (project_key, state_json, execution_epoch, resume_required, lease_json, resume_validation_json, revision)
+        SELECT ${shadowKey}, state_json, ${randomUUID()}, TRUE, NULL, NULL, revision
+        FROM work_cohort_state WHERE project_key = ${pk}
+      `;
 
       // Wipe the ORIGINAL tenant's rows (children first, FK order), then
       // reseed the full canonical set fresh — same write shape as
@@ -726,6 +736,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           AND form NOT IN ('exclusive-set', 'exclusive-administrative')
       `;
       await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
+      await tx`DELETE FROM work_cohort_state WHERE project_key = ${pk}`;
 
       await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${pk}`;
       await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
@@ -856,6 +867,18 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return this.workset;
   }
 
+  workCohortStore(): WorkCohortStore {
+    this.assertInit();
+    if (this.workCohort === null) {
+      throw new LedgerError("PostgresLedgerStore work cohort capability is not mounted");
+    }
+    return this.workCohort;
+  }
+
+  async exportWorkCohortState(): Promise<string> {
+    return await this.workCohortStore().exportPortableState();
+  }
+
   replaceWorksetRoots(roots: readonly string[]) {
     const suppliedValidation = this.worksetOptions.validateReplacement;
     return this.worksetStore().setValidatedRoots(roots, async (canonical, tx) => {
@@ -910,6 +933,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
               AND form NOT IN ('exclusive-set', 'exclusive-administrative')
           `;
           await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM work_cohort_state WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
@@ -933,6 +957,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       },
     });
 
+    this.workCohort = await createPostgresWorkCohortStore(this.pool(), this.projectKey);
     await this.reconcileProjection();
     // Exactly one peer invalidation, after both the reset transaction and the
     // surrounding administrative generation advance have committed.
@@ -955,6 +980,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.workset.close();
       this.workset = null;
     }
+    this.workCohort = null;
     if (this.handle !== null) {
       await this.handle.close();
       this.handle = null;
@@ -1081,6 +1107,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         await writeTransaction(this.pool(), async (tx) => {
           await tx`DELETE FROM workset_admissions WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM work_cohort_state WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
@@ -1100,6 +1127,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     // Erasure deletes the coherence epoch itself; this tenant instance cannot reconcile again.
     await this.recovery().close();
     this.readCache.clear();
+    this.workCohort = null;
     this.closing = true;
     this.initialised = false;
   }
@@ -2036,6 +2064,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const { owned } = resolution;
         const value = mutate(owned.tx);
         const plan = { beforeLedgers: owned.beforeLedgers, state: { ledgers: owned.ledgers } };
+        if ("direct" in context && context.direct.kind === "cohort-completion") {
+          const changed = await persistPostgresGenericRows(queries, owned, owned, this.now);
+          await persistPostgresImplementationCompletionBindings(queries, owned.implementationCompletionBindingChanges);
+          const version = await recordPostgresCoherence(queries, this.coherenceOrigin,
+            [...postgresPublicPlanChanges(plan, changed.ledgers), ...postgresArchivedRowChanges(changed)]);
+          return { value, plan, dirty: changed.ledgers, version };
+        }
         const changed = await persistPostgresPlanRows(queries, plan, [...owned.dirtyLedgers]);
         await persistPostgresImplementationCompletionBindings(queries, owned.implementationCompletionBindingChanges);
         if ("admission" in context) assertOwnedMutationRows(context, owned.beforeLedgers, changed.items);

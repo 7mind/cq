@@ -67,6 +67,8 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import { assertCohortDispatchOutput, dispatchRecord } from "./cohortDispatchContract.js";
+import { assertCohortEffectEnvelopeV1, cohortValueDigestV1, type CohortEffectEnvelopeV1 } from "@cq/process-control";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
 import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-reviewer.js";
 import {
@@ -120,6 +122,9 @@ import type {
   ImplementationQueueTombstoneBinding,
   ImplementationStagedCompletionQualification,
 } from "./dispatchImplementationQueue.js";
+import { implementationQueueSubjectsMatch } from "./implementationQueueIdentity.js";
+import { assertDispatchGuardedRebaseBridge } from "./guardedRebaseBridge.js";
+import { assertDispatchCohortRebaseTransition, cohortRebaseTransitionMatches, type DispatchCohortRebaseTransition } from "./cohortRebaseTransition.js";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ATTESTATION_ID_RE = /^att_[A-Za-z0-9_-]{32,}$/;
@@ -940,12 +945,10 @@ export interface DispatchProvenanceBinding {
 }
 
 /** Immutable broker receipt trusted across a terminal dispatch reprepare. */
-export interface DispatchGitChangeReceipt {
+interface DispatchGitChangeReceiptCoordinates {
   readonly kind: "cq-git-change-receipt";
-  readonly version: 1;
   readonly attestationId: string;
   readonly generation: number;
-  readonly taskId: string;
   readonly operationId: string;
   readonly requestDigest: string;
   readonly oldHead: string;
@@ -955,6 +958,10 @@ export interface DispatchGitChangeReceipt {
   readonly paths: readonly string[];
   readonly committedAt: string;
 }
+export type DispatchGitChangeReceipt = DispatchGitChangeReceiptCoordinates & (
+  | { readonly version: 1; readonly taskId: string; readonly cohort?: never }
+  | { readonly version: 2; readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never }
+);
 
 /**
  * The verified guarded-rebase bridge (D334/T2150), materialized ONLY by the
@@ -964,7 +971,7 @@ export interface DispatchGitChangeReceipt {
  * here so a restart, a backend round-trip, and the parent gate all see the
  * exact same bridge.
  */
-export interface DispatchGuardedRebaseBridge {
+export interface DispatchGuardedRebaseBridgeFields {
   /** Opaque digest-backed reference: `cq-guarded-rebase:v1:<requestDigest>`. */
   readonly guardedRebase: string;
   /** The parent-supplied stable operation id the journal was minted under. */
@@ -989,6 +996,34 @@ export interface DispatchGuardedRebaseBridge {
   readonly finalizedAt: string;
 }
 
+export interface DispatchGuardedRebaseSourceBinding {
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly repositoryId: string;
+  readonly commonDir: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly ref: string;
+  readonly baseCommit: string;
+}
+
+export interface DispatchCohortGuardedRebaseJournalBridge {
+  readonly requestDigest: string;
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+  readonly cohortEnvelopeDigest: string;
+  readonly conflictReceiptDigests: readonly string[];
+}
+
+export type DispatchGuardedRebaseBridge = DispatchGuardedRebaseBridgeFields & (
+  | { readonly version?: never; readonly cohort?: never; readonly sourceBinding?: never; readonly journals?: never }
+  | { readonly version: 2; readonly cohort: CohortEffectEnvelopeV1;
+      readonly sourceBinding: DispatchGuardedRebaseSourceBinding;
+      readonly journals: readonly DispatchCohortGuardedRebaseJournalBridge[] }
+);
+
 /** Authenticated bridge joining receipt components across one guarded rebase. */
 export interface DispatchReceiptChainTransition {
   readonly kind: "cq-dispatch-receipt-chain-transition";
@@ -1004,8 +1039,7 @@ export interface DispatchReceiptChainTransition {
 }
 
 /** Trusted resolver output for a live worktree_manage handle; never child-authored. */
-export interface DispatchGitEffectBinding {
-  readonly taskId: string;
+interface DispatchGitEffectCoordinates {
   readonly handleToken: string;
   readonly handleFingerprint: string;
   readonly repositoryRoot: string;
@@ -1020,10 +1054,38 @@ export interface DispatchGitEffectBinding {
   readonly inheritedGitReceipts?: readonly DispatchGitChangeReceipt[];
   /** Server-materialized guarded-rebase bridge (D334); never caller-authored. */
   readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
+  readonly cohortRebaseTransition?: DispatchCohortRebaseTransition;
   /** Recovery-journal authority for the one discontinuity in inherited receipts. */
   readonly receiptChainTransition?: DispatchReceiptChainTransition;
   /** Ordered recovery-journal authority when inherited receipts cross repeated guarded rebases. */
   readonly receiptChainTransitions?: readonly DispatchReceiptChainTransition[];
+}
+
+export type DispatchGitEffectBinding = DispatchGitEffectCoordinates & (
+  | { readonly taskId: string; readonly cohort?: never }
+  | { readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never }
+);
+
+export type DispatchTaskGitEffectBinding = Extract<DispatchGitEffectBinding, { readonly taskId: string }>;
+export type DispatchCohortGitEffectBinding = Extract<DispatchGitEffectBinding, { readonly cohort: CohortEffectEnvelopeV1 }>;
+
+export function requireTaskGitEffectBinding(binding: DispatchGitEffectBinding): DispatchTaskGitEffectBinding {
+  if (binding.cohort !== undefined) throw new AttestationContractError("gitEffectBinding", "this operation requires task authority, not cohort authority");
+  return binding;
+}
+
+export function assertTaskGitEffectBinding<T extends DispatchGitEffectBinding>(binding: T): asserts binding is T & DispatchTaskGitEffectBinding {
+  requireTaskGitEffectBinding(binding);
+}
+
+export function dispatchGitEffectSubject(binding: DispatchGitEffectBinding): DispatchJSONValue {
+  return binding.cohort === undefined ? { taskId: binding.taskId } : {
+    cohort: binding.cohort as unknown as DispatchJSONValue,
+  };
+}
+
+export function dispatchGitEffectSubjectsEqual(left: DispatchGitEffectBinding, right: DispatchGitEffectBinding): boolean {
+  return cohortValueDigestV1(dispatchGitEffectSubject(left)) === cohortValueDigestV1(dispatchGitEffectSubject(right));
 }
 
 /** Trusted live-Git evidence captured while the managed worktree effect lock is held. */
@@ -1115,9 +1177,8 @@ export interface DispatchContinuationSourceClaim {
 }
 
 /** Server-authenticated current-recovery journal authority claimed by one successor. */
-export interface DispatchJournalRecoveryClaim {
+interface DispatchJournalRecoveryClaimBase {
   readonly kind: "cq-dispatch-journal-recovery-claim";
-  readonly version: 1;
   readonly fenceRef: string;
   readonly sealReference: string;
   readonly sealDigest: string;
@@ -1125,14 +1186,17 @@ export interface DispatchJournalRecoveryClaim {
   readonly lineageMaximumGeneration: number;
   readonly sourceTerminalDigest: string;
   readonly source: DispatchCurrentRecoverySource;
-  readonly taskId: string;
-  readonly goalRef: string;
-  readonly taskDigest: string;
-  readonly finalizedManifestDigest: string;
   readonly liveTip: string;
   readonly managedFingerprint: string;
   readonly gitReceiptsDigest: string;
 }
+
+export type DispatchJournalRecoveryClaim = DispatchJournalRecoveryClaimBase & (
+  | { readonly version: 1; readonly taskId: string; readonly goalRef: string;
+      readonly taskDigest: string; readonly finalizedManifestDigest: string; readonly cohort?: never }
+  | { readonly version: 2; readonly cohort: CohortEffectEnvelopeV1; readonly taskId?: never;
+      readonly goalRef?: never; readonly taskDigest?: never; readonly finalizedManifestDigest?: never }
+);
 
 /** Trusted resolution used internally by prepare; public callers receive an opaque projection. */
 export interface ResolvedDispatchContinuation {
@@ -1152,7 +1216,7 @@ export interface DispatchContinuationClaim {
   readonly liveTip: string;
 }
 
-export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
+export type AuthorizedDispatchGitEffect = DispatchGitEffectBinding & {
   readonly attestationId: string;
   readonly generation: number;
   readonly roleId: "implement-worker" | "implement-conflict-resolver";
@@ -1161,7 +1225,7 @@ export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
 }
 
 /** Trusted server-side context for one Codex implement-worker gate supervision. */
-export interface AuthorizedSupervisedWorkerGateContext extends AuthorizedDispatchGitEffect {
+export type AuthorizedSupervisedWorkerGateContext = AuthorizedDispatchGitEffect & {
   readonly roleId: "implement-worker";
   readonly surface: "codex";
   readonly promptProvenance: DispatchPromptProvenance;
@@ -1172,7 +1236,8 @@ export interface AuthorizedSupervisedWorkerGateContext extends AuthorizedDispatc
 
 function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSONValue {
   return {
-    taskId: binding.taskId,
+    ...(binding.cohortRebaseTransition === undefined ? {} : { cohortRebaseTransition: binding.cohortRebaseTransition as unknown as DispatchJSONValue }),
+    ...(binding.cohort === undefined ? { taskId: binding.taskId } : { cohort: binding.cohort as unknown as DispatchJSONValue }),
     handleToken: binding.handleToken,
     handleFingerprint: binding.handleFingerprint,
     repositoryRoot: binding.repositoryRoot,
@@ -1194,6 +1259,12 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
       ? {}
       : {
           guardedRebaseBridge: {
+            ...(binding.guardedRebaseBridge.version === 2 ? {
+              version: 2,
+              cohort: binding.guardedRebaseBridge.cohort as unknown as DispatchJSONValue,
+              sourceBinding: { ...binding.guardedRebaseBridge.sourceBinding },
+              journals: binding.guardedRebaseBridge.journals as unknown as DispatchJSONValue,
+            } : {}),
             guardedRebase: binding.guardedRebaseBridge.guardedRebase,
             operationId: binding.guardedRebaseBridge.operationId,
             requestDigest: binding.guardedRebaseBridge.requestDigest,
@@ -1208,14 +1279,12 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
     ...(binding.receiptChainTransition === undefined
       ? {}
       : {
-          receiptChainTransition:
-            binding.receiptChainTransition as unknown as DispatchJSONValue,
+          receiptChainTransition: binding.receiptChainTransition as unknown as DispatchJSONValue,
         }),
     ...(binding.receiptChainTransitions === undefined
       ? {}
       : {
-          receiptChainTransitions:
-            binding.receiptChainTransitions as unknown as DispatchJSONValue,
+          receiptChainTransitions: binding.receiptChainTransitions as unknown as DispatchJSONValue,
         }),
   };
 }
@@ -1244,6 +1313,12 @@ export interface AttestationEnvelope {
   readonly resultCapabilityHash: string;
   /** Parent-only finalization authority; present only for supervised Codex workers. */
   readonly parentGateCapabilityHash?: string;
+  readonly cohortParentExecutionEpoch?: string;
+  readonly cohortRebaseExecution?: {
+    readonly executionEpoch: string;
+    readonly transitionDigest: string;
+    readonly successorIntentDigest: string;
+  };
   readonly gitChangeCapabilityHash?: string;
   readonly gitConflictCapabilityHash?: string;
   readonly gitEffectBinding?: DispatchGitEffectBinding;
@@ -1286,6 +1361,8 @@ export interface AttestationEnvelope {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Present only on the generation whose allocation claimed a consumed predecessor. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Present only on a changed correction allocated from one rejected guarded descendant. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Present only on a successor allocated from an exact committed recovery journal. */
   readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
 }
@@ -1318,6 +1395,8 @@ export interface AttestationTombstone {
   readonly dispatchContinuationBinding?: DispatchContinuationBinding;
   /** Retained so collapse cannot resurrect a predecessor's single-use authority. */
   readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
+  /** Retained so later continuations can authenticate the rejected correction edge. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Retained so a collapsed successor preserves its committed recovery ancestry. */
   readonly dispatchJournalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Minimal terminal queue identity/provenance retained through collapse. */
@@ -1352,6 +1431,8 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "outputDigest",
   "resultCapabilityHash",
   "parentGateCapabilityHash",
+  "cohortParentExecutionEpoch",
+  "cohortRebaseExecution",
   "gitChangeCapabilityHash",
   "gitConflictCapabilityHash",
   "gitEffectBinding",
@@ -1521,6 +1602,8 @@ export interface PrepareDispatchRequest {
   readonly continuationClaim?: DispatchContinuationClaim;
   /** Trusted fence-authorized generation reservation; never contains the capability token. */
   readonly journalRecoveryReservation?: DispatchJournalRecoveryReservation;
+  /** Trusted proof that one exact rejected guarded descendant may receive a changed correction. */
+  readonly gateRejectedCorrectionClaim?: DispatchGateRejectedCorrectionClaim;
   /** Complete authenticated journal ancestry retained on the allocated successor. */
   readonly journalRecoveryClaim?: DispatchJournalRecoveryClaim;
   /** Protected historical-evidence bootstrap authority consumed by this prepare. */
@@ -1534,13 +1617,24 @@ export interface DispatchJournalRecoveryReservation {
   readonly lineageMaximumGeneration: number;
 }
 
+export interface DispatchGateRejectedCorrectionClaim {
+  readonly fenceRef: string;
+  readonly source: DispatchHandle;
+  readonly resultCommit: string;
+  readonly gitReceiptLineageDigest: string;
+  readonly guardedRebaseBridgeDigest: string | null;
+}
+
 /**
  * Canonical digest of every prepare field that can change the resulting
  * dispatch. The executable overlay registry is excluded; validated overlay ids
  * and data are included.
  */
-export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): string {
-  return dispatchPayloadDigest({
+function prepareDispatchRequestDigestPayload(
+  request: PrepareDispatchRequest,
+  includeGateRejectedCorrectionClaim: boolean,
+): DispatchJSONValue {
+  return {
     roleId: request.roleId,
     surface: request.surface,
     input: request.input,
@@ -1585,12 +1679,46 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
+    ...(includeGateRejectedCorrectionClaim
+      ? {
+          gateRejectedCorrectionClaim:
+            request.gateRejectedCorrectionClaim === undefined
+              ? null
+              : {
+                  fenceRef: request.gateRejectedCorrectionClaim.fenceRef,
+                  source: {
+                    attestationId: request.gateRejectedCorrectionClaim.source.attestationId,
+                    generation: request.gateRejectedCorrectionClaim.source.generation,
+                  },
+                  resultCommit: request.gateRejectedCorrectionClaim.resultCommit,
+                  gitReceiptLineageDigest:
+                    request.gateRejectedCorrectionClaim.gitReceiptLineageDigest,
+                  guardedRebaseBridgeDigest:
+                    request.gateRejectedCorrectionClaim.guardedRebaseBridgeDigest,
+                },
+        }
+      : {}),
     journalRecoveryClaim:
       request.journalRecoveryClaim === undefined
         ? null
         : (request.journalRecoveryClaim as unknown as DispatchJSONValue),
     implementationEvidenceBootstrapRef: request.implementationEvidenceBootstrapRef ?? null,
-  });
+  };
+}
+
+export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): string {
+  return dispatchPayloadDigest(prepareDispatchRequestDigestPayload(request, true));
+}
+
+export function prepareDispatchRequestDigestMatchesKnownFormat(
+  request: PrepareDispatchRequest,
+  persistedDigest: string,
+): boolean {
+  if (prepareDispatchRequestDigest(request) === persistedDigest) return true;
+  if (request.gateRejectedCorrectionClaim !== undefined) return false;
+  return (
+    dispatchPayloadDigest(prepareDispatchRequestDigestPayload(request, false)) === persistedDigest
+  );
 }
 
 /**
@@ -1636,6 +1764,7 @@ function assertChildIdentity(child: NativeChildIdentity, path: string): NativeCh
   }
   return Object.freeze({ childId, runId });
 }
+
 
 function assertReceiptChainTransition(
   value: DispatchReceiptChainTransition,
@@ -1742,6 +1871,16 @@ function assertGitEffectBinding(
   roleId: string,
 ): DispatchGitEffectBinding | undefined {
   if (binding === undefined) return undefined;
+  if (binding.cohort === undefined) {
+    if (typeof binding.taskId !== "string" || binding.taskId.trim() === "") throw new AttestationContractError("gitEffectBinding.taskId", "expected a non-empty string");
+  } else {
+    if (Object.hasOwn(binding, "taskId")) throw new AttestationContractError("gitEffectBinding", "cohort binding cannot also carry task authority");
+    assertCohortEffectEnvelopeV1(binding.cohort);
+    if (binding.branch !== `implement/cohort-${binding.cohort.intent.intentDigest}` ||
+        binding.repositoryId !== binding.cohort.definition.repository.repositoryId) {
+      throw new AttestationContractError("gitEffectBinding", "cohort binding substituted its branch or repository");
+    }
+  }
   if (roleId !== "implement-worker" && roleId !== "implement-conflict-resolver") {
     throw new AttestationContractError(
       "gitEffectBinding",
@@ -1749,7 +1888,6 @@ function assertGitEffectBinding(
     );
   }
   for (const field of [
-    "taskId",
     "handleToken",
     "handleFingerprint",
     "repositoryRoot",
@@ -1794,10 +1932,11 @@ function assertGitEffectBinding(
     }
     for (const [index, receipt] of inheritedGitReceipts.entries()) {
       const path = `gitEffectBinding.inheritedGitReceipts[${String(index)}]`;
-      if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
-        throw new AttestationContractError(path, "expected a version-1 Git change receipt");
+      if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== (binding.cohort === undefined ? 1 : 2) ||
+          !implementationQueueSubjectsMatch(receipt, binding, true)) {
+        throw new AttestationContractError(path, "expected a Git change receipt for the exact task or cohort production subject");
       }
-      for (const field of ["attestationId", "taskId", "operationId", "committedAt"] as const) {
+      for (const field of ["attestationId", "operationId", "committedAt"] as const) {
         if (typeof receipt[field] !== "string" || receipt[field].trim() === "") {
           throw new AttestationContractError(`${path}.${field}`, "expected a non-empty string");
         }
@@ -1822,7 +1961,19 @@ function assertGitEffectBinding(
     }
   }
   const guardedRebaseBridge = binding.guardedRebaseBridge;
+  if (binding.cohortRebaseTransition !== undefined) {
+    assertDispatchCohortRebaseTransition(binding.cohortRebaseTransition);
+    if (roleId !== "implement-worker" || !cohortRebaseTransitionMatches(binding.cohortRebaseTransition.sourceBinding, binding, binding.cohortRebaseTransition.source)) {
+      throw new AttestationContractError("gitEffectBinding.cohortRebaseTransition", "successor differs from its exact manager transition");
+    }
+  }
   if (guardedRebaseBridge !== undefined) {
+    try { assertDispatchGuardedRebaseBridge(guardedRebaseBridge); } catch (error) {
+      throw new AttestationContractError("gitEffectBinding.guardedRebaseBridge", String(error));
+    }
+    if ((guardedRebaseBridge.version === 2) !== (binding.cohort !== undefined)) {
+      throw new AttestationContractError("gitEffectBinding.guardedRebaseBridge", "guarded rebase bridge subject arm differs from its dispatch binding");
+    }
     if (roleId !== "implement-worker") {
       throw new AttestationContractError(
         "gitEffectBinding.guardedRebaseBridge",
@@ -1924,7 +2075,6 @@ function assertGitEffectBinding(
 }
 
 const RECOVERY_BINDING_FIELDS = [
-  "taskId",
   "handleToken",
   "handleFingerprint",
   "repositoryRoot",
@@ -1981,7 +2131,19 @@ export function assertDispatchRecoveryBinding(
           { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
           "implement-worker",
         )?.inheritedGitReceipts ?? Object.freeze([]));
-  if (receipts.length > 0 && receipts.at(-1)?.newHead !== value.liveTip) {
+  const recoveryTransitions = assertReceiptChainTransitions(
+    gitEffectBinding.receiptChainTransition,
+    gitEffectBinding.receiptChainTransitions,
+    `${path}.gitEffectBinding.receiptChainTransitions`,
+  );
+  if (
+    receipts.length > 0 &&
+    receiptChainTip(
+      receipts,
+      recoveryTransitions,
+      `${path}.gitEffectBinding.receiptChainTransitions`,
+    ) !== value.liveTip
+  ) {
     throw new AttestationBindingError(
       `${path}.liveTip`,
       "recovery receipt closure does not end at its authenticated live tip",
@@ -2101,7 +2263,19 @@ export function assertDispatchContinuationBinding(
           { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
           "implement-worker",
         )?.inheritedGitReceipts ?? Object.freeze([]));
-  if (receipts.length > 0 && receipts.at(-1)?.newHead !== value.liveTip) {
+  const continuationTransitions = assertReceiptChainTransitions(
+    gitEffectBinding.receiptChainTransition,
+    gitEffectBinding.receiptChainTransitions,
+    `${path}.gitEffectBinding.receiptChainTransitions`,
+  );
+  if (
+    receipts.length > 0 &&
+    receiptChainTip(
+      receipts,
+      continuationTransitions,
+      `${path}.gitEffectBinding.receiptChainTransitions`,
+    ) !== value.liveTip
+  ) {
     throw new AttestationBindingError(
       `${path}.liveTip`,
       "continuation receipt closure does not end at its authenticated live tip",
@@ -2130,10 +2304,7 @@ export function assertDispatchContinuationBinding(
   const completionObservationDigest =
     value.completionObservationDigest === undefined
       ? undefined
-      : assertDigest(
-          value.completionObservationDigest,
-          `${path}.completionObservationDigest`,
-        );
+      : assertDigest(value.completionObservationDigest, `${path}.completionObservationDigest`);
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-continuation-binding" as const,
     version: 1 as const,
@@ -2218,10 +2389,10 @@ function createDispatchRecoveryBinding(
     );
   }
   for (const [index, receipt] of receipts.entries()) {
-    if (receipt.taskId !== row.gitEffectBinding.taskId) {
+    if (!implementationQueueSubjectsMatch(receipt, row.gitEffectBinding, index < inherited.length)) {
       throw new AttestationBindingError(
-        `recoveryContext.gitReceipts[${String(index)}].taskId`,
-        "receipt carries a foreign task identity",
+        `recoveryContext.gitReceipts[${String(index)}]`,
+        "receipt carries a foreign task or cohort production identity",
       );
     }
     if (
@@ -2257,11 +2428,16 @@ function createDispatchRecoveryBinding(
     if (
       !receipts.some(
         (receipt) => receipt.oldHead === startingCommit || receipt.newHead === startingCommit,
+      ) &&
+      !receiptChainTransitions.some(
+        (transition) =>
+          transition.oldResultCommit === startingCommit ||
+          transition.rebasedStartCommit === startingCommit,
       )
     ) {
       throw new AttestationBindingError(
         "recoveryContext.gitReceipts",
-        "receipt closure does not contain the generation starting commit",
+        "receipt closure does not contain the generation starting commit as a receipt or guarded transition vertex",
       );
     }
   }
@@ -2449,6 +2625,18 @@ export function prepareDispatch(
   const catalogHash = assertDigest(request.catalogHash, "catalogHash");
   const expectedChild = assertChildIdentity(request.expectedChild, "expectedChild");
   const gitEffectBinding = assertGitEffectBinding(request.gitEffectBinding, validation.roleId);
+  if (gitEffectBinding !== undefined && gitEffectBinding.cohort !== undefined) {
+    if (!dispatchRecord(preparedInput) ||
+        Object.hasOwn(preparedInput, "taskId") || preparedInput["cohort"] === undefined ||
+        cohortValueDigestV1(preparedInput["cohort"]) !== cohortValueDigestV1(gitEffectBinding.cohort)) {
+      throw new AttestationContractError("gitEffectBinding", "cohort dispatch input must carry the exact complete cohort envelope without task authority");
+    }
+  }
+  if (dispatchRecord(preparedInput) && Object.hasOwn(preparedInput, "cohort") &&
+      (validation.roleId === "implement-worker" || validation.roleId === "implement-conflict-resolver") &&
+      gitEffectBinding?.cohort === undefined) {
+    throw new AttestationContractError("gitEffectBinding", "cohort execution requires complete cohort Git authority");
+  }
   const implementationEvidenceBootstrapRef = request.implementationEvidenceBootstrapRef;
   if (
     implementationEvidenceBootstrapRef !== undefined &&
@@ -2591,6 +2779,9 @@ export function prepareDispatch(
               }),
             }),
         }),
+    ...(request.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: request.gateRejectedCorrectionClaim }),
     ...(request.journalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: request.journalRecoveryClaim }),
@@ -2763,10 +2954,10 @@ function claimStagedRebaseSuccessor(
       dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
   const managerBindingChanged =
     priorManagerBinding !== undefined &&
+    !(gitEffectBinding !== undefined && cohortRebaseTransitionMatches(priorManagerBinding, gitEffectBinding, reprepareOf)) &&
     (gitEffectBinding === undefined ||
       (
         [
-          "taskId",
           "handleToken",
           "handleFingerprint",
           "repositoryRoot",
@@ -2777,11 +2968,110 @@ function claimStagedRebaseSuccessor(
           "ref",
           "baseCommit",
         ] as const
-      ).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]));
+      ).some((field) => gitEffectBinding[field] !== priorManagerBinding[field]) ||
+      (gitEffectBinding !== undefined && !implementationQueueSubjectsMatch(priorManagerBinding, gitEffectBinding, true)));
   const input =
     typeof request.input === "object" && request.input !== null && !Array.isArray(request.input)
       ? (request.input as Readonly<Record<string, DispatchJSONValue>>)
       : undefined;
+  const gateRejectedClaim = request.gateRejectedCorrectionClaim;
+  if (gateRejectedClaim !== undefined) {
+    if (isAttestationTombstone(previous)) {
+      throw new AttestationBindingError(
+        "gateRejectedCorrectionClaim",
+        "rejected guarded correction source is no longer retained",
+      );
+    }
+    const output =
+      previous.output !== null &&
+      typeof previous.output === "object" &&
+      !Array.isArray(previous.output)
+        ? (previous.output as Readonly<Record<string, DispatchJSONValue>>)
+        : undefined;
+    const correctionQueue = queue !== undefined && "attempt" in queue ? queue : undefined;
+    const inherited = gitEffectBinding?.inheritedGitReceipts ?? [];
+    const sourceInherited = priorManagerBinding?.inheritedGitReceipts ?? [];
+    const priorBridgeDigest =
+      priorGuardedBridge === undefined
+        ? null
+        : dispatchPayloadDigest(priorGuardedBridge as unknown as DispatchJSONValue);
+    const bridgeDigest =
+      bridge === undefined ? null : dispatchPayloadDigest(bridge as unknown as DispatchJSONValue);
+    const sourceTransition = priorManagerBinding?.receiptChainTransition;
+    const correctionTransition = gitEffectBinding?.receiptChainTransition;
+    const sameReceiptTransition =
+      sourceTransition === undefined
+        ? correctionTransition === undefined
+        : correctionTransition !== undefined &&
+          dispatchPayloadDigest(sourceTransition as unknown as DispatchJSONValue) ===
+            dispatchPayloadDigest(correctionTransition as unknown as DispatchJSONValue);
+    const sameReceiptTransitions =
+      priorManagerBinding?.receiptChainTransitions === undefined
+        ? gitEffectBinding?.receiptChainTransitions === undefined
+        : gitEffectBinding?.receiptChainTransitions !== undefined &&
+          dispatchPayloadDigest(
+            priorManagerBinding.receiptChainTransitions as unknown as DispatchJSONValue,
+          ) ===
+            dispatchPayloadDigest(
+              gitEffectBinding.receiptChainTransitions as unknown as DispatchJSONValue,
+            );
+    const inheritedClosesAtRejectedResult =
+      inherited.length === 0 ||
+      inherited.at(-1)?.newHead === gateRejectedClaim.resultCommit ||
+      (correctionTransition !== undefined &&
+        correctionTransition.receiptPrefixLength === inherited.length &&
+        correctionTransition.rebasedStartCommit === gateRejectedClaim.resultCommit);
+    if (
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(gateRejectedClaim.fenceRef) ||
+      gateRejectedClaim.source.attestationId !== reprepareOf.attestationId ||
+      gateRejectedClaim.source.generation !== reprepareOf.generation ||
+      !/^[0-9a-f]{40}$/u.test(gateRejectedClaim.resultCommit) ||
+      !/^[0-9a-f]{64}$/u.test(gateRejectedClaim.gitReceiptLineageDigest) ||
+      (gateRejectedClaim.guardedRebaseBridgeDigest !== null &&
+        !/^[0-9a-f]{64}$/u.test(gateRejectedClaim.guardedRebaseBridgeDigest)) ||
+      previous.promptProvenance.roleId !== "implement-worker" ||
+      previous.state !== "aborted" ||
+      previous.abortReason !== "gate-rejected" ||
+      previous.parentGateCapabilityHash === undefined ||
+      previous.abortDetails === undefined ||
+      previous.abortDetailsDigest !== dispatchPayloadDigest(previous.abortDetails) ||
+      !isImplementWorkerSupervisedGateRejectionDetails(previous.abortDetails) ||
+      correctionQueue === undefined ||
+      correctionQueue.state !== "terminal" ||
+      correctionQueue.terminal?.reason !== "gate-rejected" ||
+      correctionQueue.terminal.detailsDigest !== previous.abortDetailsDigest ||
+      source !== undefined ||
+      gitEffectBinding === undefined ||
+      priorManagerBinding === undefined ||
+      managerBindingChanged ||
+      output?.["status"] !== "pass" ||
+      output["resultCommit"] !== gateRejectedClaim.resultCommit ||
+      correctionQueue.attempt.resultCommit !== gateRejectedClaim.resultCommit ||
+      correctionQueue.attempt.gitReceiptLineageDigest !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      dispatchPayloadDigest(output["gitReceipts"] ?? []) !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      dispatchPayloadDigest(correctionQueue.attempt.gitReceipts as unknown as DispatchJSONValue) !==
+        gateRejectedClaim.gitReceiptLineageDigest ||
+      priorBridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+      bridgeDigest !== gateRejectedClaim.guardedRebaseBridgeDigest ||
+      !sameReceiptTransition ||
+      !sameReceiptTransitions ||
+      input?.["startingCommit"] !== gateRejectedClaim.resultCommit ||
+      sourceInherited.length > inherited.length ||
+      dispatchPayloadDigest(sourceInherited as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(
+          inherited.slice(0, sourceInherited.length) as unknown as DispatchJSONValue,
+        ) ||
+      !inheritedClosesAtRejectedResult
+    ) {
+      throw new AttestationBindingError(
+        "gateRejectedCorrectionClaim",
+        "rejected guarded correction does not match its authenticated terminal source",
+      );
+    }
+    return;
+  }
   const retainedQueueBindingsMatch =
     !isAttestationTombstone(previous) &&
     previous.state === "consumed" &&
@@ -2844,7 +3134,7 @@ function claimStagedRebaseSuccessor(
     gitEffectBinding !== undefined &&
     retainedQueueBindingsMatch &&
     retainedContinuation!.liveTip === bridge.oldResultCommit &&
-    queue!.attempt.taskId === gitEffectBinding.taskId &&
+    implementationQueueSubjectsMatch(queue!.attempt, gitEffectBinding, true) &&
     queue!.attempt.repositoryId === gitEffectBinding.repositoryId &&
     queue!.attempt.worktreePath === gitEffectBinding.worktreePath &&
     input?.["baseCommit"] === bridge.ontoCommit &&
@@ -2956,7 +3246,7 @@ function claimStagedRebaseSuccessor(
         : previous.implementationQueue?.qualification !== undefined &&
           (previous.implementationQueue.attempt.resultCommit === bridge.oldResultCommit ||
             sameGuardedBridge) &&
-          previous.implementationQueue.attempt.taskId === gitEffectBinding.taskId &&
+          implementationQueueSubjectsMatch(previous.implementationQueue.attempt, gitEffectBinding, true) &&
           previous.implementationQueue.attempt.repositoryId === gitEffectBinding.repositoryId &&
           previous.implementationQueue.attempt.worktreePath === gitEffectBinding.worktreePath);
     const consumedOrdinaryQueue =
@@ -3573,6 +3863,9 @@ function writeAbort(
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: row.gateRejectedCorrectionClaim }),
     ...(row.dispatchJournalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),
@@ -4111,6 +4404,7 @@ function completeParentGateRow(
       `parent gate produced invalid output: ${describeErrors(validation.errors)}`,
     );
   }
+  assertCohortDispatchOutput(row.input, request.output);
   const { at } = readNow(deps);
   const next: AttestationEnvelope = Object.freeze({
     ...row,
@@ -4276,6 +4570,12 @@ export function storeDispatchResult(
       result: writeAbort(row, at, "invalid-output", details as unknown as DispatchJSONValue, deps),
     });
   }
+  try {
+    assertCohortDispatchOutput(row.input, submission.output);
+  } catch (error) {
+    return Object.freeze({ state: "aborted" as const,
+      result: writeAbort(row, at, "invalid-output", { summary: error instanceof Error ? error.message : String(error) }, deps) });
+  }
 
   const next: AttestationEnvelope = Object.freeze(
     row.parentGateCapabilityHash === undefined
@@ -4398,8 +4698,7 @@ export type ConfirmDispatchCompletionOutcome =
       readonly result: AbortedDispatchResult<DispatchAbortReason>;
     };
 
-export interface ConfirmStagedFailureCompletionRequest
-  extends ConfirmDispatchCompletionRequest {
+export interface ConfirmStagedFailureCompletionRequest extends ConfirmDispatchCompletionRequest {
   readonly completionObservationDigest: string;
 }
 
@@ -5138,6 +5437,7 @@ function recoveryMatchesLiveBinding(
 ): boolean {
   return (
     recovery.liveTip === liveTip &&
+    implementationQueueSubjectsMatch(recovery.gitEffectBinding, current, true) &&
     RECOVERY_BINDING_FIELDS.every((field) => recovery.gitEffectBinding[field] === current[field])
   );
 }
@@ -5334,6 +5634,7 @@ function continuationMatchesLiveBinding(
 ): boolean {
   return (
     continuation.liveTip === liveTip &&
+    implementationQueueSubjectsMatch(continuation.gitEffectBinding, current, true) &&
     RECOVERY_BINDING_FIELDS.every(
       (field) => continuation.gitEffectBinding[field] === current[field],
     )
@@ -5501,6 +5802,9 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.dispatchContinuationClaim === undefined
       ? {}
       : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
+    ...(row.gateRejectedCorrectionClaim === undefined
+      ? {}
+      : { gateRejectedCorrectionClaim: row.gateRejectedCorrectionClaim }),
     ...(row.dispatchJournalRecoveryClaim === undefined
       ? {}
       : { dispatchJournalRecoveryClaim: row.dispatchJournalRecoveryClaim }),

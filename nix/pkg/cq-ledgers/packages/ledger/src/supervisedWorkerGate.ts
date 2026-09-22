@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CODEX_STAGED_TIMING_BASIS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -19,7 +19,10 @@ import {
   launchRegisteredProcessGroup,
   settleProcessGroups,
   settleWorktreeGateCommands,
+  WorksetEffectBroker,
   type ProcessGroupRegistration,
+  type RegisteredLaunchBootstrapSpecification,
+  type WorksetEffectAdmissionProvider,
   type SettleProcessGroupsResult,
   type SettleWorktreeGateCommandsOptions,
 } from "@cq/process-control";
@@ -27,7 +30,12 @@ import {
   assertManagedWorktreeDispatchBindingLive,
   findOpenWipCheckpoints,
   recordManagedWorktreeSupervisedGateEvidence,
+  assertManagedCohortWorktreeDispatchBindingLive,
+  type ManagedCohortWorktreeAuthority,
 } from "./managedWorktree.js";
+import { gitBrokerSubjectsMatch } from "./gitChangeBroker.js";
+import { cohortValueDigestV1, type CohortEvidenceSubjectV1 } from "./workCohort.js";
+import { validateCohortExecutionBindingV1, type CohortAcceptanceCandidateV1 } from "./workCohortAcceptance.js";
 import { redactSecrets } from "./store/logRedaction.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -68,6 +76,10 @@ export interface SupervisedWorkerGateRunRequest {
   readonly admissionTimeoutMs: number;
   readonly executionTimeoutMs: number;
   readonly cancellationSignal: AbortSignal;
+  readonly effectAdmission?: {
+    readonly provider: WorksetEffectAdmissionProvider;
+    readonly targetRef: string;
+  };
 }
 
 export interface SupervisedWorkerGateRunResult {
@@ -98,6 +110,24 @@ export interface SupervisedWorkerGateRunner {
   run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult>;
 }
 
+export interface SupervisedWorkerCommandRunRequest extends SupervisedWorkerGateRunRequest {
+  readonly command: {
+    readonly argv: readonly string[];
+    readonly cwd: string;
+    readonly environment: Readonly<Record<string, string>>;
+  };
+}
+
+export interface SupervisedWorkerCommandRunResult extends SupervisedWorkerGateRunResult {
+  readonly executionId: string;
+  readonly outputDigest: string;
+  readonly completeOutput?: string;
+}
+
+export interface SupervisedWorkerCommandRunner {
+  run(request: SupervisedWorkerCommandRunRequest): Promise<SupervisedWorkerCommandRunResult>;
+}
+
 /**
  * Injectable settlement arms around the node runner (D342). The production
  * singleton explicitly supplies the real worktree and registered-root
@@ -123,6 +153,53 @@ export interface SuperviseImplementWorkerGateDeps {
   readonly stateDir?: string;
   readonly now?: () => Date;
   readonly cancellationSignal: AbortSignal;
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
+  readonly effectAdmission?: SupervisedWorkerGateRunRequest["effectAdmission"];
+}
+
+async function assertCohortGatePrerequisites(
+  context: AuthorizedSupervisedWorkerGateContext,
+  resultCommit: string,
+  authority: ManagedCohortWorktreeAuthority,
+  stateDir: string | undefined,
+): Promise<CohortEvidenceSubjectV1> {
+  const { envelope, lease, store } = authority;
+  if (context.cohort === undefined || envelope.state !== "sealed" ||
+      !gitBrokerSubjectsMatch(context, { cohort: envelope }, true)) {
+    throw new Error("cohort gate requires exact sealed authority for the producing dispatch");
+  }
+  await assertManagedCohortWorktreeDispatchBindingLive({ ...context, cohort: envelope }, authority,
+    stateDir === undefined ? {} : { stateDir }, false);
+  await store.assertLiveAcceptanceAuthority(lease);
+  const state = (await store.snapshot()).portable;
+  const subject = state.evidenceSubjects.find((entry) => entry.evidenceSubjectDigest === envelope.evidenceSubject.evidenceSubjectDigest);
+  const definition = state.definitions.find((entry) => entry.definitionDigest === subject?.definitionDigest);
+  const seal = state.candidateSeals.find((entry) => entry.sealDigest === subject?.sealDigest);
+  const matrix = state.frozenMatrices.find((entry) => entry.matrixDigest === definition?.acceptanceMatrixDigest);
+  const attempt = state.candidateAttempts.find((entry) => entry.candidateAttemptDigest === seal?.candidateAttemptDigest);
+  if (subject === undefined || definition === undefined || seal === undefined || matrix === undefined ||
+      attempt?.state !== "staged" || seal.resultCommit !== resultCommit ||
+      attempt.preparedDispatch.attestationId !== context.attestationId || attempt.preparedDispatch.generation !== context.generation) {
+    throw new Error("cohort gate requires its exact sealed qualified worker attempt");
+  }
+  const candidate: CohortAcceptanceCandidateV1 = { definition, seal, matrix, attempt, evidenceSubjectDigest: subject.evidenceSubjectDigest };
+  const latest = new Map<string, (typeof state.commandEvidence)[number]>();
+  for (const evidence of state.commandEvidence) {
+    if (evidence.evidenceSubjectDigest !== subject.evidenceSubjectDigest) continue;
+    if (evidence.execution === null) throw new Error("cohort gate rejects caller-authored command evidence");
+    validateCohortExecutionBindingV1(evidence.execution, candidate);
+    if (evidence.receiptDigest !== evidence.execution.receiptDigest || evidence.evidenceKind !== evidence.execution.purpose ||
+        evidence.passed !== (evidence.execution.outcome.exitCode === 0)) throw new Error("cohort gate command receipt binding changed");
+    latest.set(`${evidence.evidenceKind}:${evidence.execution.commandDigest}`, evidence);
+  }
+  const green = [...latest.values()].filter((evidence) => evidence.passed);
+  const covered = new Set(green.filter((evidence) => evidence.evidenceKind === "focused").flatMap((evidence) => evidence.execution!.memberPlanDigests));
+  if (matrix.members.some((member) => !covered.has(member.focusedPlanDigest)) ||
+      !green.some((evidence) => evidence.evidenceKind === "shared-regression")) {
+    throw new Error("cohort full gate requires green protected focused and shared-regression evidence first");
+  }
+  if (green.some((evidence) => evidence.evidenceKind === "full-gate")) throw new Error("cohort full gate already exists; reuse the exact acceptance ladder evidence");
+  return subject;
 }
 
 const GATE_CANCELLED_MESSAGE =
@@ -179,10 +256,11 @@ function supervisedGateRejectionDetails(
     ),
     diagnosticArtifact: Object.freeze({
       kind: "cq-supervised-gate-diagnostic-artifact" as const,
-      version: 1 as const,
+      ...(context.cohort === undefined ? { version: 1 as const, taskId: context.taskId } :
+        context.cohort.state === "sealed" ? { version: 3 as const, evidenceSubject: context.cohort.evidenceSubject } :
+          (() => { throw new Error("cohort full gate diagnostic requires sealed authority"); })()),
       attestationId: context.attestationId,
       generation: context.generation,
-      taskId: context.taskId,
       resultCommit,
       capturedAt: run.capturedAt,
       reportDigest:
@@ -196,6 +274,16 @@ function supervisedGateRejectionDetails(
     throw new Error("supervised worker gate runner returned invalid rejection evidence");
   }
   return Object.freeze(details);
+}
+
+export class SupervisedWorkerGatePreflightRejectedError extends Error {
+  readonly code: "wip-open" | "wip-malformed";
+
+  constructor(code: "wip-open" | "wip-malformed", message: string) {
+    super(message);
+    this.name = "SupervisedWorkerGatePreflightRejectedError";
+    this.code = code;
+  }
 }
 
 /** A completed host gate whose deterministic result rejects the candidate. */
@@ -239,7 +327,7 @@ export class SupervisedWorkerGateRejectedError extends Error {
       version: 1,
       attestationId: publicArtifact.attestationId,
       generation: publicArtifact.generation,
-      taskId: publicArtifact.taskId,
+      ...(publicArtifact.evidenceSubject === undefined ? { taskId: publicArtifact.taskId } : { evidenceSubject: publicArtifact.evidenceSubject }),
       resultCommit: publicArtifact.resultCommit,
       capturedAt: publicArtifact.capturedAt,
       reportDigest: runArtifact.reportDigest,
@@ -247,11 +335,13 @@ export class SupervisedWorkerGateRejectedError extends Error {
       failures: runArtifact.failures,
     })}\n`;
     const artifactDigest = createHash("sha256").update(content).digest("hex");
+    const { taskId: _taskId, evidenceSubject: _subject, version: _version, ...diagnostic } = publicArtifact;
     const details: ImplementWorkerSupervisedGateRejectionDetails = Object.freeze({
       ...this.details,
       diagnosticArtifact: Object.freeze({
-        ...publicArtifact,
-        version: 2 as const,
+        ...diagnostic,
+        ...(publicArtifact.evidenceSubject === undefined ? { version: 2 as const, taskId: publicArtifact.taskId } :
+          { version: 4 as const, evidenceSubject: publicArtifact.evidenceSubject }),
         artifactPath,
         artifactDigest,
       }),
@@ -486,12 +576,12 @@ function hostGateEnvironment(junitPath: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-export function createNodeSupervisedWorkerGateRunner(
-  settlement: NodeSupervisedWorkerGateSettlement,
-): SupervisedWorkerGateRunner {
+function createSerializedSupervisedRunner<Request extends SupervisedWorkerGateRunRequest, Result>(
+  execute: (request: Request) => Promise<Result>,
+): { run(request: Request): Promise<Result> } {
   let admissionTail: Promise<void> = Promise.resolve();
   return Object.freeze({
-    async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    async run(request: Request): Promise<Result> {
       if (!Number.isInteger(request.admissionTimeoutMs) || request.admissionTimeoutMs <= 0) {
         throw new Error("supervised worker gate admissionTimeoutMs must be a positive integer");
       }
@@ -523,13 +613,29 @@ export function createNodeSupervisedWorkerGateRunner(
           request.cancellationSignal,
         );
         if (admissionTimer !== undefined) clearTimeout(admissionTimer);
-        return await runAdmittedNodeSupervisedWorkerGate(request, settlement);
+        return await execute(request);
       } finally {
         if (admissionTimer !== undefined) clearTimeout(admissionTimer);
         releaseAdmission();
       }
     },
   });
+}
+
+export function createNodeSupervisedWorkerGateRunner(
+  settlement: NodeSupervisedWorkerGateSettlement,
+): SupervisedWorkerGateRunner {
+  return createSerializedSupervisedRunner((request: SupervisedWorkerGateRunRequest) =>
+    runAdmittedNodeSupervisedWorkerGate({ ...request, command: {
+      argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: {},
+    } }, settlement));
+}
+
+export function createNodeSupervisedWorkerCommandRunner(
+  settlement: NodeSupervisedWorkerGateSettlement,
+): SupervisedWorkerCommandRunner {
+  return createSerializedSupervisedRunner((request: SupervisedWorkerCommandRunRequest) =>
+    runAdmittedNodeSupervisedWorkerGate(request, settlement));
 }
 
 const SETTLEMENT_DIAGNOSTIC_MESSAGE_LIMIT = 200;
@@ -607,16 +713,32 @@ function settlementFailed(
 
 /** Real host adapter: serialized admission, fixed command, execution deadline, full settlement. */
 async function runAdmittedNodeSupervisedWorkerGateWithReport(
-  request: SupervisedWorkerGateRunRequest,
+  request: SupervisedWorkerCommandRunRequest,
   settlement: NodeSupervisedWorkerGateSettlement,
   junitPath: string,
-): Promise<SupervisedWorkerGateRunResult> {
+): Promise<SupervisedWorkerCommandRunResult> {
   const startedAt = Date.now();
   let registration: ProcessGroupRegistration | undefined;
   let capturedStdout: Promise<string> | undefined;
   let capturedStderr: Promise<string> | undefined;
-  const commandCwd = join(request.worktreePath, "nix", "pkg", "cq-ledgers");
-  const launched = await launchRegisteredProcessGroup({
+  let worktreeSettlement: SettlementArmOutcome | undefined;
+  let rootSettlement: SettlementArmOutcome | undefined;
+  const { command } = request;
+  if (command.argv.length === 0 || command.argv.some((arg) => arg.length === 0 || arg.includes("\0")) ||
+      command.cwd.length === 0 || isAbsolute(command.cwd) || command.cwd.split(/[\\/]/).includes("..")) {
+    throw new Error("supervised command requires exact argv and a worktree-relative cwd");
+  }
+  const worktree = await realpath(request.worktreePath);
+  const commandCwd = await realpath(resolve(worktree, command.cwd));
+  const relativeCwd = relative(worktree, commandCwd);
+  if (isAbsolute(relativeCwd) || relativeCwd.split(/[\\/]/).includes("..")) {
+    throw new Error("supervised command cwd escapes its managed worktree");
+  }
+  const environment = { ...hostGateEnvironment(junitPath), ...command.environment };
+  for (const key of DISPATCH_INVOCATION_ENVIRONMENT_KEYS) delete environment[key];
+  environment["CQ_TEST_JUNIT_PATH"] = junitPath;
+  const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+  const launchSpecification = {
     argv: [
       "cq",
       "gate",
@@ -626,17 +748,15 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
       "--command-cwd",
       commandCwd,
       "--",
-      "bun",
-      "run",
-      "check",
+      ...command.argv,
     ],
     cwd: request.worktreePath,
-    env: hostGateEnvironment(junitPath),
-    stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
-    register: async (observed) => {
+    env: environment,
+    stdio,
+    register: async (observed: ProcessGroupRegistration) => {
       registration = observed;
     },
-    launchBootstrap: (specification) => {
+    launchBootstrap: (specification: RegisteredLaunchBootstrapSpecification<typeof stdio>) => {
       const child = Bun.spawn([...specification.argv], {
         cwd: specification.cwd,
         detached: specification.detached,
@@ -654,7 +774,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
         pid: child.pid,
         exited: child.exited,
         outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
-        resultFromTargetOutcome: (outcome) => {
+        resultFromTargetOutcome: (outcome: { readonly exitCode: number | null; readonly signal: NodeJS.Signals | null }) => {
           if (outcome.exitCode !== null) return outcome.exitCode;
           if (outcome.signal === null) return 1;
           return 128 + (constants.signals[outcome.signal] ?? 1);
@@ -662,7 +782,27 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
         terminate: (signal: NodeJS.Signals) => child.kill(signal),
       };
     },
-  });
+  };
+  const admission = request.effectAdmission;
+  const launched = admission === undefined
+    ? await launchRegisteredProcessGroup(launchSpecification)
+    : await new WorksetEffectBroker({ provider: admission.provider }).launch({
+      ...launchSpecification,
+      kind: "child-dispatch",
+      targetRef: admission.targetRef,
+      signal: request.cancellationSignal,
+      timeoutMs: request.executionTimeoutMs,
+      launchDeadlineMs: Date.now() + request.admissionTimeoutMs,
+      settleRegisteredDescendants: async () => {
+        worktreeSettlement = await captureSettlementArm(() =>
+          settlement.settleWorktreeGateCommands({ worktree: request.worktreePath }));
+        if (worktreeSettlement.status === "rejected") throw worktreeSettlement.error;
+        if (worktreeSettlement.result.signaled.length > 0 || worktreeSettlement.result.survivors.length > 0) {
+          throw new Error("supervised command left an unsettled worktree process group");
+        }
+      },
+    });
+  registration = launched.registration;
   if (capturedStdout === undefined || capturedStderr === undefined) {
     throw new Error("supervised worker gate produced no output capture");
   }
@@ -672,8 +812,6 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let raced: Awaited<typeof processResult> | undefined;
   let originalError: unknown;
-  let worktreeSettlement: SettlementArmOutcome | undefined;
-  let rootSettlement: SettlementArmOutcome | undefined;
   try {
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
@@ -691,9 +829,11 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
     if (timer !== undefined) clearTimeout(timer);
     // D342: both cleanup arms run exactly once in this unconditional finally;
     // neither a rejection nor survivors in one arm may suppress the other.
-    worktreeSettlement = await captureSettlementArm(() =>
-      settlement.settleWorktreeGateCommands({ worktree: request.worktreePath }),
-    );
+    if (worktreeSettlement === undefined) {
+      worktreeSettlement = await captureSettlementArm(() =>
+        settlement.settleWorktreeGateCommands({ worktree: request.worktreePath }),
+      );
+    }
     const registeredRoot = registration;
     rootSettlement =
       registeredRoot === undefined
@@ -718,6 +858,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
     );
   }
   const combined = `${raced.stdout}\n${raced.stderr}`;
+  const completeOutput = redactSecrets(combined);
   const passCount = lastCount(PASS_COUNT, combined) ?? 0;
   const failCount = lastCount(FAIL_COUNT, combined) ?? (raced.gateExitCode === 0 ? 0 : 1);
   const junitReport = await readFile(junitPath, "utf8").catch((error: unknown) => {
@@ -725,6 +866,9 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
     throw error;
   });
   return Object.freeze({
+    executionId: randomUUID(),
+    outputDigest: createHash("sha256").update(combined).digest("hex"),
+    ...(Buffer.byteLength(completeOutput, "utf8") <= FAILURE_OUTPUT_TAIL_BYTE_LIMIT ? { completeOutput } : {}),
     gateExitCode: raced.gateExitCode,
     passCount,
     failCount,
@@ -739,9 +883,9 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
 
 /** Own the per-run JUnit artifact so concurrent gates never share diagnostics. */
 async function runAdmittedNodeSupervisedWorkerGate(
-  request: SupervisedWorkerGateRunRequest,
+  request: SupervisedWorkerCommandRunRequest,
   settlement: NodeSupervisedWorkerGateSettlement,
-): Promise<SupervisedWorkerGateRunResult> {
+): Promise<SupervisedWorkerCommandRunResult> {
   const diagnosticDirectory = await mkdtemp(join(tmpdir(), "cq-supervised-gate-"));
   try {
     return await runAdmittedNodeSupervisedWorkerGateWithReport(
@@ -775,33 +919,51 @@ export async function superviseImplementWorkerGate(
   if (output["status"] !== "pass") return request.output;
 
   const { context } = request;
-  await assertManagedWorktreeDispatchBindingLive(context, {
-    ...(deps.stateDir === undefined ? {} : { stateDir: deps.stateDir }),
-  });
   const resultCommit = stringField(output, "resultCommit", "worker result");
+  const authority = deps.cohortAuthority === undefined ? undefined : {
+    store: deps.cohortAuthority.store, lease: structuredClone(deps.cohortAuthority.lease), envelope: structuredClone(deps.cohortAuthority.envelope),
+  };
+  let evidenceSubject: CohortEvidenceSubjectV1 | undefined;
+  if (context.cohort === undefined) {
+    if (authority !== undefined) throw new Error("task gate cannot use cohort authority");
+    await assertManagedWorktreeDispatchBindingLive(context, deps.stateDir === undefined ? {} : { stateDir: deps.stateDir });
+    if (output["taskId"] !== context.taskId || Object.hasOwn(output, "cohort")) throw new Error("worker taskId substitution");
+  } else {
+    if (authority === undefined) throw new Error("cohort full gate requires the sealed cohort acceptance ladder");
+    evidenceSubject = await assertCohortGatePrerequisites(context, resultCommit, authority, deps.stateDir);
+    if (Object.hasOwn(output, "taskId") || cohortValueDigestV1(output["cohort"]) !== cohortValueDigestV1(context.cohort)) {
+      throw new Error("worker cohort envelope substitution");
+    }
+  }
   const branch = stringField(output, "branch", "worker result");
   const actualWorktreePath = stringField(output, "actualWorktreePath", "worker result");
   if (!FULL_SHA.test(resultCommit)) throw new Error("worker resultCommit must be a full SHA");
-  if (output["taskId"] !== context.taskId) throw new Error("worker taskId substitution");
   if (branch !== context.branch) throw new Error("worker branch substitution");
   if (resolve(actualWorktreePath) !== resolve(context.worktreePath)) {
     throw new Error("worker worktree substitution");
   }
-  const wip = await findOpenWipCheckpoints(
+  const memberTaskIds = context.cohort === undefined ? [context.taskId] : context.cohort.memberAuthorities.map((member) => member.taskRef.slice("tasks:".length));
+  for (const taskId of memberTaskIds) {
+    const wip = await findOpenWipCheckpoints(
     context.worktreePath,
-    { taskId: context.taskId },
-    new Set([`WIP-${context.taskId}.md`]),
-    context.taskId,
+    { taskId },
+    new Set([`WIP-${taskId}.md`]),
+    taskId,
   );
   if (wip.status === "malformed") {
-    throw new Error(`supervised gate denied malformed WIP artifact ${wip.path}: ${wip.detail}`);
+    throw new SupervisedWorkerGatePreflightRejectedError(
+      "wip-malformed",
+      `supervised gate denied malformed WIP artifact ${wip.path}: ${wip.detail}`,
+    );
   }
   if (wip.status === "open") {
-    throw new Error(
+    throw new SupervisedWorkerGatePreflightRejectedError(
+      "wip-open",
       `supervised gate denied open WIP checkpoints: ${wip.findings
         .flatMap((finding) => finding.openCheckpoints)
         .join(", ")}`,
     );
+  }
   }
   const branchTip = await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref]);
   if (branchTip !== resultCommit) throw new Error("supervised gate requires the exact branch tip");
@@ -872,6 +1034,7 @@ export async function superviseImplementWorkerGate(
   }
 
   if (context.validationIntent === "focused-only") {
+    if (context.cohort !== undefined) throw new Error("cohort acceptance cannot use child-focused-only gate substitution");
     return request.output;
   }
 
@@ -880,9 +1043,15 @@ export async function superviseImplementWorkerGate(
     admissionTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
     executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
     cancellationSignal: deps.cancellationSignal,
+    ...(deps.effectAdmission === undefined ? {} : { effectAdmission: deps.effectAdmission }),
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
-    throw new SupervisedWorkerGateRejectedError(run, context, resultCommit);
+    let diagnosticContext = context;
+    if (context.cohort !== undefined) {
+      if (authority === undefined) throw new Error("cohort gate lost its sealed authority");
+      diagnosticContext = { ...context, cohort: authority.envelope };
+    }
+    throw new SupervisedWorkerGateRejectedError(run, diagnosticContext, resultCommit);
   }
   if (
     (await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !==
@@ -896,10 +1065,15 @@ export async function superviseImplementWorkerGate(
   ) {
     throw new Error("supervised worker tree became dirty during the gate");
   }
+  if (authority !== undefined) await assertCohortGatePrerequisites(context, resultCommit, authority, deps.stateDir);
 
+  const evidenceIdentity = context.cohort === undefined ? { version: 1 as const, taskId: context.taskId } : (() => {
+    if (evidenceSubject === undefined) throw new Error("cohort gate lost its sealed evidence subject");
+    return { version: 2 as const, evidenceSubject };
+  })();
   const evidence: ImplementWorkerSupervisedGateEvidence = Object.freeze({
     kind: "cq-supervised-gate-evidence",
-    version: 1,
+    ...evidenceIdentity,
     attestationId: context.attestationId,
     generation: context.generation,
     roleId: "implement-worker",
@@ -908,7 +1082,6 @@ export async function superviseImplementWorkerGate(
     promptDigest: context.promptProvenance.promptDigest,
     catalogHash: context.promptProvenance.catalogHash,
     inputDigest: context.promptProvenance.inputDigest,
-    taskId: context.taskId,
     worktreePath: context.worktreePath,
     branch: context.branch,
     baseCommit: context.dispatchBaseCommit,
@@ -925,7 +1098,7 @@ export async function superviseImplementWorkerGate(
     gitReceiptsDigest: dispatchPayloadDigest(output["gitReceipts"]),
     mutationTableDigest: dispatchPayloadDigest(output["mutationTable"] ?? null),
   });
-  await recordManagedWorktreeSupervisedGateEvidence(context, evidence, {
+  if (context.cohort === undefined && evidence.version === 1) await recordManagedWorktreeSupervisedGateEvidence(context, evidence, {
     ...(deps.stateDir === undefined ? {} : { stateDir: deps.stateDir }),
   });
   return Object.freeze({

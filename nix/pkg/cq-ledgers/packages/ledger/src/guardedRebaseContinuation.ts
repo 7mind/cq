@@ -22,8 +22,15 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DispatchGitEffectBinding, DispatchGuardedRebaseBridge } from "@cq/config";
+import { cohortEffectTargetRefV1, runWorksetGitEffectGate } from "@cq/process-control";
 import {
+  assertGitBrokerBindingLive,
+  assertGitBrokerReceiptSubject,
+  gitBrokerReceiptSubject,
+  gitBrokerSubjectsMatch,
   resolveInheritedGitChangeReceipts,
+  type GitBrokerManagedBinding,
+  type GitBrokerReceiptSubject,
   type GitChangeReceiptLineageBinding,
 } from "./gitChangeBroker.js";
 import {
@@ -31,12 +38,16 @@ import {
   gitRebaseConflictStateDigest,
   observeManagedWorktreeConflictState,
   type GitConflictContinuationReceipt,
+  type GitRebaseConflictState,
 } from "./gitConflictContinuation.js";
 import {
   withManagedWorktreeEffectLock,
   type ManagedWorktreeDeps,
   type ManagedWorktreeDispatchBinding,
+  type ManagedCohortWorktreeAuthority,
 } from "./managedWorktree.js";
+import { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.js";
+import type { LedgerStore } from "./store/LedgerStore.js";
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -68,13 +79,12 @@ class NonterminalGuardedRebaseError extends Error {}
 type GuardedRebaseJournalState = "intent" | "rebase-stopped" | "finalized";
 
 /** The durable journal. Everything a verified bridge derives from lives here. */
-export interface GuardedRebaseJournal {
-  readonly version: 1;
+export type GuardedRebaseJournal = GitBrokerReceiptSubject & {
   readonly operationId: string;
   readonly requestDigest: string;
   readonly createdAt: string;
   readonly state: GuardedRebaseJournalState;
-  readonly taskId: string;
+  readonly producingEnvelopeDigest?: string;
   readonly handleToken: string;
   readonly handleFingerprint: string;
   readonly repositoryRoot: string;
@@ -94,12 +104,21 @@ export interface GuardedRebaseJournal {
   readonly conflictIdentity?: string;
   readonly conflictReceipts?: readonly GitConflictContinuationReceipt[];
   readonly finalizedAt?: string;
-}
+};
 
 export interface GuardedRebaseEffectResult {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/** Server-only identity of one still-active guarded conflict. */
+export interface PendingGuardedRebaseConflict {
+  readonly requestDigest: string;
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly conflictStateDigest: string;
+  readonly conflictIdentity: string;
 }
 
 export type GuardedRebaseRunOutcome =
@@ -115,12 +134,9 @@ export type GuardedRebaseRunOutcome =
       readonly effect: GuardedRebaseEffectResult;
     };
 
-export interface RunGuardedRebaseOptions {
-  readonly binding: ManagedWorktreeDispatchBinding;
+interface RunGuardedRebaseCommonOptions {
   readonly operationId: string;
   readonly ontoCommit: string;
-  /** Launches the admitted `git rebase <ontoCommit>` effect exactly once. */
-  readonly runEffect: () => Promise<GuardedRebaseEffectResult>;
   /** Idempotent durable cut invoked after intent persistence and before the Git effect. */
   readonly onIntent?: (intent: {
     readonly reference: string;
@@ -128,6 +144,39 @@ export interface RunGuardedRebaseOptions {
   }) => Promise<void>;
   readonly now?: () => Date;
   readonly stateDir?: string;
+}
+
+export type RunGuardedRebaseOptions = RunGuardedRebaseCommonOptions & (
+  | { readonly binding: ManagedWorktreeDispatchBinding & { readonly cohort?: never };
+      readonly runEffect: () => Promise<GuardedRebaseEffectResult>;
+      readonly cohortAuthority?: never; readonly store?: never }
+  | { readonly binding: Extract<GitBrokerManagedBinding, { readonly cohort: object }>;
+      readonly cohortAuthority: ManagedCohortWorktreeAuthority; readonly store: LedgerStore;
+      readonly runEffect?: never }
+);
+
+interface GuardedRebaseAuthorityDeps extends Pick<ManagedWorktreeDeps, "stateDir"> {
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
+}
+
+function authorityDeps(options: GuardedRebaseAuthorityDeps): GuardedRebaseAuthorityDeps {
+  return { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+    ...(options.cohortAuthority === undefined ? {} : { cohortAuthority: options.cohortAuthority }) };
+}
+
+async function runGuardedEffect(options: RunGuardedRebaseOptions): Promise<GuardedRebaseEffectResult> {
+  if (options.cohortAuthority === undefined) return await options.runEffect();
+  const { binding, cohortAuthority: authority, store } = options;
+  if (Object.hasOwn(options, "runEffect")) throw new Error("cohort guarded rebase requires its registered all-member effect");
+  if (store.worksetStore === undefined) throw new Error("cohort guarded rebase requires a workset store");
+  const expected = { kind: "rebase" as const, targetRef: cohortEffectTargetRefV1(binding.cohort),
+    repositoryRoot: binding.repositoryRoot, worktreePath: binding.worktreePath,
+    ontoCommit: options.ontoCommit, cohort: binding.cohort };
+  return await runWorksetGitEffectGate({ expected,
+    provider: createCohortWorksetEffectAdmissionProvider(authority, store.worksetStore()),
+    environment: trustedGitEnvironment(),
+    resolve: async () => { await assertGitBrokerBindingLive(binding, authorityDeps(options), false); return expected; },
+  });
 }
 
 interface GitResult {
@@ -200,7 +249,7 @@ async function checkedGit(
   return result.stdout;
 }
 
-function guardedRebaseRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
+function guardedRebaseRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
   return join(
     stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry"),
     "guarded-rebase",
@@ -208,17 +257,18 @@ function guardedRebaseRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: s
 }
 
 function operationRoot(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   operationId: string,
   stateDir?: string,
 ): string {
-  const key = sha256(`${binding.taskId}\n${binding.handleToken}\n${operationId}`);
+  const subject = binding.cohort === undefined ? binding.taskId : binding.cohort.intent.intentDigest;
+  const key = sha256(`${subject}\n${binding.handleToken}\n${operationId}`);
   return join(guardedRebaseRoot(binding, stateDir), key);
 }
 
 /** The replay-stable request identity: the parent payload plus the full handle identity. */
 function guardedRebaseRequestDigest(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   operationId: string,
   ontoCommit: string,
 ): string {
@@ -226,7 +276,11 @@ function guardedRebaseRequestDigest(
     canonical({
       operationId,
       ontoCommit,
-      taskId: binding.taskId,
+      ...(binding.cohort === undefined ? { taskId: binding.taskId } : { cohort: {
+        definition: binding.cohort.definition, intent: binding.cohort.intent,
+        memberAuthorities: binding.cohort.memberAuthorities, memberSetDigest: binding.cohort.memberSetDigest,
+        ...(binding.cohort.state === "sealed" ? { evidenceSubject: binding.cohort.evidenceSubject } : {}),
+      } }),
       handleToken: binding.handleToken,
       handleFingerprint: binding.handleFingerprint,
       repositoryRoot: binding.repositoryRoot,
@@ -270,7 +324,7 @@ function assertJournalShape(journal: GuardedRebaseJournal): GuardedRebaseJournal
   if (
     journal === null ||
     typeof journal !== "object" ||
-    journal.version !== 1 ||
+    (journal.version !== 1 && journal.version !== 2) ||
     !OPERATION_ID.test(journal.operationId) ||
     !SHA256.test(journal.requestDigest) ||
     typeof journal.createdAt !== "string" ||
@@ -279,7 +333,6 @@ function assertJournalShape(journal: GuardedRebaseJournal): GuardedRebaseJournal
     throw new Error("invalid durable guarded-rebase journal");
   }
   for (const field of [
-    "taskId",
     "handleToken",
     "handleFingerprint",
     "repositoryRoot",
@@ -292,6 +345,13 @@ function assertJournalShape(journal: GuardedRebaseJournal): GuardedRebaseJournal
     if (typeof journal[field] !== "string" || journal[field].length === 0) {
       throw new Error("invalid durable guarded-rebase journal");
     }
+  }
+  assertGitBrokerReceiptSubject(journal);
+  if (journal.version === 2 ? journal.producingEnvelopeDigest !== journal.cohort.envelopeDigest : journal.producingEnvelopeDigest !== undefined) {
+    throw new Error("guarded rebase journal substituted its producing cohort envelope");
+  }
+  if (journal.version === 2 && guardedRebaseRequestDigest(journal, journal.operationId, journal.ontoCommit) !== journal.requestDigest) {
+    throw new Error("guarded rebase journal substituted its immutable request binding");
   }
   for (const field of ["baseCommit", "oldResultCommit", "ontoCommit"] as const) {
     if (!FULL_COMMIT.test(journal[field])) {
@@ -330,7 +390,7 @@ async function readJournal(file: string): Promise<GuardedRebaseJournal | null> {
   }
 }
 
-async function liveTip(binding: ManagedWorktreeDispatchBinding): Promise<string> {
+async function liveTip(binding: GitBrokerManagedBinding): Promise<string> {
   const symbolic = await runGit(binding.worktreePath, ["symbolic-ref", "--quiet", "HEAD"]);
   if (symbolic.code !== 0 || symbolic.stdout.toString().trim() !== binding.ref) {
     throw new Error("guarded rebase requires the bound task ref checked out");
@@ -343,7 +403,7 @@ async function liveTip(binding: ManagedWorktreeDispatchBinding): Promise<string>
 }
 
 async function assertAncestor(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   ancestor: string,
   descendant: string,
   label: string,
@@ -359,7 +419,7 @@ async function assertAncestor(
   }
 }
 
-async function sequencerActive(binding: ManagedWorktreeDispatchBinding): Promise<boolean> {
+async function sequencerActive(binding: GitBrokerManagedBinding): Promise<boolean> {
   const gitDir = (
     await checkedGit(binding.worktreePath, [
       "rev-parse",
@@ -379,7 +439,7 @@ async function sequencerActive(binding: ManagedWorktreeDispatchBinding): Promise
 
 /** Stable patch-id of one squashed range diff; "" when the range is empty. */
 async function rangePatchId(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   base: string,
   tip: string,
 ): Promise<string> {
@@ -409,6 +469,17 @@ function bridgeOf(journal: GuardedRebaseJournal, reference: string): DispatchGua
     throw new Error("guarded rebase journal is not terminal");
   }
   return Object.freeze({
+    ...(journal.version === 2 ? {
+      version: 2 as const, cohort: structuredClone(journal.cohort),
+      sourceBinding: { handleToken: journal.handleToken, handleFingerprint: journal.handleFingerprint,
+        repositoryRoot: journal.repositoryRoot, repositoryId: journal.repositoryId, commonDir: journal.commonDir,
+        worktreePath: journal.worktreePath, branch: journal.branch, ref: journal.ref, baseCommit: journal.baseCommit },
+      journals: [{ requestDigest: journal.requestDigest, oldResultCommit: journal.oldResultCommit,
+        ontoCommit: journal.ontoCommit, rebasedStartCommit: journal.rebasedStartCommit,
+        cohortEnvelopeDigest: journal.cohort.envelopeDigest,
+        conflictReceiptDigests: (journal.conflictReceipts ?? []).map((receipt) => sha256(canonical(receipt))),
+      }],
+    } : {}),
     guardedRebase: reference,
     operationId: journal.operationId,
     requestDigest: journal.requestDigest,
@@ -422,7 +493,7 @@ function bridgeOf(journal: GuardedRebaseJournal, reference: string): DispatchGua
 }
 
 async function finalizeClean(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   journal: GuardedRebaseJournal,
   rebasedStartCommit: string,
   now: () => Date,
@@ -441,9 +512,9 @@ async function finalizeClean(
 }
 
 async function finalizeConflicted(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   journal: GuardedRebaseJournal,
-  deps: Pick<ManagedWorktreeDeps, "stateDir">,
+  deps: GuardedRebaseAuthorityDeps,
   now: () => Date,
 ): Promise<GuardedRebaseJournal> {
   if (await sequencerActive(binding)) {
@@ -512,7 +583,7 @@ async function finalizeConflicted(
  * admitted gate; this boundary owns the journal, the terminal verification,
  * and the opaque reference.
  */
-export async function runGuardedRebase(
+async function runGuardedRebaseCore(
   options: RunGuardedRebaseOptions,
 ): Promise<GuardedRebaseRunOutcome> {
   if (!OPERATION_ID.test(options.operationId)) {
@@ -522,6 +593,7 @@ export async function runGuardedRebase(
     throw new Error("guarded rebase requires one full onto commit SHA");
   }
   const binding = options.binding;
+  if (binding.cohort !== undefined) await assertGitBrokerBindingLive(binding, authorityDeps(options), true);
   const now = options.now ?? (() => new Date());
   const requestDigest = guardedRebaseRequestDigest(
     binding,
@@ -531,46 +603,108 @@ export async function runGuardedRebase(
   const reference = guardedRebaseReference(requestDigest);
   const root = operationRoot(binding, options.operationId, options.stateDir);
   const journalFile = join(root, "journal.json");
-  return await withManagedWorktreeEffectLock(
-    binding,
-    { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-    async () => {
-      let journal = await readJournal(journalFile);
-      if (journal !== null && journal.requestDigest !== requestDigest) {
+  {
+    let journal = await readJournal(journalFile);
+    if (journal !== null && journal.requestDigest !== requestDigest) {
+      throw new Error(
+        `guarded rebase operationId ${options.operationId} was reused with a different request`,
+      );
+    }
+    if (journal?.state === "finalized") {
+      const tip = await liveTip(binding);
+      if (tip !== journal.rebasedStartCommit) {
         throw new Error(
-          `guarded rebase operationId ${options.operationId} was reused with a different request`,
+          "guarded rebase reference is stale: the managed ref advanced past the journaled rebased head",
         );
       }
-      if (journal?.state === "finalized") {
-        const tip = await liveTip(binding);
-        if (tip !== journal.rebasedStartCommit) {
-          throw new Error(
-            "guarded rebase reference is stale: the managed ref advanced past the journaled rebased head",
-          );
-        }
+      return Object.freeze({
+        kind: "finalized" as const,
+        reference,
+        bridge: bridgeOf(journal, reference),
+        effect: null,
+      });
+    }
+    if (journal?.state === "rebase-stopped") {
+      let finalized: GuardedRebaseJournal;
+      try {
+        finalized = await finalizeConflicted(
+          binding,
+          journal,
+          authorityDeps(options),
+          now,
+        );
+      } catch (error) {
+        if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
+        return Object.freeze({
+          kind: "conflict-pending" as const,
+          effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
+        });
+      }
+      await writeJournal(journalFile, finalized);
+      return Object.freeze({
+        kind: "finalized" as const,
+        reference,
+        bridge: bridgeOf(finalized, reference),
+        effect: null,
+      });
+    }
+    // "intent": fresh start, or a restart after the durable intent but before
+    // (or during) the effect. Reconcile the live state before deciding.
+    if (journal !== null && (await sequencerActive(binding))) {
+      const conflict = await observeManagedWorktreeConflictState(binding, authorityDeps(options));
+      journal = Object.freeze({
+        ...journal,
+        state: "rebase-stopped" as const,
+        conflictStateDigest: gitRebaseConflictStateDigest(conflict),
+        conflictHead: conflict.currentHead,
+        conflictIdentity: conflict.sequencer.identity,
+      });
+      await writeJournal(journalFile, journal);
+      try {
+        const finalized = await finalizeConflicted(
+          binding,
+          journal,
+          authorityDeps(options),
+          now,
+        );
+        await writeJournal(journalFile, finalized);
         return Object.freeze({
           kind: "finalized" as const,
           reference,
-          bridge: bridgeOf(journal, reference),
+          bridge: bridgeOf(finalized, reference),
           effect: null,
         });
+      } catch (error) {
+        if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
+        return Object.freeze({
+          kind: "conflict-pending" as const,
+          effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
+        });
       }
-      if (journal?.state === "rebase-stopped") {
-        let finalized: GuardedRebaseJournal;
-        try {
-          finalized = await finalizeConflicted(
-            binding,
-            journal,
-            { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-            now,
-          );
-        } catch (error) {
-          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
-          return Object.freeze({
-            kind: "conflict-pending" as const,
-            effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
-          });
-        }
+    }
+    if (journal !== null) {
+      const tip = await liveTip(binding);
+      if (tip !== journal.oldResultCommit) {
+        // The effect ran to completion but the outcome was never recorded.
+        const receipts = await durableHandleConflictContinuationReceipts(
+          binding,
+          authorityDeps(options),
+          {
+            headName: binding.ref,
+            originalTip: journal.oldResultCommit,
+            onto: journal.ontoCommit,
+            liveTip: tip,
+          },
+        );
+        const finalized =
+          receipts.length === 0
+            ? await finalizeClean(binding, journal, tip, now)
+            : await finalizeConflicted(
+                binding,
+                journal,
+                authorityDeps(options),
+                now,
+              );
         await writeJournal(journalFile, finalized);
         return Object.freeze({
           kind: "finalized" as const,
@@ -579,12 +713,39 @@ export async function runGuardedRebase(
           effect: null,
         });
       }
-      // "intent": fresh start, or a restart after the durable intent but before
-      // (or during) the effect. Reconcile the live state before deciding.
-      if (journal !== null && (await sequencerActive(binding))) {
-        const conflict = await observeManagedWorktreeConflictState(binding, {
-          ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-        });
+    }
+    if (journal === null) {
+      journal = Object.freeze({
+        ...gitBrokerReceiptSubject(binding),
+        ...(binding.cohort === undefined ? {} : { producingEnvelopeDigest: binding.cohort.envelopeDigest }),
+        operationId: options.operationId,
+        requestDigest,
+        createdAt: now().toISOString(),
+        state: "intent" as const,
+        handleToken: binding.handleToken,
+        handleFingerprint: binding.handleFingerprint,
+        repositoryRoot: binding.repositoryRoot,
+        repositoryId: binding.repositoryId,
+        commonDir: binding.commonDir,
+        worktreePath: binding.worktreePath,
+        branch: binding.branch,
+        ref: binding.ref,
+        baseCommit: binding.baseCommit,
+        oldResultCommit: await liveTip(binding),
+        ontoCommit: options.ontoCommit,
+      });
+      await writeJournal(journalFile, journal);
+    }
+    await options.onIntent?.({ reference, requestDigest });
+    if (binding.cohort !== undefined && journal.version === 2 && journal.cohort.envelopeDigest !== binding.cohort.envelopeDigest) {
+      await assertGitBrokerBindingLive(binding, authorityDeps(options), false);
+      journal = { ...journal, cohort: structuredClone(binding.cohort), producingEnvelopeDigest: binding.cohort.envelopeDigest };
+      await writeJournal(journalFile, journal);
+    }
+    const effect = await runGuardedEffect(options);
+    if (effect.code !== 0) {
+      if (await sequencerActive(binding)) {
+        const conflict = await observeManagedWorktreeConflictState(binding, authorityDeps(options));
         journal = Object.freeze({
           ...journal,
           state: "rebase-stopped" as const,
@@ -593,118 +754,41 @@ export async function runGuardedRebase(
           conflictIdentity: conflict.sequencer.identity,
         });
         await writeJournal(journalFile, journal);
-        try {
-          const finalized = await finalizeConflicted(
-            binding,
-            journal,
-            { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-            now,
-          );
-          await writeJournal(journalFile, finalized);
-          return Object.freeze({
-            kind: "finalized" as const,
-            reference,
-            bridge: bridgeOf(finalized, reference),
-            effect: null,
-          });
-        } catch (error) {
-          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
-          return Object.freeze({
-            kind: "conflict-pending" as const,
-            effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
-          });
-        }
+        return Object.freeze({ kind: "conflict-pending" as const, effect });
       }
-      if (journal !== null) {
-        const tip = await liveTip(binding);
-        if (tip !== journal.oldResultCommit) {
-          // The effect ran to completion but the outcome was never recorded.
-          const receipts = await durableHandleConflictContinuationReceipts(
-            binding,
-            {
-              ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-            },
-            {
-              headName: binding.ref,
-              originalTip: journal.oldResultCommit,
-              onto: journal.ontoCommit,
-              liveTip: tip,
-            },
-          );
-          const finalized =
-            receipts.length === 0
-              ? await finalizeClean(binding, journal, tip, now)
-              : await finalizeConflicted(
-                  binding,
-                  journal,
-                  { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-                  now,
-                );
-          await writeJournal(journalFile, finalized);
-          return Object.freeze({
-            kind: "finalized" as const,
-            reference,
-            bridge: bridgeOf(finalized, reference),
-            effect: null,
-          });
-        }
-      }
-      if (journal === null) {
-        journal = Object.freeze({
-          version: 1 as const,
-          operationId: options.operationId,
-          requestDigest,
-          createdAt: now().toISOString(),
-          state: "intent" as const,
-          taskId: binding.taskId,
-          handleToken: binding.handleToken,
-          handleFingerprint: binding.handleFingerprint,
-          repositoryRoot: binding.repositoryRoot,
-          repositoryId: binding.repositoryId,
-          commonDir: binding.commonDir,
-          worktreePath: binding.worktreePath,
-          branch: binding.branch,
-          ref: binding.ref,
-          baseCommit: binding.baseCommit,
-          oldResultCommit: await liveTip(binding),
-          ontoCommit: options.ontoCommit,
-        });
-        await writeJournal(journalFile, journal);
-      }
-      await options.onIntent?.({ reference, requestDigest });
-      const effect = await options.runEffect();
-      if (effect.code !== 0) {
-        if (await sequencerActive(binding)) {
-          const conflict = await observeManagedWorktreeConflictState(binding, {
-            ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
-          });
-          journal = Object.freeze({
-            ...journal,
-            state: "rebase-stopped" as const,
-            conflictStateDigest: gitRebaseConflictStateDigest(conflict),
-            conflictHead: conflict.currentHead,
-            conflictIdentity: conflict.sequencer.identity,
-          });
-          await writeJournal(journalFile, journal);
-          return Object.freeze({ kind: "conflict-pending" as const, effect });
-        }
-        throw new Error(`guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`);
-      }
-      const tip = await liveTip(binding);
-      const finalized = await finalizeClean(binding, journal, tip, now);
-      await writeJournal(journalFile, finalized);
-      return Object.freeze({
-        kind: "finalized" as const,
-        reference,
-        bridge: bridgeOf(finalized, reference),
-        effect,
-      });
-    },
+      throw new Error(`guarded rebase effect failed (${effect.code}): ${effect.stderr.trim()}`);
+    }
+    const tip = await liveTip(binding);
+    const finalized = await finalizeClean(binding, journal, tip, now);
+    await writeJournal(journalFile, finalized);
+    return Object.freeze({
+      kind: "finalized" as const,
+      reference,
+      bridge: bridgeOf(finalized, reference),
+      effect,
+    });
+  }
+}
+
+export async function runGuardedRebase(
+  options: RunGuardedRebaseOptions,
+): Promise<GuardedRebaseRunOutcome> {
+  return await withManagedWorktreeEffectLock(
+    options.binding,
+    { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+    async () => await runGuardedRebaseCore(options),
   );
 }
 
+/** Reconcile a guarded journal when the caller already holds this binding's effect lock. */
+export async function runGuardedRebaseUnderManagedLock(
+  options: RunGuardedRebaseOptions,
+): Promise<GuardedRebaseRunOutcome> {
+  return await runGuardedRebaseCore(options);
+}
+
 async function readJournals(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   stateDir?: string,
 ): Promise<readonly GuardedRebaseJournal[]> {
   const root = guardedRebaseRoot(binding, stateDir);
@@ -727,7 +811,6 @@ async function readJournals(
 }
 
 const BINDING_IDENTITY_FIELDS = [
-  "taskId",
   "handleToken",
   "handleFingerprint",
   "repositoryRoot",
@@ -741,9 +824,12 @@ const BINDING_IDENTITY_FIELDS = [
 
 function assertJournalMatchesBinding(
   journal: GuardedRebaseJournal,
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   label: string,
 ): void {
+  if (!(label === "prior-generation" ? gitBrokerSubjectsMatch(binding, journal, true) : gitBrokerSubjectsMatch(journal, binding, true))) {
+    throw new Error(`guarded rebase journal does not match the ${label} subject`);
+  }
   for (const field of BINDING_IDENTITY_FIELDS) {
     if (journal[field] !== binding[field]) {
       throw new Error(`guarded rebase journal does not match the ${label} binding at ${field}`);
@@ -753,15 +839,56 @@ function assertJournalMatchesBinding(
 
 function journalMatchesBinding(
   journal: GuardedRebaseJournal,
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
 ): boolean {
-  return BINDING_IDENTITY_FIELDS.every((field) => journal[field] === binding[field]);
+  return gitBrokerSubjectsMatch(journal, binding, true) && BINDING_IDENTITY_FIELDS.every((field) => journal[field] === binding[field]);
+}
+
+/**
+ * Authenticate the unique nonterminal guarded journal for the exact live
+ * manager binding and caller-observed conflict. No journal path, operation id,
+ * or opaque authority is returned to the caller-facing boundary.
+ */
+export async function resolveUniquePendingGuardedRebaseConflict(
+  binding: GitBrokerManagedBinding,
+  expectedState: GitRebaseConflictState,
+  deps: GuardedRebaseAuthorityDeps = {},
+): Promise<PendingGuardedRebaseConflict> {
+  const expectedDigest = gitRebaseConflictStateDigest(expectedState);
+  const observed = await observeManagedWorktreeConflictState(binding, deps);
+  if (gitRebaseConflictStateDigest(observed) !== expectedDigest) {
+    throw new Error("pending guarded rebase conflict differs from the live managed worktree");
+  }
+  const journals = await readJournals(binding, deps.stateDir);
+  const matches = journals.filter(
+    (journal) =>
+      journal.state === "rebase-stopped" &&
+      journalMatchesBinding(journal, binding) &&
+      guardedRebaseRequestDigest(binding, journal.operationId, journal.ontoCommit) ===
+        journal.requestDigest &&
+      journal.oldResultCommit === expectedState.sequencer.originalTip &&
+      journal.ontoCommit === expectedState.sequencer.onto &&
+      journal.conflictStateDigest === expectedDigest &&
+      journal.conflictHead === expectedState.currentHead &&
+      journal.conflictIdentity === expectedState.sequencer.identity,
+  );
+  if (matches.length !== 1) {
+    throw new Error("pending guarded rebase conflict does not resolve to one durable journal");
+  }
+  const journal = matches[0]!;
+  return Object.freeze({
+    requestDigest: journal.requestDigest,
+    oldResultCommit: journal.oldResultCommit,
+    ontoCommit: journal.ontoCommit,
+    conflictStateDigest: expectedDigest,
+    conflictIdentity: expectedState.sequencer.identity,
+  });
 }
 
 function composeGuardedRebaseBridge(
   journals: readonly GuardedRebaseJournal[],
   selected: GuardedRebaseJournal,
-  binding: ManagedWorktreeDispatchBinding,
+  binding: GitBrokerManagedBinding,
   oldResultCommit: string,
   reference: string,
 ): DispatchGuardedRebaseBridge {
@@ -793,6 +920,11 @@ function composeGuardedRebaseBridge(
   const latest = bridgeOf(selected, reference);
   return Object.freeze({
     ...latest,
+    ...(latest.version === 2 ? { journals: [...chain].reverse().flatMap((entry) => {
+      const part = bridgeOf(entry, guardedRebaseReference(entry.requestDigest));
+      if (part.version !== 2) throw new Error("cohort guarded rebase chain contains a task journal");
+      return part.journals;
+    }) } : {}),
     oldResultCommit,
     outcome: chain.some((journal) => journal.outcome === "conflicted") ? "conflicted" : "clean",
     exactTip: chain.every((journal) => journal.exactTip === true),
@@ -800,12 +932,13 @@ function composeGuardedRebaseBridge(
 }
 
 export interface MaterializeGuardedRebaseBridgeOptions {
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
   readonly reference: string;
   /** The exact terminal prior worker generation's persisted binding. */
   readonly prior: GitChangeReceiptLineageBinding &
     Pick<DispatchGitEffectBinding, "receiptChainTransition" | "receiptChainTransitions">;
   /** The live binding resolved for THIS prepare. */
-  readonly current: ManagedWorktreeDispatchBinding;
+  readonly current: GitBrokerManagedBinding;
   readonly baseCommitInput: string;
   readonly startingCommitInput: string;
   readonly priorResultCommitInput?: string | null;
@@ -854,6 +987,7 @@ export async function materializeGuardedRebaseBridge(
   }
   try {
     assertJournalMatchesBinding(journal, options.current, "current");
+    if (options.current.cohort !== undefined) await assertGitBrokerBindingLive(options.current, authorityDeps(options), false);
     assertJournalMatchesBinding(journal, options.prior, "prior-generation");
   } catch (error) {
     throw new GuardedRebaseRejection(
@@ -897,7 +1031,7 @@ export async function materializeGuardedRebaseBridge(
   }
   try {
     await resolveInheritedGitChangeReceipts(options.prior, bridge.oldResultCommit, {
-      ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+      ...authorityDeps(options),
       ...(options.prior.receiptChainTransition === undefined
         ? {}
         : { receiptChainTransition: options.prior.receiptChainTransition }),
@@ -932,10 +1066,26 @@ export async function materializeGuardedRebaseBridge(
   return bridge;
 }
 
+export async function verifyHistoricalCohortGuardedRebaseBridge(
+  bridge: Extract<DispatchGuardedRebaseBridge, { readonly version: 2 }>, stateDir: string | undefined,
+): Promise<void> {
+  const binding = { ...bridge.sourceBinding, cohort: bridge.cohort };
+  const journals = await readJournals(binding, stateDir);
+  const matches = journals.filter((journal) => journal.requestDigest === bridge.requestDigest);
+  if (matches.length !== 1 || matches[0]!.state !== "finalized" || bridge.guardedRebase !== guardedRebaseReference(bridge.requestDigest)) {
+    throw new Error("historical cohort bridge lacks one immutable finalized source journal");
+  }
+  assertJournalMatchesBinding(matches[0]!, binding, "historical source");
+  if (canonical(composeGuardedRebaseBridge(journals, matches[0]!, binding, bridge.oldResultCommit, bridge.guardedRebase)) !== canonical(bridge)) {
+    throw new Error("historical cohort bridge differs from its immutable finalized source journal");
+  }
+}
+
 export interface ReverifyGuardedRebaseBridgeOptions {
+  readonly cohortAuthority?: ManagedCohortWorktreeAuthority;
   /** The bridge persisted on the exact terminal prior generation. */
   readonly bridge: DispatchGuardedRebaseBridge;
-  readonly current: ManagedWorktreeDispatchBinding;
+  readonly current: GitBrokerManagedBinding;
   readonly baseCommitInput: string;
   readonly startingCommitInput: string;
   /** First oldHead of the inherited post-rebase suffix, or null when it is empty. */
@@ -952,6 +1102,7 @@ export interface ReverifyGuardedRebaseBridgeOptions {
 export async function reverifyGuardedRebaseBridge(
   options: ReverifyGuardedRebaseBridgeOptions,
 ): Promise<DispatchGuardedRebaseBridge> {
+  if (options.current.cohort !== undefined) await assertGitBrokerBindingLive(options.current, authorityDeps(options), false);
   const bridge = options.bridge;
   if (!GUARDED_REBASE_REFERENCE_PATTERN.test(bridge.guardedRebase)) {
     throw new GuardedRebaseRejection(
