@@ -465,11 +465,16 @@ fallback exists.
    do not deploy, switch, acknowledge, or invent successful probes yourself.
 10. Reuse the unchanged candidate's acceptance: **no post-merge validation** and
     no duplicate gate. A changed runtime artifact for the same authenticated
-    source/seal reruns only deployment probes. Failure leaves every member
-    nonterminal; retain actual diagnostics. Recover `prepared`, `merged`,
+    source/seal reruns only deployment probes. Acceptance or deployment failure
+    leaves every member nonterminal; retain actual diagnostics. Recover `prepared`, `merged`,
     `probes-complete`, `ledger-recording`, `ledger-recorded`, and `released`
     handoffs honestly. Lost primary acknowledgement verifies the committed
     protected batch before any effect or new mutation admission.
+    After primary recording, a `cleanup pending` refusal retains the terminal
+    batch. Retry the identical `complete_cohort` request to finish exact managed
+    worktree cleanup; do not reacquire archived task authority, repeat acceptance,
+    or reinterpret the completed tasks as failed. Completion releases only its
+    own reservation and lease; replay must preserve a newer cohort's authority.
 11. Only the atomic completion writes all tasks and exact implementation
     reviews, resolves wholly covered defects, merges exact partial archives,
     and archives eligible fully covered non-coordination milestones and the

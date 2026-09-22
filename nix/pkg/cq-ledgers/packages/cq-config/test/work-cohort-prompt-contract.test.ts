@@ -17,7 +17,8 @@ describe("canonical always-on cohort command contract [Behavioral-Active Blackbo
     const text = await source("implement/advance");
     for (const clause of ["cohort_advance", "pending candidate attempt", "immutable candidate seal", "evidenceSubject",
       "selected shared-regression", "one canonical full gate", "record_cohort_review", "complete_cohort", "current execution epoch",
-      "No fusion setting", "no post-merge validation", "explicit singleton", "whole-candidate", "bootstrap mode"]) expect(text).toContain(clause);
+      "No fusion setting", "no post-merge validation", "explicit singleton", "whole-candidate", "bootstrap mode",
+      "cleanup pending", "do not reacquire archived task authority"]) expect(text).toContain(clause);
     expect(text).not.toContain("trusted result storage runs the repository-wide full gate exactly once");
     expect(text).not.toContain("Every reviewer reruns the gate only when exact trusted evidence is absent or invalid.");
   });
