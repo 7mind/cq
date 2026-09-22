@@ -1,4 +1,4 @@
-import type { WorksetEffectAdmissionProvider } from "@cq/process-control";
+import { assertCohortEffectEnvelopeV1, cohortEffectTargetRefV1, type CohortEffectEnvelopeV1, type WorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   AttestationBindingError,
   AttestationContractError,
@@ -109,7 +109,7 @@ export interface DispatchAdapterLaunchContext {
   readonly prepared: DispatchPrepared;
   /** Exact per-role token resolved by cq.toml before transport selection. */
   readonly resolvedModel: ReviewerToken;
-  /** Trusted canonical ledger ref derived from the persisted prepared input. */
+  /** Trusted effect subject derived from the persisted prepared input. */
   readonly effectTargetRef: string;
   readonly child: DispatchAdapterChildPort;
 }
@@ -680,6 +680,12 @@ export function dispatchEffectTargetRef(input: DispatchJSONValue): string {
   const present = DISPATCH_EFFECT_TARGET_FIELDS.filter(({ field }) =>
     Object.hasOwn(record, field),
   );
+  if (Object.hasOwn(record, "cohort")) {
+    if (present.length !== 0) throw new DispatchTransportRoutingError("cohort dispatch cannot substitute an anchor effect target");
+    const cohort = record["cohort"] as unknown as CohortEffectEnvelopeV1;
+    assertCohortEffectEnvelopeV1(cohort);
+    return cohortEffectTargetRefV1(cohort);
+  }
   if (present.length !== 1) {
     throw new DispatchTransportRoutingError(
       `prepared dispatch input must carry exactly one effect target id, found ${present.length}`,

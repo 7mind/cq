@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DISPATCH_TIMEOUT_MIN_MS, investigateExplorerSidecar, investigateProberSidecar, serializePromptSurfaceManifest } from "@cq/config";
+import { DISPATCH_TIMEOUT_MIN_MS, investigateExplorerSidecar, investigateProberSidecar, serializePromptSurfaceManifest, withoutWorksetCredentials } from "@cq/config";
 import { createLedgerStore, SqliteLedgerStore, createWorksetOwnedGuardedLedger, createTrustedWorksetManagementAuthority,
   createCohortCommandBoundaryV1, createNodeSupervisedWorkerCommandRunner, settleProcessGroups, settleWorktreeGateCommands } from "@cq/ledger";
 import { FileSystemPromptArtifactStore, createSingleProjectDispatchRuntime, createCohortInvestigationAdvanceRuntimeV1 } from "@cq/ledger-mcp";
@@ -197,7 +197,7 @@ console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_messag
       const roleScript = fileURLToPath(new URL("../../cq-config/scripts/codex-role-dispatch.ts", import.meta.url));
       const { CQ_PROMPT_SURFACE: _surface, ...scriptEnvironment } = f.options.env;
       const child = Bun.spawn([process.execPath, roleScript], { cwd: f.root,
-        env: { ...scriptEnvironment, CQ_CODEX_LEDGER_COMMAND: cq, CQ_CODEX_EXECUTABLE: codex },
+        env: { ...withoutWorksetCredentials(scriptEnvironment), CQ_CODEX_LEDGER_COMMAND: cq, CQ_CODEX_EXECUTABLE: codex },
         stdin: new Blob([`${JSON.stringify(invocation)}\n`]), stdout: "pipe", stderr: "pipe" });
       const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });

@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutWorksetCredentials } from "@cq/config";
 import { createLedgerStore, constructCohortDecisionsV1, createCohortDefinitionIdentityV1,
   createCohortCandidateIntentV1, createCohortEffectEnvelopeV1, prepareManagedCohortWorktree,
   resolveManagedCohortWorktreeDispatchBinding, runGuardedRebase, observeManagedWorktreeConflictState, gitRebaseConflictStateDigest,
@@ -119,7 +120,7 @@ console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_messag
         model: "recording", reasoningEffort: "medium", sandboxMode: "danger-full-access", timeoutMs: 5_000 };
       const roleScript = fileURLToPath(new URL("../../cq-config/scripts/codex-role-dispatch.ts", import.meta.url));
       const child = Bun.spawn([process.execPath, roleScript], { cwd: subject.root,
-        env: { ...process.env, CQ_PROMPT_ROOT: promptRoot, CQ_CODEX_LEDGER_COMMAND: cq, CQ_CODEX_EXECUTABLE: codex },
+        env: { ...withoutWorksetCredentials(process.env), CQ_PROMPT_ROOT: promptRoot, CQ_CODEX_LEDGER_COMMAND: cq, CQ_CODEX_EXECUTABLE: codex },
         stdin: new Blob([`${JSON.stringify(invocation)}\n`]), stdout: "pipe", stderr: "pipe" });
       const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });

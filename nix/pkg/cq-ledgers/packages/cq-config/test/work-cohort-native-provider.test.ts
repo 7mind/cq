@@ -11,7 +11,14 @@ import { qualifyClaudeNativeAdapter, qualifyCodexNativeAdapter,
 import { createClaudeNativeDispatchAdapter } from "../src/claudeNativeDispatch.js";
 import { createPiNativeDispatchAdapter } from "../src/piNativeDispatch.js";
 import type { ManagedWorktreeHandleV3 } from "../src/managedWorktreeHandle.js";
-import { cohortRoleEnvelope } from "./workCohortRoleFixture.js";
+import { cohortRoleEnvelope, cohortRoleMembers } from "./workCohortRoleFixture.js";
+import { InMemoryAttestationStore, prepareDispatch, DISPATCH_OVERLAY_REGISTRY,
+  sequentialDispatchRandomBytes, runPreparedDispatch, DispatchTransportAdapterRegistry,
+  createNativeDispatchAdapter, dispatchEffectTargetRef, type DispatchJSONValue } from "../src/index.js";
+
+function wire(value: unknown): DispatchJSONValue {
+  return JSON.parse(JSON.stringify(value)) as DispatchJSONValue;
+}
 
 function nativeCohortHandleFixture() {
   const cohort = cohortRoleEnvelope();
@@ -29,6 +36,45 @@ function nativeCohortHandleFixture() {
 }
 
 describe("native full-cohort provider binding [Blackbox-Atomic]", () => {
+  for (const harness of ["claude", "codex", "pi"] as const) {
+    test(`${harness} public router derives the complete persisted cohort effect target`, async () => {
+      const namespace = { backend: "xdg" as const, projectKey: "cohort-router" };
+      const store = new InMemoryAttestationStore(namespace);
+      const now = () => "2026-09-22T00:00:00.000Z";
+      const cohort = cohortRoleEnvelope();
+      const branch = `implement/cohort-${cohort.intent.intentDigest}`;
+      const prepared = prepareDispatch({ namespace, roleId: "implement-worker", surface: harness,
+        input: wire({ cohort, members: cohortRoleMembers(cohort), worktreePath: "/tmp/cohort-router", branch,
+          baseCommit: "1".repeat(40), startingCommit: "1".repeat(40), round: 0, validationIntent: "final" }),
+        idempotencyKey: harness, timeoutMs: 600_000, registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest: "a".repeat(64), catalogHash: "b".repeat(64), expectedChild: { childId: `${harness}-child`, runId: `${harness}-run` },
+        gitEffectBinding: { cohort, branch, handleToken: "cohort-handle", handleFingerprint: "5".repeat(64),
+          repositoryRoot: "/tmp", repositoryId: cohort.definition.repository.repositoryId, commonDir: "/tmp/.git",
+          worktreePath: "/tmp/cohort-router", ref: `refs/heads/${branch}`, baseCommit: "1".repeat(40) },
+      }, { store, now, randomBytes: sequentialDispatchRandomBytes() });
+      if (!prepared.accepted) throw new Error(JSON.stringify(prepared));
+      const targets: string[] = [];
+      const registry = new DispatchTransportAdapterRegistry([createNativeDispatchAdapter(harness, (context) => {
+        targets.push(context.effectTargetRef);
+        expect(context.child.materializeInput().input).toMatchObject({ cohort });
+        return { outcome: "aborted", reason: "native-failure" };
+      })]);
+      const result = await runPreparedDispatch({ namespace, prepared: prepared.prepared,
+        activeHarness: harness, targetHarness: harness, forceShellout: false,
+        resolvedModel: { harness, model: "test-model", provider: harness === "pi" ? "test-provider" : null, effort: null },
+      }, registry, { store, now });
+      expect(result.outcome).toBe("aborted");
+      expect(targets).toEqual([cohortEffectTargetRefV1(cohort)]);
+    });
+  }
+
+  test("cohort router rejects anchor substitution and changed envelope bytes", () => {
+    const cohort = cohortRoleEnvelope();
+    for (const field of ["taskId", "goalId", "defectId", "researchId"]) {
+      expect(() => dispatchEffectTargetRef(wire({ cohort, [field]: "T701" }))).toThrow();
+    }
+    expect(() => dispatchEffectTargetRef(wire({ cohort: { ...cohort, executionEpoch: "substituted" } }))).toThrow();
+  });
   for (const [name, preflight, bind, release, assertIntact] of [
     ["Claude", preflightClaudeNativeWorktree, bindClaudeNativeWorktree, releaseClaudeNativeWorktree, assertClaudeNativeWorktreeBindingIntact],
     ["Pi", preflightPiNativeWorktree, bindPiNativeWorktree, releasePiNativeWorktree, assertPiNativeWorktreeBindingIntact],
