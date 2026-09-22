@@ -11,6 +11,7 @@ import {
   nodeManagedWorktreeGitRunner, parseCohortAdmissionPlanV1, redactSecrets, requireWorksetStore,
   settleProcessGroups, settleWorktreeGateCommands,
   resolveCohortDefinitionObservationV1, withManagedCohortAuthorityWriterLock,
+  produceCohortAdmissionObservationV1, resolveCohortCommandBoundaryV1,
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS, SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   type CohortAdmissionObservationSourceV1, type CohortAdmissionPlanV1,
   type CohortInvestigationAdvanceCapabilityV1, type CohortInvestigationAdvanceInputV1,
@@ -18,6 +19,7 @@ import {
   type InvestigationCohortRunV1, type InvestigationMemberAdjudicationV1,
   type InvestigationPreparedDispatchV1, type ResolvedLedgerStore,
   type InvestigationProbeReceiptV1, type InvestigationRoleV1,
+  type InvestigationCorrectionCandidateV1, type InvestigationCorrectionEligibilityV1,
   type SupervisedWorkerCommandRunner, type WorkCohortLeaseV1, type WorkCohortStore, type WorksetStore,
 } from "@cq/ledger";
 import { z } from "zod";
@@ -34,11 +36,14 @@ interface PrivateInvestigationJournal {
   readonly launches: { readonly investigation: InvestigationPreparedDispatchV1; readonly prepared: DispatchPrepared }[];
   readonly adjudications: { readonly defectRef: string; readonly evidenceDigest: string; readonly adjudication: InvestigationMemberAdjudicationV1 }[];
   readonly probes: InvestigationProbeReceiptV1[];
+  correctionProposal?: CohortAdmissionPlanV1;
+  correctionEligibility?: InvestigationCorrectionEligibilityV1;
 }
 const journalSchema = z.object({ version: z.literal(1), admissionPlan: z.unknown(), plan: z.unknown(),
   lease: z.object({ holderId: z.string().min(1), semanticSubject: z.string().min(1), executionEpoch: z.string().min(1), capability: z.string().min(1) }).strict().nullable(),
   launches: z.array(z.object({ investigation: z.unknown(), prepared: z.unknown() }).strict()),
   adjudications: z.array(z.unknown()), probes: z.array(z.unknown()),
+  correctionProposal: z.unknown().optional(), correctionEligibility: z.unknown().optional(),
 }).strict();
 
 export interface CohortInvestigationAdvanceRuntimeOptionsV1 {
@@ -117,6 +122,48 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
     }
     return journal;
   };
+  const correctionCandidates = async (journal: PrivateInvestigationJournal, run: InvestigationCohortRunV1): Promise<readonly InvestigationCorrectionCandidateV1[]> => {
+    if (journal.correctionProposal === undefined) return [];
+    if (run.members.some((member) => member.explorerResult === null || member.citations.length === 0 ||
+        (member.explorerResult.output.probeRequest !== undefined && member.proberResult === null))) {
+      throw new Error("correction proposal requires separately consumed complete evidence for every member");
+    }
+    const proposal = parseCohortAdmissionPlanV1(journal.correctionProposal);
+    if (proposal.members.length !== run.plan.members.length || proposal.members.some((member, index) =>
+      member.memberRef !== run.plan.members[index]!.defectRef || member.investigationHypothesisRef !== run.plan.members[index]!.hypothesisRef)) {
+      throw new Error("correction proposal must preserve the exact ordered defect and hypothesis members");
+    }
+    for (const member of proposal.members) for (const boundary of member.boundaryCandidates) {
+      if (boundary.witness.kind !== "repository-node") throw new Error("correction proposal requires current repository witness applicability for each member");
+      resolveCohortCommandBoundaryV1(boundary.sharedRegression);
+      const fullGate = resolveCohortCommandBoundaryV1(boundary.canonicalFullGate);
+      if (digest(fullGate) !== digest({ argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] })) {
+        throw new Error("correction proposal cannot substitute the canonical implementation full gate");
+      }
+    }
+    const observation = await produceCohortAdmissionObservationV1({ memberRefs: run.plan.members.map((member) => member.defectRef) }, options.source(proposal));
+    if (observation.members.length !== run.plan.members.length || observation.members.some((member, index) => {
+      const expected = run.plan.members[index]!;
+      return member.phase !== "investigation" || member.defectRef !== expected.defectRef || member.defectRevision !== expected.defectRevision ||
+        member.hypothesisRef !== expected.hypothesisRef || member.hypothesisRevision !== expected.hypothesisRevision;
+    })) throw new Error("correction proposal member revisions differ from the consumed investigation");
+    const proposalDigest = digest(proposal);
+    const memberEvidence = run.plan.members.map((member, index) => ({ defectRef: member.defectRef, evidenceDigest: evidenceDigest(run, index) }));
+    return observation.atoms.flatMap((source) => {
+      const applicability = observation.members.map((member) => member.attestations.find((entry) => entry.atomDigest === source.atomDigest));
+      if (source.witness.kind !== "repository-node" || applicability.some((entry) => entry === undefined)) return [];
+      const payload = { kind: "cq-cohort-common-boundary-atom" as const, version: 1 as const, phase: "implementation" as const,
+        witness: { kind: "repository-node" as const, witnessDigest: digest({ kind: "cq-investigation-correction-source", planDigest: run.plan.planDigest,
+          proposalDigest, sourceWitness: source.witness, memberEvidence }) },
+        sharedRegression: source.sharedRegression, canonicalFullGate: source.canonicalFullGate, reviewerClass: source.reviewerClass,
+        deploymentClass: source.deploymentClass, finalizationClass: source.finalizationClass, repository: source.repository,
+        environment: source.environment, splitConditions: source.splitConditions };
+      const atom = { ...payload, atomDigest: digest(payload) };
+      const candidate = { proposalDigest, observationDigest: observation.observationDigest, atom, memberEvidence,
+        applicability: applicability.map((entry) => entry!) };
+      return [{ ...candidate, correctionBoundaryDigest: digest({ kind: "cq-investigation-correction-boundary", ...candidate }) }];
+    });
+  };
   const hostFor = (journal: PrivateInvestigationJournal) => {
     const resolver = createRepositoryInvestigationCitationResolverV1(options.repositoryRoot, {
       read: async (prepared, citation) => {
@@ -143,13 +190,22 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
       validateCorrectionBoundary: async (plan, causes, atomDigest) => {
         await host.assertCurrent(plan);
         const state = (await options.cohorts.snapshot()).portable;
-        const observation = resolveCohortDefinitionObservationV1({ definition: plan.definition, observations: state.observations, decisions: state.decisions });
-        const atom = observation.atoms.find((value) => value.atomDigest === atomDigest);
-        if (atom === undefined || causes.length !== plan.members.length ||
-          causes.some((cause, index) => cause.defectRef !== plan.members[index]!.defectRef ||
-            !observation.members.find((member) => member.memberRef === cause.defectRef)!.attestations.some((entry) => entry.atomDigest === atomDigest))) {
-          throw new Error("correction boundary lacks one authenticated whole-member common atom");
+        const run = state.investigationRuns.findLast((entry) => entry.plan.planDigest === plan.planDigest);
+        if (run === undefined) throw new Error("correction boundary lacks its durable member evidence");
+        const candidate = (await correctionCandidates(journal, run)).find((entry) => entry.atom.atomDigest === atomDigest);
+        if (candidate === undefined || candidate.atom.phase !== "implementation" || causes.length !== plan.members.length ||
+          causes.some((cause, index) => digest(cause) !== digest(run.members[index]!.confirmedCause) ||
+            cause.correctionBoundaryDigest !== candidate.correctionBoundaryDigest)) {
+          throw new Error("correction boundary lacks one authenticated implementation proposal with separate confirmed member causes");
         }
+        const payload = { kind: "cq-investigation-correction-eligibility" as const, version: 1 as const,
+          planDigest: plan.planDigest, candidate, confirmedCauses: causes };
+        const receipt = { ...payload, receiptDigest: digest(payload) };
+        if (journal.correctionEligibility !== undefined && digest(journal.correctionEligibility) !== digest(receipt)) {
+          throw new Error("retained implementation correction eligibility changed on revalidation");
+        }
+        journal.correctionEligibility = receipt;
+        publish(journal);
       },
     });
     const prepare = host.prepare.bind(host);
@@ -182,6 +238,7 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
       (member.explorerResult.output.probeRequest === undefined || member.proberResult !== null)
       ? [{ defectRef: run.plan.members[index]!.defectRef, evidenceDigest: evidenceDigest(run, index) }] : []);
     return structuredClone({ planDigest: journal.plan.planDigest, run, launches, adjudicationRequests, probeEvidence: journal.probes,
+      correctionCandidates: run.state === "split" ? [] : await correctionCandidates(journal, run), correctionEligibility: journal.correctionEligibility ?? null,
       state: run.state === "split" || run.state === "correction-ready" ? run.state : launches.length > 0 ? "awaiting-launch" : adjudicationRequests.length > 0 ? "awaiting-adjudication" : "awaiting-evidence" });
   };
   return {
@@ -247,6 +304,16 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
         journal.lease = fresh; publish(journal); return undefined;
       });
       try {
+        if (input.operation === "propose-correction") {
+          const run = (await options.cohorts.snapshot()).portable.investigationRuns.findLast((entry) => entry.plan.planDigest === journal.plan.planDigest);
+          if (run === undefined || run.state === "split" || journal.adjudications.length > 0) throw new Error("propose correction after collection and before adjudication");
+          const proposal = parseCohortAdmissionPlanV1(input.proposal);
+          if (journal.correctionProposal !== undefined && digest(journal.correctionProposal) !== digest(proposal)) throw new Error("retained correction proposal cannot be substituted");
+          const proposed = { ...journal, correctionProposal: proposal };
+          if ((await correctionCandidates(proposed, run)).length === 0) throw new Error("correction proposal has no common implementation boundary");
+          journal.correctionProposal = proposal;
+          publish(journal);
+        }
         if (input.operation === "adjudicate") {
           const run = (await options.cohorts.snapshot()).portable.investigationRuns.findLast((entry) => entry.plan.planDigest === journal.plan.planDigest);
           if (run === undefined) throw new Error("investigation has no consumed evidence to adjudicate");

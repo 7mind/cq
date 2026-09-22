@@ -6,11 +6,11 @@ import { createHash } from "node:crypto";
 import { InMemoryAttestationBackend, InMemoryAttestationStore, SqliteAttestationBackend,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
   sequentialDispatchRandomBytes, type AttestationBackend, type DispatchJSONValue } from "@cq/config";
-import { COHORT_INVESTIGATION_ADVANCE_SCHEMA, cohortValueDigestV1 as digest,
+import { COHORT_ADMISSION_PLAN_SCHEMA, COHORT_INVESTIGATION_ADVANCE_SCHEMA, cohortValueDigestV1 as digest,
   createInMemoryWorkCohortStore, createInMemoryWorksetStore, createNodeSupervisedWorkerCommandRunner,
   InMemoryLedgerStore, SqliteLedgerStore, createWorksetOwnedGuardedLedger, createTrustedWorksetManagementAuthority, createCohortCommandBoundaryV1,
   settleProcessGroups, settleWorktreeGateCommands,
-  type CohortInvestigationAdvanceResultV1, type SupervisedWorkerCommandRunner } from "@cq/ledger";
+  type CohortAdmissionPlanV1, type CohortInvestigationAdvanceResultV1, type SupervisedWorkerCommandRunner } from "@cq/ledger";
 import { createSqliteWorkCohortStore } from "../../ledger/src/store/sqlite/sqliteWorkCohortStore.js";
 import { openLedgerDb } from "../../ledger/src/store/sqlite/connection.js";
 import { ensureSchema } from "../../ledger/src/store/sqlite/schema.js";
@@ -76,7 +76,9 @@ async function fixture(adapter: "memory" | "SQLite") {
   const commands = adapter === "memory" ? manual : createNodeSupervisedWorkerCommandRunner({ settleProcessGroups, settleWorktreeGateCommands });
   const options = { cohorts, backend, dispatch, promptArtifacts: artifacts(), repositoryRoot: directory,
     journalRoot: join(directory, "private"), cancellationSignal: new AbortController().signal, commands, workset,
-    source: () => source, hypothesisStatement: () => plan.members[0]!.statement };
+    source: (proposed: CohortAdmissionPlanV1) => ({ resolveExactSnapshot: async () => ({ ...snapshot,
+      members: snapshot.members.map((member) => ({ ...member, boundaryCandidates: proposed.members.find((entry) => entry.memberRef === member.memberRef)!.boundaryCandidates })) }) }),
+    hypothesisStatement: () => plan.members[0]!.statement };
   const make = () => createInvestigationAdvanceCapabilityV1(options);
   const prepare = COHORT_INVESTIGATION_ADVANCE_SCHEMA.parse({ operation: "prepare", admissionPlan,
     definitionDigest: plan.definition.definitionDigest, operationId: "parent-investigation",
@@ -91,11 +93,35 @@ async function fixture(adapter: "memory" | "SQLite") {
     await dispatch.confirmCompletion({ ...launch.investigation.handle, expectedProvenance: launch.investigation.provenance,
       nativeCompletion: { kind: "native-completion", actor: "trusted-parent", ...launch.investigation.expectedChild, completedAt: INVESTIGATION_NOW } });
   };
-  return { make, prepare, consume, cohorts, directory, manual, workset, plan,
+  const correctionProposal = COHORT_ADMISSION_PLAN_SCHEMA.parse({ ...admissionPlan, members: admissionPlan.members.map((member, index) => ({ ...member,
+    investigationHypothesisRef: plan.members[index]!.hypothesisRef,
+    boundaryCandidates: member.boundaryCandidates.map((candidate) => ({ ...candidate,
+      sharedRegression: createCohortCommandBoundaryV1({ argv: ["bun", "test", "correction.test.ts"], cwd: ".", environment: [] }),
+      canonicalFullGate: createCohortCommandBoundaryV1({ argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] }),
+      finalizationClass: { identity: "correction-planning", digest: digest("correction-planning") },
+    })) })) });
+  return { make, prepare, consume, correctionProposal, cohorts, directory, manual, workset, plan,
     close: async () => { await backend.close(); db?.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
 for (const adapter of ["memory", "SQLite"] as const) describe(`parent investigation ${adapter} [Behavioral-Active Blackbox-${adapter === "memory" ? "Group" : "GoodCommunication"}]`, () => {
+  test("investigation-phase membership cannot authenticate implementation correction admission", async () => {
+    const f = await fixture(adapter);
+    try {
+      const prepared = await f.make().advance(f.prepare);
+      for (const launch of prepared.launches) await f.consume(launch, false, null);
+      const collected = await f.make().advance({ operation: "collect", planDigest: prepared.planDigest });
+      const atom = (await f.cohorts.snapshot()).portable.observations[0]!.atoms[0]!;
+      expect(atom.phase).toBe("investigation");
+      const members = collected.adjudicationRequests.map((request) => ({ ...request, adjudication: {
+        verdict: "confirmed" as const, rationale: "Exact separately consumed member evidence", causeDigest: digest("cause"),
+        correctionBoundaryDigest: digest("boundary"), implementationAtomDigests: [atom.atomDigest],
+      } }));
+      const result = await f.make().advance({ operation: "adjudicate", planDigest: prepared.planDigest, members });
+      expect(result.state).toBe("split");
+      expect(result.run.split!.reason).toBe("incompatible-correction-boundary");
+    } finally { await f.close(); }
+  });
   test("epoch recovery after private lease publication starts the first durable run without inventing consumed work", async () => {
     const f = await fixture(adapter);
     const acquire = f.cohorts.acquireLeaseAndPublish.bind(f.cohorts);
@@ -164,8 +190,44 @@ for (const adapter of ["memory", "SQLite"] as const) describe(`parent investigat
       const authority = await runtime!.resolveLaunchAuthority(prepared.launches[0]!.investigation.handle);
       expect(authority).toMatchObject({ roleId: "investigate-explorer", memberRef: members[0]!.memberRef });
       expect(authority!.members.map((member) => member.defectRef)).toEqual(members.map((member) => member.memberRef));
+      for (const launch of prepared.launches) {
+        await dispatch.fetchInput({ ...launch.investigation.handle, inputCapability: launch.prepared.inputCapability });
+        await dispatch.storeResult({ resultCapability: launch.prepared.resultCapability, output: {
+          hypothesisId: launch.investigation.binding.member.hypothesisRef.slice("hypothesis:".length), lean: "supports",
+          evidence: [{ n: 1, citation: "contract.ts:1", excerpt: "export interface CohortContract { value: string }", relevance: "Exact member contract" }],
+        } });
+        await dispatch.confirmCompletion({ ...launch.investigation.handle, expectedProvenance: launch.investigation.provenance,
+          nativeCompletion: { kind: "native-completion", actor: "trusted-parent", ...launch.investigation.expectedChild, completedAt: INVESTIGATION_NOW } });
+      }
+      const collected = await runtime!.advance({ operation: "collect", planDigest: prepared.planDigest });
+      const proposal = { ...admissionPlan, members: members.map((member) => ({ ...member,
+        boundaryCandidates: member.boundaryCandidates.map((boundary) => ({ ...boundary,
+          sharedRegression: createCohortCommandBoundaryV1({ argv: ["bun", "test", "contract.test.ts"], cwd: ".", environment: [] }),
+          finalizationClass: { identity: "correction-planning", digest: digest("correction-planning") },
+        })) })) };
+      await expect(runtime!.advance({ operation: "propose-correction", planDigest: prepared.planDigest,
+        proposal: { ...proposal, members: proposal.members.slice(0, 1) } })).rejects.toThrow("exact ordered");
+      const unrelated = { ...proposal, members: proposal.members.map((member, index) => index === 0 ? member : { ...member,
+        boundaryCandidates: member.boundaryCandidates.map((boundary) => ({ ...boundary,
+          sharedRegression: createCohortCommandBoundaryV1({ argv: ["bun", "test", "unrelated.test.ts"], cwd: ".", environment: [] }),
+        })) }) };
+      await expect(runtime!.advance({ operation: "propose-correction", planDigest: prepared.planDigest, proposal: unrelated })).rejects.toThrow("no common implementation boundary");
+      const invalidPath = { ...proposal, members: proposal.members.map((member, index) => index === 0 ? member : { ...member,
+        boundaryCandidates: member.boundaryCandidates.map((boundary) => ({ ...boundary, witness: { ...boundary.witness, memberPath: ["not-a-member-source.ts", "contract.ts"] } })) }) };
+      await expect(runtime!.advance({ operation: "propose-correction", planDigest: prepared.planDigest, proposal: invalidPath })).rejects.toThrow();
+      const proposed = await runtime!.advance({ operation: "propose-correction", planDigest: prepared.planDigest, proposal });
+      const candidate = proposed.correctionCandidates[0]!;
+      expect(candidate.atom.phase).toBe("implementation");
+      const complete = await runtime!.advance({ operation: "adjudicate", planDigest: prepared.planDigest,
+        members: collected.adjudicationRequests.map((request) => ({ ...request, adjudication: { verdict: "confirmed", rationale: "Separate exact cited member evidence",
+          causeDigest: digest("shared-primary-cause"), correctionBoundaryDigest: candidate.correctionBoundaryDigest,
+          implementationAtomDigests: [candidate.atom.atomDigest] } })) });
+      expect(complete.state).toBe("correction-ready");
+      expect(complete.correctionEligibility!.confirmedCauses.map((cause) => cause.defectRef)).toEqual(members.map((member) => member.memberRef));
+      expect(complete.correctionEligibility!.candidate.applicability.every((entry) => entry.applicability.kind === "repository-path")).toBe(true);
+      expect((await runtime!.advance({ operation: "collect", planDigest: prepared.planDigest })).correctionEligibility).toEqual(complete.correctionEligibility);
       await primary.updateItem("hypothesis", prepared.run.plan.members[0]!.hypothesisRef.slice("hypothesis:".length), { fields: { description: "changed after preparation" } });
-      await expect(runtime!.resolveLaunchAuthority(prepared.launches[0]!.investigation.handle)).rejects.toThrow("observation changed");
+      await expect(runtime!.advance({ operation: "collect", planDigest: prepared.planDigest })).rejects.toThrow("observation changed");
     } finally { await backend.close(); await primary.dispose(); await rm(directory, { recursive: true, force: true }); }
   }, 30_000);
   test("prepared refs survive runtime recreation; only consumed distinct members reach explicit adjudication", async () => {
@@ -192,16 +254,20 @@ for (const adapter of ["memory", "SQLite"] as const) describe(`parent investigat
       expect(collected.state).toBe("awaiting-adjudication");
       expect(collected.adjudicationRequests.length).toBe(2);
       expect(collected.run.members.every((member) => member.confirmedCause === null)).toBe(true);
-      const state = (await f.cohorts.snapshot()).portable;
-      const atom = state.observations[0]!.atoms[0]!.atomDigest;
+      const proposed = await f.make().advance({ operation: "propose-correction", planDigest: prepared.planDigest, proposal: f.correctionProposal });
+      const candidate = proposed.correctionCandidates[0]!;
+      expect(candidate.atom.phase).toBe("implementation");
+      expect(candidate.atom.atomDigest).not.toBe((await f.cohorts.snapshot()).portable.observations[0]!.atoms[0]!.atomDigest);
       const members = collected.adjudicationRequests.map((request) => ({ ...request,
         adjudication: { verdict: "confirmed" as const, rationale: "Independent consumed member evidence establishes this cause",
-          causeDigest: digest("cause"), correctionBoundaryDigest: digest("boundary"), implementationAtomDigests: [atom] } }));
+          causeDigest: digest("cause"), correctionBoundaryDigest: candidate.correctionBoundaryDigest, implementationAtomDigests: [candidate.atom.atomDigest] } }));
       await expect(f.make().advance({ operation: "adjudicate", planDigest: prepared.planDigest,
         members: [{ ...members[0]!, evidenceDigest: digest("unrelated") }] })).rejects.toThrow("exact complete member evidence");
       const complete = await f.make().advance({ operation: "adjudicate", planDigest: prepared.planDigest, members });
       expect(complete.state).toBe("correction-ready");
       expect(new Set(complete.run.members.map((member) => member.confirmedCause!.receiptDigest)).size).toBe(2);
+      expect(complete.correctionEligibility!.confirmedCauses).toEqual(complete.run.members.map((member) => member.confirmedCause!));
+      expect(complete.correctionEligibility!.candidate.applicability.map((entry) => entry.memberRef)).toEqual(prepared.run.plan.members.map((member) => member.defectRef));
       await f.cohorts.beginNewExecutionEpoch();
       await expect(f.make().advance({ operation: "collect", planDigest: prepared.planDigest })).rejects.toThrow("explicit resume");
       expect((await f.make().advance({ operation: "resume", planDigest: prepared.planDigest })).state).toBe("correction-ready");

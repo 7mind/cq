@@ -69,11 +69,24 @@ resumable parent operations; operation fields use the exact camelCase names belo
   explorer's free-text `probeRequest` automatically. Retained `probeEvidence`
   binds real execution identity, output digest, redacted diagnostics, and bounded
   `completeOutput`; an unavailable complete range is not evidence.
+- `propose-correction`: after complete evidence has been collected and before
+  adjudication, pass `planDigest` and an explicit `proposal` in the same
+  `CohortAdmissionPlanV1` grammar. Preserve the exact ordered defect/hypothesis
+  refs; propose each defect's current repository witness and correlated correction
+  regression, canonical implementation gate, reviewer, deployment, and finalization
+  boundaries. The server independently authenticates applicability and returns
+  `correctionCandidates` with implementation-phase atoms and
+  `correctionBoundaryDigest`. An original investigation atom is not a correction
+  candidate; never relabel it or supply invented eligibility receipts.
 - `adjudicate`: pass `planDigest` and the selected members' exact returned
   `evidenceDigest`, with explicit verdict, rationale, cause/correction-boundary
-  digests, and applicable common-atom digests. This is parent judgment over
+  digests, and applicable common-atom digests selected from the returned correction
+  candidates. The server binds each separate confirmed-cause receipt to the
+  complete revalidated candidate in `correctionEligibility`. This is parent judgment over
   authenticated evidence, not a worker verdict or implementation acceptance.
   Preserve separate judgments for every member and honor a returned split.
+  Correction eligibility is pre-task planning evidence, not execution authority;
+  implementation still requires its normal finalized task cohort.
 - `resume`: pass the unchanged `planDigest` only after an execution-epoch change.
   The server reauthenticates retained evidence before renewing live authority;
   the previous epoch's launch authority cannot be reused.
