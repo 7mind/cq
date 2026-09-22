@@ -2205,6 +2205,11 @@ function qualificationRefusalDiagnostic(
           firstUnreachable.row,
           authority,
         );
+  const firstUnreachablePredecessorBinding =
+    firstUnreachable?.predecessor === undefined ||
+    isAttestationTombstone(firstUnreachable.predecessor)
+      ? undefined
+      : firstUnreachable.predecessor.gitEffectBinding;
   return (
     `[qualification-refusal:v1 reason=${reason} ` +
     `scope=${candidate.attestationId === successor.attestationId ? "same-attestation" : "different-attestation"} ` +
@@ -2224,7 +2229,7 @@ function qualificationRefusalDiagnostic(
     `first-unreachable-source-recovery-claim=${firstUnreachable?.predecessor?.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
     `first-unreachable-target-recovery-claim=${firstUnreachable?.row.dispatchJournalRecoveryClaim === undefined ? "none" : "present"} ` +
     `first-unreachable-target-guarded-bridge=${firstUnreachable?.row.gitEffectBinding?.guardedRebaseBridge === undefined ? "none" : "present"} ` +
-    `first-unreachable-manager-base-match=${firstUnreachable?.predecessor?.gitEffectBinding?.baseCommit === firstUnreachable?.row.gitEffectBinding?.baseCommit ? "yes" : "no"} ` +
+    `first-unreachable-manager-base-match=${firstUnreachablePredecessorBinding?.baseCommit === firstUnreachable?.row.gitEffectBinding?.baseCommit ? "yes" : "no"} ` +
     `first-unreachable-recovery-rejection=${firstUnreachableRecoveryInspection === undefined || firstUnreachableRecoveryInspection.accepted ? "none" : firstUnreachableRecoveryInspection.rejection}]`
   );
 }

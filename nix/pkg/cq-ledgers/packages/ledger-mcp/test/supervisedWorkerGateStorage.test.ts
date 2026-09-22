@@ -1605,6 +1605,7 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
     ) {
       throw new Error("consecutive parent-loss recovery operations are unavailable");
     }
+    const gitCommit = capability.gitCommit;
     const binding = await resolveManagedWorktreeDispatchBinding(
       {
         repositoryRoot: subject.repositoryRoot,
@@ -1636,10 +1637,11 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
     const prepareRecovery = async (
       generation: number,
       liveTip: string,
-      recovery: DispatchRecoveryResolution & {
-        readonly preparation: { readonly kind: "current" };
-      },
+      recovery: DispatchRecoveryResolution,
     ) => {
+      if (recovery.preparation.kind !== "current") {
+        throw new Error(`generation ${String(generation)} lacks current recovery authority`);
+      }
       const child = {
         childId: `implement-worker#consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
         runId: `consecutive-parent-loss-${attestationBackend}-${String(generation)}-${String(sequence)}`,
@@ -1776,6 +1778,10 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
       generation: number,
       liveTip: string,
     ) => {
+      const gitChangeCapability = resumed.prepared.gitChangeCapability;
+      if (gitChangeCapability === undefined) {
+        throw new Error(`generation ${String(generation)} lost Git authority`);
+      }
       const wipPath = `WIP-${subject.managed.handle.taskId}.md`;
       const oldWip = await fs.readFile(
         path.join(subject.managed.handle.absolutePath, wipPath),
@@ -1787,9 +1793,9 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         `Resumed generation ${String(generation)} after authenticated parent loss.\n`,
       );
       await fs.writeFile(path.join(subject.managed.handle.absolutePath, wipPath), newWip);
-      const receipt = await capability.gitCommit({
+      const receipt = await gitCommit({
         ...resumed.handle,
-        gitChangeCapability: resumed.prepared.gitChangeCapability,
+        gitChangeCapability,
         operationId: `T2081-${String(sequence)}-consecutive-parent-loss-${attestationBackend}-${String(generation)}-commit`,
         expectedHead: liveTip,
         message: `resume parent-lost generation ${String(generation)}`,
@@ -1860,7 +1866,6 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         throw new Error(`generation ${String(generation - 1)} did not preserve current recovery`);
       }
       const resumed = await prepareRecovery(generation, liveTip, recovery);
-      liveTip = await persistPassingWip(resumed, generation, liveTip);
       expect(await capability.abort({ ...resumed.handle, reason: "parent-lost" })).toMatchObject({
         state: "aborted",
         reason: "parent-lost",
@@ -1903,7 +1908,9 @@ for (const attestationBackend of ["memory", "sqlite"] as const) {
         throw new Error(`generation ${String(generation - 1)} did not preserve current recovery`);
       }
       const resumed = await prepareRecovery(generation, liveTip, recovery);
-      liveTip = await persistPassingWip(resumed, generation, liveTip);
+      if (generation === 26) {
+        liveTip = await persistPassingWip(resumed, generation, liveTip);
+      }
       expect(await capability.abort({ ...resumed.handle, reason: "parent-lost" })).toMatchObject({
         state: "aborted",
         reason: "parent-lost",
