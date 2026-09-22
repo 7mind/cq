@@ -777,6 +777,15 @@ function latestDefinition(
     .sort((left, right) => right.definitionGeneration - left.definitionGeneration)[0];
 }
 
+export function workCohortHasPendingSealedCandidateV1(state: WorkCohortPortableStateV1): boolean {
+  return state.candidateSeals.some((seal) => {
+    if (state.completionHandoffs.some((handoff) => handoff.phase === "released" && handoff.sealDigest === seal.sealDigest)) return false;
+    const subject = state.evidenceSubjects.find((value) => value.sealDigest === seal.sealDigest);
+    const acceptance = state.acceptanceTransitions.findLast((value) => value.evidenceSubjectDigest === subject?.evidenceSubjectDigest);
+    return acceptance?.eligible !== false;
+  });
+}
+
 function assertEligibleEvidenceSubject(
   state: WorkCohortPortableStateV1,
   evidenceSubjectDigest: string,
@@ -1443,7 +1452,7 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
     const handoff = readAuthorizedCohortCompletionHandoffV1(authority);
     return this.#persistence.transact((current) => {
       this.assertCohortAuthoritySnapshot(current, lease, envelope);
-      return operationMutation(current, operationId, handoff, (state) => {
+      const mutation = operationMutation(current, operationId, handoff, (state) => {
         if (envelope.state !== "sealed" || handoff.definitionDigest !== envelope.definition.definitionDigest ||
             handoff.evidenceSubjectDigest !== envelope.evidenceSubject.evidenceSubjectDigest || handoff.sealDigest !== envelope.evidenceSubject.sealDigest ||
             !state.completionReceipts.some((value) => value.evidenceSubjectDigest === handoff.evidenceSubjectDigest)) {
@@ -1453,8 +1462,17 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
         const atom = state.commonAtoms.find((value) => value.atomDigest === envelope.definition.selectedAtomDigest);
         if (atom === undefined) throw new Error("cohort completion handoff lacks its exact common boundary");
         assertCohortCompletionHandoffBindingsV1(handoff, envelope.definition, atom);
+        if (handoff.phase === "released") for (const reservation of activeReservations(state).values()) {
+          if (reservation.definitionDigest !== handoff.definitionDigest) continue;
+          const { transitionDigest: _digest, ...prior } = reservation;
+          const released = { ...prior, transition: "released" as const };
+          appendExact(state.reservationTransitions, (value) => value.transitionDigest,
+            { ...released, transitionDigest: digest(released) }, "reservation transition");
+        }
         return appendExact(state.completionHandoffs, (value) => value.handoffDigest, handoff, "completion handoff");
       });
+      return handoff.phase === "released" ? { ...mutation, next: { ...mutation.next,
+        runtime: { ...mutation.next.runtime, lease: null, resumeValidation: null } } } : mutation;
     });
   }
 
@@ -1774,7 +1792,7 @@ export class InMemoryWorkCohortPersistence implements WorkCohortPersistence {
         ...current,
         runtime: {
           ...newWorkCohortStoredDocumentV1().runtime,
-          resumeRequired: current.portable.candidateSeals.length > 0,
+          resumeRequired: workCohortHasPendingSealedCandidateV1(current.portable),
         },
         revision: current.revision + 1,
       },

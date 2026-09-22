@@ -350,10 +350,21 @@ export function readAuthorizedCohortCompletionV1(value: AuthorizedCohortCompleti
   return value.read();
 }
 
+class IssuedCohortTerminalReleaseV1 {
+  readonly #batch: CohortCompletionBatchV1;
+  constructor(batch: CohortCompletionBatchV1) { this.#batch = immutableClone(batch); }
+  read(): CohortCompletionBatchV1 { return structuredClone(this.#batch); }
+}
+export type AuthorizedCohortTerminalReleaseV1 = IssuedCohortTerminalReleaseV1;
+export function readAuthorizedCohortTerminalReleaseV1(value: AuthorizedCohortTerminalReleaseV1): CohortCompletionBatchV1 {
+  if (!(value instanceof IssuedCohortTerminalReleaseV1)) throw new Error("cohort terminal release requires authenticated primary completion");
+  return value.read();
+}
+
 export class CohortCompletionCoordinatorV1 {
   constructor(readonly store: WorkCohortStore, readonly ledger: LedgerStore, readonly host: CohortCompletionHostV1) {}
 
-  async run(input: CohortCompletionBatchV1, lease: WorkCohortLeaseV1): Promise<CohortCompletionHandoffV1> {
+  async run(input: CohortCompletionBatchV1, lease: WorkCohortLeaseV1 | null): Promise<CohortCompletionHandoffV1> {
     const batch = immutableClone(input);
     assertCohortCompletionBatchV1(batch);
     const measured: Partial<Record<CohortActivityMeasurementV1, number>> = { primaryFinalizationAttempts: 1 };
@@ -361,17 +372,28 @@ export class CohortCompletionCoordinatorV1 {
     try { return await this.runMeasured(batch, lease, measure); }
     finally {
       await this.store.recordActivity(createCohortActivityV1({ semanticSubject: batch.envelope.semanticSubject,
-        executionEpoch: lease.executionEpoch, executions: [],
+        executionEpoch: batch.envelope.executionEpoch, executions: [],
         measurements: (Object.entries(measured) as [CohortActivityMeasurementV1, number][])
           .filter(([, value]) => value > 0).map(([measurement, value]) => ({ measurement, value })),
       }));
     }
   }
 
-  private async runMeasured(batch: CohortCompletionBatchV1, lease: WorkCohortLeaseV1,
+  async authorizeTerminalRelease(input: CohortCompletionBatchV1): Promise<AuthorizedCohortTerminalReleaseV1> {
+    const batch = immutableClone(input);
+    assertCohortCompletionBatchV1(batch);
+    await this.runMeasured(batch, null, () => undefined);
+    return new IssuedCohortTerminalReleaseV1(batch);
+  }
+
+  private async runMeasured(batch: CohortCompletionBatchV1, lease: WorkCohortLeaseV1 | null,
     measure: (measurement: CohortActivityMeasurementV1, value: number) => void): Promise<CohortCompletionHandoffV1> {
-    await this.store.assertLiveCohortAuthority(lease, batch.envelope);
     const snapshot = await this.store.snapshot();
+    let handoff = snapshot.portable.completionHandoffs.findLast((value) => value.operationId === batch.operationId);
+    if (handoff?.phase !== "released") {
+      if (lease === null) throw new Error("nonterminal cohort completion requires live authority");
+      await this.store.assertLiveCohortAuthority(lease, batch.envelope);
+    }
     const acceptance = snapshot.portable.completionReceipts.find(({ completionDigest }) => completionDigest === batch.acceptance.completionDigest);
     const seal = snapshot.portable.candidateSeals.find(({ sealDigest }) => sealDigest === batch.acceptance.sealDigest);
     const atom = snapshot.portable.commonAtoms.find(({ atomDigest }) => atomDigest === batch.envelope.definition.selectedAtomDigest);
@@ -386,12 +408,19 @@ export class CohortCompletionCoordinatorV1 {
     try { await this.host.authenticateReviews(batch); }
     catch (error) { measure("reviewRejections", 1); throw error; }
     measure("reviewReuses", new Set(batch.members.flatMap((member) => member.reviewAttemptRefs)).size);
-    let handoff = snapshot.portable.completionHandoffs.findLast((value) => value.operationId === batch.operationId);
     if (handoff !== undefined) {
       assertCohortCompletionHandoffBindingsV1(handoff, batch.envelope.definition, atom);
       if (handoff.batchDigest !== batch.batchDigest) throw new Error("cohort completion retry changed its batch");
       await this.host.authenticateHandoff(batch, immutableClone(handoff));
     }
+    if (handoff?.phase === "released") {
+      const current = await this.store.snapshot();
+      const recorded = await recordProtectedCohortCompletion(this.ledger, new IssuedCohortCompletionV1(batch, handoff,
+        { revision: current.revision, executionEpoch: current.runtime.executionEpoch }, "verify", null));
+      if (cohortValueDigestV1(recorded) !== cohortValueDigestV1(handoff.ledgerResult)) throw new Error("cohort handoff differs from its protected primary completion evidence");
+      return handoff;
+    }
+    if (lease === null) throw new Error("nonterminal cohort completion requires live authority");
     const persist = async (input: Omit<CohortCompletionHandoffV1, "kind" | "version" | "handoffDigest">) => {
       await this.store.assertLiveCohortAuthority(lease, batch.envelope);
       const next = createCohortCompletionHandoffV1(input);

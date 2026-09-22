@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import {
   PersistentWorkCohortStore,
   newWorkCohortStoredDocumentV1,
+  workCohortHasPendingSealedCandidateV1,
   parseWorkCohortPortableStateV1,
   type WorkCohortPersistence,
   type WorkCohortPortableStateV1,
@@ -131,7 +132,7 @@ export class SqliteWorkCohortPersistence implements WorkCohortPersistence {
           ...fresh,
           runtime: {
             ...fresh.runtime,
-            resumeRequired: current.portable.candidateSeals.length > 0,
+            resumeRequired: workCohortHasPendingSealedCandidateV1(current.portable),
           },
           revision: current.revision + 1,
         },

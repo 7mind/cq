@@ -6,7 +6,8 @@ import { CODEX_CORRELATION_SEPARATOR, InMemoryAttestationBackend, InMemoryAttest
 import { InMemoryLedgerStore, SqliteLedgerStore, cohortValueDigestV1 as digest,
   createInMemoryImplementationEvidenceStore, createCohortEffectEnvelopeV1, createCohortCommandBoundaryV1,
   createCohortCompletionBatchV1, createLedgerMcpToolSpecifications,
-  createTrustedWorksetManagementAuthority, type CohortCompletionRuntimeResultV1, type CohortAdmissionPlanV1, type CohortEffectEnvelopeV1 } from "@cq/ledger";
+  createTrustedWorksetManagementAuthority, type CohortCompletionRuntimeResultV1, type CohortAdmissionPlanV1, type CohortEffectEnvelopeV1,
+  type ManagedWorktreeFaultInjector } from "@cq/ledger";
 import { prepareCohortPrimaryFixture } from "../../ledger/test/workCohortCompletionContract.js";
 import { cohortBrokerGit as git, rawDigest } from "../../ledger/test/workCohortGitBrokerFixture.js";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
@@ -26,7 +27,7 @@ function artifacts(): PromptArtifactStore {
       return { metadata, bytes: new Uint8Array([1]) }; } };
 }
 
-export async function completionRuntimeFixture(adapter: "memory" | "sqlite", deployment: boolean) {
+export async function completionRuntimeFixture(adapter: "memory" | "sqlite", deployment: boolean, inheritedWip?: string) {
   const root = await mkdtemp(join(tmpdir(), "cq-completion-production-"));
   const ledger = adapter === "memory" ? new InMemoryLedgerStore() : new SqliteLedgerStore({ dbPath: join(root, ".state", "ledger.db") });
   await mkdir(join(root, ".state"));
@@ -43,6 +44,7 @@ export async function completionRuntimeFixture(adapter: "memory" | "sqlite", dep
     const contract = "export interface CohortContract { readonly value: string }\n";
     await writeFile(join(root, "shared.ts"), contract);
     await writeFile(join(root, "bun.lock"), "{}\n");
+    if (inheritedWip !== undefined) await writeFile(join(root, "WIP-T9999.md"), inheritedWip);
     await writeFile(join(root, ".gitignore"), ".claude/\n.state/\n.cache/\nnode_modules/\n");
     await git(root, ["add", "."]); await git(root, ["commit", "-q", "-m", "seed"]);
     const baseCommit = await git(root, ["rev-parse", "HEAD"]);
@@ -138,10 +140,11 @@ export async function completionRuntimeFixture(adapter: "memory" | "sqlite", dep
     const confirmed = await dispatch.confirmCompletion({ ...reviewer.prepared, expectedProvenance: reviewer.prepared.promptProvenance,
       nativeCompletion: { kind: "native-completion", actor: "trusted-parent", ...reviewChild, completedAt: new Date().toISOString() } });
     if (confirmed.state !== "consumed") throw new Error(JSON.stringify(confirmed));
-    const runtimeWithArtifact = (artifact: string) => {
+    const runtimeWithArtifact = (artifact: string, faultInjector?: ManagedWorktreeFaultInjector) => {
       const runtime = createCohortCompletionRuntimeV1({ resolved: { store: ledger, implementationEvidenceStore: evidence,
       backend: "xdg", configRoot: root, branch: "cq-ledger" }, backend, promptArtifacts, stateDir: deps.stateDir,
       trustedSourceWorkspaceBuildCommit: resultCommit, trustedSourceWorkspaceArtifactIdentity: artifact,
+      ...(faultInjector === undefined ? {} : { managedWorktreeFaultInjector: faultInjector }),
       cancellationSignal: new AbortController().signal });
       if (runtime === undefined) throw new Error("completion runtime unavailable");
       return runtime;

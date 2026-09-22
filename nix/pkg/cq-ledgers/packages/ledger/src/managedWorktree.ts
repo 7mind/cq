@@ -99,6 +99,9 @@ import { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.
 import { materializeGuardedRebaseBridge, verifyHistoricalCohortGuardedRebaseBridge } from "./guardedRebaseContinuation.js";
 import type { LedgerStore } from "./store/LedgerStore.js";
 import type { WorkCohortLeaseV1, WorkCohortStore } from "./workCohortStore.js";
+import { readAuthorizedCohortTerminalReleaseV1, type AuthorizedCohortTerminalReleaseV1 } from "./workCohortCompletion.js";
+import { mintManagedCohortTerminalReleaseBinding } from "./managedTerminalReleaseAdmission.js";
+import { createManagedCohortTerminalReleaseGitRunner } from "./worksetGitEffects.js";
 import {
   currentRecoveryJournalRoot,
   FsCurrentRecoverySealJournalStore,
@@ -679,7 +682,7 @@ function refusedRelease(
   reason: ReleaseManagedWorktreeRefusalReason,
   detail: string,
   extra: Partial<Extract<ReleaseManagedWorktreeResult, { status: "refused" }>> = {},
-): ReleaseManagedWorktreeResult {
+): Extract<ReleaseManagedWorktreeResult, { status: "refused" }> {
   return { status: "refused", reason, detail, ...extra };
 }
 
@@ -1655,7 +1658,7 @@ async function recoverableWipCandidateNames(
   worktreePath: string,
   taskStartCommit: string,
   resultCommit: string,
-  taskId: string,
+  taskIds: readonly string[],
 ): Promise<ReadonlySet<string>> {
   const start = await revParse(git, worktreePath, taskStartCommit);
   if (start === null) throw new Error("managed WIP closure requires the task starting commit");
@@ -1683,7 +1686,7 @@ async function recoverableWipCandidateNames(
     );
   }
   return new Set([
-    `WIP-${taskId}.md`,
+    ...taskIds.map((taskId) => `WIP-${taskId}.md`),
     ...rootWipNames(changed.stdout),
     ...rootWipNames(untracked.stdout),
   ]);
@@ -3082,6 +3085,81 @@ function isTerminalDisposition(value: string): value is ManagedWorktreeTerminalD
   return value === "done" || value === "abandoned";
 }
 
+export type ReleaseManagedCohortWorktreeResult =
+  | { readonly status: "released"; readonly handle: ManagedWorktreeHandleV3; readonly idempotent: boolean; readonly absolutePath: string }
+  | Extract<ReleaseManagedWorktreeResult, { readonly status: "refused" }>;
+
+export async function releaseCompletedManagedCohortWorktree(input: {
+  readonly repositoryRoot: string; readonly ledger: LedgerStore; readonly authority: AuthorizedCohortTerminalReleaseV1;
+}, deps: ManagedWorktreeDeps): Promise<ReleaseManagedCohortWorktreeResult> {
+  const batch = readAuthorizedCohortTerminalReleaseV1(input.authority);
+  const identity = cohortWorktreeIdentityFromEnvelopeV1(batch.envelope);
+  const regRoot = registryRoot(input.repositoryRoot, deps.stateDir);
+  const subjectKey = `cohort-${identity.candidateIntentDigest}`;
+  const fault = deps.faultInjector ?? (async () => undefined);
+  const locate = async () => {
+    const records = await loadOrReconcileSubjectRecords(regRoot, subjectKey, fault);
+    if (records.length !== 1) throw new Error("completed cohort release requires its unique retained manager record");
+    const stored = records[0]!;
+    if (stored.handle.version !== 3 || validateAnyManagedWorktreeHandle(stored.handle, input.repositoryRoot).status !== "valid" ||
+        fingerprintHandle(stored.handle) !== stored.fingerprint || cohortValueDigestV1(stored.handle.cohort) !== cohortValueDigestV1(identity)) {
+      throw new Error("completed cohort release differs from its exact manager identity");
+    }
+    return { stored, handle: stored.handle, records };
+  };
+  const initial = await locate();
+  return withManagedWorktreeEffectLock({ repositoryRoot: input.repositoryRoot, handleToken: initial.handle.token }, deps, () =>
+    withManagedMemberPrepareLocks(regRoot, identity.memberAuthorities.map(({ taskRef }) => taskRef.slice("tasks:".length)), deps, async () => {
+      const { stored, handle, records } = await locate();
+      if (handle.token !== initial.handle.token) throw new Error("completed cohort manager record changed before release");
+      const absolutePath = handle.absolutePath;
+      const readOnlyGit = deps.git ?? nodeManagedWorktreeGitRunner;
+      const binding = mintManagedCohortTerminalReleaseBinding(input.authority, { handleToken: handle.token,
+        handleFingerprint: stored.fingerprint, repositoryRoot: input.repositoryRoot, worktreePath: absolutePath, branch: handle.branch });
+      const git = createManagedCohortTerminalReleaseGitRunner({ store: input.ledger, binding, envelope: batch.envelope, readOnlyGit });
+      const branchTip = await revParse(git, input.repositoryRoot, handle.branch);
+      if (branchTip !== null && branchTip !== batch.resultCommit) return refusedRelease("commit-mismatch", "cohort branch no longer names its completed commit", { absolutePath });
+      let pathExists: boolean;
+      try { pathExists = (await fs.stat(absolutePath)).isDirectory(); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; pathExists = false; }
+      if (pathExists) {
+        if (stored.status === "released") return refusedRelease("ambiguous", "released cohort worktree path reappeared", { absolutePath });
+        const coordinates = await resolveManagedGitCoordinates(stored, input.repositoryRoot, false, git);
+        if (coordinates === null || coordinates.repositoryId !== batch.envelope.definition.repository.repositoryId) {
+          return refusedRelease("handle-mismatch", "cohort worktree no longer resolves to its authenticated Git coordinates", { absolutePath });
+        }
+        if (await revParse(git, absolutePath, "HEAD") !== batch.resultCommit) return refusedRelease("commit-mismatch", "cohort HEAD differs from its completed commit", { absolutePath });
+        const status = await gitPorcelain(git, absolutePath);
+        if (status.code !== 0 || status.porcelain.trim() !== "") return refusedRelease("dirty", "cohort worktree has uncommitted changes", { absolutePath });
+        const taskIds = identity.memberAuthorities.map(({ taskRef }) => taskRef.slice("tasks:".length));
+        const candidateNames = await recoverableWipCandidateNames(git, absolutePath, stored.headAtPrepare, batch.resultCommit, taskIds);
+        const ownedNames = new Set(taskIds.map((taskId) => `WIP-${taskId}.md`));
+        if ([...candidateNames].some((name) => !ownedNames.has(name))) return refusedRelease("wip-malformed", "cohort candidate changed a foreign WIP artifact", { absolutePath });
+        for (const taskId of taskIds) {
+          const wip = await findOpenWipCheckpoints(absolutePath, undefined, new Set([`WIP-${taskId}.md`]), taskId);
+          if (wip.status === "malformed") return refusedRelease("wip-malformed", `WIP artifact malformed at ${wip.path}: ${wip.detail}`, { absolutePath });
+          if (wip.status === "open") return refusedRelease("wip-open", "cohort worktree retains open WIP checkpoints", { absolutePath });
+        }
+        await fault("before-worktree-remove", { absolutePath, token: handle.token });
+        const removed = await git(input.repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
+        if (removed.code !== 0) return refusedRelease("ambiguous", `cohort worktree removal failed: ${removed.stderr}`, { absolutePath });
+      }
+      if (stored.status !== "released") {
+        await fault("before-registry-release", { absolutePath, token: handle.token });
+        const { retainedCohortAuthority: _authority, ...historical } = stored;
+        await publishTaskGeneration(regRoot, subjectKey, records.map((record) => record.handle.token === handle.token
+          ? { ...historical, status: "released", releasedAt: (deps.now ?? (() => new Date()))().toISOString() } : record), fault);
+      }
+      if (branchTip !== null) {
+        const parked = await git(input.repositoryRoot, ["update-ref", `${RECOVERY_REF_PREFIX}/${handle.branch}`, batch.resultCommit]);
+        if (parked.code !== 0) return refusedRelease("ambiguous", `cohort recovery ref publication failed: ${parked.stderr}`, { absolutePath });
+        const deleted = await git(input.repositoryRoot, ["branch", "-D", handle.branch]);
+        if (deleted.code !== 0) return refusedRelease("ambiguous", `cohort branch removal failed: ${deleted.stderr}`, { absolutePath });
+      }
+      return { status: "released", handle, idempotent: stored.status === "released", absolutePath };
+    }));
+}
+
 /**
  * Guarded release of a managed worktree. Refuses without mutation when the
  * tree is dirty, carries open WIP checkpoints, is non-terminal, or the handle
@@ -3315,7 +3393,7 @@ async function releaseManagedWorktreeUnderEffectLock(
         absolutePath,
         projection?.integrationBaseCommit ?? stored.headAtPrepare,
         head,
-        stored.handle.taskId,
+        [stored.handle.taskId],
       );
     } catch (error) {
       return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), {
@@ -3623,7 +3701,7 @@ export async function assertManagedWorktreeWipClosure(
     binding.worktreePath,
     projection?.integrationBaseCommit ?? stored.headAtPrepare,
     resultCommit,
-    binding.taskId,
+    [binding.taskId],
   );
   const assessment = await findOpenWipCheckpoints(
     binding.worktreePath,

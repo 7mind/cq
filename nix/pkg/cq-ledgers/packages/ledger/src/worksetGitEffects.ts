@@ -14,6 +14,8 @@ import {
   assertManagedTerminalReleaseRunnerBinding,
   type ManagedTerminalReleaseBinding,
   type ManagedTerminalReleaseEffect,
+  type AnyManagedTerminalReleaseBinding,
+  type ManagedCohortTerminalReleaseBinding,
 } from "./managedTerminalReleaseAdmission.js";
 import { resolveUniqueTaskState } from "./taskStateResolver.js";
 import { createCohortWorksetEffectAdmissionProvider } from "./workCohortEffects.js";
@@ -32,7 +34,7 @@ export interface RunLedgerWorksetGitEffectOptions {
   readonly store: LedgerStore;
   readonly expected: WorksetGitEffectBinding;
   readonly resolve: () => Promise<WorksetGitEffectBinding>;
-  readonly terminalReleaseBinding?: ManagedTerminalReleaseBinding;
+  readonly terminalReleaseBinding?: AnyManagedTerminalReleaseBinding;
   readonly environment?: NodeJS.ProcessEnv;
 }
 
@@ -187,6 +189,27 @@ export function createManagedCohortWorktreeGitEffectRunner(input: {
         return { ...coordinates, cohort: envelope };
       },
     }),
+  });
+}
+
+export function createManagedCohortTerminalReleaseGitRunner(input: {
+  readonly store: LedgerStore; readonly binding: ManagedCohortTerminalReleaseBinding;
+  readonly envelope: CohortEffectEnvelopeV1; readonly readOnlyGit: ManagedWorktreeGitRunner;
+}): ManagedWorktreeGitRunner {
+  const terminal = input.binding;
+  return createManagedGitEffectRunnerCore({ repositoryRoot: terminal.repositoryRoot, targetRef: terminal.targetRef,
+    branch: terminal.branch, readOnlyGit: input.readOnlyGit,
+    runEffect: async (binding, resolveCoordinates) => {
+      if (binding.kind === "worktree-remove" && binding.headCommit !== terminal.resultCommit) throw new Error("cohort release worktree differs from its completed commit");
+      return runLedgerWorksetGitEffect({ store: input.store, expected: { ...binding, cohort: input.envelope },
+        terminalReleaseBinding: terminal, resolve: async () => {
+          if (binding.kind === "worktree-remove") {
+            const status = await input.readOnlyGit(binding.worktreePath, ["status", "--porcelain"]);
+            if (status.code !== 0 || status.stdout.trim() !== "") throw new Error("cohort cleanup worktree changed before removal");
+          }
+          return { ...await resolveCoordinates(), cohort: input.envelope };
+        } });
+    },
   });
 }
 

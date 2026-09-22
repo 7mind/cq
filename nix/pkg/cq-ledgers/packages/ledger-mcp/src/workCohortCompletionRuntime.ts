@@ -11,6 +11,7 @@ import {
   createNodeSupervisedWorkerCommandRunner, materializeCohortOperatorAction, recordOperatorActionEvidence,
   operatorActionRevision, requireWorksetStore, resolveRetainedManagedCohortAuthority, ledgerItemRevisionV1,
   parseGoalFinalizedManifest,
+  releaseCompletedManagedCohortWorktree,
   nodeManagedWorktreeGitRunner, validateCohortExecutionBindingV1,
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS, SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   createCohortActivityV1,
@@ -18,6 +19,7 @@ import {
   type CohortCompletionHostV1, type CohortDeploymentIdentityV1, type CohortDeploymentProbeReceiptV1,
   type CohortEffectEnvelopeV1, type CohortReviewRoleContractV1, type CohortReviewReceiptV1, type ManagedCohortWorktreeAuthority,
   type ResolvedLedgerStore, type WorkCohortStore,
+  type ManagedWorktreeFaultInjector,
   cohortEffectTargetRefV1, runWorksetGitEffectGate, settleProcessGroups, settleWorktreeGateCommands, type MergeEffectBinding,
 } from "@cq/ledger";
 import { implementationEvidenceBuildCommit } from "./buildProvenance.js";
@@ -31,6 +33,7 @@ export interface CohortCompletionRuntimeOptionsV1 {
   readonly stateDir?: string;
   readonly trustedSourceWorkspaceBuildCommit?: string;
   readonly trustedSourceWorkspaceArtifactIdentity?: string;
+  readonly managedWorktreeFaultInjector?: ManagedWorktreeFaultInjector;
 }
 
 class CohortDeploymentRequiredError extends Error {
@@ -83,7 +86,8 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
   const cohorts = resolved.store.workCohortStore();
   const journal = new ProtectedCohortCompletionJournalV1(resolved.implementationEvidenceStore);
   const repositoryRoot = resolved.configRoot;
-  const managerDeps = options.stateDir === undefined ? {} : { stateDir: options.stateDir };
+  const managerDeps = { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+    ...(options.managedWorktreeFaultInjector === undefined ? {} : { faultInjector: options.managedWorktreeFaultInjector }) };
   const workset = requireWorksetStore(ledger);
   const commands = createNodeSupervisedWorkerCommandRunner({ settleProcessGroups, settleWorktreeGateCommands });
   const now = () => new Date().toISOString();
@@ -108,8 +112,12 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
     backend.transact({ kind: "namespace" }, (store) => new CohortReviewAuthenticatorV1(store).authenticate({
       reviewerDispatch, envelope, resultCommit, gateEvidence, recording, role: reviewerRole(options.promptArtifacts) }));
 
-  function host(authority: ManagedCohortWorktreeAuthority): CohortCompletionHostV1 {
-    const assertLive = () => cohorts.assertLiveCohortAuthority(authority.lease, authority.envelope);
+  function host(authority: ManagedCohortWorktreeAuthority | null): CohortCompletionHostV1 {
+    const requireAuthority = () => {
+      if (authority === null) throw new Error("terminal completion replay has no live effect authority");
+      return authority;
+    };
+    const assertLive = () => { const live = requireAuthority(); return cohorts.assertLiveCohortAuthority(live.lease, live.envelope); };
     const assertEffectMembers = async (batch: CohortCompletionBatchV1) => {
       await assertLive();
       for (const member of batch.envelope.memberAuthorities) {
@@ -122,7 +130,8 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
             !manifest.tasks.some(({ id }) => id === task.id)) throw new Error(`cohort effect member authority changed for ${member.taskRef}`);
       }
     };
-    const provider = createCohortWorksetEffectAdmissionProvider(authority, workset);
+    const provider = { acquire: (input: Parameters<ReturnType<typeof createCohortWorksetEffectAdmissionProvider>["acquire"]>[0]) =>
+      createCohortWorksetEffectAdmissionProvider(requireAuthority(), workset).acquire(input) };
     const withPrimaryAdmission = async <T>(batch: CohortCompletionBatchV1, effect: () => Promise<T>): Promise<T> => {
       await assertLive();
       const admission = await workset.admitLedgerMutation({ kind: "owned-write", targets: batch.members.map(({ taskRef }) => taskRef) });
@@ -153,7 +162,6 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
     return {
       withPrimaryAdmission,
       authenticateReviews: async (batch) => {
-        await assertLive();
         const accepted = await acceptedCandidate(cohorts, backend, batch.envelope);
         if (digest(accepted.acceptance) !== digest(batch.acceptance)) throw new Error("completion acceptance changed");
         for (const receipt of await journal.reviews(batch)) {
@@ -162,10 +170,19 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
         }
       },
       authenticateHandoff: async (batch, handoff) => {
-        await assertLive();
         if (handoff.phase === "prepared") return;
         const record = await journal.read(batch);
         if (record.mergeReceiptDigest === null || record.mergeReceiptDigest !== handoff.mergeReceiptDigest) throw new Error("cohort handoff lacks its protected merge journal");
+        if (handoff.phase === "released") {
+          if (record.state !== "released" || record.ledgerResult === null) throw new Error("cohort terminal replay lacks completed protected journal settlement");
+          const { candidate } = await acceptedCandidate(cohorts, backend, batch.envelope);
+          await backend.transact({ kind: "namespace" }, (store) => {
+            const row = store.read(candidate.attempt.preparedDispatch);
+            const detail = { batchDigest: batch.batchDigest, sealDigest: batch.acceptance.sealDigest, completionRef: record.completionRef };
+            if (row === undefined || row.kind !== "envelope" || row.implementationQueue?.state !== "released" ||
+                row.implementationQueue.terminal?.detailsDigest !== digest(detail)) throw new Error("cohort terminal replay lacks exact released queue evidence");
+          });
+        }
         await git(["merge-base", "--is-ancestor", batch.resultCommit, "HEAD"]);
         if (handoff.deployment !== null && !record.deployments.some((entry) => digest(entry) === digest(handoff.deployment))) throw new Error("cohort handoff substituted its deployment identity");
         for (const probe of handoff.probes) if (!record.probes.some((entry) => digest(entry) === digest(probe))) throw new Error("cohort handoff lacks its protected probe receipt");
@@ -283,9 +300,14 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
     complete: async ({ batch: value }) => {
       const batch = structuredClone(value);
       assertCohortCompletionBatchV1(batch);
-      const { authority } = await retained(batch.envelope);
+      const prior = (await status({ operationId: batch.operationId })).handoff;
+      const authority = prior?.phase === "released" ? null : (await retained(batch.envelope)).authority;
       try {
-        const handoff = await new CohortCompletionCoordinatorV1(cohorts, ledger, host(authority)).run(batch, authority.lease);
+        const coordinator = new CohortCompletionCoordinatorV1(cohorts, ledger, host(authority));
+        const handoff = await coordinator.run(batch, authority === null ? null : authority.lease);
+        const release = await releaseCompletedManagedCohortWorktree({ repositoryRoot, ledger,
+          authority: await coordinator.authorizeTerminalRelease(batch) }, managerDeps);
+        if (release.status !== "released") throw new Error(`cohort completion cleanup pending (${release.reason}): ${release.detail}`);
         return { state: "complete", handoff };
       } catch (error) {
         if (!(error instanceof CohortDeploymentRequiredError)) throw error;

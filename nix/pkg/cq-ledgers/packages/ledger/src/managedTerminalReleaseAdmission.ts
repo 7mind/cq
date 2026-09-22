@@ -1,5 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { WorksetAdmissionError, type WorksetExternalEffectKind } from "./worksetEffectAdmission.js";
+import { cohortEffectTargetRefV1 } from "@cq/process-control";
+import { readAuthorizedCohortTerminalReleaseV1, type AuthorizedCohortTerminalReleaseV1 } from "./workCohortCompletion.js";
 
 const FULL_SHA256 = /^[0-9a-f]{64}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
@@ -22,6 +24,19 @@ export interface ManagedTerminalReleaseBinding {
   readonly terminalDisposition: "done" | "abandoned";
   readonly [managedReleaseBrand]: true;
 }
+
+export interface ManagedCohortTerminalReleaseBinding {
+  readonly kind: "cq-managed-cohort-terminal-release-binding";
+  readonly targetRef: string;
+  readonly cohortTargets: readonly string[];
+  readonly resultCommit: string;
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+}
+export type AnyManagedTerminalReleaseBinding = ManagedTerminalReleaseBinding | ManagedCohortTerminalReleaseBinding;
 
 export type ManagedTerminalReleaseEffect =
   | {
@@ -48,12 +63,12 @@ export type ManagedTerminalReleaseEffect =
     };
 
 export interface ManagedTerminalReleaseAdmissionRequest {
-  readonly binding: ManagedTerminalReleaseBinding;
+  readonly binding: AnyManagedTerminalReleaseBinding;
   readonly effect: ManagedTerminalReleaseEffect;
 }
 
 interface ManagedTerminalReleaseBindingState {
-  readonly binding: ManagedTerminalReleaseBinding;
+  readonly binding: AnyManagedTerminalReleaseBinding;
   worktreeRemoveAdmitted: boolean;
   recoveryReferenceAdmitted: boolean;
   branchRemoveAdmitted: boolean;
@@ -130,6 +145,22 @@ export function assertManagedTerminalReleaseRunnerBinding(
   }
 }
 
+export function mintManagedCohortTerminalReleaseBinding(authority: AuthorizedCohortTerminalReleaseV1, input: {
+  readonly handleToken: string; readonly handleFingerprint: string;
+  readonly repositoryRoot: string; readonly worktreePath: string; readonly branch: string;
+}): ManagedCohortTerminalReleaseBinding {
+  const batch = readAuthorizedCohortTerminalReleaseV1(authority);
+  requireCanonicalAbsolutePath(input.repositoryRoot, "repository root");
+  requireCanonicalAbsolutePath(input.worktreePath, "worktree path");
+  if (input.handleToken.length === 0 || !FULL_SHA256.test(input.handleFingerprint) ||
+      input.branch !== `implement/cohort-${batch.envelope.intent.intentDigest}`) reject("cohort manager identity differs from terminal completion");
+  const binding: ManagedCohortTerminalReleaseBinding = Object.freeze({ ...input,
+    kind: "cq-managed-cohort-terminal-release-binding", targetRef: cohortEffectTargetRefV1(batch.envelope),
+    cohortTargets: Object.freeze(batch.members.map(({ taskRef }) => taskRef)), resultCommit: batch.resultCommit });
+  bindingStates.set(binding, { binding, worktreeRemoveAdmitted: false, recoveryReferenceAdmitted: false, branchRemoveAdmitted: false });
+  return binding;
+}
+
 /**
  * Consume one exact release-sequence effect. Validation precedes every store
  * mutation; each accepted call still receives a normal one-effect admission.
@@ -139,6 +170,7 @@ export function authorizeManagedTerminalReleaseEffect(
 ): {
   readonly kind: WorksetExternalEffectKind;
   readonly targetRef: string;
+  readonly cohortTargets?: readonly string[];
 } {
   const state = bindingStates.get(input.binding);
   if (state === undefined || state.binding !== input.binding) {
@@ -146,7 +178,9 @@ export function authorizeManagedTerminalReleaseEffect(
   }
   const binding = state.binding;
   const effect = input.effect;
-  if (effect.targetRef !== `tasks:${binding.taskId}`) reject("target task was substituted");
+  const cohort = binding.kind === "cq-managed-cohort-terminal-release-binding";
+  const targetRef = cohort ? binding.targetRef : `tasks:${binding.taskId}`;
+  if (effect.targetRef !== targetRef) reject("terminal release target was substituted");
   if (effect.repositoryRoot !== binding.repositoryRoot) reject("repository was substituted");
   if (state.branchRemoveAdmitted) reject("release sequence is already terminal");
 
@@ -157,7 +191,7 @@ export function authorizeManagedTerminalReleaseEffect(
     if (effect.worktreePath !== binding.worktreePath) reject("worktree path was substituted");
     if (effect.branch !== binding.branch) reject("worktree branch was substituted");
     state.worktreeRemoveAdmitted = true;
-    return { kind: effect.kind, targetRef: effect.targetRef };
+    return { kind: effect.kind, targetRef: effect.targetRef, ...(cohort ? { cohortTargets: binding.cohortTargets } : {}) };
   }
 
   if (effect.kind === "branch-create") {
@@ -168,8 +202,9 @@ export function authorizeManagedTerminalReleaseEffect(
     if (!FULL_COMMIT.test(effect.expectedReferenceCommit) || !FULL_COMMIT.test(effect.commit)) {
       reject("recovery reference commits are invalid");
     }
+    if (cohort && effect.commit !== binding.resultCommit) reject("cohort recovery reference differs from completed commit");
     state.recoveryReferenceAdmitted = true;
-    return { kind: effect.kind, targetRef: effect.targetRef };
+    return { kind: effect.kind, targetRef: effect.targetRef, ...(cohort ? { cohortTargets: binding.cohortTargets } : {}) };
   }
 
   if (effect.kind !== "branch-remove") {
@@ -177,6 +212,7 @@ export function authorizeManagedTerminalReleaseEffect(
   }
   if (effect.branch !== binding.branch) reject("removed branch was substituted");
   if (!FULL_COMMIT.test(effect.expectedCommit)) reject("removed branch commit is invalid");
+  if (cohort && effect.expectedCommit !== binding.resultCommit) reject("cohort branch differs from completed commit");
   state.branchRemoveAdmitted = true;
-  return { kind: effect.kind, targetRef: effect.targetRef };
+  return { kind: effect.kind, targetRef: effect.targetRef, ...(cohort ? { cohortTargets: binding.cohortTargets } : {}) };
 }

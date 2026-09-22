@@ -441,6 +441,7 @@ export {
   assertManagedCohortWorktreeDispatchBindingLive,
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
+  releaseCompletedManagedCohortWorktree,
   resolveManagedWorktreeDispatchBinding,
   resolveManagedWorktreeLineageBinding,
   resolveManagedWorktreeTerminalReleaseRegistryBinding,
