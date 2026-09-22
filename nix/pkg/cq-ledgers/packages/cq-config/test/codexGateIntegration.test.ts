@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { withoutWorksetCredentials } from "../src/worksetManagementCommand.js";
 import {
   acquireWorktreeGate,
   closeWorktreeGate,
@@ -164,7 +165,7 @@ function launchDispatch(
   const child = Bun.spawn(argv, {
     cwd: fixture.worktree,
     env: {
-      ...process.env,
+      ...withoutWorksetCredentials(process.env),
       XDG_STATE_HOME: join(fixture.root, "xdg-state"),
       CQ_PROMPT_ROOT: fixture.promptRoot,
       CQ_CODEX_EXECUTABLE: fixture.fakeCodex,

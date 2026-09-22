@@ -4,6 +4,7 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutWorksetCredentials } from "../src/worksetManagementCommand.js";
 
 const DISPATCH_SCRIPT = fileURLToPath(
   new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
@@ -25,7 +26,7 @@ async function invoke(
 ): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
   const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
     cwd: request["cwd"] as string,
-    env: environment,
+    env: withoutWorksetCredentials(environment),
     stdin: new Blob([`${JSON.stringify(request)}\n`]),
     stdout: "pipe",
     stderr: "pipe",

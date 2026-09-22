@@ -26,6 +26,7 @@ import {
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   interceptCodexRoleBoundaryResult,
   resolveCodexRoleEffectAdmissionProvider,
+  withoutWorksetCredentials,
   type CodexRoleBoundaryPlan,
   type CodexStagedTimingPhase,
 } from "@cq/config";
@@ -256,7 +257,7 @@ throw new Error("unexpected cq invocation");
       const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
         cwd: worktree,
         env: {
-          ...process.env,
+          ...withoutWorksetCredentials(process.env),
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: codex,
           CQ_CODEX_LEDGER_COMMAND: cq,

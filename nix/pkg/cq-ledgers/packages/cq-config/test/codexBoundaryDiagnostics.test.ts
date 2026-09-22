@@ -12,6 +12,7 @@ import {
   CodexRoleBoundaryError,
   formatCodexRoleBoundaryDiagnostic,
   interceptCodexRoleBoundaryResult,
+  withoutWorksetCredentials,
   type CodexRoleBoundaryDiagnostic,
 } from "@cq/config";
 
@@ -226,7 +227,7 @@ describe("T1628 Codex boundary diagnostics", () => {
       const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
         cwd: worktree,
         env: {
-          ...process.env,
+          ...withoutWorksetCredentials(process.env),
           XDG_STATE_HOME: join(root, "xdg-state"),
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: fakeCodex,
