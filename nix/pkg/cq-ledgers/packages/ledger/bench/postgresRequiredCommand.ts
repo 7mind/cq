@@ -6,7 +6,13 @@ export async function runPostgresRequiredCommand(command: readonly string[], cwd
   if (command[0] === undefined) throw new Error("required PostgreSQL command is empty");
   if (signal !== null && signal.aborted) throw new Error("required PostgreSQL gate was interrupted");
   const child = spawn(command[0], command.slice(1), { cwd, env: { ...environment }, detached: true, stdio: "inherit" });
-  const exited = new Promise<number>((resolve, reject) => { child.once("error", reject); child.once("close", (code) => resolve(code ?? 1)); });
+  const exited = new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, terminationSignal) => {
+      if (typeof terminationSignal === "string") process.stderr.write(`required PostgreSQL command terminated by signal ${terminationSignal} (pid ${child.pid})\n`);
+      resolve(code ?? 1);
+    });
+  });
   if (child.pid === undefined) return await exited;
   const identity = await readProcessIdentity(child.pid);
   const registration: ProcessGroupRegistration | null = identity === null ? null : { pgid: child.pid, leader: identity };
