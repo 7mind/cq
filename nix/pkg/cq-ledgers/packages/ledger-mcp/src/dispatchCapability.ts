@@ -2585,7 +2585,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             generation: input.generation,
           },
           liveTip,
-          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          {
+            ...(options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir }),
+            ...(binding.receiptChainTransition === undefined
+              ? {}
+              : { receiptChainTransition: binding.receiptChainTransition }),
+            ...(binding.receiptChainTransitions === undefined
+              ? {}
+              : { receiptChainTransitions: binding.receiptChainTransitions }),
+          },
         );
         recoveryContext = { liveTip, gitReceipts };
       }
