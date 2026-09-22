@@ -184,8 +184,8 @@ class Harness {
         // a store whose injected failure closed its pool is already gone
       }
     }
-    for (const tenant of this.tenants.splice(0)) await dropTenant(this.admin, tenant);
-    await this.admin.close();
+    try { for (const tenant of this.tenants.splice(0)) await dropTenant(this.admin, tenant); }
+    finally { await this.admin.close(); }
   }
 }
 

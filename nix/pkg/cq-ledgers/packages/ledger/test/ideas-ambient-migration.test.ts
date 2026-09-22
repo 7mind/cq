@@ -30,6 +30,7 @@ import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.js";
 import { ensureSchema as ensurePostgresSchema } from "../src/store/postgres/schema.js";
+import { dropTenant } from "./postgresTestTenant.js";
 
 const NOW = "2026-08-14T17:00:00.000Z";
 const LEGACY_MILESTONE = "M326";
@@ -313,21 +314,8 @@ if (pgUrl === undefined || pgUrl.length === 0) {
           `,
         ).toEqual([]);
       } finally {
-        await setup.begin(async (tx) => {
-          await tx`DELETE FROM workset_admissions WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM workset_roots WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM plan_operations WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM plan_claims WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM archived_items WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM archive_pointers WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM items WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM groups WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM ledgers WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM logs WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM mcp_usage_stats WHERE project_key = ${projectKey}`;
-          await tx`DELETE FROM projects WHERE project_key = ${projectKey}`;
-        });
-        await setup.close();
+        try { await dropTenant(setup, projectKey); }
+        finally { await setup.close(); }
       }
     });
   });

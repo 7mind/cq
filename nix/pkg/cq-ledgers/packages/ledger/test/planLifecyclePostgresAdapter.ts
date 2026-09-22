@@ -51,6 +51,8 @@ import type {
 } from "./planLifecycleReferenceAdapter.js";
 import { OneShotSerializationBoundary } from "./planLifecycleSerializationBoundary.js";
 import { postgresGoalRowLockHook } from "./postgresGoalRowLockHook.js";
+import { dropTenant } from "./postgresTestTenant.js";
+export { dropTenant } from "./postgresTestTenant.js";
 
 const PG_URL_ENV = "CQ_TEST_PG_URL";
 const TEST_POOL_MAX = 4;
@@ -169,21 +171,6 @@ export async function cloneTenant(admin: SQL, from: string, to: string): Promise
       INSERT INTO plan_operations (project_key, scope, record_json)
       SELECT ${to}, scope, record_json FROM plan_operations WHERE project_key = ${from}
     `;
-  });
-}
-
-/** Remove every row a throwaway tenant owns (children first, FK order). */
-export async function dropTenant(admin: SQL, projectKey: string): Promise<void> {
-  await admin.begin(async (tx) => {
-    await tx`DELETE FROM archived_items WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM archive_pointers WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM items WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM groups WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM ledgers WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM plan_claims WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM plan_operations WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM logs WHERE project_key = ${projectKey}`;
-    await tx`DELETE FROM projects WHERE project_key = ${projectKey}`;
   });
 }
 
@@ -394,9 +381,14 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
   }
 
   override async dispose(): Promise<void> {
-    for (const fixture of this.spawned.splice(0)) await fixture.dispose();
-    await this.lease.release(this.admin);
-    if (this.ownsAdmin) await this.admin.close();
+    try {
+      const results = await Promise.allSettled([
+        ...this.spawned.splice(0).map((fixture) => fixture.dispose()),
+        this.lease.release(this.admin),
+      ]);
+      const failures: unknown[] = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+      if (failures.length > 0) throw new AggregateError(failures, `PostgreSQL fixture teardown failed: ${String(failures[0])}`);
+    } finally { if (this.ownsAdmin) await this.admin.close(); }
   }
 }
 

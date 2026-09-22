@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
 
 import {
   WorkCohortServiceV1,
@@ -18,6 +17,7 @@ import {
 import { ensureSchema, PG_SCHEMA_VERSION } from "../src/store/postgres/schema.js";
 import { createTrustedWorksetManagementAuthority } from "../src/worksetInvocationAuthority.js";
 import { sha256 } from "./workCohortFixture.js";
+import { dropTenant as removeOwnedFixtureTenant } from "./postgresTestTenant.js";
 import { recordFixtureCohortAcceptance } from "./workCohortAcceptanceFixture.js";
 import { workCohortAcceptanceContract } from "./workCohortAcceptanceContract.js";
 import { workCohortAuthorityContract } from "./workCohortAuthorityContract.js";
@@ -31,25 +31,6 @@ const PG_URL = process.env.CQ_TEST_PG_URL;
 
 function projectKey(label: string): string {
   return `cohort-${label}-${randomUUID()}`;
-}
-
-async function removeOwnedFixtureTenant(pool: SQL, key: string): Promise<void> {
-  await pool.begin(async (tx) => {
-    await tx`DELETE FROM workset_admissions WHERE project_key = ${key}`;
-    await tx`DELETE FROM workset_roots WHERE project_key = ${key}`;
-    await tx`DELETE FROM work_cohort_state WHERE project_key = ${key}`;
-    await tx`DELETE FROM implementation_completion_bindings WHERE project_key = ${key}`;
-    await tx`DELETE FROM plan_operations WHERE project_key = ${key}`;
-    await tx`DELETE FROM plan_claims WHERE project_key = ${key}`;
-    await tx`DELETE FROM mcp_usage_stats WHERE project_key = ${key}`;
-    await tx`DELETE FROM archived_items WHERE project_key = ${key}`;
-    await tx`DELETE FROM archive_pointers WHERE project_key = ${key}`;
-    await tx`DELETE FROM items WHERE project_key = ${key}`;
-    await tx`DELETE FROM groups WHERE project_key = ${key}`;
-    await tx`DELETE FROM ledgers WHERE project_key = ${key}`;
-    await tx`DELETE FROM logs WHERE project_key = ${key}`;
-    await tx`DELETE FROM projects WHERE project_key = ${key}`;
-  });
 }
 
 async function disposeFixtureStores(stores: readonly PostgresLedgerStore[]): Promise<void> {

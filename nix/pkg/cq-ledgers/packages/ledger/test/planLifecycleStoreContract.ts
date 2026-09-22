@@ -394,8 +394,8 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         });
         afterAll(async () => {
           const applicationName = postgresApplicationName(operatorActionFixture);
-          await operatorActionFixture.dispose();
           try {
+            await operatorActionFixture.dispose();
             await waitForPostgresConnectionBaseline(
               () => postgresConnectionCount(connectionObserver, applicationName),
               0,

@@ -47,6 +47,7 @@ import {
 } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema as ensurePostgresSchema } from "../src/store/postgres/schema.js";
+import { dropTenant } from "./postgresTestTenant.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { injectSqliteSchemaDivergence, sqliteDivergenceBackupPath } from "./sqliteSchemaFixture.js";
 
@@ -411,15 +412,7 @@ async function cleanupPostgresTenantFamily(pool: SQL, projectKey: string): Promi
     ORDER BY project_key
   `;
   for (const { project_key: tenant } of tenants) {
-    await pool.begin(async (tx) => {
-      await tx`DELETE FROM archived_items WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM archive_pointers WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM items WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM groups WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM ledgers WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM logs WHERE project_key = ${tenant}`;
-      await tx`DELETE FROM projects WHERE project_key = ${tenant}`;
-    });
+    await dropTenant(pool, tenant);
   }
 }
 
@@ -554,11 +547,10 @@ describe.skipIf(!PG_URL)("pre-upstream PostgreSQL tenant initialization", () => 
 
   afterAll(async () => {
     if (setupPool === undefined) return;
-    for (const projectKey of tenantKeys) {
-      await cleanupPostgresTenantFamily(setupPool, projectKey);
-    }
-    tenantKeys.clear();
-    await setupPool.close();
+    try {
+      for (const projectKey of tenantKeys) await cleanupPostgresTenantFamily(setupPool, projectKey);
+      tenantKeys.clear();
+    } finally { await setupPool.close(); }
   });
 
   test("PostgresLedgerStore adds only an empty tenant-scoped upstream row", async () => {
