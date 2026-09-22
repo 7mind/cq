@@ -28,6 +28,11 @@ const namespace: AttestationNamespace = {
 };
 const repositoryA = "d".repeat(64);
 const repositoryB = "e".repeat(64);
+const NO_UNREACHABLE_ANCESTRY_DIAGNOSTICS =
+  "first-unreachable-generation=none first-unreachable-predecessor-generation=none " +
+  "first-unreachable-source-recovery-claim=none first-unreachable-target-recovery-claim=none " +
+  "first-unreachable-target-guarded-bridge=none first-unreachable-manager-base-match=yes " +
+  "first-unreachable-recovery-rejection=none]";
 const defaults = {
   repositoryId: repositoryA,
   integrationRef: "refs/heads/main",
@@ -366,7 +371,8 @@ describe("ledger-MCP implementation candidate queue", () => {
         `source-terminal=cancelled target-generation=${String(resurrected.prepared.generation)} ` +
         "intermediate-count=0 bound-intermediate-count=0 admitted-first-hop-count=0 " +
         "first-intermediate-generation=none first-intermediate-state=none " +
-        "first-intermediate-terminal=none first-admitted-generation=none]",
+        "first-intermediate-terminal=none first-admitted-generation=none " +
+        NO_UNREACHABLE_ANCESTRY_DIAGNOSTICS,
     );
     const receipt = first.candidate.gitReceipts[0];
     if (receipt === undefined)
@@ -423,7 +429,8 @@ describe("ledger-MCP implementation candidate queue", () => {
         `source-terminal=cancelled target-generation=${String(resurrected.prepared.generation)} ` +
         "intermediate-count=0 bound-intermediate-count=0 admitted-first-hop-count=0 " +
         "first-intermediate-generation=none first-intermediate-state=none " +
-        "first-intermediate-terminal=none first-admitted-generation=none]",
+        "first-intermediate-terminal=none first-admitted-generation=none " +
+        NO_UNREACHABLE_ANCESTRY_DIAGNOSTICS,
     );
   });
 
@@ -552,13 +559,14 @@ describe("ledger-MCP implementation candidate queue", () => {
       }),
     );
     expect(rejection.message).toContain(
-      "[qualification-refusal:v1 reason=first-hop-rejected scope=same-attestation " +
+      "[qualification-refusal:v1 reason=downstream-rejected scope=same-attestation " +
         `source-generation=${String(first.prepared.generation)} source-state=terminal ` +
         `source-terminal=superseded target-generation=${String(rejected.prepared.generation)} ` +
-        "intermediate-count=1 bound-intermediate-count=1 admitted-first-hop-count=0 " +
+        "intermediate-count=1 bound-intermediate-count=1 admitted-first-hop-count=1 " +
         `first-intermediate-generation=${String(intermediate.prepared.generation)} ` +
         "first-intermediate-state=terminal first-intermediate-terminal=cancelled " +
-        "first-admitted-generation=none]",
+        `first-admitted-generation=${String(intermediate.prepared.generation)} ` +
+        NO_UNREACHABLE_ANCESTRY_DIAGNOSTICS,
     );
     for (const forbidden of [
       exactTipBinding.handleToken,

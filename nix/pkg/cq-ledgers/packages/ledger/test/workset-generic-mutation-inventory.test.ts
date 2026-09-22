@@ -125,7 +125,9 @@ describe("workset generic-mutation inventory [T1961]", () => {
     expect(clauseForGenericMutationOperation("archive-terminal-items").exemptions).toEqual([
       "idea-only",
     ]);
-    expect(clauseForGenericMutationOperation("execute-finalize").exemptions).toEqual([]);
+    expect(clauseForGenericMutationOperation("execute-finalize").exemptions).toEqual([
+      "idea-only",
+    ]);
   });
 
   it("classifies status, closure-forming, advisory, and sealed-ownership fields", () => {

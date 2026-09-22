@@ -610,10 +610,19 @@ ledgers:
           required: true
         taskRef:
           type: id
-          required: true
+          required: false
         goalRef:
           type: id
-          required: true
+          required: false
+        cohortBatchDigest:
+          type: string
+          required: false
+        cohortMemberRefs:
+          type: id[]
+          required: false
+        cohortGoalRefs:
+          type: id[]
+          required: false
         expectedOutputIdentity:
           type: string
           required: true

@@ -2116,7 +2116,7 @@ test("intentional failure receipt and manager substitutions fail closed before c
     {
       label: "foreign task",
       mutate: (subject: GateFixture) => ({ ...subject.output, taskId: "T9999" }),
-      expected: "taskId does not match",
+      expected: "broker receipt task/cohort subject does not match the dispatch binding",
     },
     {
       label: "foreign branch",

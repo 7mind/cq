@@ -112,7 +112,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
   test("constructs one production service and passes it to both standalone transports", async () => {
     const source = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
     expect(source.match(/createProductionImplementationEvidenceService\(/gu)).toHaveLength(1);
-    expect(source).toContain("implementationEvidence,\n    );");
+    expect(source).toContain("implementationEvidence,\n      cohortCompletion,\n      cohortAdvance,\n      cohortInvestigation,\n    );");
     expect(source).toContain("{ implementationEvidence }");
   });
 

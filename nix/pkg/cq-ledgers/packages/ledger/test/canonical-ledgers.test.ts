@@ -1252,7 +1252,7 @@ describe("D43: T301-T304 prompt-hardening grep invariants — file-scoped", () =
 
   it("D43/T301: implement-worker.md contains worktree-confinement Boundary marker", async () => {
     const text = await readFile(path.join(cqAgentsRoot, "implement-worker.md"), "utf8");
-    expect(text).toContain("Work only inside the supplied worktree and task branch");
+    expect(text).toContain("Work only inside the supplied worktree and bound branch");
     expect(text).toMatch(/Do not\s+operate on another checkout or alter its refs/);
   });
 
@@ -1305,7 +1305,7 @@ describe("G38 item 1a prompt-hardening grep invariants — file-scoped", () => {
 
   it("G38-1a: implement-worker.md contains worker-ephemeral marker", async () => {
     const text = await readFile(path.join(cqAgentsRoot, "implement-worker.md"), "utf8");
-    expect(text).toContain("Work only inside the supplied worktree and task branch");
+    expect(text).toContain("Work only inside the supplied worktree and bound branch");
     expect(text).not.toContain("worktree remove");
   });
 
@@ -1317,7 +1317,7 @@ describe("G38 item 1a prompt-hardening grep invariants — file-scoped", () => {
     expect(text).toMatch(
       /prune stale worktree metadata and inspect all implementation\\nand runtime-created worktrees/,
     );
-    expect(text).toContain("Work only inside the supplied worktree and task branch");
+    expect(text).toContain("Work only inside the supplied worktree and bound branch");
   });
 });
 
