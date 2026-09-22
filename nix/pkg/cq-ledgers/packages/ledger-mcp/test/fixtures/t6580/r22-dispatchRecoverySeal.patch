@@ -1,0 +1,126 @@
+--- a/packages/ledger-mcp/src/dispatchRecoverySeal.ts
++++ b/packages/ledger-mcp/src/dispatchRecoverySeal.ts
+@@ -537,6 +537,7 @@
+   readonly resultCommit: string;
+   readonly resolvedReceipts: readonly GitChangeBrokerReceipt[];
+   readonly componentPrefix?: readonly GitChangeBrokerReceipt[];
++  readonly componentBindingAuthenticated: boolean;
+ }
+ 
+ export interface AuthenticatedResolvedRecoveryReceiptClosure {
+@@ -555,6 +556,7 @@
+     );
+   const componentPrefixMatches =
+     !completePrefixMatches &&
++    input.componentBindingAuthenticated &&
+     input.componentPrefix !== undefined &&
+     input.resolvedReceipts.length >= input.componentPrefix.length &&
+     receiptClosuresEqual(
+@@ -1769,13 +1771,17 @@
+       }
+       const transition = guardedTipTransitions.at(-1);
+       const componentPrefix =
+-        transition === undefined
++        transition === undefined || transition.receiptPrefixLength > inheritedReceipts.length
+           ? undefined
+           : inheritedReceipts.slice(transition.receiptPrefixLength);
++      const componentBindingAuthenticated =
++        transition !== undefined &&
++        componentPrefix !== undefined &&
++        bindingMatchesGuardedTransition(correction.gitEffectBinding, transition);
+       const authenticatedClosure =
+         resolved === undefined || typeof resultCommit !== "string"
+           ? undefined
+-          : authenticateResolvedRecoveryReceiptClosure({
++          : authenticateResolvedRecoveryReceiptClosureWithForm({
+               taskId: coordinates.taskId,
+               attestationId: successor.attestationId,
+               generation: successor.generation,
+@@ -1783,6 +1789,7 @@
+               inheritedTip,
+               resultCommit,
+               resolvedReceipts: resolved,
++              componentBindingAuthenticated,
+               ...(componentPrefix === undefined ? {} : { componentPrefix }),
+             });
+       const correctionInherited = correction.gitEffectBinding?.inheritedGitReceipts;
+@@ -1814,10 +1821,6 @@
+         correctionInput?.["startingCommit"] !== claim.resultCommit ||
+         correctionInput["priorResultCommit"] !== claim.resultCommit ||
+         resolved === undefined ||
+-        transition === undefined ||
+-        transition.receiptPrefixLength > inheritedReceipts.length ||
+-        !bindingMatchesGuardedTransition(correction.gitEffectBinding, transition) ||
+-        componentPrefix === undefined ||
+         authenticatedClosure === undefined ||
+         correctionInherited === undefined ||
+         !receiptClosuresEqual(correctionInherited, resolved)
+@@ -1827,7 +1830,7 @@
+           "intermediate gate-rejected recovery correction is incomplete, divergent, or foreign",
+         );
+       }
+-      inheritedReceipts = authenticatedClosure;
++      inheritedReceipts = authenticatedClosure.receipts;
+       inheritedTip = claim.resultCommit;
+       continue;
+     }
+@@ -1846,12 +1849,11 @@
+       );
+     }
+     const closure = continuation.gitReceipts;
+-    const completePrefixMatches =
+-      closure.length >= inheritedReceipts.length &&
+-      receiptClosuresEqual(closure.slice(0, inheritedReceipts.length), inheritedReceipts);
+     const transition = guardedTipTransitions.at(-1);
+     const componentPrefix =
+-      transition === undefined
++      transition === undefined ||
++      transition.receiptPrefixLength > inheritedReceipts.length ||
++      !bindingMatchesGuardedTransition(continuation.gitEffectBinding, transition)
+         ? undefined
+         : inheritedReceipts.slice(transition.receiptPrefixLength);
+     const authenticatedClosure = authenticateResolvedRecoveryReceiptClosure({
+@@ -1862,16 +1864,10 @@
+       inheritedTip,
+       resultCommit: continuation.liveTip,
+       resolvedReceipts: closure,
++      componentBindingAuthenticated: componentPrefix !== undefined,
+       ...(componentPrefix === undefined ? {} : { componentPrefix }),
+     });
+-    if (
+-      authenticatedClosure === undefined ||
+-      (!completePrefixMatches &&
+-        (transition === undefined ||
+-          transition.receiptPrefixLength > inheritedReceipts.length ||
+-          !bindingMatchesGuardedTransition(continuation.gitEffectBinding, transition) ||
+-          componentPrefix === undefined))
+-    ) {
++    if (authenticatedClosure === undefined) {
+       throw new CurrentRecoverySealError(
+         "journal-conflict",
+         "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
+--- a/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts
++++ b/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts
+@@ -232,6 +232,7 @@
+       inheritedReceipts: RECOVERY_RECEIPTS,
+       inheritedTip: RECOVERY_TIP,
+       componentPrefix: [] as const,
++      componentBindingAuthenticated: true,
+     };
+ 
+     expect(
+@@ -293,6 +294,14 @@
+       form: "post-guarded-component",
+       receipts: [...RECOVERY_RECEIPTS, firstCorrection, secondCorrection],
+     });
++    expect(
++      authenticateResolvedRecoveryReceiptClosureWithForm({
++        ...base,
++        componentBindingAuthenticated: false,
++        resultCommit,
++        resolvedReceipts: [firstCorrection, secondCorrection],
++      }),
++    ).toBeUndefined();
+   });
+ 
+   test("a known red tip cannot recover through an older eligible source [Behavioral-Progression Blackbox-Group]", async () => {
