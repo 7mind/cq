@@ -32,13 +32,13 @@ export const ITEM_PROJECTION_DESCRIPTION =
   "required compact|full|complement; compact.fields ⊎ complement.fields = full.fields";
 
 export const ITEM_MUTATION_ACK_DESCRIPTION =
-  "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";
+  "Fixed {item:{id,milestoneId,status,fields:{dependsOn?,blockedBy?,ledgerRefs?},createdAt, updatedAt,author?,session?}}; no narrative.";
 
 export const MILESTONE_MUTATION_ACK_DESCRIPTION =
-  "Returns fixed acknowledgement { milestone: { id, status, fields: { dependsOn?, blockedBy? }, createdAt, updatedAt, author?, session? } }; title and description are not returned.";
+  "Fixed {milestone:{id,status,fields:{dependsOn?,blockedBy?},createdAt, updatedAt,author?,session?}}; no title/description.";
 
 export const LEDGER_MUTATION_ACK_DESCRIPTION =
-  "Returns fixed acknowledgement { ledger: { id } }; the schema and items are not returned.";
+  "Fixed {ledger:{id}}; no schema/items.";
 
 export const GET_REVIEWERS_SECTION_RESPONSE_DESCRIPTION =
   "{ configured, reviewers: [{ harness, model, provider, alias, effort }] }";
@@ -211,13 +211,13 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }`",
   ),
   fetch_ledger: mandatoryItemProjection(
-    "Grouped `{ ledger }`, or paginated `{ ledger, items, total, offset, limit, nextOffset }`; every item uses the requested projection.",
+    "Grouped `{ ledger }` or paginated `{ ledger, items, total, offset, limit, nextOffset }`; items use requested projection.",
   ),
   fetch_ledger_archive: requestedFullContent(
     "`{ archive }` with the requested archived item or milestone group in full.",
   ),
   fetch_item: mandatoryItemProjection(
-    "Ordinary ledgers return `{ item }`; the `milestones` ledger returns `{ item, resolved, references }`. `item` uses the requested projection.",
+    "`{ item }`; `milestones`: `{ item, resolved, references }`. Items use requested projection.",
   ),
   update_item: fixedAcknowledgement(
     "item",
@@ -236,13 +236,13 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   search_items: mandatoryItemProjection("`{ items }` using the requested projection."),
   fts_search: mandatoryItemProjection(
-    "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
+    "`{ results: [{ ledgerId, item, score, matchedFields }] }`; items use requested projection.",
   ),
   archive_milestone: purposeBuiltSmall("`{ pointer }`."),
   archive_terminal_items: purposeBuiltSmall("`{ sweep }`."),
   execute_finalize: purposeBuiltSmall("`{ applied }`."),
   list_milestone_items: mandatoryItemProjection(
-    "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",
+    "`{ items: Record<ledgerId, Item[]> }`; items use requested projection.",
   ),
   snapshot: purposeBuiltSmall(
     "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
@@ -270,7 +270,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   read_log: requestedFullContent("`{ path, content, truncated? }`."),
   get_config: requestedFullContent(
-    "The payload selected by `section`; no unrelated section is returned.",
+    "Selected `section` payload only.",
   ),
   get_usage_stats: purposeBuiltSmall(
     "`{ endpoints: [{ name, callCount, bytesIn, bytesOut }], totals: { callCount, bytesIn, bytesOut } }`",
@@ -279,7 +279,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{accepted,prepared,handle,executedStepOrder}` or pre-launch rejection.",
   ),
   fetch_dispatch_input: requestedFullContent(
-    "The prepare-bound typed input on its first capability-authorized retrieval.",
+    "Prepare-bound typed input; capability-authorized first retrieval only.",
   ),
   store_result: purposeBuiltSmall("A handle-only stored-result acknowledgement or typed abort."),
   confirm_dispatch_completion: purposeBuiltSmall(
@@ -290,103 +290,93 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "One typed fetch state; only the first consumed fetch can carry `output`.",
   ),
   fetch_prompt: requestedFullContent(
-    'Full typed prompt entry under the default `projection: "full"`, including prompt text and schemas when available; `projection: "schema"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null).',
+    "Default full: typed entry with prompt and available schemas. Schema: exactly {roleId,version?,inputSchema?,outputSchema?}; orchestrator-command {roleId} only, schema keys absent, never null.",
   ),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   mint_plan_claim_authority: purposeBuiltSmall(
-    "Exactly `{ claimRequestId, ownerFenceToken }` (public request id, secret fence token).",
+    "Exactly {claimRequestId,ownerFenceToken}: public ID, secret fence.",
   ),
   claim_plan: purposeBuiltSmall(
-    "`{ ok: true, replayed, acknowledgement }` — echoes the minted " +
-      "`ownerFenceToken` only back to the winning or exactly-retried " +
-      "claimant — or `{ ok: false, conflict }` carrying public claim metadata only.",
+    "`{ok:true,replayed,acknowledgement}`: minted ownerFenceToken only to winner/exact retry; `{ok:false,conflict}`: public claim metadata only.",
   ),
   publish_plan_draft: purposeBuiltSmall(
-    "`{ ok: true, replayed, acknowledgement: { …operation key, manifest, " +
-      "replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never " +
-      "carries `ownerFenceToken`.",
+    "`{ok:true,replayed,acknowledgement:{…operation key,manifest,replacedManifest,reviewDefects}}` or `{ok:false,conflict}`; never ownerFenceToken.",
   ),
   release_plan_claim: purposeBuiltSmall(
-    "`{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, " +
-      "researches, waitingResearches, tasks, waitingTasks, reviewDefects, " +
-      "goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`.",
+    "`{ok:true,replayed,acknowledgement:{kind,…operation key,questions,researches,waitingResearches,tasks,waitingTasks,reviewDefects,goalPhase}}` or `{ok:false,conflict}`; never ownerFenceToken.",
   ),
   finalize_plan: purposeBuiltSmall(
-    "`{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, " +
-      "decisionId, manifest, reviewDefects, goalPhase } }` or " +
-      "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
+    "`{ok:true,replayed,acknowledgement:{…operation key,reviewId,draft,decisionId,manifest,reviewDefects,goalPhase}}` or `{ok:false,conflict}`; never ownerFenceToken.",
   ),
   worktree_manage: purposeBuiltSmall(
     "`prepared|resume-required|refused`, `conflict-observed`, staged-rebase recovery, or " +
       "`released|refused`; typed acknowledgements only.",
   ),
   git_commit: purposeBuiltSmall(
-    "A replayable `{ kind, version, attestationId, generation, taskId, operationId, " +
-      "requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt.",
+    "Replayable `{kind,version,attestationId,generation,taskId|cohort,operationId,requestDigest,oldHead,newHead,tree,objectOids,paths,committedAt}` receipt.",
   ),
   git_resolve_continue: purposeBuiltSmall(
-    "A replayable durable conflict-continuation receipt carrying attributed objects and " +
-      "either the terminal rebased tip or the exact next parent-bound conflict state.",
+    "Replayable durable conflict-continuation receipt: attributed objects plus terminal rebased tip or exact next parent-bound conflict state.",
   ),
   prepare_implementation_review_panel: purposeBuiltSmall(
-    "Exactly `{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`.",
+    "`{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`.",
   ),
   prepare_implementation_review_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch.",
+    "`{ status, attemptRef, launch, dispatch? }`; `dispatch` only for native launch.",
   ),
   execute_external_implementation_review_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, executionRef }`.",
+    "`{ status, attemptRef, executionRef }`.",
   ),
   finalize_implementation_review_attempt: purposeBuiltSmall(
     "`{status,attemptRef,terminalState,outcome}`.",
   ),
   prepare_implementation_review_fallback: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
+    "`{ status, attemptRef, dispatch }`: sole authenticated native fallback.",
   ),
   prepare_implementation_audit_panel: purposeBuiltSmall(
-    "Exactly `{ status, panelRef, manifestId, recordKey, taskRef, rosterDigest, attemptRefs }`.",
+    "`{ status, panelRef, manifestId, recordKey, taskRef, rosterDigest, attemptRefs }`.",
   ),
   prepare_implementation_audit_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch.",
+    "`{ status, attemptRef, launch, dispatch? }`; `dispatch` only for native launch.",
   ),
   execute_external_implementation_audit_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, executionRef }`.",
+    "`{ status, attemptRef, executionRef }`.",
   ),
   finalize_implementation_audit_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, terminalState }`.",
+    "`{ status, attemptRef, terminalState }`.",
   ),
   prepare_implementation_audit_fallback: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
+    "`{ status, attemptRef, dispatch }`: sole authenticated native fallback.",
   ),
   advance_implementation_evidence_bootstrap: purposeBuiltSmall(
-    "One typed bootstrap acknowledgement.",
+    "Typed bootstrap acknowledgement.",
   ),
   arm_implementation_evidence_activation: purposeBuiltSmall(
-    "One typed activation-arm acknowledgement.",
+    "Typed activation-arm acknowledgement.",
   ),
   apply_implementation_audit_manifest: purposeBuiltSmall(
-    "One typed audit-application acknowledgement.",
+    "Typed audit-application acknowledgement.",
   ),
   get_implementation_evidence_activation_status: purposeBuiltSmall(
-    "Exactly one bounded absent, pending, stale, or active activation status acknowledgement.",
+    "Bounded absent|pending|stale|active activation-status acknowledgement.",
   ),
   continue_implementation_evidence_activation: purposeBuiltSmall(
-    "Exactly one continued or existing activation-continuation acknowledgement.",
+    "Continued|existing activation-continuation acknowledgement.",
   ),
-  get_implementation_evidence_service_status: purposeBuiltSmall("One typed service-status object."),
-  record_cohort_review: purposeBuiltSmall("One authenticated all-member review reference."),
-  complete_cohort: purposeBuiltSmall("One resumable cohort handoff or executor/deployment requirement."),
-  cohort_advance: purposeBuiltSmall("Observed decisions and definitions, or one full-cohort managed worktree result."),
-  cohort_investigation_advance: purposeBuiltSmall("Retained investigation state, exact prepared native launches, per-member adjudication requests and authenticated probe receipts."),
-  get_cohort_status: purposeBuiltSmall("Cohort metadata and durable measured counts; no live lease authority."),
-  get_cohort_completion_status: purposeBuiltSmall("One retained cohort handoff and executor availability."),
+  get_implementation_evidence_service_status: purposeBuiltSmall("Typed service-status object."),
   prepare_implementation_completion: purposeBuiltSmall(
-    "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
+    "`{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
   ),
   record_implementation_completion: purposeBuiltSmall(
     "Completion acknowledgement: merge-required, reprepare-required, recorded, or existing.",
   ),
   record_implementation_adoption: purposeBuiltSmall("Operator-adoption acknowledgement."),
+  record_cohort_review: purposeBuiltSmall("Authenticated all-member review reference."),
+  complete_cohort: purposeBuiltSmall("Resumable cohort handoff or executor/deployment requirement."),
+  cohort_advance: purposeBuiltSmall("Observed decisions/definitions or full-cohort managed-worktree result."),
+  cohort_investigation_advance: purposeBuiltSmall("Retained state, exact native launches, per-member adjudication requests, authenticated probe receipts and correction eligibility/candidates; no execution authority."),
+  get_cohort_completion_status: purposeBuiltSmall("Retained handoff and executor availability."),
+  get_cohort_status: purposeBuiltSmall("Cohort metadata, durable measured counts; no live lease authority."),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

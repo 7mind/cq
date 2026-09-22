@@ -126,7 +126,7 @@ describe("ledger response contract matrix", () => {
         kind: "mandatory-item-projection",
         projections: ["compact", "full", "complement"],
         responseCell:
-          "Ordinary ledgers return `{ item }`; the `milestones` ledger returns `{ item, resolved, references }`. `item` uses the requested projection.",
+          "`{ item }`; `milestones`: `{ item, resolved, references }`. Items use requested projection.",
       },
       update_item: {
         kind: "fixed-acknowledgement",

@@ -7,6 +7,8 @@ import {
   exposedLedgerToolsForRole,
 } from "../../cq-config/src/index.js";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
+import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
+import { createLedgerMcpToolSpecifications, ledgerToolInputJsonSchema } from "../src/mcp/ledgerTools.js";
 
 interface ToolDefinition extends Record<string, unknown> {
   name: string;
@@ -1509,7 +1511,23 @@ export async function measureToolSurfaceTarget() {
   const breakingSurfaceTarget = withMilestoneCrudGenericized(
     withSimplifiedSchemas(withDescriptionTargets(currentTools)),
   );
-  const combinedTarget = [...breakingSurfaceTarget, ...POST_TARGET_ADDITIONS];
+  const cohortNames = ["record_cohort_review", "complete_cohort", "cohort_advance",
+    "cohort_investigation_advance", "get_cohort_completion_status", "get_cohort_status"] as const;
+  const store = new InMemoryLedgerStore();
+  let cohortAdditions: ToolDefinition[];
+  try {
+    const specifications = createLedgerMcpToolSpecifications(store, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, true);
+    cohortAdditions = cohortNames.map((name) => {
+      const specification = specifications.find((value) => value.name === name);
+      if (specification === undefined) throw new Error(`missing cohort surface target: ${name}`);
+      return { name, description: specification.description,
+        inputSchema: ledgerToolInputJsonSchema(specification) };
+    });
+  } finally {
+    await store.dispose();
+  }
+  const combinedTarget = [...breakingSurfaceTarget, ...POST_TARGET_ADDITIONS, ...cohortAdditions];
   const profiles = targetRoleProfiles(combinedTarget);
   const breakingSurfaceProfiles = targetRoleProfiles(breakingSurfaceTarget);
   const currentRoleSurface = currentDefaultRoleSurface(currentTools);

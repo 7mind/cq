@@ -112,7 +112,7 @@ describe("buildServerInstructions", () => {
     // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
     expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
     // Pin the ordinary registered tool count so management-only operations cannot leak here.
-    expect(LEDGER_TOOL_NAMES.length).toBe(42);
+    expect(LEDGER_TOOL_NAMES.length).toBe(44);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }

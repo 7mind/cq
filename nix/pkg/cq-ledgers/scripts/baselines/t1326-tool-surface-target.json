@@ -188,7 +188,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -251,7 +257,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "begin": {
@@ -316,7 +328,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -379,7 +397,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "implement-conflict-resolver": {
@@ -482,7 +506,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -545,7 +575,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "implement/start": {
@@ -610,7 +646,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -673,7 +715,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "implementation-auditor": {
@@ -748,7 +796,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -811,7 +865,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "investigate-explorer": {
@@ -896,7 +956,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -959,7 +1025,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "plan": {
@@ -1024,7 +1096,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1087,7 +1165,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "plan-advance": {
@@ -1188,7 +1272,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1251,7 +1341,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "plan/follow-up": {
@@ -1316,7 +1412,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1379,7 +1481,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "planners": {
@@ -1452,7 +1560,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1515,7 +1629,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "research-experimenter": {
@@ -1600,7 +1720,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1663,7 +1789,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         },
         "reviewers": {
@@ -1736,7 +1868,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1799,7 +1937,13 @@
             "get_implementation_evidence_service_status",
             "prepare_implementation_completion",
             "record_implementation_completion",
-            "record_implementation_adoption"
+            "record_implementation_adoption",
+            "record_cohort_review",
+            "complete_cohort",
+            "cohort_advance",
+            "cohort_investigation_advance",
+            "get_cohort_completion_status",
+            "get_cohort_status"
           ]
         }
       },
@@ -1811,12 +1955,12 @@
           "sha256": "93e97e53374c7e5a23e97a2d58953b6d91dae86bd34a8fb7a538ff044e1373e0"
         },
         "counterfactual": {
-          "utf8Bytes": 549099,
-          "tokens": 129333,
-          "sha256": "ff0df08ab9d0d5175d220da73ca326088f6d0b3f2940124d29220725a5053ae8"
+          "utf8Bytes": 549459,
+          "tokens": 129405,
+          "sha256": "6a09528fdafa83723eef13fd3d2cc7d50389c73e9dafb2b1ece81cebf2c58465"
         },
-        "deltaUtf8Bytes": 654598,
-        "deltaTokens": 154554
+        "deltaUtf8Bytes": 654238,
+        "deltaTokens": 154482
       }
     },
     {
@@ -1979,9 +2123,15 @@
       "apply_implementation_audit_manifest",
       "get_implementation_evidence_activation_status",
       "continue_implementation_evidence_activation",
-      "get_implementation_evidence_service_status"
+      "get_implementation_evidence_service_status",
+      "record_cohort_review",
+      "complete_cohort",
+      "cohort_advance",
+      "cohort_investigation_advance",
+      "get_cohort_completion_status",
+      "get_cohort_status"
     ],
-    "publicToolCount": 61,
+    "publicToolCount": 67,
     "removedPublicTools": [
       "create_milestone",
       "update_milestone",
@@ -2117,7 +2267,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2180,7 +2336,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "begin": {
@@ -2245,7 +2407,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2308,7 +2476,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "implement-conflict-resolver": {
@@ -2411,7 +2585,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2474,7 +2654,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "implement/start": {
@@ -2539,7 +2725,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2602,7 +2794,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "implementation-auditor": {
@@ -2677,7 +2875,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2740,7 +2944,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "investigate-explorer": {
@@ -2825,7 +3035,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2888,7 +3104,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "plan": {
@@ -2953,7 +3175,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3016,7 +3244,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "plan-advance": {
@@ -3117,7 +3351,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3180,7 +3420,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "plan/follow-up": {
@@ -3245,7 +3491,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3308,7 +3560,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "planners": {
@@ -3381,7 +3639,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3444,7 +3708,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "research-experimenter": {
@@ -3529,7 +3799,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3592,7 +3868,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       },
       "reviewers": {
@@ -3665,7 +3947,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -3728,7 +4016,13 @@
           "get_implementation_evidence_service_status",
           "prepare_implementation_completion",
           "record_implementation_completion",
-          "record_implementation_adoption"
+          "record_implementation_adoption",
+          "record_cohort_review",
+          "complete_cohort",
+          "cohort_advance",
+          "cohort_investigation_advance",
+          "get_cohort_completion_status",
+          "get_cohort_status"
         ]
       }
     },

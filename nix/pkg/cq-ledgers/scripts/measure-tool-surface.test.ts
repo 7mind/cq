@@ -145,7 +145,8 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // 1590 -> 1614 under G199/D468: mint authority adds a compact result contract;
     // its encoding and secret-handling rules remain in the tool description.
     // D461 adds adoption; concise completion/adoption acknowledgements retain the budget.
-    maximumRemainingG93AttributableTokens: 1619,
+    // Cohort operations add six contracts; compact existing wording preserves all fields.
+    maximumRemainingG93AttributableTokens: 1620,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

@@ -156,7 +156,7 @@ describe("public MCP response-contract documentation", () => {
     expect(readme).toContain('projection: "complement"');
     expect(readme).toContain("fields(full) = fields(compact) ∪ fields(complement)");
     expect(readme).toContain("After a `compact` read");
-    expect(readme).toContain("closed 61-tool matrix");
+    expect(readme).toContain(`closed ${MANAGEMENT_LEDGER_TOOL_NAMES.length}-tool matrix`);
   });
 
   // Regression: T678 review round 2 — field-level documentation drift must fail.
@@ -185,11 +185,11 @@ describe("public MCP response-contract documentation", () => {
       readFile(path.join(repoRoot, "CLAUDE.md"), "utf8"),
     ]);
 
-    expect(rootReadme).toContain("61-tool management ledger surface");
+    expect(rootReadme).toContain(`${MANAGEMENT_LEDGER_TOOL_NAMES.length}-tool management ledger surface`);
     expect(rootOrdinaryToolNames(rootReadme)).toEqual([...LEDGER_TOOL_NAMES]);
-    expect(LEDGER_TOOL_NAMES).toHaveLength(42);
-    expect(NON_DISPATCH_LEDGER_TOOL_NAMES).toHaveLength(34);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(61);
+    expect(LEDGER_TOOL_NAMES).toHaveLength(44);
+    expect(NON_DISPATCH_LEDGER_TOOL_NAMES).toHaveLength(36);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(67);
     expect(rootReadme).toContain("compact/complement/full projection");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");

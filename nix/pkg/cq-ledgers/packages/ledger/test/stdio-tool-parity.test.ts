@@ -1730,6 +1730,17 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         ...PARITY_PROVENANCE,
       },
     },
+    {
+      name: "record_cohort_review",
+      args: { reviewer_dispatch: PARITY_IMPLEMENTATION_WORKER, envelope: {},
+        operation_id: "parity_cohort_review", ...PARITY_PROVENANCE },
+    },
+    { name: "complete_cohort", args: { batch: {} } },
+    { name: "cohort_advance", args: { operation: "observe", operation_id: "parity_cohort" } },
+    { name: "cohort_investigation_advance",
+      args: { input: { operation: "collect", planDigest: "c".repeat(64) } } },
+    { name: "get_cohort_status", args: {} },
+    { name: "get_cohort_completion_status", args: { operation_id: "parity_cohort" } },
   ];
 }
 
@@ -1737,6 +1748,12 @@ function assertRepresentativeContracts(
   responses: Map<LedgerToolName, unknown>,
   fixture: Fixture,
 ): void {
+  for (const name of ["record_cohort_review", "complete_cohort", "cohort_advance",
+    "cohort_investigation_advance"] as const) {
+    expect(responses.get(name)).toEqual({ state: "executor-unavailable" });
+  }
+  expect(responses.get("get_cohort_status")).toMatchObject({ executor: "unavailable" });
+  expect(responses.get("get_cohort_completion_status")).toEqual({ executor: "unavailable", handoff: null });
   expect(responses.get("record_implementation_adoption")).toMatchObject({
     status: "recorded", kind: "operator-adoption", taskRef: "tasks:T9201",
     resultCommit: PARITY_IMPLEMENTATION_BASE, repositoryHead: PARITY_IMPLEMENTATION_BASE,
@@ -2175,7 +2192,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 61 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all ${MANAGEMENT_LEDGER_TOOL_NAMES.length} tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
