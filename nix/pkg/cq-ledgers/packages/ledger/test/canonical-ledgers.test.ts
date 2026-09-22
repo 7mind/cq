@@ -706,21 +706,23 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
 
   it("default abort-mode throws on a deliberately stale fixture; opt-in backup-reinit does not (D47 reproduce-first)", async () => {
     // Build a stale variant: serialize a registry where the decisions schema has
-    // one field's `required` flipped (false → true). The resulting YAML parses
+    // one field's `required` flipped (true → false). The resulting YAML parses
     // successfully (valid schema, transitions unchanged) but schemasEqual returns
-    // false against the real canonical schema → divergent[] is non-empty.
+    // false against the real canonical schema → divergent[] is non-empty. The
+    // flip must be in THIS direction: canon TIGHTENING optional → required stays
+    // divergent, whereas canon RELAXING required → optional is a legal widening.
     const staleText = serializeRegistry({
       version: 1,
       ledgers: CANONICAL_LEDGERS.map((c) => {
         if (c.name !== DECISIONS_LEDGER) return { name: c.name, schema: c.schema };
-        // Flip decisions.rationale.required to produce a parseable divergence.
+        // Flip decisions.headline.required to produce a parseable divergence.
         return {
           name: c.name,
           schema: {
             ...c.schema,
             fields: {
               ...c.schema.fields,
-              rationale: { type: "string" as const, required: true },
+              headline: { type: "string" as const, required: false },
             },
           },
         };

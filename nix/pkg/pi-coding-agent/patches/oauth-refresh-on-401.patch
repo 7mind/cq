@@ -1,6 +1,6 @@
 --- a/packages/ai/src/auth/resolve.ts
 +++ b/packages/ai/src/auth/resolve.ts
-@@ -18,6 +18,13 @@
+@@ -18,6 +18,13 @@ export type ModelsErrorCode = "model_source" | "model_validation" | "provider" |
  export interface AuthResolutionOverrides {
  	apiKey?: string;
  	env?: ProviderEnv;
@@ -14,7 +14,7 @@
  	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
  	minOAuthValidityMs?: number;
  	signal?: AbortSignal;
-@@ -94,6 +101,7 @@
+@@ -94,6 +101,7 @@ async function resolveProviderAuthWithSignal(
  				stored,
  				signal,
  				overrides?.minOAuthValidityMs,
@@ -22,7 +22,7 @@
  			);
  		}
  		if (stored.type === "api_key" && provider.auth.apiKey) {
-@@ -123,6 +131,10 @@
+@@ -123,6 +131,10 @@ const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
   * OAuth resolution with double-checked locking: tokens with less than five
   * minutes remaining lock, re-check expiry under the lock, refresh once
   * globally, and persist the rotated credential before release.
@@ -33,7 +33,7 @@
   */
  async function resolveStoredOAuth(
  	credentials: CredentialStore,
-@@ -131,20 +143,27 @@
+@@ -131,20 +143,27 @@ async function resolveStoredOAuth(
  	stored: OAuthCredential,
  	signal: AbortSignal,
  	minOAuthValidityMs?: number,
@@ -66,7 +66,7 @@
  							signal,
 --- a/packages/ai/src/models.ts
 +++ b/packages/ai/src/models.ts
-@@ -18,6 +18,7 @@
+@@ -18,6 +18,7 @@ import type {
  	Api,
  	ApiStreamOptions,
  	AssistantMessage,
@@ -74,7 +74,7 @@
  	AssistantMessageEventStream,
  	Context,
  	DeferredCancelOptions,
-@@ -636,6 +637,7 @@
+@@ -648,6 +649,7 @@ class ModelsImpl implements MutableModels {
  	private async applyAuth<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
  		model: Model<Api>,
  		options: TOptions | undefined,
@@ -82,7 +82,7 @@
  	): Promise<{
  		requestModel: Model<Api>;
  		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
-@@ -645,6 +647,7 @@
+@@ -657,6 +659,7 @@ class ModelsImpl implements MutableModels {
  			apiKey: options?.apiKey,
  			env: options?.env,
  			signal: options?.signal,
@@ -90,7 +90,7 @@
  		});
  		if (!resolution) {
  			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-@@ -664,21 +667,54 @@
+@@ -676,22 +679,55 @@ class ModelsImpl implements MutableModels {
  		return { requestModel, requestOptions };
  	}
  
@@ -108,13 +108,14 @@
 +		options: (ProviderRequestOptions & ModelsRequestTransforms) | undefined,
 +		kind: "stream" | "streamSimple",
  	): AssistantMessageEventStream {
+ 		const transcript = normalizeContext(context);
  		return lazyStream(model, async () => {
  			const provider = this.requireProvider(model);
 -			const { requestModel, requestOptions } = await this.applyAuth(
 -				model,
 -				options as ModelsApiStreamOptions<Api> | undefined,
 -			);
--			return provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>);
+-			return provider.stream(requestModel as Model<TApi>, transcript, requestOptions as ApiStreamOptions<TApi>);
 +			const stored = await this.credentials.read(model.provider, { signal: options?.signal });
 +			// Explicit apiKey override is treated as a static credential path — no oauth retry.
 +			const oauthEligible = stored?.type === "oauth" && options?.apiKey === undefined;
@@ -124,9 +125,9 @@
 +					forceOAuthRefresh: forceOAuthRefresh || undefined,
 +				});
 +				if (kind === "stream") {
-+					return provider.stream(requestModel as Model<Api>, context, requestOptions as ApiStreamOptions<Api>);
++					return provider.stream(requestModel as Model<Api>, transcript, requestOptions as ApiStreamOptions<Api>);
 +				}
-+				return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
++				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 +			};
 +
 +			if (!oauthEligible) {
@@ -153,20 +154,21 @@
  	async complete<TApi extends Api>(
  		model: Model<TApi>,
  		context: Context,
-@@ -688,11 +724,7 @@
+@@ -701,12 +737,7 @@ class ModelsImpl implements MutableModels {
  	}
  
  	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
+-		const transcript = normalizeContext(context);
 -		return lazyStream(model, async () => {
 -			const provider = this.requireProvider(model);
 -			const { requestModel, requestOptions } = await this.applyAuth(model, options);
--			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
+-			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 -		});
 +		return this.streamWithOAuth401Retry(model, context, options, "streamSimple");
  	}
  
  	async completeSimple(
-@@ -732,6 +764,53 @@
+@@ -754,6 +785,53 @@ class ModelsImpl implements MutableModels {
  	}
  }
  

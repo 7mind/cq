@@ -41,25 +41,30 @@ export function schemasEqual(a: LedgerSchema, b: LedgerSchema): boolean {
  * schema, such that loading it requires NO destructive backup-reinit?
  *
  * Compatible means the two schemas are equal EXCEPT that `canonical` may add
- * optional fields or append statuses. An appended status may be terminal only
- * when it is itself new; existing transition lists may only append targets
- * that are also new. Existing items and transitions therefore retain their
- * meaning, and the store can upgrade the persisted schema in place.
+ * optional fields, RELAX an existing field from required to optional, or
+ * append statuses. An appended status may be terminal only when it is itself
+ * new; existing transition lists may only append targets that are also new.
+ * Existing items and transitions therefore retain their meaning, and the store
+ * can upgrade the persisted schema in place.
  *
  * Everything else remains divergent: removals/reordering, changed transitions
  * among existing statuses, a field present on disk but absent from canon, an
- * added required field, or a field whose type/required flag changed.
+ * added required field, a field whose type changed, or a field canon TIGHTENS
+ * from optional to required (stored items may lack it).
  */
 export function schemaCompatible(a: LedgerSchema, b: LedgerSchema): boolean {
   if (schemasEqual(a, b)) return true;
   if ((a.idPrefix ?? undefined) !== (b.idPrefix ?? undefined)) return false;
   if (!statusWideningCompatible(a, b)) return false;
-  // Every on-disk field must exist in canon UNCHANGED (no removed/retyped
-  // field, no required-flag flip).
+  // Every on-disk field must exist in canon with the SAME type. The required
+  // flag may only be RELAXED (required -> optional): every stored item
+  // satisfied the stricter rule, so it satisfies the looser one. Tightening
+  // (optional -> required) stays divergent — stored items may lack the field.
   for (const [name, af] of Object.entries(a.fields)) {
     const bf = b.fields[name];
     if (bf === undefined) return false;
-    if (af.type !== bf.type || af.required !== bf.required) return false;
+    if (af.type !== bf.type) return false;
+    if (!af.required && bf.required) return false;
   }
   // Every canon field MISSING from on-disk must be OPTIONAL (added-optional).
   for (const [name, bf] of Object.entries(b.fields)) {
