@@ -537,7 +537,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/renderedWorkerGate.test.ts",
-      "sha256": "d2f052dbef05a970de1b0d0b2ddddb8a7dc6ba9ba2c5039363362f06d548af7a",
+      "sha256": "832ec6fe0c4944a0874998a21f363930bef741fc8683e2065c47d6b054e7fd0d",
       "targets": []
     },
     {
@@ -1364,7 +1364,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/renderedWorkerGate.test.ts",
-      "sha256": "d2f052dbef05a970de1b0d0b2ddddb8a7dc6ba9ba2c5039363362f06d548af7a",
+      "sha256": "832ec6fe0c4944a0874998a21f363930bef741fc8683e2065c47d6b054e7fd0d",
       "targets": []
     },
     {

@@ -15,6 +15,8 @@ const WORKER_PROMPT = path.join(
 const EXACT_GATE =
   'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
 const YIELDED_GATE_SESSION = "A yielded command-session handle remains the sole full-gate attempt";
+/** Proof the gate ran the package's OWN check script, independent of reporter format. */
+const REAL_PACKAGE_CHECK_SENTINEL = "cq-t1629-real-package-check-ran";
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(prefix: string): string {
@@ -80,10 +82,17 @@ describe("D244/D243 rendered worker gate and history contract", () => {
         scripts: { check: "bun test gate.fixture.test.ts" },
       }),
     );
+    // The fixture EMITS its sentinel rather than relying on the runner to echo
+    // the test name: `bun test` prints per-test lines only for FAILING tests,
+    // so asserting a passing test's name against reporter output contradicts
+    // the `exitCode === 0` assertion below and can never hold.
     writeFileSync(
       path.join(packageDirectory, "gate.fixture.test.ts"),
       'import { expect, test } from "bun:test";\n' +
-        'test("real package check", () => expect(process.cwd()).toBe(import.meta.dir));\n',
+        'test("real package check", () => {\n' +
+        `  console.log(${JSON.stringify(REAL_PACKAGE_CHECK_SENTINEL)});\n` +
+        "  expect(process.cwd()).toBe(import.meta.dir);\n" +
+        "});\n",
     );
     run(["git", "add", "."], worktree);
     run(["git", "commit", "--quiet", "-m", "gate fixture"], worktree);
@@ -97,7 +106,7 @@ describe("D244/D243 rendered worker gate and history contract", () => {
       new TextDecoder().decode(result.stderr),
     ].join("\n");
     expect(result.exitCode).toBe(0);
-    expect(output).toContain("real package check");
+    expect(output).toContain(REAL_PACKAGE_CHECK_SENTINEL);
     expect(output).toContain("1 pass");
   });
 
