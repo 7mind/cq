@@ -8,6 +8,10 @@
  * `__milestones__` global mutex is mirrored here as well.
  */
 
+import {
+  assertLifetimeIdNamespace,
+  type LifetimeIdCollision,
+} from "./lifetimeIdNamespace.js";
 import type { ArchivePointer, Item, Ledger, LedgerSchema, Milestone } from "../types.js";
 import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation } from "../worksetPlanLifecycle.js";
 import {
@@ -332,6 +336,13 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     // the load-time counterpart that keeps directly-materialized state settled.
     this.normalizeStoredRefs();
     for (const ledger of this.ledgers.values()) relocateActiveIdeasToAmbient(ledger);
+    // D434 / questions:Q417 — see SqliteLedgerStore.init. A seeded or restored
+    // in-memory tenant can carry the same durable shapes.
+    assertLifetimeIdNamespace(
+      "InMemoryLedgerStore",
+      this.lifetimeIdCollisions(),
+      (line) => process.stderr.write(`${line}\n`),
+    );
     this.initialised = true;
     // Build the FTS index for every ledger present after bootstrap + seed.
     for (const name of this.ledgers.keys()) {
@@ -523,6 +534,42 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       }
     }
     return found;
+  }
+
+  /** D434 — every `<ledger>:<id>` occupying more than one durable slot. */
+  private lifetimeIdCollisions(): readonly LifetimeIdCollision[] {
+    const slots = new Map<string, { active: boolean; pointers: string[] }>();
+    const slot = (ledgerId: string, itemId: string) => {
+      const key = `${ledgerId}\u0000${itemId}`;
+      let found = slots.get(key);
+      if (found === undefined) {
+        found = { active: false, pointers: [] };
+        slots.set(key, found);
+      }
+      return found;
+    };
+    for (const [ledgerId, ledger] of this.ledgers) {
+      for (const group of ledger.milestones) {
+        for (const item of group.items) slot(ledgerId, item.id).active = true;
+      }
+    }
+    for (const [key, group] of this.archives) {
+      const ledgerId = key.slice(0, key.indexOf("/"));
+      for (const item of group.items) slot(ledgerId, item.id).pointers.push(group.id);
+    }
+    for (const [key, item] of this.itemArchives) {
+      const ledgerId = key.slice(0, key.indexOf("/"));
+      slot(ledgerId, item.id).pointers.push(item.id);
+    }
+    return [...slots].map(([key, value]) => {
+      const separator = key.indexOf("\u0000");
+      return {
+        ledgerId: key.slice(0, separator),
+        itemId: key.slice(separator + 1),
+        active: value.active,
+        archivePointerIds: value.pointers,
+      };
+    });
   }
 
   /**

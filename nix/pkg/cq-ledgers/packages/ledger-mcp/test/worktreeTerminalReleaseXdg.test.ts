@@ -1115,7 +1115,9 @@ describe("D336 production XDG terminal worktree release", () => {
           },
         })) as ToolResult;
         expect(denied.isError, textOf(denied)).toBe(true);
-        expect(textOf(denied)).toContain("resolves to 2 active-or-archived records");
+        expect(textOf(denied)).toContain(
+          "is archive-ambiguous across 2 archived generations",
+        );
         expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(beforeRelease);
         expect(await store.worksetStore!().snapshot()).toEqual(rootsBeforeRelease);
       });

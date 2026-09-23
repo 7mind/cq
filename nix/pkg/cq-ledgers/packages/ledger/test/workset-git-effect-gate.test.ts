@@ -142,6 +142,10 @@ afterEach(async () => {
 
 describe("T2322 unique active-or-archived task state", () => {
   test("reads every archive and rejects an active plus archived duplicate [Behavioral-Active Blackbox-Atomic]", async () => {
+    // D434 / questions:Q417 keeps this refusal. The open-time detector cannot
+    // see a twin forged into an ALREADY-OPEN store by a second writer, and
+    // this resolver guards mutating operations, so live ambiguity is refused
+    // here rather than silently resolved to the active record.
     const active = taskItem("T2322", "done", "M-active");
     const fixture = taskStateReader({
       active: [active],
@@ -168,8 +172,12 @@ describe("T2322 unique active-or-archived task state", () => {
         { id: "M-two", items: [taskItem("T2322", "done", "M-two")] },
       ],
     });
+    // Two archived generations are pointer-qualified history, never renamed,
+    // so the diagnostic names the pointers and the addressing form instead of
+    // reporting an opaque count.
     await expect(resolveUniqueTaskState(duplicated.reader, "T2322")).rejects.toThrow(
-      "task T2322 resolves to 2 active-or-archived records",
+      "task T2322 is archive-ambiguous across 2 archived generations (M-one, M-two); " +
+        "address history as tasks:T2322@<pointerId>",
     );
   });
 

@@ -44,6 +44,10 @@
  *    createItem shim that no longer materialises the whole target ledger.
  */
 
+import {
+  assertLifetimeIdNamespace,
+  type LifetimeIdCollision,
+} from "../lifetimeIdNamespace.js";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type { Database } from "bun:sqlite";
@@ -393,6 +397,31 @@ function rowToItem(row: ItemRow): Item {
  */
 const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * D434 — one indexed pass over both namespaces. Returns only ids occupying
+ * more than one durable slot, so the classifier decides which arm applies.
+ */
+function readLifetimeIdCollisions(db: Database): readonly LifetimeIdCollision[] {
+  const rows = db
+    .query(
+      `SELECT ledger, id, MAX(is_active) AS active, GROUP_CONCAT(pointer_id) AS pointers
+       FROM (
+         SELECT ledger, id, 1 AS is_active, NULL AS pointer_id FROM items
+         UNION ALL
+         SELECT ledger, id, 0 AS is_active, pointer_id FROM archived_items
+       )
+       GROUP BY ledger, id
+       HAVING COUNT(*) > 1`,
+    )
+    .all() as { ledger: string; id: string; active: number; pointers: string | null }[];
+  return rows.map((row) => ({
+    ledgerId: row.ledger,
+    itemId: row.id,
+    active: row.active === 1,
+    archivePointerIds: row.pointers === null ? [] : row.pointers.split(","),
+  }));
+}
+
 export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly dbPath: string;
   private readonly logsDir: string | undefined;
@@ -591,6 +620,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         recordSqliteCoherence(db, this.coherenceOrigin, ledgerControlChanges([IDEAS_LEDGER]));
       }
     });
+
+    // D434 / questions:Q417 — apply the lifetime id-namespace policy before
+    // this store is usable: an id that is BOTH active and archived makes a
+    // live canonical reference ambiguous and refuses the store; two archived
+    // generations are pointer-qualified history and are only reported.
+    assertLifetimeIdNamespace(
+      `SqliteLedgerStore(${this.dbPath})`,
+      readLifetimeIdCollisions(db),
+      (line) => process.stderr.write(`${line}\n`),
+    );
 
     this.handle = db;
     this.initialised = true;

@@ -173,7 +173,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
-      "sha256": "33efc63cfe88be19e17ee2be46ae4de2cf417215d78ea017bff2adfae93769d4",
+      "sha256": "98efb3fc4eb375a6783dbea42eba32f22d30f65eeeec0c3a29dc9c4d8b0fd225",
       "targets": []
     },
     {
@@ -842,13 +842,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
-      "sha256": "992499d385f6aa3dcd12a60746c2e49866c0945f88416d760b23769a4f9b4e84",
+      "sha256": "8b95ffc10d39ec87a4126be22ad7baf29533237cadc9a079d048beccc240f9f5",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
-      "sha256": "992499d385f6aa3dcd12a60746c2e49866c0945f88416d760b23769a4f9b4e84",
+      "sha256": "8b95ffc10d39ec87a4126be22ad7baf29533237cadc9a079d048beccc240f9f5",
       "targets": []
     },
     {
@@ -1778,7 +1778,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "df2d83df3ee85657a1a3412a2aaa140796a3ffbd0af264dd3ad5b3e058251cd1",
+      "sha256": "9f3882d32464c17002a2843779fe8fe365a2aad69f633e47d04d134c8cc2e8e5",
       "targets": []
     },
     {

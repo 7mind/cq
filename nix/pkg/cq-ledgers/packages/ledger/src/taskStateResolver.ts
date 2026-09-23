@@ -11,20 +11,54 @@ async function resolveUniqueItemState(
   itemKind: string,
 ): Promise<Item> {
   const ledger = reader.fetch(ledgerId);
-  const matches = ledger.milestones.flatMap((group) =>
+  const active = ledger.milestones.flatMap((group) =>
     group.items.filter((item) => item.id === itemId),
   );
+  const generations: { readonly pointerId: string; readonly item: Item }[] = [];
   for (const pointer of ledger.archivePointers) {
     const archive = await reader.fetchArchive(ledgerId, pointer.id);
     const items = archive.kind === "group" ? archive.milestone.items : [archive.item];
-    matches.push(...items.filter((item) => item.id === itemId));
+    for (const item of items) {
+      if (item.id === itemId) generations.push({ pointerId: pointer.id, item });
+    }
   }
-  if (matches.length !== 1) {
+
+  // D434 / questions:Q417. Every archive is still read, deliberately. The
+  // open-time detector refuses a store whose id is both active and archived,
+  // but it cannot see corruption that arrives while the store is already OPEN
+  // — a second writer on the same ledger.db can still produce that shape, and
+  // this resolver guards mutating operations such as terminal release. So
+  // live ambiguity is refused here too rather than silently resolved to the
+  // active record.
+  const total = active.length + generations.length;
+  if (active.length > 0 && generations.length > 0) {
     throw new LedgerError(
-      `${itemKind} ${itemId} resolves to ${String(matches.length)} active-or-archived records`,
+      `${itemKind} ${itemId} resolves to ${String(total)} active-or-archived records`,
     );
   }
-  return matches[0]!;
+  const onlyActive = active[0];
+  if (active.length === 1 && onlyActive !== undefined) return onlyActive;
+  if (active.length > 1) {
+    throw new LedgerError(
+      `${itemKind} ${itemId} resolves to ${String(total)} active-or-archived records`,
+    );
+  }
+  const onlyArchived = generations[0];
+  if (generations.length === 1 && onlyArchived !== undefined) return onlyArchived.item;
+  if (generations.length === 0) {
+    throw new LedgerError(
+      `${itemKind} ${itemId} resolves to 0 active-or-archived records`,
+    );
+  }
+  // The one case the policy DOES change: two archived generations are
+  // pointer-qualified history that is never renamed, so name the pointers and
+  // the addressing form instead of reporting an opaque count.
+  const pointers = generations.map((entry) => entry.pointerId).sort();
+  throw new LedgerError(
+    `${itemKind} ${itemId} is archive-ambiguous across ${String(generations.length)} archived ` +
+      `generations (${pointers.join(", ")}); address history as ` +
+      `${ledgerId}:${itemId}@<pointerId>`,
+  );
 }
 
 /** Resolve one task identity across every active group and advertised archive. */

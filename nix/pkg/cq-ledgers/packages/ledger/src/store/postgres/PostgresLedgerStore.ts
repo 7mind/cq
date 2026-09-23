@@ -47,6 +47,9 @@
  * DEFAULT policy still matches sqlite's `'backup-reinit'`).
  */
 
+import {
+  assertLifetimeIdNamespace,
+} from "../lifetimeIdNamespace.js";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
@@ -522,6 +525,34 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       load: (afterVersion, rebuild, signal) => this.loadProjectionFrame(afterVersion, rebuild, signal),
       notify: (frame, signal) => this.notifyProjectionFrame(frame, signal),
     }, SEARCH_PROJECTION_COMMAND_DEADLINE_MS);
+    // D434 / questions:Q417 — same lifetime id-namespace policy as the other
+    // adapters, scoped to this tenant.
+    {
+      const rows = await pool<
+        { ledger: string; id: string; active: number; pointers: string | null }[]
+      >`
+        SELECT ledger, id, MAX(is_active) AS active, STRING_AGG(pointer_id, ',') AS pointers
+        FROM (
+          SELECT ledger, id, 1 AS is_active, NULL::text AS pointer_id
+          FROM items WHERE project_key = ${pk}
+          UNION ALL
+          SELECT ledger, id, 0 AS is_active, pointer_id
+          FROM archived_items WHERE project_key = ${pk}
+        ) AS slots
+        GROUP BY ledger, id
+        HAVING COUNT(*) > 1
+      `;
+      assertLifetimeIdNamespace(
+        `PostgresLedgerStore(${pk})`,
+        rows.map((row) => ({
+          ledgerId: row.ledger,
+          itemId: row.id,
+          active: Number(row.active) === 1,
+          archivePointerIds: row.pointers === null ? [] : row.pointers.split(","),
+        })),
+        (line) => process.stderr.write(`${line}\n`),
+      );
+    }
     try { await this.projectionRecovery.initialize(); this.initialised = true; }
     catch (error) { await this.projectionRecovery.close(); this.projectionRecovery = null; this.searchProjection = null; throw error; }
   }
