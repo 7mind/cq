@@ -18,6 +18,7 @@ import {
   isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
   qualifyPiNativeAdapter,
+  isCutoverReadyNativeQualification,
   selectPiChildDelivery,
   selectQualifiedNativeAdapterIds,
   routeDispatchTransport,
@@ -26,6 +27,7 @@ import {
   CLAUDE_ACCEPTED_RESIDUALS,
   CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY,
   type ClaudeNativeQualificationHandle,
+  type NativeAdapterQualification,
 } from "@cq/config";
 
 const SRC = fileURLToPath(new URL("../src/nativeDispatchQualification.ts", import.meta.url));
@@ -270,9 +272,17 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     // Placement evidence only — NOT a D160 closure / cutover-ready claim.
     expect(q.defectClosed).toBeNull();
     expect(q.evidence).toMatch(/D160 remains open/);
+    // D412: the residual is READABLE DATA, not prose. `confinement` alone
+    // says "structural" here, which is true of the PLACEMENT evidence and says
+    // nothing about cutover-readiness.
+    expect(q.residualDefect).toBe("D160");
+    expect(isCutoverReadyNativeQualification(q)).toBe(false);
     expect(selectQualifiedNativeAdapterIds([q, qualifyClaudeNativeAdapter()])).toEqual([
       "pi:native",
     ]);
+    // Registration and cutover-readiness are different questions: pi:native
+    // passes the first while still carrying D160.
+    expect(isCutoverReadyNativeQualification(q)).toBe(false);
     const claudeCwd =
       "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
     const claudeQ = qualifyClaudeNativeAdapter({
@@ -517,6 +527,8 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
       transport: "native" as const,
       confinement: "structural" as const,
       defectClosed: null,
+      // A forgery claims the strongest possible verdict, residual included.
+      residualDefect: null,
       evidence: "FALSE — no structural proof",
     };
     const registry = buildPositiveOnlyDispatchRegistry({
@@ -534,6 +546,69 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(real.confinement).toBe("harness-owned");
     const after = sha256(readFileSync(SRC, "utf8"));
     expect(after).toBe(before);
+  });
+});
+
+describe("D412 native qualification residual reporting", () => {
+  const worktreeId = "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+  const piCwd = `/tmp/project/.claude/worktrees/${worktreeId}`;
+  const managedCwd = piCwd;
+  const managedHandle = (): ClaudeNativeQualificationHandle => ({
+    kind: "cq-managed-worktree-handle",
+    version: 1,
+    token: "tok-d412",
+    worktreeId,
+    taskId: "T1698",
+    branch: "implement/T1698",
+    repositoryRoot: "/tmp/project",
+    absolutePath: managedCwd,
+    baseCommit: "a".repeat(40),
+    createdAt: "2026-08-07T00:00:00.000Z",
+    nonce: "n-d412",
+  });
+  const piQualified = (): NativeAdapterQualification =>
+    qualifyPiNativeAdapter({
+      cwd: piCwd,
+      escapeCanary: {
+        escaped: false,
+        insideWriteOk: true,
+        evidence: "relative write stayed under cwd; absolute outside write refused",
+      },
+    });
+
+  test("every qualified verdict states its residual, and only pi:native carries one", () => {
+    const claude = qualifyClaudeNativeAdapter({ cwd: managedCwd, handle: managedHandle() });
+    const pi = piQualified();
+    for (const verdict of [claude, pi]) {
+      expect(verdict.status).toBe("qualified");
+      if (verdict.status !== "qualified") throw new Error("expected qualified");
+      // Required, so a new adapter cannot omit the axis and default to "closed".
+      expect(Object.hasOwn(verdict, "residualDefect")).toBe(true);
+    }
+    if (claude.status !== "qualified" || pi.status !== "qualified") {
+      throw new Error("expected qualified");
+    }
+    expect(claude.residualDefect).toBeNull();
+    expect(claude.defectClosed).toBe("D263");
+    expect(pi.residualDefect).toBe("D160");
+    expect(pi.defectClosed).toBeNull();
+  });
+
+  test("a residual refuses the cutover-ready claim independently of confinement", () => {
+    const pi = piQualified();
+    const claude = qualifyClaudeNativeAdapter({ cwd: managedCwd, handle: managedHandle() });
+    if (pi.status !== "qualified" || claude.status !== "qualified") {
+      throw new Error("expected qualified");
+    }
+    // The two axes disagree on purpose: pi has the STRONGER confinement word
+    // and the WEAKER readiness, so reading `confinement` to decide readiness
+    // gets exactly the wrong answer.
+    expect(pi.confinement).toBe("structural");
+    expect(claude.confinement).toBe("harness-owned");
+    expect(isCutoverReadyNativeQualification(pi)).toBe(false);
+    expect(isCutoverReadyNativeQualification(claude)).toBe(true);
+    // An incompatible verdict is never cutover-ready either.
+    expect(isCutoverReadyNativeQualification(qualifyClaudeNativeAdapter())).toBe(false);
   });
 });
 

@@ -113,6 +113,7 @@ describe("T2044 Codex native composed qualification [Behavioral-Active, Blackbox
           confinement: "structural",
           evidence: "caller-authored",
           defectClosed: "D307",
+          residualDefect: null,
         },
       ],
     });

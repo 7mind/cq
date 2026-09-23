@@ -150,6 +150,7 @@ export {
   qualifyPiNativeAdapter,
   assertNativeAdapterQualified,
   selectQualifiedNativeAdapterIds,
+  isCutoverReadyNativeQualification,
   isNativeAdapterId,
   nativeAdapterIdFor,
 } from "./nativeDispatchQualification.js";
