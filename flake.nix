@@ -3,6 +3,16 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Bun is held at 1.3.13, off nixos-unstable, because 1.4.2 regressed
+    # `bun:test`: `expect(promise).resolves` no longer observes a promise that
+    # settles from a cross-`Worker` `postMessage` reply, while plain `await` on
+    # the identical promise settles in milliseconds. CQ's search projection is
+    # Worker-backed, so this turns into cascading multi-second test timeouts
+    # that read as flakiness rather than a runtime regression (defects:D488).
+    # Reported upstream as https://github.com/oven-sh/bun/issues/43819 — drop
+    # this input and the overlay below once that lands in nixos-unstable.
+    # This rev is the one this flake tracked before df88248c8 bumped it.
+    nixpkgs-bun.url = "github:NixOS/nixpkgs/eaad089433ca2bb662274377d33df3d0e51ef28b";
     flake-utils.url = "github:numtide/flake-utils";
 
     # LLM coding-agent harness dependencies, consumed by
@@ -47,6 +57,15 @@
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
+          # Every `pkgs.bun` below — the node-modules FOD, the `cq` and
+          # `cq-codex-role` wrappers, and their PATH — resolves through this,
+          # so the shipped product and every nested gate it launches run the
+          # pinned Bun rather than whatever nixos-unstable currently carries.
+          overlays = [
+            (_final: _prev: {
+              bun = (import inputs.nixpkgs-bun { inherit system; }).bun;
+            })
+          ];
         };
         sourceRevision =
           if
