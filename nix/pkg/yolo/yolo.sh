@@ -876,6 +876,7 @@ case "$SUBCMD" in
     EXEC_CMD=(
       claude
       --permission-mode bypassPermissions
+      --dangerously-skip-permissions
       --disallowed-tools AskUserQuestion
       "${claude_prompt_args[@]}"
       "${CMD_ARGS[@]}"

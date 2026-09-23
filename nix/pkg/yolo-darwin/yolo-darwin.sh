@@ -549,7 +549,7 @@ yolo_exec_agent() {
   case "$subcmd" in
     claude)
       agent_prompt="$(compose_prompt claude)"
-      agent_argv=(claude --permission-mode bypassPermissions --disallowed-tools AskUserQuestion)
+      agent_argv=(claude --permission-mode bypassPermissions --dangerously-skip-permissions --disallowed-tools AskUserQuestion)
       [[ -n "$agent_prompt" ]] && agent_argv+=(--append-system-prompt "$agent_prompt")
       ;;
     codex)  agent_argv=(codex --dangerously-bypass-approvals-and-sandbox --search) ;;
