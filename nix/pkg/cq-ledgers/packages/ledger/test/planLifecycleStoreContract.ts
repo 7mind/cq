@@ -405,6 +405,61 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
           }
         });
 
+        /** Seed one operator action and drive it to `verified` through `peer`. */
+        async function seedVerifiedOperatorAction(
+          peer: LedgerStore,
+          actionKey: string,
+        ): Promise<{ readonly actionId: string; readonly taskId: string }> {
+          const created = await seedOperatorAction(peer, actionKey, ["probe-v1"]);
+          const acknowledged = await acknowledgeOperatorAction(peer, {
+            actionId: created.action.id,
+            expectedRevision: 1,
+            outputIdentity: `/nix/store/${actionKey}`,
+            acknowledgedAt: "2026-08-11T12:20:00.000Z",
+          });
+          expect(acknowledged.state).toBe("acknowledged");
+          const verified = await recordOperatorActionEvidence(
+            peer,
+            created.action.id,
+            1,
+            {
+              command: "probe-v1",
+              stdout: "ok",
+              stderr: "",
+              exitCode: 0,
+              outputIdentity: `/nix/store/${actionKey}`,
+              observedAt: "2026-08-11T12:21:00.000Z",
+            },
+            { author: "postgres-verifier" },
+          );
+          expect(verified.state).toBe("verified");
+          const taskRef = created.action.fields["taskRef"];
+          if (typeof taskRef !== "string" || !taskRef.startsWith("tasks:")) {
+            throw new Error("operator-action taskRef is malformed");
+          }
+          return { actionId: created.action.id, taskId: taskRef.slice("tasks:".length) };
+        }
+
+        // D426: completion commits durably, but `fetchItem` is served from each
+        // connection's in-memory projection and a peer whose completion was
+        // REJECTED never reconciles it. Asserting one nominated peer's cache
+        // after a race therefore silently presumes that peer won. Read the
+        // committed outcome through an explicit `invalidate` on both peers
+        // instead — a freshness precondition, not a relaxation of the
+        // synchronous cache contract.
+        async function expectCompletionOnBothPeers(
+          peers: readonly [LedgerStore, LedgerStore],
+          actionId: string,
+          taskId: string,
+        ): Promise<void> {
+          for (const peer of peers) {
+            await peer.invalidate("tasks");
+            await peer.invalidate("operatorActions");
+            expect(peer.fetchItem("tasks", taskId).status).toBe("done");
+            expect(peer.fetchItem("operatorActions", actionId).status).toBe("verified");
+          }
+        }
+
         it(
           "serializes operator-action revision before and after acknowledgement",
           async () => {
@@ -778,64 +833,71 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         it(
           "commits one simultaneous operator-action completion with its linked task",
           async () => {
-              const fixture = operatorActionFixture;
-              const [first, second] = operatorActionPeers(fixture);
-              const created = await seedOperatorAction(first, "pg-simultaneous-completion", [
-                "probe-v1",
-              ]);
-              const acknowledged = await acknowledgeOperatorAction(first, {
-                actionId: created.action.id,
-                expectedRevision: 1,
-                outputIdentity: "/nix/store/pg-simultaneous-completion",
-                acknowledgedAt: "2026-08-11T12:20:00.000Z",
-              });
-              expect(acknowledged.state).toBe("acknowledged");
-              const verified = await recordOperatorActionEvidence(
+              const peers = operatorActionPeers(operatorActionFixture);
+              const [first, second] = peers;
+              const { actionId, taskId } = await seedVerifiedOperatorAction(
                 first,
-                created.action.id,
-                1,
-                {
-                  command: "probe-v1",
-                  stdout: "ok",
-                  stderr: "",
-                  exitCode: 0,
-                  outputIdentity: "/nix/store/pg-simultaneous-completion",
-                  observedAt: "2026-08-11T12:21:00.000Z",
-                },
-                { author: "postgres-verifier" },
+                "pg-simultaneous-completion",
               );
-              expect(verified.state).toBe("verified");
 
               const outcomes = await Promise.allSettled([
-                completeOperatorActionTask(
-                  first,
-                  created.action.id,
-                  1,
-                  "completed by first",
-                  { author: "postgres-a" },
-                ),
-                completeOperatorActionTask(
-                  second,
-                  created.action.id,
-                  1,
-                  "completed by second",
-                  { author: "postgres-b" },
-                ),
+                completeOperatorActionTask(first, actionId, 1, "completed by first", {
+                  author: "postgres-a",
+                }),
+                completeOperatorActionTask(second, actionId, 1, "completed by second", {
+                  author: "postgres-b",
+                }),
               ]);
               expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
               expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
-              const taskRef = created.action.fields["taskRef"];
-              if (typeof taskRef !== "string" || !taskRef.startsWith("tasks:")) {
-                throw new Error("operator-action taskRef is malformed");
-              }
-              const taskId = taskRef.slice("tasks:".length);
-              expect(first.fetchItem("tasks", taskId).status).toBe("done");
-              expect(first.fetchItem("operatorActions", created.action.id).status).toBe(
-                "verified",
+              const loser = outcomes.find(({ status }) => status === "rejected");
+              if (loser?.status !== "rejected") throw new Error("completion loser missing");
+              expect(String(loser.reason)).toContain(
+                `Operator-action task ${taskId} is not planned`,
               );
+              await expectCompletionOnBothPeers(peers, actionId, taskId);
           },
           timeout,
         );
+
+        // D426 regression: the reproduced schedule is a SECOND-peer win, under
+        // which the previous unconditional first-peer cache assertion failed
+        // with expected `done` / received `planned`. The race above cannot pin
+        // it, so nominate each winner explicitly and cover both directions.
+        for (const [label, winnerIndex] of [
+          ["first", 0],
+          ["second", 1],
+        ] as const) {
+          it(
+            `converges both peers when the ${label} connection wins the completion`,
+            async () => {
+              const peers = operatorActionPeers(operatorActionFixture);
+              const winner = peers[winnerIndex];
+              const loser = peers[winnerIndex === 0 ? 1 : 0];
+              const { actionId, taskId } = await seedVerifiedOperatorAction(
+                peers[0],
+                `pg-${label}-wins-completion`,
+              );
+
+              const completed = await completeOperatorActionTask(
+                winner,
+                actionId,
+                1,
+                `completed by ${label}`,
+                { author: `postgres-${label}` },
+              );
+              expect(completed.status).toBe("done");
+              await expect(
+                completeOperatorActionTask(loser, actionId, 1, "losing completion", {
+                  author: "postgres-loser",
+                }),
+              ).rejects.toThrow(`Operator-action task ${taskId} is not planned`);
+
+              await expectCompletionOnBothPeers(peers, actionId, taskId);
+            },
+            timeout,
+          );
+        }
         });
       }
 
