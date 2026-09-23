@@ -435,7 +435,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
-      "sha256": "83b290884a7d735c46174d5e0a5f1e445968ff96ea188e0542f8109f542cd2e6",
+      "sha256": "55e24bf38e685326e4ae69c016a5fde448937155d5a7a883bea66aa293c7bdac",
       "targets": []
     },
     {
@@ -1154,7 +1154,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
-      "sha256": "83b290884a7d735c46174d5e0a5f1e445968ff96ea188e0542f8109f542cd2e6",
+      "sha256": "55e24bf38e685326e4ae69c016a5fde448937155d5a7a883bea66aa293c7bdac",
       "targets": []
     },
     {
@@ -1340,7 +1340,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptFragmentInventory.test.ts",
-      "sha256": "6668852cb80ff8215591d444593488bc1b5c872f48f1838d268d42079432b6b5",
+      "sha256": "43decc744c11b06dfad15d04573a6ac8e0ed243e203379ae09067df5bd0a649a",
       "targets": []
     },
     {

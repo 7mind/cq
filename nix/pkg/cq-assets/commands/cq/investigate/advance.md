@@ -7,6 +7,11 @@ argument-hint: [defectId ...]
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:subagent-dispatch}}
+
+Durable project facts enter this flow through the shared policy below:
+
+{{cq:fragment:memory-grounding}}
+
 Effect-boundary authority follows this shared contract:
 
 {{cq:fragment:workset-effect-discipline}}

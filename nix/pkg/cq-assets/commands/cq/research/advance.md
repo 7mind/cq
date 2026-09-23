@@ -8,6 +8,11 @@ argument-hint: <researchId>
 {{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:ledger-response-contract}}
 
+Durable project facts enter this flow through the shared policy below:
+
+{{cq:fragment:memory-grounding}}
+
+
 ## Catalogue
 ```yaml
 inputs:

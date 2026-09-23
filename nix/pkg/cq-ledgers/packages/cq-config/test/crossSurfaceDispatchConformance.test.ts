@@ -45,7 +45,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
+import { DISPATCHED_ROLE_VERSIONS, DISPATCHED_ROLE_SIDECARS, exposedLedgerToolsForRole } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -752,6 +752,45 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   // itself refuses a nonempty body on a non-TTY session. Only the PTY recipe
   // below actually delivers the request, so pin it on the fragment AND on every
   // rendered parent edge that carries it.
+  // D410: CQ's only retrieval instruction was the MCP initialization sentence,
+  // scoped generically to "Plan/build" and replaced entirely by a bare tool
+  // inventory under a narrow role profile. No decision procedure required it,
+  // so durable project facts never entered planning or execution. Bind one
+  // shared policy to every parent flow that FORMS a decision, on all three
+  // surfaces, and pin its order — retrieve before the decision, not after.
+  it("D410 requires memory grounding before every parent flow forms a decision", () => {
+    const required: readonly string[] = [
+      "`fts_search`",
+      "`memories`",
+      "Before forming or dispatching",
+      "no relevant memory",
+      "typed input",
+    ];
+    const parentFlows = [
+      "investigate/advance",
+      "plan/advance",
+      "research/advance",
+      "implement/advance",
+    ] as const;
+    for (const surface of PROMPT_SURFACES) {
+      for (const flow of parentFlows) {
+        const body = normalize(renderedOf(surface, flow));
+        for (const phrase of required) {
+          expect(body, `${surface} ${flow} is missing ${phrase}`).toContain(phrase);
+        }
+        // The ORDER is part of the contract and has to be stated, not merely
+        // implied by where the fragment happens to render.
+        expect(body).toContain("Memory grounding");
+      }
+    }
+    // The parent forwards selected memory content; a dispatched role's tool
+    // profile is NOT widened to compensate for missing orchestration.
+    for (const roleId of ["implement-worker", "plan-advance"] as const) {
+      const exposed = new Set<string>(exposedLedgerToolsForRole(roleId));
+      expect(exposed.has("fts_search")).toBe(roleId === "plan-advance");
+    }
+  });
+
   it("D407 pins the stdin-preserving PTY launch on every Codex dispatch edge", () => {
     const recipe: readonly string[] = [
       "`stty -echo; exec cq-codex-role`",

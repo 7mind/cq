@@ -50,7 +50,8 @@ export type PromptRendererCapability =
   | "operational-tool-vocabulary"
   | "advance-run-guard"
   | "ledger-response-contract"
-  | "workset-effect-discipline";
+  | "workset-effect-discipline"
+  | "memory-grounding";
 
 export type PromptIntentionalDifferenceKind =
   | "invocation-syntax"
