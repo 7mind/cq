@@ -72,6 +72,15 @@ export interface RawDispatch {
   readonly unsafeDisableCodexReadOnlySandbox: unknown;
 }
 
+/**
+ * The raw `[gate]` table (D403 / H310): the project's own full-gate command.
+ * Cells stay untyped for parseConfig.
+ */
+export interface RawGate {
+  readonly argv: unknown;
+  readonly cwd: unknown;
+}
+
 /** The raw `[upstream]` table; cells stay untyped for parseConfig. */
 export interface RawUpstream {
   readonly filing: unknown;
@@ -125,6 +134,8 @@ export interface RawToml {
   /** The `[project]` table, or null if absent (T570). */
   readonly project: RawProject | null;
   readonly dispatch: RawDispatch | null;
+  /** The `[gate]` table, or null if absent. */
+  readonly gate: RawGate | null;
   /** The `[upstream]` table, or null if absent. */
   readonly upstream: RawUpstream | null;
   /**
@@ -155,6 +166,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "ledger",
   "project",
   "dispatch",
+  "gate",
   "upstream",
   "harness",
 ]);
@@ -300,6 +312,18 @@ function parseDispatchRaw(value: unknown): RawDispatch {
   };
 }
 
+const ALLOWED_GATE_KEYS = new Set(["argv", "cwd"]);
+
+function parseGateRaw(value: unknown): RawGate {
+  if (!isTable(value)) throw new TomlSyntaxError("[gate] must be a table");
+  for (const key of Object.keys(value)) {
+    if (!ALLOWED_GATE_KEYS.has(key)) {
+      throw new TomlSyntaxError(`unexpected key "${key}" in [gate]`);
+    }
+  }
+  return { argv: value.argv, cwd: value.cwd };
+}
+
 const ALLOWED_UPSTREAM_KEYS = new Set(["filing", "recheck"]);
 
 function parseUpstreamRaw(value: unknown): RawUpstream {
@@ -404,6 +428,7 @@ export function parseToml(source: string): RawToml {
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
   const project = "project" in doc ? parseProjectRaw(doc.project) : null;
   const dispatch = "dispatch" in doc ? parseDispatchRaw(doc.dispatch) : null;
+  const gate = "gate" in doc ? parseGateRaw(doc.gate) : null;
   const upstream = "upstream" in doc ? parseUpstreamRaw(doc.upstream) : null;
   const harnessOverrides =
     "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
@@ -419,6 +444,7 @@ export function parseToml(source: string): RawToml {
     ledger,
     project,
     dispatch,
+    gate,
     upstream,
     harnessOverrides,
   };

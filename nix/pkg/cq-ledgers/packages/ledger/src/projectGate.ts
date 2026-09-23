@@ -53,3 +53,20 @@ export function projectGateAuthorizationForm(
 ): { readonly argv: readonly string[]; readonly cwd: string; readonly environment: readonly [] } {
   return { argv: gate.argv, cwd: gate.cwd, environment: [] };
 }
+
+/**
+ * Resolve the gate a dispatch must run, from the project's declared `[gate]`.
+ *
+ * A project that declares no gate falls back to {@link CANONICAL_PROJECT_GATE}
+ * so existing stores, receipts and fixtures are unchanged. That fallback is a
+ * COMPATIBILITY decision, not a correct default for a generic worker: a
+ * consumer project has no `nix/pkg/cq-ledgers`, and the fix for it is to
+ * declare `[gate]`. CQ's own cq.toml declares it explicitly rather than
+ * leaning on the fallback, so the configured path is the exercised one.
+ */
+export function resolveProjectGate(
+  declared: { readonly argv: readonly string[]; readonly cwd: string } | null | undefined,
+): ProjectGateSpecification {
+  if (declared === null || declared === undefined) return CANONICAL_PROJECT_GATE;
+  return Object.freeze({ argv: Object.freeze([...declared.argv]), cwd: declared.cwd });
+}

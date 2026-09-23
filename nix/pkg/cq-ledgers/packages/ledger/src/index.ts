@@ -383,6 +383,7 @@ export type {
 export {
   CANONICAL_PROJECT_GATE,
   projectGateAuthorizationForm,
+  resolveProjectGate,
   type ProjectGateSpecification,
 } from "./projectGate.js";
 export { decideWorktreeSweep, patchEquivalentFromGitCherry } from "./worktreeSweep.js";

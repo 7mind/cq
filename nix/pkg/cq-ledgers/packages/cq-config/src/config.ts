@@ -50,6 +50,7 @@ import {
   type ActiveHarness,
   type CqConfig,
   type DispatchConfig,
+  type GateConfig,
   type UpstreamConfig,
   type Effort,
   type Harness,
@@ -465,6 +466,27 @@ function parseProject(raw: RawProject): ProjectConfig {
   return { name };
 }
 
+/**
+ * D403 / H310 — the project's own full gate. Absent means "this project has
+ * not declared one"; the caller decides the fallback, so a consumer project is
+ * never silently handed CQ's layout by this parser.
+ */
+function parseGate(raw: import("./toml.js").RawGate | null): GateConfig | null {
+  if (raw === null) return null;
+  if (!Array.isArray(raw.argv) || raw.argv.length === 0 ||
+      raw.argv.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+    throw new CqConfigError("[gate] argv must be a non-empty array of non-empty strings");
+  }
+  if (raw.cwd !== undefined && typeof raw.cwd !== "string") {
+    throw new CqConfigError("[gate] cwd must be a string");
+  }
+  const cwd = raw.cwd === undefined ? "" : raw.cwd;
+  if (cwd.startsWith("/") || cwd.split(/[\\/]/).includes("..")) {
+    throw new CqConfigError("[gate] cwd must be relative to the worktree and must not escape it");
+  }
+  return { argv: raw.argv as readonly string[], cwd };
+}
+
 function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchConfig {
   if (raw?.forceShellout !== undefined && typeof raw.forceShellout !== "boolean") {
     throw new CqConfigError("[dispatch] forceShellout must be a boolean");
@@ -601,6 +623,7 @@ function parseConfigFromRaw(raw: RawToml, activeHarness: ActiveHarness): CqConfi
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
   const project = raw.project === null ? null : parseProject(raw.project);
   const dispatch = parseDispatch(raw.dispatch);
+  const gate = parseGate(raw.gate);
   const upstream = parseUpstream(raw.upstream);
   return {
     aliases,
@@ -613,6 +636,7 @@ function parseConfigFromRaw(raw: RawToml, activeHarness: ActiveHarness): CqConfi
     ledger,
     project,
     dispatch,
+    gate,
     upstream,
     dispatchViolation,
   };
@@ -655,6 +679,7 @@ function mergeGlobalAndLocalConfig(globalConfig: RawToml, localConfig: RawToml):
     reviewers: localConfig.reviewers ?? globalConfig.reviewers,
     planners: localConfig.planners ?? globalConfig.planners,
     webui: localConfig.webui ?? globalConfig.webui,
+    gate: localConfig.gate ?? globalConfig.gate,
     tiers: mergeOptionalRecord(globalConfig.tiers, localConfig.tiers),
     agentTiers: mergeOptionalRecord(globalConfig.agentTiers, localConfig.agentTiers),
     agentEfforts: mergeOptionalRecord(

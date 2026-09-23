@@ -734,13 +734,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "f715f9ea3d18d1fedfdd592abba2ea2007e73807ac8e65191e0cb5772c22cef4",
+      "sha256": "a754bc5029da536497098716e406b035f82f07df818b091c51c230910a3d5b05",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "f715f9ea3d18d1fedfdd592abba2ea2007e73807ac8e65191e0cb5772c22cef4",
+      "sha256": "a754bc5029da536497098716e406b035f82f07df818b091c51c230910a3d5b05",
       "targets": []
     },
     {
@@ -1058,7 +1058,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/config.ts",
-      "sha256": "41b6554135eef174e9fdace966d76ab3f68fbc923de06a5e56e50cd53e30dbb9",
+      "sha256": "6f7f537fb881872d268d55b5c9510606891bb7008a458f013f851effec33021a",
       "targets": []
     },
     {

@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import {
   CANONICAL_PROJECT_GATE,
   projectGateAuthorizationForm,
+  resolveProjectGate,
 } from "../src/projectGate.js";
 
 const PACKAGES_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..");
@@ -69,5 +70,36 @@ describe("D403 project gate definition", () => {
     // Five copies of a value that two authorization checks compare by digest
     // is the hazard this replaces; a sixth must fail rather than drift.
     expect(offenders.map((file) => path.relative(PACKAGES_ROOT, file))).toEqual([]);
+  });
+
+  test("a non-CQ project's declared gate replaces CQ's layout entirely", () => {
+    // The consumer shape from GitHub issue #6: no `nix/pkg/cq-ledgers`, a
+    // different runner, and the gate at the repository root.
+    const consumer = resolveProjectGate({ argv: ["npm", "test"], cwd: "" });
+    expect(consumer.argv).toEqual(["npm", "test"]);
+    expect(consumer.cwd).toBe("");
+    expect(consumer.cwd).not.toBe(CANONICAL_PROJECT_GATE.cwd);
+    // It flows through to the authorization form the cohort checks digest.
+    expect(projectGateAuthorizationForm(consumer)).toEqual({
+      argv: ["npm", "test"],
+      cwd: "",
+      environment: [],
+    });
+  });
+
+  test("an undeclared gate falls back, and the fallback is the COMPATIBILITY arm", () => {
+    // Recorded as a deliberate compatibility decision, not a correct default:
+    // a consumer that declares nothing still inherits CQ's layout, and the fix
+    // for that is to declare `[gate]`.
+    expect(resolveProjectGate(null)).toEqual(CANONICAL_PROJECT_GATE);
+    expect(resolveProjectGate(undefined)).toEqual(CANONICAL_PROJECT_GATE);
+  });
+
+  test("this repository declares its own gate rather than leaning on the fallback", () => {
+    const toml = readFileSync(path.resolve(PACKAGES_ROOT, "..", "..", "..", "..", "cq.toml"), "utf8");
+    expect(toml).toContain("[gate]");
+    // The configured path is the exercised one, so the fallback is not the
+    // thing under test in this repository's own runs.
+    expect(toml).toContain('cwd  = "nix/pkg/cq-ledgers"');
   });
 });

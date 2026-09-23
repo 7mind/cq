@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
-import { CANONICAL_PROJECT_GATE } from "./projectGate.js";
+import { CANONICAL_PROJECT_GATE, type ProjectGateSpecification } from "./projectGate.js";
 import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -619,12 +619,20 @@ function createSerializedSupervisedRunner<Request extends SupervisedWorkerGateRu
   });
 }
 
+/**
+ * D403 / H310: the gate this runner executes is the PROJECT's, resolved from
+ * `[gate]`. It is a constructor parameter rather than a module literal so a
+ * consumer project is not handed CQ's `nix/pkg/cq-ledgers` layout. Omitting it
+ * keeps {@link CANONICAL_PROJECT_GATE} for compatibility with existing stores
+ * and fixtures.
+ */
 export function createNodeSupervisedWorkerGateRunner(
   settlement: NodeSupervisedWorkerGateSettlement,
+  gate: ProjectGateSpecification = CANONICAL_PROJECT_GATE,
 ): SupervisedWorkerGateRunner {
   return createSerializedSupervisedRunner((request: SupervisedWorkerGateRunRequest) =>
     runAdmittedNodeSupervisedWorkerGate({ ...request, command: {
-      argv: [...CANONICAL_PROJECT_GATE.argv], cwd: CANONICAL_PROJECT_GATE.cwd, environment: {},
+      argv: [...gate.argv], cwd: gate.cwd, environment: {},
     } }, settlement));
 }
 
