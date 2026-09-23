@@ -78,7 +78,7 @@ function projectItem(item: Item, projection: ItemProjection): Item {
   };
 }
 
-function itemAck(item: Item): ItemMutationAckDto {
+export function itemAck(item: Item): ItemMutationAckDto {
   const fields: ItemMutationAckDto["fields"] = {};
   if (Array.isArray(item.fields["dependsOn"])) fields.dependsOn = item.fields["dependsOn"];
   if (Array.isArray(item.fields["blockedBy"])) fields.blockedBy = item.fields["blockedBy"];
