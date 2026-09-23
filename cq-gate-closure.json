@@ -1304,13 +1304,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piDispatchCouplingGuard.test.ts",
-      "sha256": "3c5f480fdce4b4bfcc118109e79e1e8b67ef3afbbe1d11d963d6f7fc9b87ed68",
+      "sha256": "f5c7d01f6fee25e059237001aad993bdc03fc3822f7807548d5e975dc302eaff",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piDispatchCouplingGuard.test.ts",
-      "sha256": "3c5f480fdce4b4bfcc118109e79e1e8b67ef3afbbe1d11d963d6f7fc9b87ed68",
+      "sha256": "f5c7d01f6fee25e059237001aad993bdc03fc3822f7807548d5e975dc302eaff",
       "targets": []
     },
     {
