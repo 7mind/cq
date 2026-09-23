@@ -28,7 +28,74 @@ class DeferredFakeClient extends FakeClient {
   }
 }
 
+/** A client whose active store lost an id to the archive (D400). */
+class ArchivedFakeClient extends FakeClient {
+  constructor(private readonly archived: ReadonlyMap<string, { item: Item; pointerId: string }>) {
+    super();
+  }
+
+  override async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
+    if (this.archived.has(`${ledgerId}:${itemId}`)) {
+      throw new Error(`Item not found in ledger ${ledgerId}: ${itemId}`);
+    }
+    return await super.fetchItem(ledgerId, itemId, projection);
+  }
+
+  override async fetchItemIncludingArchived(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    const hit = this.archived.get(`${ledgerId}:${itemId}`);
+    if (hit !== undefined) return { item: hit.item, archived: [{ pointerId: hit.pointerId }] };
+    return { item: await super.fetchItem(ledgerId, itemId, projection), archived: [] };
+  }
+}
+
 describe("ItemReferenceLookup", () => {
+  it("D400: resolves a reference whose item was archived, carrying its provenance", async () => {
+    const archivedItem: Item = {
+      id: "T900",
+      milestoneId: "M9",
+      status: "done",
+      fields: { headline: "archived work" },
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-02T00:00:00.000Z",
+    };
+    const client = new ArchivedFakeClient(
+      new Map([["tasks:T900", { item: archivedItem, pointerId: "M9" }]]),
+    );
+    const lookup = new ItemReferenceLookup(client);
+
+    expect(await lookup.resolve({ ledger: "tasks", id: "T900" })).toEqual({
+      kind: "found",
+      ledger: "tasks",
+      id: "T900",
+      status: "done",
+      summary: "archived work",
+      archivedUnder: ["M9"],
+    });
+  });
+
+  it("D400: a terminal but still-active item resolves with no archive provenance", async () => {
+    const client = new ArchivedFakeClient(new Map());
+    const lookup = new ItemReferenceLookup(client);
+    const result = await lookup.resolve({ ledger: "tasks", id: "T1" });
+    expect(result.kind).toBe("found");
+    if (result.kind !== "found") throw new Error("expected found");
+    expect(result.archivedUnder).toBeUndefined();
+  });
+
+  it("D400: a genuinely missing id is still not-found", async () => {
+    const client = new ArchivedFakeClient(new Map());
+    const lookup = new ItemReferenceLookup(client);
+    expect(await lookup.resolve({ ledger: "tasks", id: "T99999" })).toEqual({
+      kind: "not-found",
+      ledger: "tasks",
+      id: "T99999",
+    });
+  });
+
   it("uses loaded items before MCP and applies headline/title/question/summary precedence", async () => {
     const client = new FakeClient();
     const lookup = new ItemReferenceLookup(client);

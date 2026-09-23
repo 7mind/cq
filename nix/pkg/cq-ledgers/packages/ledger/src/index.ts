@@ -319,6 +319,7 @@ export type { ParsedFrontmatter } from "./parser/frontmatter.js";
 export type {
   LedgerStore,
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,

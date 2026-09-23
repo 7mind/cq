@@ -72,6 +72,16 @@ export type ArchiveContent =
   | { kind: "item"; item: Item };
 
 /**
+ * D400 — one archived generation of a canonical `<ledger>:<id>`, with the
+ * archive pointer it lives under as provenance.
+ */
+export interface ArchivedItemGeneration {
+  /** Archive pointer id: the archived milestone-group (or milestone item). */
+  readonly pointerId: string;
+  readonly item: Item;
+}
+
+/**
  * Operation that triggered a mutation. Used by the `onMutation` hook
  * and by the internal-WS `ledger.changed` envelope. The mirror in
  * `@cq/shared` (`LedgerOp` Zod enum) MUST stay in lockstep — if either
@@ -170,6 +180,25 @@ export interface LedgerStore {
   fetch(ledgerId: string): FetchedLedger;
 
   fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
+
+  /**
+   * D400 — exact archived lookup keyed by canonical ledger + item id.
+   *
+   * {@link fetchArchive} is group-granular and needs the archive pointer id,
+   * which a caller holding only `<ledger>:<id>` does not have; scanning every
+   * archive group to find one item is not an acceptable substitute. This
+   * resolves the id directly against archived storage and carries the pointer
+   * back as provenance.
+   *
+   * Returns EVERY archived generation of the id, newest pointer last, because
+   * an id can legitimately name more than one archived record in stores
+   * written before the D434 lifetime invariant. An empty array means the id
+   * was never archived in this ledger.
+   */
+  fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]>;
 
   fetchItem(ledgerId: string, itemId: string): Item;
 

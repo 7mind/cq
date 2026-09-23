@@ -712,6 +712,14 @@ export class FakeClient implements WorksetCapableLedgerClient {
     this.fetchItemCalls.push({ ledgerId, itemId, projection });
     return projectItem(this.find(ledgerId, itemId), projection);
   }
+  /** D400 — no archived data in the fake, so this is the active read. */
+  async fetchItemIncludingArchived(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(ledgerId, itemId, projection), archived: [] };
+  }
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
     this.createItemCalls.push({ ledgerId, milestoneId });
     const d = this.data[ledgerId];

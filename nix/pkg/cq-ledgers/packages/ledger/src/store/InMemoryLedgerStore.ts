@@ -51,6 +51,7 @@ import { statusSatisfiesDependency } from "./core.js";
 import { buildPrefixRegistry, canonicalizeRef, normalizeStoredRefFields } from "../refs.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -501,6 +502,27 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
     }
     return { kind: "group", milestone: cloneMilestone(m) };
+  }
+
+  async fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]> {
+    this.assertInit();
+    if (ledgerId === MILESTONES_LEDGER) {
+      const archived = this.itemArchives.get(`${MILESTONES_LEDGER}/${itemId}`);
+      return archived === undefined
+        ? []
+        : [{ pointerId: itemId, item: cloneItem(archived) }];
+    }
+    const found: ArchivedItemGeneration[] = [];
+    for (const [key, group] of this.archives) {
+      if (!key.startsWith(`${ledgerId}/`)) continue;
+      for (const item of group.items) {
+        if (item.id === itemId) found.push({ pointerId: group.id, item: cloneItem(item) });
+      }
+    }
+    return found;
   }
 
   /**

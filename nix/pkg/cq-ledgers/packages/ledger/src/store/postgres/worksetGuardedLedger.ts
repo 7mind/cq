@@ -162,6 +162,7 @@ export async function createPostgresWorksetGuardedLedger(
     enumerate: () => surface.enumerate(),
     fetch: (id) => surface.fetch(id),
     fetchArchive: (ledgerId, archiveId) => surface.fetchArchive(ledgerId, archiveId),
+    fetchArchivedItems: (ledgerId, itemId) => surface.fetchArchivedItems(ledgerId, itemId),
     fetchItem: (ledgerId, itemId) => surface.fetchItem(ledgerId, itemId),
     fetchMilestone: (milestoneId) => surface.fetchMilestone(milestoneId),
     search: (ledgerId, query) => surface.search(ledgerId, query),

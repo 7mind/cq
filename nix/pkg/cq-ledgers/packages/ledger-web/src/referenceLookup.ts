@@ -3,7 +3,15 @@ import type { Item, LedgerClient } from "./types.js";
 import type { ItemReference } from "./itemReferences.js";
 
 export type ReferencePreviewResult =
-  | { kind: "found"; ledger: string; id: string; status: string; summary: string }
+  | {
+      kind: "found";
+      ledger: string;
+      id: string;
+      status: string;
+      summary: string;
+      /** D400 — present when the item was resolved out of the archive. */
+      archivedUnder?: readonly string[];
+    }
   | { kind: "not-found"; ledger: string; id: string }
   | { kind: "error"; ledger: string; id: string; message: string };
 
@@ -16,13 +24,18 @@ function keyOf(reference: ItemReference): string {
   return `${reference.ledger}:${reference.id}`;
 }
 
-function found(ledger: string, item: Item): ReferencePreviewResult {
+function found(
+  ledger: string,
+  item: Item,
+  archivedUnder: readonly string[] = [],
+): ReferencePreviewResult {
   return {
     kind: "found",
     ledger,
     id: item.id,
     status: item.status,
     summary: summarize(item),
+    ...(archivedUnder.length === 0 ? {} : { archivedUnder }),
   };
 }
 
@@ -31,7 +44,9 @@ export class ItemReferenceLookup {
   private readonly settled = new Map<string, ReferencePreviewResult>();
   private readonly inFlight = new Map<string, Promise<ReferencePreviewResult>>();
 
-  constructor(private readonly client: Pick<LedgerClient, "fetchItem">) {}
+  constructor(
+    private readonly client: Pick<LedgerClient, "fetchItem" | "fetchItemIncludingArchived">,
+  ) {}
 
   replaceLocalItems(items: Iterable<LocalReferenceItem>): void {
     this.local.clear();
@@ -59,8 +74,22 @@ export class ItemReferenceLookup {
   private async fetch(reference: ItemReference): Promise<ReferencePreviewResult> {
     const key = keyOf(reference);
     try {
-      const item = await this.client.fetchItem(reference.ledger, reference.id, "compact");
-      const result = found(reference.ledger, item);
+      // D400: an item selected while visible can be archived before its popup
+      // is opened, and archival removes it from the ACTIVE store the ordinary
+      // read resolves. Ask for the archived generations in the same call
+      // rather than reporting a reference we know exists as not-found; the
+      // server keeps the active read as its fast path and still fails an id
+      // that was never there.
+      const { item, archived } = await this.client.fetchItemIncludingArchived(
+        reference.ledger,
+        reference.id,
+        "compact",
+      );
+      const result = found(
+        reference.ledger,
+        item,
+        archived.map(({ pointerId }) => pointerId),
+      );
       this.settled.set(key, result);
       return result;
     } catch (error) {

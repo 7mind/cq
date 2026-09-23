@@ -186,6 +186,23 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
     ).item;
   }
 
+  async fetchItemIncludingArchived(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    const result = await this.call<{
+      item: Item;
+      archived?: { pointerId: string }[];
+    }>("fetch_item", {
+      ledger_id: ledgerId,
+      item_id: itemId,
+      projection,
+      include_archived: true,
+    });
+    return { item: result.item, archived: result.archived ?? [] };
+  }
+
   async fetchPromptResult(roleId: string): Promise<FetchPromptResult> {
     return await this.call<FetchPromptResult>("fetch_prompt", { roleId });
   }

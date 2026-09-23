@@ -1592,7 +1592,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/finalizeFlow.test.tsx",
-      "sha256": "3ef10a2709861e02a5e43fc112390e13056d3ff2b6c98a32d330b8b7e0ffb99f",
+      "sha256": "39fdba531d8d0a47f87f3818e15cf8518bf89ec85079b5a6152c8b81a9938448",
       "targets": []
     },
     {
@@ -1778,7 +1778,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "32e6d33283765ed75e06675c495d865dcc58e5d94ac3f24496acaf2763181e76",
+      "sha256": "df2d83df3ee85657a1a3412a2aaa140796a3ffbd0af264dd3ad5b3e058251cd1",
       "targets": []
     },
     {

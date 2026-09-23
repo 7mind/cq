@@ -68,6 +68,7 @@ import {
 } from "../../types.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -1289,6 +1290,15 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     this.assertCacheReadable();
     return this.readCache.archive(ledgerId, archiveId);
+  }
+
+  /** D400 — exact archived lookup by canonical ledger + item id. */
+  async fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]> {
+    this.assertCacheReadable();
+    return this.readCache.archivedGenerationsById(ledgerId, itemId);
   }
 
   // ---------------------------------------------------------------------------

@@ -75,6 +75,7 @@ export { buildActiveStateFromLedgerStore, closedGraphIsTargetAdmitted } from "./
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -349,6 +350,10 @@ export interface WorksetLedgerReadSurface {
   enumerate(): string[];
   fetch(ledgerId: string): FetchedLedger;
   fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
+  fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]>;
   fetchItem(ledgerId: string, itemId: string): Item;
   fetchMilestone(milestoneId: string): FetchedMilestoneItem;
   search(ledgerId: string, query: string): Item[];
@@ -1581,6 +1586,7 @@ export function createWorksetGuardedLedger(
     enumerate: () => rawStore.enumerate(),
     fetch: (id) => rawStore.fetch(id),
     fetchArchive: (ledgerId, archiveId) => rawStore.fetchArchive(ledgerId, archiveId),
+    fetchArchivedItems: (ledgerId, itemId) => rawStore.fetchArchivedItems(ledgerId, itemId),
     fetchItem: (ledgerId, itemId) => rawStore.fetchItem(ledgerId, itemId),
     fetchMilestone: (milestoneId) => rawStore.fetchMilestone(milestoneId),
     search: (ledgerId, query) => rawStore.search(ledgerId, query),

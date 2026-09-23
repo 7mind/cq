@@ -81,6 +81,7 @@ import {
 } from "../../types.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -1284,6 +1285,24 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         kind: "group",
         milestone: { id: archiveId, title: "", description: "", items: rows.map(rowToItem) },
       };
+    });
+  }
+
+  /** D400 — exact archived lookup by canonical ledger + item id (indexed). */
+  async fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]> {
+    return this.read(() => {
+      this.assertLedgerExists(ledgerId);
+      const rows = this.db()
+        .query(
+          `SELECT pointer_id, id, milestone_id, status, fields_json,
+                  created_at, updated_at, author, session
+           FROM archived_items WHERE ledger = ? AND id = ? ORDER BY rowid`,
+        )
+        .all(ledgerId, itemId) as (ItemRow & { pointer_id: string })[];
+      return rows.map((row) => ({ pointerId: row.pointer_id, item: rowToItem(row) }));
     });
   }
 
