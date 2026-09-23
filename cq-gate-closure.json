@@ -1807,6 +1807,12 @@
     },
     {
       "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/required-relaxation-init.test.ts",
+      "sha256": "b21c52b22aa579e6b1850f725e9a6defe94c6b00f49268a1abe44ed2e0451938",
+      "targets": []
+    },
+    {
+      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-and-reinit.test.ts",
       "sha256": "2f0e85cdcda7a0179f1991e34a1e4ab84be096da77b91e45e637f8c098909ce0",
       "targets": []
@@ -1826,7 +1832,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/canonical-ledgers.test.ts",
-      "sha256": "f76e7383ac121fec44738c44ff6980044f4bda5b6c0c2f100ced2b2449901033",
+      "sha256": "2e7f890a2782b42ddea40c15ae8ffe7054ee4453cf6549e399c5cc9c91600bab",
       "targets": []
     },
     {
