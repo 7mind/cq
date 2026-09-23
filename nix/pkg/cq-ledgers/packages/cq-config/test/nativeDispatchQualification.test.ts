@@ -385,10 +385,46 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
           completedAt: "2026-08-07T00:00:00.000Z",
         }) as never,
     });
-    // Direct launch through a minimal context is not available without prepare;
-    // pin the source contract instead for the bad-shape type and the seam constants.
     expect(PI_NATIVE_SESSION_SEAM).not.toBe(PI_PROCESS_SESSION_SEAM);
     expect(bad.id).toBe("pi:native");
+
+    // D418: actually EXECUTE the refusal. The production guard lives inside the
+    // launch closure, so asserting only the seam constants left
+    // `pi-native-used-process-seam` — and the no-store invariant — uncovered.
+    //
+    // The context below is narrowed rather than fully constructed: this
+    // adapter's `resolve` ignores it entirely (see above), and the launch path
+    // reads only `prepared` (for the completion handle) and `child`. Both are
+    // supplied with real shapes; the cast covers only the fields this refusal
+    // path provably never reaches, and the instrumented `child` fails loudly if
+    // that assumption ever stops holding.
+    let storeCalls = 0;
+    const seamResult = await bad.launch({
+      route: { harness: "pi", transport: "native" },
+      prepared: { attestationId: "att-pi-seam", generation: 1 },
+      resolvedModel: "pi:native",
+      effectTargetRef: "tasks:T4167",
+      child: {
+        materializeInput: () => {
+          throw new Error("a refused launch must not materialize child input");
+        },
+        storeResult: () => {
+          storeCalls += 1;
+          throw new Error("a refused launch must not store a child result");
+        },
+      },
+    } as unknown as Parameters<typeof bad.launch>[0]);
+
+    expect(seamResult).toMatchObject({
+      outcome: "aborted",
+      reason: "protocol-violation",
+      details: {
+        violation: "pi-native-used-process-seam",
+        usedLaunchPiChild: true,
+        usedCreateAgentSession: false,
+      },
+    });
+    expect(storeCalls).toBe(0);
   });
 
   test("MUTATION: unbound Claude qualification still refuses; false structural claim is not produced by qualifier", () => {

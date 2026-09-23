@@ -1268,7 +1268,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/nativeDispatchQualification.test.ts",
-      "sha256": "78cd4c1f223a3cc7468b62b615949fda1f99bf0a8fa6f75a7ebb4cb9a0486ab6",
+      "sha256": "5120ad01d67c8f8acd52da1a01182a6d22b99debea0cafaff0c1276f87e076de",
       "targets": []
     },
     {
