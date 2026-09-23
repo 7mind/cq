@@ -13,6 +13,7 @@ import {
   formatCodexRoleBoundaryDiagnostic,
   interceptCodexRoleBoundaryResult,
   withoutWorksetCredentials,
+  withoutDispatchInvocationIdentity,
   type CodexRoleBoundaryDiagnostic,
 } from "@cq/config";
 
@@ -227,7 +228,13 @@ describe("T1628 Codex boundary diagnostics", () => {
       const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
         cwd: worktree,
         env: {
-          ...withoutWorksetCredentials(process.env),
+          // D506: this fixture launches a NESTED role invocation, so it must
+          // own its dispatch identity rather than inherit the caller's. An
+          // ambient CQ_CODEX_ROLE_CORRELATION_ID selects the
+          // registered-observation path, which waits for a thread.started the
+          // fake CLI never emits, and the diagnostic under test is never
+          // reached — one expected line, zero received.
+          ...withoutDispatchInvocationIdentity(withoutWorksetCredentials(process.env)),
           XDG_STATE_HOME: join(root, "xdg-state"),
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: fakeCodex,

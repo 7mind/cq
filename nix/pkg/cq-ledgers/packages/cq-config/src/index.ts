@@ -268,6 +268,8 @@ export {
 export {
   WORKSET_CREDENTIAL_ENV_NAMES,
   withoutWorksetCredentials,
+  withoutDispatchInvocationIdentity,
+  DISPATCH_INVOCATION_ENV_NAMES,
   createWorksetManagementCommand,
 } from "./worksetManagementCommand.js";
 export type {

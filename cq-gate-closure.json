@@ -369,7 +369,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexBoundaryDiagnostics.test.ts",
-      "sha256": "c5067932b97f85ba74e47e1f81b3fc96018743ddb71adba20dc1548a092bd499",
+      "sha256": "082146a51a4c822b7de96e3889bb40b677dbd118d53d33602b2474cc6e672850",
       "targets": []
     },
     {
@@ -734,13 +734,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "991e239cce6ce27731fe776df66bfe326fde657ec619a7a1977d3fb9cbe5498f",
+      "sha256": "6f77c5743b7e0799b4b5f60d57c4494b48418cf19af9b71e0926d34109c3bbae",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "991e239cce6ce27731fe776df66bfe326fde657ec619a7a1977d3fb9cbe5498f",
+      "sha256": "6f77c5743b7e0799b4b5f60d57c4494b48418cf19af9b71e0926d34109c3bbae",
       "targets": []
     },
     {
@@ -1382,7 +1382,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-effect-boundary-inventory.test.ts",
-      "sha256": "9dc2c299c93912cfcc551de8aed970eeec502f1dc17c68d1bee16b714488acae",
+      "sha256": "db3e487ece682faaa4e71d2c0663257c69e73bfb1630fa1bafcbbf38516635cb",
       "targets": []
     },
     {
