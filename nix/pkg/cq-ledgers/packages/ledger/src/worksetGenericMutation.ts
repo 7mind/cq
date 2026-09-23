@@ -45,7 +45,10 @@ import {
 import { closeWorkset, defaultWorksetPrefixRegistry, type WorksetGraph } from "./worksetGraph.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
+  PREREQUISITE_EDGE,
+  readCanonicalOwnership,
   WorksetOwnershipFieldError,
+  type CanonicalOwnership,
 } from "./worksetOwnerEdges.js";
 import type { FinalizeBatchOperation } from "./finalize.js";
 import { ledgerItemRevisionV1 } from "./itemRevision.js";
@@ -477,6 +480,13 @@ function itemRef(ledgerId: string, itemId: string): string {
   return `${ledgerId}:${itemId}`;
 }
 
+function splitRefParts(ref: string): { readonly ledger: string; readonly id: string } {
+  const colon = ref.indexOf(":");
+  return colon === -1
+    ? { ledger: ref, id: "" }
+    : { ledger: ref.slice(0, colon), id: ref.slice(colon + 1) };
+}
+
 function asStringArray(value: FieldValue | undefined): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === "string");
@@ -593,6 +603,104 @@ export function introducedClosureRefs(
     }
   }
   return introduced;
+}
+
+
+// ---------------------------------------------------------------------------
+// D487 — terminal-cleanup closure
+// ---------------------------------------------------------------------------
+
+/**
+ * Archival cleanup and runnable traversal are different authorities.
+ *
+ * `closeWorkset` deliberately drops an ANSWERED exact-gate question and a DONE
+ * task's children: neither is executable, so neither belongs to a runnable
+ * workset. But a milestone only becomes archivable once its members ARE
+ * terminal, so that same readiness filter removes precisely the members an
+ * archival sweep has to cover — and the sweep then refuses, with no legal way
+ * to finish the cleanup short of adding every child as a root.
+ *
+ * These two predicates admit an exact canonically owned TERMINAL descendant of
+ * admitted work into its own owner's archival sweep. They never widen ordinary
+ * execution or generic intake: they are consulted only by `archiveMilestone`,
+ * and only for members of the milestone being archived.
+ */
+function terminalCleanupShape(
+  schemaOf: (ledgerId: string) => LedgerSchema | undefined,
+  item: Item,
+  ledgerId: string,
+): CanonicalOwnership | null {
+  // The milestone boundary needs no check here: every ref this is asked about
+  // comes from `collectArchiveSweepRefs(milestoneId)`, which returns only that
+  // group's members plus the milestone item itself — and the milestone item
+  // carries no sealed ownership, so it fails below like any other unowned row.
+  // Terminal only — live work is never cleanup.
+  const schema = schemaOf(ledgerId);
+  if (schema === undefined || !schema.terminalStatuses.includes(item.status)) return null;
+  // Forged, partial and advisory-only links fail closed: `readCanonicalOwnership`
+  // is total and returns null for a missing or non-string field, an ownerRef
+  // with no `<ledger>:` prefix, and an unknown edge kind — which is exactly the
+  // set `isAmbiguousLegacyOwnership` flags, so one check settles both. An
+  // advisory `ledgerRefs` link never reaches here at all.
+  const ownership = readCanonicalOwnership(item);
+  if (ownership === null) return null;
+  // `prerequisite` is an ordering edge, never sealed ownership.
+  if (ownership.edgeKind === PREREQUISITE_EDGE.edgeKind) return null;
+  return ownership;
+}
+
+/**
+ * Pre-admission half: owner-agnostic, so a candidate can be withheld from the
+ * admission targets before the admitted graph is known. Withholding a target
+ * never grants authority — the in-transaction half below re-derives it.
+ */
+function isTerminalCleanupCandidate(
+  store: Pick<LedgerStore, "fetch" | "fetchItem">,
+  ref: string,
+): boolean {
+  const { ledger: ledgerId, id } = splitRefParts(ref);
+  let item: Item;
+  try {
+    item = store.fetchItem(ledgerId, id);
+  } catch {
+    return false;
+  }
+  const schemaOf = (name: string): LedgerSchema | undefined => {
+    try {
+      return store.fetch(name).schema;
+    } catch {
+      return undefined;
+    }
+  };
+  return terminalCleanupShape(schemaOf, item, ledgerId) !== null;
+}
+
+/**
+ * Authoritative half: decided inside the critical section against the live
+ * graph, so the owner must be an admitted member at the admitted epoch.
+ */
+function terminalCleanupAdmissible(
+  store: Pick<LedgerStore, "fetch">,
+  tx: WorksetGenericMutationTx,
+  ctx: ValidationContext,
+  ref: string,
+): boolean {
+  const { ledger: ledgerId, id } = splitRefParts(ref);
+  let item: Item;
+  try {
+    item = tx.fetchItem(ledgerId, id);
+  } catch {
+    return false;
+  }
+  const schemaOf = (name: string): LedgerSchema | undefined => {
+    try {
+      return store.fetch(name).schema;
+    } catch {
+      return undefined;
+    }
+  };
+  const ownership = terminalCleanupShape(schemaOf, item, ledgerId);
+  return ownership !== null && ctx.members.has(ownership.ownerRef);
 }
 
 function collectArchiveSweepRefs(
@@ -1397,8 +1505,19 @@ export function createWorksetGenericMutationGateway(
       // Resolve the live sweep first so admission targets cover every member;
       // re-check inside the critical section for linearizability.
       const preSweep = collectArchiveSweepRefs(rawStore, milestoneId);
+      // D487: withhold terminal-cleanup candidates from the ADMISSION targets.
+      // The coordinator probe is shared by every mutation kind and cannot be
+      // told which operation is asking, so the operation-specific relaxation
+      // has to happen where the operation is known. Withholding a target
+      // grants nothing on its own: the critical section below re-derives
+      // eligibility from the live graph at the admitted epoch, and any ref
+      // that fails there still ends the archive as `archive-sweep-incomplete`.
+      const withheld = new Set(
+        preSweep.filter((ref) => isTerminalCleanupCandidate(rawStore, ref)),
+      );
+      const presented = preSweep.filter((ref) => !withheld.has(ref));
       const admitTargets =
-        preSweep.length > 0 ? preSweep : [itemRef(MILESTONES_LEDGER, milestoneId)];
+        presented.length > 0 ? presented : [itemRef(MILESTONES_LEDGER, milestoneId)];
       return withGenericAdmission(
         admitTargets,
         "archive-milestone",
@@ -1407,7 +1526,11 @@ export function createWorksetGenericMutationGateway(
         (tx, _adm, ctx) => {
           const sweep = tx.collectArchiveSweepRefs(milestoneId);
           if (ctx.restrictive) {
-            const missing = sweep.filter((ref) => !ctx.members.has(ref));
+            const missing = sweep.filter(
+              (ref) =>
+                !ctx.members.has(ref) &&
+                !terminalCleanupAdmissible(rawStore, tx, ctx, ref),
+            );
             if (missing.length > 0) {
               throw new WorksetGenericMutationError(
                 "archive-sweep-incomplete",
@@ -1421,6 +1544,7 @@ export function createWorksetGenericMutationGateway(
           return tx.archiveMilestone(milestoneId, summary);
         },
         {
+          scopeTargetRefs: preSweep,
           accessScope: {
             ledgerIds: [MILESTONES_LEDGER],
             milestoneIds: [milestoneId],
