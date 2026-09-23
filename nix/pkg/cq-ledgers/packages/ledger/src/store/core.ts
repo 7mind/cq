@@ -584,7 +584,12 @@ export function applyCreateItem(
   milestoneId: string,
   init: CreateItemInit,
   now: string,
-  refCtx?: RefValidationContext,
+  /**
+   * D434 — REQUIRED: `refExists` is the only view that spans a ledger's active
+   * AND archived namespaces, and the lifetime id invariant below cannot be
+   * enforced without it. Every create path already builds one.
+   */
+  refCtx: RefValidationContext,
   /**
    * T1962 — library-managed sealed ownership. When present, the generic fence
    * still rejects ownership keys in `init.fields` (forged caller payload) and
@@ -650,11 +655,19 @@ export function applyCreateItem(
   // a DanglingRefError leaves the ledger's counters + milestones untouched.
   normalizeRefFields(init.fields, {}, refCtx);
   const prefix = effectiveIdPrefix(ledger.id, ledger.schema);
+  // D434: an id is taken for the LIFETIME of its ledger. `itemIdExists` sees
+  // only the active collection, and archiving moves a group out of it, so on
+  // its own it lets an archived id be reissued — after which `<ledger>:<id>`
+  // resolves to two durable generations and every canonical reference to it is
+  // ambiguous. `refExists` is the view that spans both namespaces, and the
+  // backend resolves it inside this same transaction/lock.
+  const idTaken = (candidate: string): boolean =>
+    itemIdExists(ledger, candidate) || refCtx.refExists(ledger.id, candidate);
   let id: string;
   if (init.id !== undefined) {
     assertSafeId("item", init.id);
     assertItemIdMatchesPrefix(ledger, init.id, prefix);
-    if (itemIdExists(ledger, init.id)) throw new DuplicateIdError("item", init.id);
+    if (idTaken(init.id)) throw new DuplicateIdError("item", init.id);
     id = init.id;
     const n = numericPart(init.id, perPrefixIdRe(prefix));
     if (n !== null && n >= ledger.counters.item) {
@@ -663,8 +676,9 @@ export function applyCreateItem(
   } else {
     ledger.counters.item += 1;
     id = prefix + String(ledger.counters.item);
-    // Avoid colliding with a caller-supplied id elsewhere.
-    while (itemIdExists(ledger, id)) {
+    // Avoid colliding with a caller-supplied id elsewhere, or with an archived
+    // generation the counter alone cannot see.
+    while (idTaken(id)) {
       ledger.counters.item += 1;
       id = prefix + String(ledger.counters.item);
     }
@@ -705,7 +719,7 @@ export function applyCreateMilestoneItem(
   ledger: Ledger,
   init: CreateMilestoneItemInit,
   now: string,
-  refCtx?: RefValidationContext,
+  refCtx: RefValidationContext,
   sealedOwnership?: CanonicalOwnership,
 ): Item {
   if (ledger.id !== MILESTONES_LEDGER) {
