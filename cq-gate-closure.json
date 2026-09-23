@@ -1813,6 +1813,12 @@
     },
     {
       "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/satisfies-dependency-policy-init.test.ts",
+      "sha256": "faa8e5c27924615131c9c57bff438606431e3f6472e25a5eb74cac73d7ddf562",
+      "targets": []
+    },
+    {
+      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-and-reinit.test.ts",
       "sha256": "2f0e85cdcda7a0179f1991e34a1e4ab84be096da77b91e45e637f8c098909ce0",
       "targets": []
