@@ -427,6 +427,61 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(storeCalls).toBe(0);
   });
 
+  // D432: the pi adapter likewise derives its completion handle from
+  // `context.prepared`, so a child claiming a different handle in its compact
+  // final text was replaced by the expected one before the router could
+  // compare anything.
+  for (const [label, claimed] of [
+    ["attestationId", { attestationId: "att-WRONG", generation: 1 }],
+    ["generation", { attestationId: "att-pi-handle", generation: 99 }],
+  ] as const) {
+    test(`D432: pi refuses a compact final handle whose ${label} differs from the prepared one`, async () => {
+      const cwd = "/tmp/project/.claude/worktrees/pi-native-d432";
+      const canary = { escaped: false as const, insideWriteOk: true, evidence: "canary ok" };
+      const qualification = qualifyPiNativeAdapter({ cwd, escapeCanary: canary });
+      const adapter = createPiNativeDispatchAdapter({
+        qualification,
+        resolve: () => ({
+          cwd,
+          prompt: "do the task",
+          correlation: { childId: "pi-child", runId: "pi-run" },
+          now: () => "2026-08-07T00:00:00.000Z",
+          escapeCanary: canary,
+        }),
+        launchSession: async () => ({
+          finalText: JSON.stringify(claimed),
+          cwd,
+          usedCreateAgentSession: true,
+          usedLaunchPiChild: false,
+          childId: "pi-child",
+          runId: "pi-run",
+          completedAt: "2026-08-07T00:00:00.000Z",
+        }),
+      });
+
+      const result = await adapter.launch({
+        route: { harness: "pi", transport: "native" },
+        prepared: { attestationId: "att-pi-handle", generation: 1 },
+        resolvedModel: "pi:native",
+        effectTargetRef: "tasks:T5528",
+        child: {
+          materializeInput: () => {
+            throw new Error("a refused launch must not materialize child input");
+          },
+          storeResult: () => {
+            throw new Error("a refused launch must not store a child result");
+          },
+        },
+      } as unknown as Parameters<typeof adapter.launch>[0]);
+
+      expect(result.outcome).toBe("aborted");
+      if (result.outcome === "aborted") {
+        expect(result.reason).toBe("protocol-violation");
+        expect(result.details).toMatchObject({ violation: "pi-native-final-handle-mismatch" });
+      }
+    });
+  }
+
   test("MUTATION: unbound Claude qualification still refuses; false structural claim is not produced by qualifier", () => {
     const before = sha256(readFileSync(SRC, "utf8"));
     const unbound = qualifyClaudeNativeAdapter();

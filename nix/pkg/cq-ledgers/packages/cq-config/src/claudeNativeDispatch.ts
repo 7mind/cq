@@ -221,17 +221,48 @@ export function createClaudeNativeDispatchAdapter(
         parsed !== null &&
         typeof parsed === "object" &&
         !Array.isArray(parsed) &&
-        "attestationId" in parsed &&
-        Object.keys(parsed as object).some((key) => key !== "attestationId" && key !== "generation")
+        "attestationId" in parsed
       ) {
-        return {
-          outcome: "aborted",
-          reason: "protocol-violation",
-          details: {
-            violation: "claude-native-echoed-body",
-            finalTextBytes: sessionResult.finalText.length,
-          },
-        };
+        if (
+          Object.keys(parsed as object).some(
+            (key) => key !== "attestationId" && key !== "generation",
+          )
+        ) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "claude-native-echoed-body",
+              finalTextBytes: sessionResult.finalText.length,
+            },
+          };
+        }
+        // D432: the completion handle is derived from `context.prepared`, so
+        // without this the child's CLAIMED handle was discarded and replaced by
+        // the expected one — the router then compared the substitution against
+        // itself and attestation-only or generation-only mutations passed. Both
+        // fields are required, typed, and compared independently.
+        const claimed = parsed as Readonly<Record<string, unknown>>;
+        if (
+          typeof claimed["attestationId"] !== "string" ||
+          typeof claimed["generation"] !== "number" ||
+          claimed["attestationId"] !== handle.attestationId ||
+          claimed["generation"] !== handle.generation
+        ) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "claude-native-final-handle-mismatch",
+              expectedAttestationId: handle.attestationId,
+              expectedGeneration: handle.generation,
+              observedAttestationId:
+                typeof claimed["attestationId"] === "string" ? claimed["attestationId"] : null,
+              observedGeneration:
+                typeof claimed["generation"] === "number" ? claimed["generation"] : null,
+            },
+          };
+        }
       }
     } catch {
       // non-JSON final text acceptable outside compact handle-only protocol

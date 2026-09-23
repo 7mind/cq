@@ -116,6 +116,57 @@ describe("D286 createClaudeNativeDispatchAdapter", () => {
     expect(result.nativeCompletion.actor).toBe(requiredActor);
   });
 
+  // D432: the adapter derives its completion handle from `context.prepared`,
+  // so a child claiming a DIFFERENT handle in its compact final text was
+  // silently replaced by the expected one. The router compares the returned
+  // handle and therefore only ever saw the substituted values, which made
+  // attestation-only and generation-only mutations invisible.
+  for (const [label, claimed] of [
+    ["attestationId", { attestationId: "att-WRONG", generation: 1 }],
+    ["generation", { attestationId: "att-1", generation: 99 }],
+  ] as const) {
+    test(`D432: refuses a compact final handle whose ${label} differs from the prepared one`, async () => {
+      const adapter = createClaudeNativeDispatchAdapter({
+        resolve: () => binding(),
+        launchSession: async (req) =>
+          ({
+            finalText: JSON.stringify(claimed),
+            cwd: req.cwd,
+            usedClaudeNativeAgent: true,
+            usedProcessShellout: false,
+            childId: "c1",
+            runId: "r1",
+            completedAt: "2026-08-07T12:00:01.000Z",
+          }) satisfies ClaudeNativeSessionLaunchResult,
+      });
+      const result = await adapter.launch(fakeContext() as never);
+      expect(result.outcome).toBe("aborted");
+      if (result.outcome === "aborted") {
+        expect(result.reason).toBe("protocol-violation");
+        expect(result.details).toMatchObject({
+          violation: "claude-native-final-handle-mismatch",
+        });
+      }
+    });
+  }
+
+  test("D432: non-JSON final text remains the accepted prompt-best-effort residual", async () => {
+    const adapter = createClaudeNativeDispatchAdapter({
+      resolve: () => binding(),
+      launchSession: async (req) =>
+        ({
+          finalText: "done, stored via the result capability",
+          cwd: req.cwd,
+          usedClaudeNativeAgent: true,
+          usedProcessShellout: false,
+          childId: "c1",
+          runId: "r1",
+          completedAt: "2026-08-07T12:00:01.000Z",
+        }) satisfies ClaudeNativeSessionLaunchResult,
+    });
+    expect((await adapter.launch(fakeContext() as never)).outcome).toBe("completed");
+  });
+
   test("launches when handle+path qualify and session is native", async () => {
     let launchedCwd: string | undefined;
     const adapter = createClaudeNativeDispatchAdapter({
