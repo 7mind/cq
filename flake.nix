@@ -1050,9 +1050,14 @@ EOF
             ${pkgs.bun}/bin/bun test \
               "$WORKSPACE/packages/cq-config/test/dispatchTransportRouter.test.ts" \
               --test-name-pattern T2045
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              export CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex
-            ''}
+            # D414: this was Linux-only, so the installed provider qualification
+            # and its codex:native registry assertion skipped themselves on
+            # Darwin and that platform shipped unqualified. `codexPackage`
+            # carries aarch64/x86_64-darwin assets, and the gate's exact
+            # invocation — `codex -c default_permissions=... -c permissions.<p>=...
+            # sandbox -P <p> -C <dir> -- <cmd>` — runs under seatbelt on
+            # aarch64-darwin, so the guard was never a platform limitation.
+            export CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex
             PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
