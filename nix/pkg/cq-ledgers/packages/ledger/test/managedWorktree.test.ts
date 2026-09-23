@@ -1614,6 +1614,12 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     await fs.writeFile(path.join(prepared.evidence.absolutePath, "done.txt"), "ok\n");
     await git(prepared.evidence.absolutePath, ["add", "."]);
     await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "complete"]);
+    const carrying = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    // D405: terminal disposal. The completed artifact must leave the tree that
+    // release fast-forwards into the integration branch.
+    await git(prepared.evidence.absolutePath, ["rm", "-q", "WIP-T1310.md"]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "dispose WIP-T1310.md"]);
     const tip = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
 
     const released = await releaseManagedWorktree(
@@ -1627,6 +1633,79 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     );
     expect(released.status).toBe("released");
     expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(0);
+
+    // Durability is unchanged: the artifact is gone from the terminal tree but
+    // every checkpoint commit remains reachable through the parked recovery ref.
+    const inTip = await exec("git", ["cat-file", "-e", `${tip}:WIP-T1310.md`], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    }).then(() => true, () => false);
+    expect(inTip).toBe(false);
+    const parked = await git(repo.cwd, [
+      "rev-parse",
+      `refs/cq-managed-recovery/${prepared.handle.branch}`,
+    ]);
+    expect(parked).toBe(tip);
+    const carriedFromRecovery = await exec(
+      "git",
+      ["cat-file", "-e", `${carrying}:WIP-T1310.md`],
+      { cwd: repo.cwd, encoding: "utf8" },
+    ).then(() => true, () => false);
+    expect(carriedFromRecovery).toBe(true);
+    const reachable = await exec(
+      "git",
+      ["merge-base", "--is-ancestor", carrying, parked],
+      { cwd: repo.cwd, encoding: "utf8" },
+    ).then(() => true, () => false);
+    expect(reachable).toBe(true);
+  });
+
+  it("D405: terminal release refuses a resultCommit that still carries its WIP artifact", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1311", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    const complete = serializeWipArtifact({
+      id: "T1311",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "implementation", status: "done", body: "done\n" }],
+      complete: true,
+      openCheckpoints: [],
+    });
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "WIP-T1311.md"), complete);
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "done.txt"), "ok\n");
+    await git(prepared.evidence.absolutePath, ["add", "."]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "complete with wip"]);
+    const retained = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    // Every checkpoint is closed, so the G122 open-checkpoint guard is
+    // satisfied. The artifact is nonetheless still IN the terminal tree, and
+    // release fast-forwards exactly this commit into the integration tree.
+    const refused = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: retained,
+        deleteBranch: true,
+      },
+      deps,
+    );
+    expect(refused.status).toBe("refused");
+    if (refused.status === "refused") expect(refused.reason).toBe("wip-retained");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1311", repo.stateDir)).toHaveLength(1);
   });
 
   it("category-(iii): dependency resultCommit absent from base refuses before worktree add", async () => {

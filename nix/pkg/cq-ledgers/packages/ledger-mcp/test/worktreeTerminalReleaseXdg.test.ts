@@ -592,13 +592,39 @@ describe("D336 production XDG terminal worktree release", () => {
           complete: false,
           openCheckpoints: ["trusted full gate"],
         });
-        await writeFile(path.join(prepared.handle.absolutePath, "RESULT-T336.md"), resultBody);
-        await writeFile(path.join(prepared.handle.absolutePath, wipPath), wipBody);
-        const receipt = decode<{
+        type GitChangeReceipt = {
           kind: "cq-git-change-receipt";
           newHead: string;
           paths: string[];
-        }>(
+        };
+        // Early durability: the WIP partial lands in its own commit first.
+        await writeFile(path.join(prepared.handle.absolutePath, wipPath), wipBody);
+        const wipReceipt = decode<GitChangeReceipt>(
+          (await client.callTool({
+            name: "git_commit",
+            arguments: {
+              attestationId: dispatch.prepared.attestationId,
+              generation: dispatch.prepared.generation,
+              gitChangeCapability: dispatch.prepared.gitChangeCapability,
+              operationId: "d336-wip-v1",
+              expectedHead: baseCommit,
+              message: "D336 wip partial",
+              changes: [
+                {
+                  kind: "add",
+                  path: wipPath,
+                  newState: { mode: "100644", digest: sha256(wipBody) },
+                },
+              ],
+            },
+          })) as ToolResult,
+        );
+        // D405 terminal disposal: the result commit carries the deliverable and
+        // REMOVES the artifact, so the tree release fast-forwards is clean while
+        // the partial stays reachable at the earlier commit.
+        await writeFile(path.join(prepared.handle.absolutePath, "RESULT-T336.md"), resultBody);
+        await rm(path.join(prepared.handle.absolutePath, wipPath));
+        const receipt = decode<GitChangeReceipt>(
           (await client.callTool({
             name: "git_commit",
             arguments: {
@@ -606,7 +632,7 @@ describe("D336 production XDG terminal worktree release", () => {
               generation: dispatch.prepared.generation,
               gitChangeCapability: dispatch.prepared.gitChangeCapability,
               operationId: "d336-result-v1",
-              expectedHead: baseCommit,
+              expectedHead: wipReceipt.newHead,
               message: "D336 supervised result",
               changes: [
                 {
@@ -615,9 +641,9 @@ describe("D336 production XDG terminal worktree release", () => {
                   newState: { mode: "100644", digest: sha256(resultBody) },
                 },
                 {
-                  kind: "add",
+                  kind: "delete",
                   path: wipPath,
-                  newState: { mode: "100644", digest: sha256(wipBody) },
+                  oldState: { mode: "100644", digest: sha256(wipBody) },
                 },
               ],
             },
@@ -630,8 +656,8 @@ describe("D336 production XDG terminal worktree release", () => {
           resultCommit,
           branch: prepared.handle.branch,
           actualWorktreePath: prepared.handle.absolutePath,
-          filesTouched: [...receipt.paths],
-          gitReceipts: [receipt],
+          filesTouched: ["RESULT-T336.md"],
+          gitReceipts: [wipReceipt, receipt],
           checkSummary: "runner-supervised gate requested",
           summary: "D336 exact-tip result",
           baseVerification: {

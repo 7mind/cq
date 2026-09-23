@@ -253,7 +253,21 @@ receipt path union.
    an A/B reproduction of the same selector and signature on this tree and the
    recorded base; if confinement prevents that proof, return `fail`.
 
-6. **Commit and verify.** Commit all task changes through the applicable path, then require:
+6. **Dispose the WIP artifact.** After every worker-owned checkpoint is closed
+   and BEFORE the terminal commit, delete `WIP-<taskId>.md` (every member's file
+   for a cohort) from the worktree and persist that deletion through the
+   applicable commit path — the `git_commit` broker when one was supplied,
+   otherwise the confined commit path. Release fast-forwards the terminal tree
+   into the integration branch, so an artifact left there stays there forever;
+   closing its checkpoints is not disposal. Durability is unaffected: every
+   checkpoint commit remains reachable in the task branch history that managed
+   release parks under its recovery ref. Managed release refuses `wip-retained`
+   and completion refuses a `resultCommit` that still contains the path, so a
+   skipped disposal blocks the result rather than polluting the tree. A
+   no-effect round that reports `resultCommit === startingCommit` performs no
+   deletion, because its tip was already disposed when it was produced.
+
+7. **Commit and verify.** Commit all task changes through the applicable path, then require:
    - `git rev-parse --verify HEAD` succeeds;
    - `git cat-file -t <head>` returns `commit`;
    - `git status --porcelain --untracked-files=all` is empty;

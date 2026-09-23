@@ -355,6 +355,27 @@ export async function verifyProductionImplementation(
     ["merge-base", "--is-ancestor", startingCommit, resultCommit],
     "starting ancestry",
   );
+  // D405: the terminal tree is exactly what gets fast-forwarded into the
+  // integration branch, so a completed-but-retained WIP artifact lands there
+  // permanently. Closing every checkpoint is NOT disposal. Recovery is
+  // unaffected — the checkpoints stay reachable through the branch history the
+  // managed release parks under its recovery ref.
+  const resultTaskId = workerOutput["taskId"];
+  if (typeof resultTaskId !== "string" || resultTaskId === "") {
+    throw new Error("worker result task id is malformed");
+  }
+  const retainedWip = `WIP-${resultTaskId}.md`;
+  if (
+    (await gitOutput(
+      repositoryRoot,
+      ["ls-tree", "--name-only", resultCommit, "--", retainedWip],
+      "terminal WIP artifact",
+    )) !== ""
+  ) {
+    throw new Error(
+      `worker resultCommit still contains ${retainedWip}; delete the artifact and commit that deletion before completion`,
+    );
+  }
   const actualWorktreePath = workerOutput["actualWorktreePath"];
   if (typeof actualWorktreePath !== "string") {
     throw new Error("worker result actualWorktreePath is malformed");

@@ -143,6 +143,28 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
   return result.stdout;
 }
 
+/**
+ * D405: a round that DISPOSES its WIP artifact makes that round's receipt
+ * paths differ from the net `base..result` diff — the artifact was added in an
+ * earlier round and removed in this one, so it is absent from the net diff.
+ * `filesTouchedVerified` compares against that net diff, so report it.
+ */
+async function netChangedPaths(
+  worktreePath: string,
+  baseCommit: string,
+  resultCommit: string,
+): Promise<readonly string[]> {
+  const output = await git(worktreePath, [
+    "diff",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    `${baseCommit}..${resultCommit}`,
+    "--",
+  ]);
+  return output.split("\0").filter((name) => name !== "");
+}
+
 function resultText(result: ToolResult): string {
   return (result.content ?? [])
     .filter((entry) => entry.type === "text")
@@ -287,15 +309,19 @@ async function completeWorker(
   baseCommit: string,
   startingCommit: string,
   changes: readonly {
-    readonly kind: "add" | "modify";
+    readonly kind: "add" | "modify" | "delete";
     readonly path: string;
     readonly oldBody?: string;
-    readonly newBody: string;
+    readonly newBody?: string;
   }[],
   operationId: string,
 ): Promise<{ readonly receipt: GitReceipt; readonly resultCommit: string }> {
   for (const change of changes) {
-    await writeFile(path.join(handle.absolutePath, change.path), change.newBody);
+    if (change.kind === "delete") {
+      await rm(path.join(handle.absolutePath, change.path));
+    } else {
+      await writeFile(path.join(handle.absolutePath, change.path), change.newBody!);
+    }
   }
   const receipt = await callOk<GitReceipt>(client, calls, "git_commit", {
     attestationId: dispatch.prepared.attestationId,
@@ -309,14 +335,20 @@ async function completeWorker(
         ? {
             kind: "add",
             path: change.path,
-            newState: { mode: "100644", digest: sha256(change.newBody) },
+            newState: { mode: "100644", digest: sha256(change.newBody!) },
           }
-        : {
-            kind: "modify",
-            path: change.path,
-            oldState: { mode: "100644", digest: sha256(change.oldBody!) },
-            newState: { mode: "100644", digest: sha256(change.newBody) },
-          },
+        : change.kind === "delete"
+          ? {
+              kind: "delete",
+              path: change.path,
+              oldState: { mode: "100644", digest: sha256(change.oldBody!) },
+            }
+          : {
+              kind: "modify",
+              path: change.path,
+              oldState: { mode: "100644", digest: sha256(change.oldBody!) },
+              newState: { mode: "100644", digest: sha256(change.newBody!) },
+            },
     ),
   });
   invariant(FULL_SHA.test(receipt.newHead), "Git broker returned a malformed result commit");
@@ -326,7 +358,7 @@ async function completeWorker(
     resultCommit: receipt.newHead,
     branch: handle.branch,
     actualWorktreePath: handle.absolutePath,
-    filesTouched: [...receipt.paths],
+    filesTouched: await netChangedPaths(handle.absolutePath, baseCommit, receipt.newHead),
     gitReceipts: [receipt],
     checkSummary: "trusted gate delegated to result storage",
     baseVerification: {
@@ -901,7 +933,6 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
     const correctionConsumedFinalizedOutcome =
       JSON.stringify(secondInput.input.priorCriticism) === JSON.stringify(firstCriticism);
     invariant(correctionConsumedFinalizedOutcome, "correction substituted non-finalized criticism");
-    const secondWip = firstWip.replace("Initial candidate.", "Corrected candidate.");
     const secondEvidence = "export const replacementEvidence = 'corrected';\n";
     const secondWorker = await completeWorker(
       firstConnection.client,
@@ -913,12 +944,8 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       baseCommit,
       firstWorker.resultCommit,
       [
-        {
-          kind: "modify",
-          path: `WIP-${evidenceTaskId}.md`,
-          oldBody: firstWip,
-          newBody: secondWip,
-        },
+        // D405: the round whose result reaches completion disposes the WIP.
+        { kind: "delete", path: `WIP-${evidenceTaskId}.md`, oldBody: firstWip },
         {
           kind: "modify",
           path: "replacement-evidence.ts",

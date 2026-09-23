@@ -10398,11 +10398,42 @@ throw new Error("unexpected controlled cq invocation");
       }),
     ).resolves.toBeUndefined();
 
-    const released = await releaseManagedWorktree(
+    // D405: pre-merge WIP CLOSURE and terminal DISPOSAL are different gates.
+    // The projection above closes the reserved parent-owned checkpoint, so
+    // closure holds at this tip — but the artifact is still IN the tree that
+    // release fast-forwards into integration, which is exactly how completed
+    // artifacts used to land there permanently.
+    const retained = await releaseManagedWorktree(
       {
         handle: subject.managed.handle,
         terminalDisposition: "done",
         resultCommit: subject.receipt.newHead,
+      },
+      { stateDir: subject.stateDir },
+    );
+    expect(retained).toMatchObject({ status: "refused", reason: "wip-retained" });
+
+    // Disposing the artifact and committing that deletion releases cleanly,
+    // and the checkpoint commit stays reachable behind the disposal tip.
+    await git(subject.managed.handle.absolutePath, [
+      "rm",
+      "-q",
+      `WIP-${subject.managed.handle.taskId}.md`,
+    ]);
+    await git(subject.managed.handle.absolutePath, [
+      "commit",
+      "-q",
+      "-m",
+      `dispose WIP-${subject.managed.handle.taskId}.md`,
+    ]);
+    const disposedTip = await git(subject.managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+    expect(disposedTip).not.toBe(subject.receipt.newHead);
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: subject.managed.handle,
+        terminalDisposition: "done",
+        resultCommit: disposedTip,
       },
       { stateDir: subject.stateDir },
     );

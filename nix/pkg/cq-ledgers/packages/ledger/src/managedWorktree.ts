@@ -286,6 +286,7 @@ export type ReleaseManagedWorktreeRefusalReason =
   | "dirty"
   | "wip-open"
   | "wip-malformed"
+  | "wip-retained"
   | "not-terminal"
   | "commit-mismatch"
   | "ambiguous"
@@ -1644,6 +1645,32 @@ async function revParse(
   const result = await git(cwd, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]);
   if (result.code !== 0) return null;
   return result.stdout.trim();
+}
+
+/**
+ * D405 — task ids whose `WIP-<taskId>.md` is STILL PRESENT in `commit`'s tree.
+ *
+ * Closing every checkpoint makes an artifact "clean" for G122, but release
+ * fast-forwards this exact commit into the integration tree, so a clean-but-
+ * retained artifact lands there permanently. Recovery durability is unaffected:
+ * the WIP remains reachable through the branch history that release parks under
+ * the recovery ref, so only the TERMINAL tree has to be free of it.
+ */
+async function wipPathsRetainedInTree(
+  git: ManagedWorktreeGitRunner,
+  worktreePath: string,
+  commit: string,
+  taskIds: readonly string[],
+): Promise<readonly string[]> {
+  if (taskIds.length === 0) return [];
+  const paths = taskIds.map((taskId) => `WIP-${taskId}.md`);
+  const listed = await git(worktreePath, ["ls-tree", "--name-only", "-z", commit, "--", ...paths]);
+  if (listed.code !== 0) {
+    throw new Error(
+      `managed release could not inspect the terminal tree: ${listed.stderr.trim() || listed.stdout.trim()}`,
+    );
+  }
+  return listed.stdout.split("\0").filter((name: string) => name !== "");
 }
 
 function rootWipNames(output: string): readonly string[] {
@@ -3140,6 +3167,15 @@ export async function releaseCompletedManagedCohortWorktree(input: {
           if (wip.status === "malformed") return refusedRelease("wip-malformed", `WIP artifact malformed at ${wip.path}: ${wip.detail}`, { absolutePath });
           if (wip.status === "open") return refusedRelease("wip-open", "cohort worktree retains open WIP checkpoints", { absolutePath });
         }
+        let cohortRetained: readonly string[];
+        try {
+          cohortRetained = await wipPathsRetainedInTree(git, absolutePath, batch.resultCommit, taskIds);
+        } catch (error) {
+          return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), { absolutePath });
+        }
+        if (cohortRetained.length > 0) {
+          return refusedRelease("wip-retained", `cohort terminal tree still contains ${cohortRetained.join(", ")}`, { absolutePath });
+        }
         await fault("before-worktree-remove", { absolutePath, token: handle.token });
         const removed = await git(input.repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
         if (removed.code !== 0) return refusedRelease("ambiguous", `cohort worktree removal failed: ${removed.stderr}`, { absolutePath });
@@ -3421,6 +3457,27 @@ async function releaseManagedWorktreeUnderEffectLock(
         absolutePath,
         openCheckpoints,
       });
+    }
+
+    // Only a `done` release hands its tip to integration, so only that tip has
+    // to be free of the artifact. An abandoned worktree merges nothing, and
+    // refusing it here would strand work this guard was never meant to touch.
+    if (request.terminalDisposition === "done") {
+      let retained: readonly string[];
+      try {
+        retained = await wipPathsRetainedInTree(git, absolutePath, head, [stored.handle.taskId]);
+      } catch (error) {
+        return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), {
+          absolutePath,
+        });
+      }
+      if (retained.length > 0) {
+        return refusedRelease(
+          "wip-retained",
+          `terminal tree still contains ${retained.join(", ")}; delete the artifact and commit that deletion before release`,
+          { absolutePath },
+        );
+      }
     }
 
     await fault("before-worktree-remove", {
