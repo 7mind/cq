@@ -1314,15 +1314,18 @@ export const CLAUDE_WORKTREE_INPUT_PROPERTY = "worktreePath" as const;
 export const CLAUDE_WORKTREE_OUTPUT_PROPERTY = "actualWorktreePath" as const;
 
 /**
- * The `isolation` argument a NATIVE ref-first dispatch must pass.
+ * D402: there is NO isolation argument any more.
  *
- * Passing `"worktree"` would make the harness allocate-or-reuse its OWN tree at
- * whatever commit it was left — defects:D119's root cause, and exactly the
- * behaviour questions:Q363 abolished. So the one worktree-related argument the
- * `Agent` tool DOES accept must be set to keep the harness out of the way, and
- * the prepared path is carried in the input instead.
+ * `CLAUDE_NATIVE_ISOLATION_ARGUMENT = "none"` used to be pinned here on the
+ * premise that `"none"` was the one worktree-related value the `Agent` tool
+ * accepted. That premise is false on the installed provider, whose isolation
+ * enum is `worktree | remote`, so the constant was inert — and researches:RS12
+ * showed the allocation it was meant to prevent is driven by generated role
+ * FRONTMATTER, not by the call site at all. A ref-first native launch now
+ * simply omits the argument, and the frontmatter declaration is refused by the
+ * generated-artifact scanner instead.
  */
-export const CLAUDE_NATIVE_ISOLATION_ARGUMENT = "none" as const;
+
 
 /**
  * The `run_in_background` argument a NATIVE ref-first dispatch must pass, against

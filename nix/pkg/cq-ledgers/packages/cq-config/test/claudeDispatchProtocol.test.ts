@@ -22,6 +22,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import * as configModule from "@cq/config";
 import {
   AttestationBindingError,
   AttestationContractError,
@@ -51,7 +52,6 @@ import {
   CLAUDE_MODE_WORKTREE_PLACEMENTS,
   CLAUDE_NATIVE_DELIVERY_MODE,
   CLAUDE_NATIVE_ENFORCEMENT_GAP,
-  CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   CLAUDE_RESIDUAL_ACCEPTANCE_QUOTE,
   CLAUDE_WORKTREE_ADDRESSING,
@@ -438,9 +438,11 @@ describe("T687 §1 — which Claude delivery modes can satisfy the contract", ()
     // a native ref-first dispatch must opt out of it explicitly.
     expect(isSupportedClaudeDeliveryMode("background-native-subagent")).toBe(false);
     expect(CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT).toBe(false);
-    // And it must keep the harness OUT of worktree allocation (defects:D119).
-    expect(CLAUDE_NATIVE_ISOLATION_ARGUMENT).toBe("none");
-    expect(CLAUDE_NATIVE_ISOLATION_ARGUMENT).not.toBe("worktree");
+    // D402: the isolation argument is gone. `"none"` was never in the
+    // provider's enum (`worktree | remote`), so pinning it proved nothing, and
+    // researches:RS12 located the real allocation trigger in generated role
+    // frontmatter. Keeping the harness out is now the scanner's job.
+    expect(Object.keys(configModule)).not.toContain("CLAUDE_NATIVE_ISOLATION_ARGUMENT");
   });
 
   test("the native enforcement gap is recorded WITH its flip condition", () => {

@@ -327,7 +327,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/claudeDispatchBridge.ts",
-      "sha256": "2b7a84d665639495ae5b8e6722bab34edad8a3b99600262b7067963f65f12088",
+      "sha256": "98833c653c29e707b5c874d30e2f4cae3ec1af307995ad64697893a7e82adcec",
       "targets": []
     },
     {
@@ -357,13 +357,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeDispatchBridge.test.ts",
-      "sha256": "e70b31600b68015a96b56cd215aa7aecdcc6881dff1b8e8b21e34d80e05552b9",
+      "sha256": "76ba0901a75d05932ca6dfe2420efce7b19e695104a4327e5c1f9cd7d3bf12d3",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeDispatchProtocol.test.ts",
-      "sha256": "cedecbb5ea68698dfeec57c22346c7f9143481cac71b6967bb316b21ad61e786",
+      "sha256": "97947f1d8c17248009d1851417212fcdae22616454ca2ca95f2a7825d6b4d47e",
       "targets": []
     },
     {
@@ -722,7 +722,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/agentsCatalogue.gen.test.ts",
-      "sha256": "445b288b09e1ea56d0d9e866738cb73cf01684174fea88760063764f07452700",
+      "sha256": "920fa6fd695b5b0d967e6eff37c91d97d32cfd4fc749ec5ea8812c994d644b20",
       "targets": []
     },
     {
@@ -1586,7 +1586,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/agentsCatalogue.gen.test.ts",
-      "sha256": "445b288b09e1ea56d0d9e866738cb73cf01684174fea88760063764f07452700",
+      "sha256": "920fa6fd695b5b0d967e6eff37c91d97d32cfd4fc749ec5ea8812c994d644b20",
       "targets": []
     },
     {

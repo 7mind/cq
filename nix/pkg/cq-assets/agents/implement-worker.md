@@ -97,11 +97,16 @@ receipt path union.
    `fail` with a precise `blockedReason` containing the literal diagnosis
    `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`
    plus the supplied path and the resolved toplevel — do not rediscover the
-   confinement by trial-and-error across sibling checkouts. When the surface
-   adapter already pinned a harness-minted worktree and the advisory path is
-   absent or unusable for that reason, continue in the pinned tree and still
-   report its absolute toplevel as `actualWorktreePath`. Always include
-   `actualWorktreePath` in the stored result.
+   confinement by trial-and-error across sibling checkouts. When no CQ-prepared worktree can be
+   entered — the advisory `worktreePath` is absent, unreachable, or not a git
+   worktree of this repository — STOP and return `fail` with a precise
+   `blockedReason` naming the supplied path and the resolved toplevel. You must
+   never operate in the parent checkout: the orchestrator prepared a worktree
+   precisely so your commits land on the task branch, and a turn that proceeds
+   in whatever tree it happens to hold commits to the live integration branch
+   instead. An absent advisory path is a dispatch fault to report, not a
+   placement to improvise. Always include `actualWorktreePath` in the stored
+   result.
 
    Verify placement evidence:
    - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);
