@@ -26,7 +26,10 @@ import {
   WORKSET_GENERIC_MUTATION_RAW_WRITE_METHODS,
   WORKSET_OWNER_REF_FIELD,
   WORKSET_OWNER_EDGE_KIND_FIELD,
+  DECISIONS_LEDGER,
+  DEFECTS_LEDGER,
   IDEAS_LEDGER,
+  MEMORIES_LEDGER,
   MILESTONES_AMBIENT_ID,
   QUESTIONS_LEDGER,
   TASKS_LEDGER,
@@ -356,20 +359,109 @@ export function runWorksetGenericMutationContract(
       );
       expect(answeredStatus.fields.answer).toBe("drafted earlier");
 
+      // The exemption is now the whole of question OPERATOR INPUT, not just an
+      // answer-only delta. Withdrawing, rewording and mixed answer+context
+      // edits are ordinary maintenance that gates nothing, and the schema
+      // admits only `open -> answered | withdrawn` (both terminal), so no
+      // update can move a question back to open and re-block its owner.
       for (const [id, patch] of [
         [withdrawal.id, { status: "withdrawn" }],
         [questionEdit.id, { fields: { question: "changed question" } }],
         [mixedEdit.id, { fields: { answer: "answer", context: "changed context" } }],
       ] as const) {
-        const before = ledger.fetchItem(QUESTIONS_LEDGER, id);
-        await expectGatewayRejection(
-          ledger.mutations.updateItem(QUESTIONS_LEDGER, id, patch),
-          "target-excluded",
-        );
-        expect(ledger.fetchItem(QUESTIONS_LEDGER, id)).toEqual(before);
+        const updated = await ledger.mutations.updateItem(QUESTIONS_LEDGER, id, patch);
+        expect(updated.id).toBe(id);
       }
+      expect(ledger.fetchItem(QUESTIONS_LEDGER, withdrawal.id).status).toBe("withdrawn");
+      expect(ledger.fetchItem(QUESTIONS_LEDGER, questionEdit.id).fields.question).toBe(
+        "changed question",
+      );
+
+      // What stays gated: CREATING a question outside the workset would let an
+      // open gate be injected into work the caller was never admitted to.
+      await expectGatewayRejection(
+        ledger.mutations.createItem(QUESTIONS_LEDGER, milestone.id, {
+          status: "open",
+          fields: { question: "injected blocker" },
+        }),
+        "creation-denied",
+      );
       expect(await ledger.snapshotRoots()).toEqual(roots);
     });
+
+    caseIt(
+      factory,
+      "ambient records, and defect intake, are writable under an unrelated root",
+      async () => {
+        const ledger = await factory.build();
+        await ledger.init();
+        const milestone = await ledger.mutations.createMilestone({ title: "ambient intake" });
+        const root = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+          status: "planned",
+          fields: { headline: "unrelated root" },
+        });
+        await ledger.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+        const roots = await ledger.snapshotRoots();
+
+        // Ambient records: nothing dispatches on them and no readiness
+        // predicate reads them, so workset membership has nothing to say.
+        const idea = await ledger.mutations.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "open",
+          fields: { title: "unrelated intake" },
+        });
+        const memory = await ledger.mutations.createItem(
+          MEMORIES_LEDGER,
+          MILESTONES_AMBIENT_ID,
+          { status: "active", fields: { title: "durable fact", content: "measured" } },
+        );
+        const decision = await ledger.mutations.createItem(DECISIONS_LEDGER, milestone.id, {
+          status: "proposed",
+          fields: { headline: "a locked choice", rationale: "measured" },
+        });
+        for (const [ledgerId, id, field, value] of [
+          [IDEAS_LEDGER, idea.id, "title", "edited intake"],
+          [MEMORIES_LEDGER, memory.id, "content", "edited fact"],
+          [DECISIONS_LEDGER, decision.id, "headline", "edited choice"],
+        ] as const) {
+          const updated = await ledger.mutations.updateItem(ledgerId, id, {
+            fields: { ...ledger.fetchItem(ledgerId, id).fields, [field]: value },
+          });
+          expect(updated.fields[field]).toBe(value);
+        }
+
+        // Defect INTAKE: requiring a fault to be admitted before it can be
+        // reported is circular, so reporting one at `open` is exempt.
+        const reported = await ledger.mutations.createItem(DEFECTS_LEDGER, milestone.id, {
+          status: "open",
+          fields: { headline: "observed elsewhere", severity: "medium" },
+        });
+        expect(reported.status).toBe("open");
+
+        // Intake means `open`, and only `open`. Creating a defect already at a
+        // later status would smuggle seed-ready work past admission, so the
+        // exemption is keyed on the status, not merely on the ledger.
+        await expectGatewayRejection(
+          ledger.mutations.createItem(DEFECTS_LEDGER, milestone.id, {
+            status: "root-caused",
+            fields: { headline: "pre-seeded", severity: "high" },
+          }),
+          "creation-denied",
+        );
+
+        // And a defect STATUS TRANSITION is not intake either: `open -> wip`
+        // and `open -> root-caused` drive pInvestigate/pSeed, so they stay
+        // gated.
+        const before = ledger.fetchItem(DEFECTS_LEDGER, reported.id);
+        await expectGatewayRejection(
+          ledger.mutations.updateItem(DEFECTS_LEDGER, reported.id, { status: "wip" }),
+          "target-excluded",
+        );
+        expect(ledger.fetchItem(DEFECTS_LEDGER, reported.id)).toEqual(before);
+
+        // None of this advanced the workset.
+        expect(await ledger.snapshotRoots()).toEqual(roots);
+      },
+    );
 
     caseIt(factory, "D442 reopens and unarchives ideas without changing workset roots", async () => {
       const ledger = await factory.build();

@@ -3,6 +3,9 @@ import type { SQL } from "bun";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  DECISIONS_LEDGER,
+  DEFECTS_LEDGER,
+  MEMORIES_LEDGER,
   TASKS_LEDGER,
   IDEAS_LEDGER,
   QUESTIONS_LEDGER,
@@ -66,23 +69,24 @@ describe("T1988 generic mutation conformance [Behavioral-Active Blackbox-Atomic]
       }),
     ).toEqual({ statusChanged: true, changedFields: ["answer"] });
     expect(
-      classifyGenericItemUpdate(QUESTIONS_LEDGER, question, {
-        status: "answered",
-        fields: { question: "Ship?", context: "unchanged", answer: "final" },
-      }),
-    ).toBe("pure-question-answer");
+      classifyGenericItemUpdate(QUESTIONS_LEDGER),
+    ).toBe("question-operator-input");
+    // Widened deliberately: the previous rule admitted an answer-only delta and
+    // called ordinary MAINTENANCE of a question `ordinary`, so fixing its
+    // context or recording a recommendation needed workset membership while
+    // gating nothing.
     expect(
-      classifyGenericItemUpdate(QUESTIONS_LEDGER, question, {
-        fields: { answer: "final", context: "changed" },
-      }),
-    ).toBe("ordinary");
-    expect(classifyGenericItemUpdate(IDEAS_LEDGER, question, { status: "answered" })).toBe(
-      "idea-only",
-    );
+      classifyGenericItemUpdate(QUESTIONS_LEDGER),
+    ).toBe("question-operator-input");
+    expect(classifyGenericItemUpdate(IDEAS_LEDGER)).toBe("ambient-record");
+    expect(classifyGenericItemUpdate(MEMORIES_LEDGER)).toBe("ambient-record");
+    expect(classifyGenericItemUpdate(DECISIONS_LEDGER)).toBe("ambient-record");
+    expect(classifyGenericItemUpdate(TASKS_LEDGER)).toBe("ordinary");
+    expect(classifyGenericItemUpdate(DEFECTS_LEDGER)).toBe("ordinary");
     expect(
       WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES.find(({ kind }) => kind === "update-item")
         ?.exemptions,
-    ).toEqual(["idea-only", "pure-question-answer"]);
+    ).toEqual(["ambient-record", "question-operator-input"]);
   });
 
   test("recovers only an exact inactive root and preserves its archived sibling", async () => {
