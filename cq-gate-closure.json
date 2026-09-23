@@ -1778,7 +1778,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "a35169860f035fb4fc31cad1cdbd81367fd6b5db3cf1f02892929be6efaec756",
+      "sha256": "32e6d33283765ed75e06675c495d865dcc58e5d94ac3f24496acaf2763181e76",
       "targets": []
     },
     {
@@ -2000,7 +2000,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
-      "sha256": "2ea7871219f78cac419f77c8a325a189ae24eec186a2f06e7a5d81ed28cbf3ab",
+      "sha256": "289f6d87be23c37861aeff8c28753921e54c1187184541205aecef95eaaf6c9e",
       "targets": []
     },
     {

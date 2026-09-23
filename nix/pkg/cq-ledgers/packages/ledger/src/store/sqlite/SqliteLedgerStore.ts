@@ -2069,13 +2069,18 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       ...scope.referenceCandidates,
       ...scope.milestoneIds.map((milestoneId) => `${MILESTONES_LEDGER}:${milestoneId}`),
     ];
+    // Server-derived membership also recorded as authoritative for validation
+    // (D484); it stays in `candidateRefs` so traversal order is unchanged.
+    const requiredRefs: string[] = [];
     if (
       operation === "archive-milestone" ||
       operation === "execute-finalize" ||
       operation === "update-milestone"
     ) {
       for (const milestoneId of scope.milestoneIds) {
-        candidateRefs.push(...source.itemRefsByMilestone(milestoneId));
+        const refs = source.itemRefsByMilestone(milestoneId);
+        candidateRefs.push(...refs);
+        requiredRefs.push(...refs);
       }
     }
     if (operation === "archive-terminal-items") {
@@ -2083,13 +2088,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of scope.ledgerIds) {
         const metadata = metadataById.get(ledgerId);
         if (metadata === undefined) continue;
-        candidateRefs.push(
-          ...source.itemRefsByLedgerStatuses(ledgerId, metadata.schema.terminalStatuses),
+        const refs = source.itemRefsByLedgerStatuses(
+          ledgerId,
+          metadata.schema.terminalStatuses,
         );
+        candidateRefs.push(...refs);
+        requiredRefs.push(...refs);
       }
     }
     const resolved = resolveGenericMutationClosure(source, roots, {
       candidateRefs,
+      requiredRefs,
       incidentReferenceFields:
         operation === "archive-milestone" ||
         operation === "archive-terminal-items" ||

@@ -571,6 +571,56 @@ for (const factory of factories) {
       }
     });
 
+    test("terminal-item archival actually archives an operatorActions record [D483/D484]", async () => {
+      const store = await factory.build();
+      try {
+        const milestone = await store.createMilestone({ title: "operator cleanup" });
+        const goal = await store.createItem("goals", milestone.id, {
+          status: "planned",
+          fields: { title: "goal", description: "goal" },
+        });
+        const task = await store.createItem("tasks", milestone.id, {
+          status: "planned",
+          fields: {
+            headline: "obsolete deployment",
+            description: "CQ-OPERATOR-ACTION v1 obsolete-deployment. User deploys.",
+            ledgerRefs: [`goals:${goal.id}`],
+          },
+        });
+        const created = await materializeOperatorAction(store, {
+          taskId: task.id,
+          expectedOutputIdentity: IDENTITY,
+          expectedEvidence: ["cq --version"],
+        });
+        await supersedeOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          reason: "deployment requirement replaced",
+          supersededAt: NOW,
+          author: "parent",
+        });
+        const action = store.fetchItem("operatorActions", created.action.id);
+        expect(action.status).toBe("superseded");
+
+        const mutations = createWorksetGenericMutationGateway({
+          rawStore: store,
+          worksetStore: createInMemoryWorksetStore(),
+        });
+        // The canonical ref for this ledger is `operatorActions:OA<n>`. Its
+        // camelCase name used to fail ref parsing, and the sweep swallowed
+        // that error and reported a successful no-op instead.
+        const result = await mutations.archiveTerminalItems(
+          ["operatorActions"],
+          "operator action cleanup",
+          "retain-active-gates",
+        );
+        expect(result).toMatchObject({ archivedItems: 1 });
+        expect(() => store.fetchItem("operatorActions", action.id)).toThrow();
+      } finally {
+        await store.dispose();
+      }
+    });
+
     test("reuses one action/handoff, fences identity, preserves evidence, and completes only verified", async () => {
       const store = await factory.build();
       try {

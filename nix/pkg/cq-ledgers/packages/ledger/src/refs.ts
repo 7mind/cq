@@ -29,8 +29,15 @@ import type { FieldValue, LedgerSchema } from "./types.js";
  */
 const BARE_ID_RE = /^([A-Z]+)(\d+)$/;
 
-/** Ledger-name shape in the prefixed `<ledger>:<id>` form: a lowercase word. */
-const LEDGER_NAME_RE = /^[a-z][a-z0-9_-]*$/;
+/**
+ * Ledger-name shape in the prefixed `<ledger>:<id>` form: a camelCase word.
+ * Must START lowercase — that is what keeps a ledger name distinguishable
+ * from a bare id and keeps "Tasks:T5" malformed — but the remainder admits
+ * uppercase, because registered canonical identities are not all
+ * single-word: `operatorActions` is one of them (D483/D484). Matching is
+ * exact; names are never case-folded to resolve.
+ */
+const LEDGER_NAME_RE = /^[a-z][A-Za-z0-9_-]*$/;
 
 /**
  * Id-part shape in the prefixed `<ledger>:<id>` form. Deliberately more
