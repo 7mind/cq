@@ -7,7 +7,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { InMemoryLedgerStore } from "@cq/ledger";
+import {
+  InMemoryLedgerStore,
+  LEDGER_TOOL_PROFILE_HEADER,
+  ledgerToolNamesForProfile,
+} from "@cq/ledger";
 import { attachMcpHttp } from "../src/main.js";
 import { connectRemoteMcpProxy } from "../src/stdioRemoteProxy.js";
 
@@ -19,7 +23,11 @@ async function seedStore(): Promise<InMemoryLedgerStore> {
   return store;
 }
 
-function startProjectServer(store: InMemoryLedgerStore, requireAuth: boolean): ReturnType<typeof Bun.serve> {
+function startProjectServer(
+  store: InMemoryLedgerStore,
+  requireAuth: boolean,
+  configuredProfile = "full",
+): ReturnType<typeof Bun.serve> {
   const handlers = attachMcpHttp(
     store,
     "t728-project",
@@ -29,7 +37,7 @@ function startProjectServer(store: InMemoryLedgerStore, requireAuth: boolean): R
     undefined,
     undefined,
     undefined,
-    "full",
+    configuredProfile,
     undefined,
     requireAuth
       ? { ordinaryToken: TOKEN, managementToken: "t728-admin-token" }
@@ -46,21 +54,30 @@ function startProjectServer(store: InMemoryLedgerStore, requireAuth: boolean): R
   });
 }
 
-async function connectDirect(origin: string, token: string): Promise<Client> {
+async function connectDirect(
+  origin: string,
+  token: string,
+  toolProfile?: string,
+): Promise<Client> {
   const client = new Client({ name: "t728-direct", version: "0.0.1" }, { capabilities: {} });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(`${origin}/p/alpha/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
+      requestInit: {
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(toolProfile === undefined ? {} : { [LEDGER_TOOL_PROFILE_HEADER]: toolProfile }),
+        },
+      },
     }) as unknown as Transport,
   );
   return client;
 }
 
-async function connectProxy(origin: string, token: string): Promise<{
+async function connectProxy(origin: string, token: string, toolProfile?: string): Promise<{
   client: Client;
   close(): Promise<void>;
 }> {
-  const proxy = await connectRemoteMcpProxy(origin, "alpha", token);
+  const proxy = await connectRemoteMcpProxy(origin, "alpha", token, toolProfile);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await proxy.server.connect(serverTransport);
   const client = new Client({ name: "t728-proxy", version: "0.0.1" }, { capabilities: {} });
@@ -123,6 +140,65 @@ describe("T728 remote stdio proxy", () => {
     } finally {
       await proxied.close();
       await direct.close();
+      await store.dispose();
+    }
+  });
+
+  // D411: `--tool-profile` was parsed, validated and then dropped on the
+  // `backend=remote` path, so a remote stdio process launched as a narrow role
+  // received the hub's full upstream surface. The profile now rides the
+  // initialize header and binds the UPSTREAM session, which is why the proxy
+  // can keep forwarding `tools/list` and instructions verbatim.
+  for (const profile of ["plan-review", "plan-advance"] as const) {
+    test(`D411: a remote proxy launched as '${profile}' gets that role's surface [BA]`, async () => {
+      const store = await seedStore();
+      const http = startProjectServer(store, true);
+      servers.push(http);
+      const origin = `http://127.0.0.1:${String(http.port)}`;
+      const full = await connectDirect(origin, TOKEN);
+      const direct = await connectDirect(origin, TOKEN, profile);
+      const proxied = await connectProxy(origin, TOKEN, profile);
+      try {
+        // The role's nominal names intersected with what this server actually
+        // exposes: capability gating independently removes dispatch tools when
+        // no dispatch capability is wired, and the profile must not re-add one.
+        const fullNames = (await full.listTools()).tools.map((tool) => tool.name);
+        const roleNames = new Set<string>(ledgerToolNamesForProfile(profile));
+        const expected = fullNames.filter((name) => roleNames.has(name));
+        expect((await direct.listTools()).tools.map((tool) => tool.name)).toEqual(expected);
+        expect((await proxied.client.listTools()).tools.map((tool) => tool.name)).toEqual(expected);
+        expect(expected.length).toBeLessThan(fullNames.length);
+
+        // Instructions are profile-derived, so the proxy forwarding them
+        // verbatim is only correct once the UPSTREAM session is bound.
+        expect(proxied.client.getInstructions()).toBe(direct.getInstructions());
+        expect(proxied.client.getInstructions()).not.toBe(full.getInstructions());
+      } finally {
+        await proxied.close();
+        await direct.close();
+        await full.close();
+        await store.dispose();
+      }
+    });
+  }
+
+  test("D411: a session may not widen beyond the configured profile [BA]", async () => {
+    const store = await seedStore();
+    const http = startProjectServer(store, true, "plan-advance");
+    servers.push(http);
+    const origin = `http://127.0.0.1:${String(http.port)}`;
+    try {
+      // `full` is a strict superset of `plan-advance`, and `implement-worker`
+      // is a sibling role holding tools `plan-advance` does not: neither may be
+      // reached from a session the server configured as `plan-advance`.
+      await expect(connectDirect(origin, TOKEN, "full")).rejects.toThrow();
+      await expect(connectDirect(origin, TOKEN, "implement-worker")).rejects.toThrow();
+      await expect(connectDirect(origin, TOKEN, "no-such-role")).rejects.toThrow();
+      // The configured profile itself still initializes.
+      const ok = await connectDirect(origin, TOKEN, "plan-advance");
+      expect((await ok.listTools()).tools.length).toBeGreaterThan(0);
+      await ok.close();
+    } finally {
       await store.dispose();
     }
   });

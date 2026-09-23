@@ -770,6 +770,7 @@ export type {
   AttestationConstructionStoreInput,
 } from "./store/attestationConstruction.js";
 export {
+  LEDGER_TOOL_PROFILE_HEADER,
   PROJECT_DISPLAY_NAME_HEADER,
   PROJECT_DISPLAY_NAME_MAX_BYTES,
   RemoteLedgerClient,
