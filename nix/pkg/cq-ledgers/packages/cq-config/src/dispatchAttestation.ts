@@ -5682,12 +5682,14 @@ export function discoverDispatchContinuation(
       "no unclaimed consumed continuation is bound to this managed handle and live tip",
     );
   }
-  if (candidates.length !== 1) {
+  const attestationIds = new Set(candidates.map((binding) => binding.attestationId));
+  if (attestationIds.size !== 1) {
     throw new DispatchContinuationError(
       "ambiguous",
       "multiple consumed continuations match this managed handle and live tip",
     );
   }
+  candidates.sort((left, right) => right.generation - left.generation);
   return resolvedContinuationOf(candidates[0]!);
 }
 

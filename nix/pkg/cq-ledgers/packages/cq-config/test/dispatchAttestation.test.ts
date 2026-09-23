@@ -3116,6 +3116,39 @@ describe("consumed managed-worker continuation authority", () => {
       ),
     ).toThrow(DispatchContinuationError);
   });
+
+  test("discovery selects the latest consumed generation of ONE lineage at an unchanged tip", () => {
+    const h = harness({ seed: 60 });
+    const first = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    consumeManaged(h, first);
+    // A schema/correction retry re-prepares the same lineage WITHOUT claiming
+    // the prior continuation, then is itself consumed at the unchanged tip.
+    const retry = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          idempotencyKey: "T685-continuation-retry",
+          reprepareOf: handleOf(first),
+          gitEffectBinding: GIT_EFFECT_BINDING,
+        }),
+        h.prepareDeps,
+      ),
+    ).prepared;
+    consumeManaged(h, retry);
+    expect(retry.attestationId).toBe(first.attestationId);
+    expect(retry.generation).toBeGreaterThan(first.generation);
+
+    expect(
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ).reprepareOf,
+    ).toEqual(handleOf(retry));
+  });
 });
 
 describe("idempotency keys, generations and old-attestation isolation", () => {
