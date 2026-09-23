@@ -441,7 +441,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "a63c1bad22a89c51774317adae972b462ddee7154af275a894178c75cbddf4d1",
+      "sha256": "3fea1d33bee2c2d14ac23ecd9dda70bd1616aca9f99a22a86012d4f67dbb5ae2",
       "targets": []
     },
     {
@@ -1190,7 +1190,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "a63c1bad22a89c51774317adae972b462ddee7154af275a894178c75cbddf4d1",
+      "sha256": "3fea1d33bee2c2d14ac23ecd9dda70bd1616aca9f99a22a86012d4f67dbb5ae2",
       "targets": []
     },
     {

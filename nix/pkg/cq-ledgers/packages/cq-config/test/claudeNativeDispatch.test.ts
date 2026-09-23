@@ -3,6 +3,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  CLAUDE_DELIVERY_MODES,
   CLAUDE_NATIVE_SESSION_SEAM,
   createClaudeNativeDispatchAdapter,
   qualifyClaudeNativeAdapter,
@@ -72,6 +73,47 @@ function fakeContext() {
 describe("D286 createClaudeNativeDispatchAdapter", () => {
   test("seam pin is distinct from process shellout", () => {
     expect(CLAUDE_NATIVE_SESSION_SEAM).toBe("claude-agent-native");
+  });
+
+  test("D431: completion actor satisfies the router requirement for its own route", async () => {
+    // The router's matrix test already proves claude:native reaches `consumed`
+    // when the proof carries `trusted-parent`. What nothing pinned is that THIS
+    // adapter produces it: a `trusted-extension` proof on this route aborts the
+    // dispatch with `completion-actor-does-not-match-transport`, so the whole
+    // same-harness Claude path never completes.
+    const verdict = CLAUDE_DELIVERY_MODES.get("native-subagent");
+    if (verdict === undefined) throw new Error("native-subagent delivery verdict is missing");
+    const declared = verdict.completionActor;
+    if (declared === undefined) {
+      throw new Error("native-subagent verdict declares no completion actor");
+    }
+    expect(declared).toBe("trusted-parent");
+
+    const adapter = createClaudeNativeDispatchAdapter({
+      resolve: () => binding(),
+      launchSession: async (req) =>
+        ({
+          finalText: JSON.stringify({ attestationId: "att-1", generation: 1 }),
+          cwd: req.cwd,
+          usedClaudeNativeAgent: true,
+          usedProcessShellout: false,
+          childId: "c1",
+          runId: "r1",
+          completedAt: "2026-08-07T12:00:01.000Z",
+        }) satisfies ClaudeNativeSessionLaunchResult,
+    });
+
+    const result = await adapter.launch(fakeContext() as never);
+    if (result.outcome !== "completed") throw new Error(`expected completion, got ${result.reason}`);
+
+    // Re-derive the router's rule from the adapter's own route rather than
+    // restating its answer, so a change on either side is caught here.
+    const requiredActor =
+      adapter.transport === "process" || adapter.targetHarness === "pi"
+        ? "trusted-extension"
+        : "trusted-parent";
+    expect(requiredActor).toBe(declared);
+    expect(result.nativeCompletion.actor).toBe(requiredActor);
   });
 
   test("launches when handle+path qualify and session is native", async () => {

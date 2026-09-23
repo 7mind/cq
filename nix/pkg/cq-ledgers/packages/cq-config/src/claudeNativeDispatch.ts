@@ -239,7 +239,11 @@ export function createClaudeNativeDispatchAdapter(
 
     const nativeCompletion: NativeCompletionProof = Object.freeze({
       kind: "native-completion",
-      actor: "trusted-extension",
+      // D431: claude:native is same-harness, so the router requires
+      // `trusted-parent` here; `trusted-extension` belongs to the process
+      // transport and to pi. Emitting it aborted every same-harness Claude
+      // dispatch with `completion-actor-does-not-match-transport`.
+      actor: "trusted-parent",
       childId: sessionResult.childId || binding.correlation.childId,
       runId: sessionResult.runId || binding.correlation.runId,
       completedAt: sessionResult.completedAt || binding.now(),
