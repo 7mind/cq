@@ -745,6 +745,37 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     expect(implement).toContain("forward that exact parent-only capability");
   });
 
+  // D407: the fragment required writing one JSON request to `cq-codex-role`
+  // stdin but never said how Codex must keep stdin open to deliver it. On the
+  // pinned Codex contract a default `exec_command` is non-TTY, so the boundary
+  // reads EOF and exits before `write_stdin` can attach, and `write_stdin`
+  // itself refuses a nonempty body on a non-TTY session. Only the PTY recipe
+  // below actually delivers the request, so pin it on the fragment AND on every
+  // rendered parent edge that carries it.
+  it("D407 pins the stdin-preserving PTY launch on every Codex dispatch edge", () => {
+    const recipe: readonly string[] = [
+      "`stty -echo; exec cq-codex-role`",
+      "`tty: true`",
+      "`write_stdin`",
+      "newline-terminated",
+      "same session",
+    ];
+    const fragment = normalize(
+      readFileSync(path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"), "utf8"),
+    );
+    for (const phrase of recipe) expect(fragment).toContain(phrase);
+    for (const edge of DISPATCH_EDGE_INPUTS) {
+      const body = normalize(renderedOf("codex", edge.flowRoleId));
+      for (const phrase of recipe) expect(body).toContain(phrase);
+    }
+    // The recipe is Codex-specific: it must not leak into the other surfaces,
+    // whose transports keep stdin open by construction.
+    for (const surface of ["claude", "pi"] as const) {
+      const other = normalize(renderedOf(surface, "implement/advance"));
+      expect(other).not.toContain("stty -echo");
+    }
+  });
+
   it("T2045 binds each Codex Git role to its sole broker operation and receipt family", () => {
     const dispatch = readFileSync(
       path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"),
