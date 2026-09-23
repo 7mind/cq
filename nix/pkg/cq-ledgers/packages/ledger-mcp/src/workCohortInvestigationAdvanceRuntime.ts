@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { projectGateAuthorizationForm } from "@cq/ledger";
 import { existsSync, readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -137,7 +138,7 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
       if (boundary.witness.kind !== "repository-node") throw new Error("correction proposal requires current repository witness applicability for each member");
       resolveCohortCommandBoundaryV1(boundary.sharedRegression);
       const fullGate = resolveCohortCommandBoundaryV1(boundary.canonicalFullGate);
-      if (digest(fullGate) !== digest({ argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] })) {
+      if (digest(fullGate) !== digest(projectGateAuthorizationForm())) {
         throw new Error("correction proposal cannot substitute the canonical implementation full gate");
       }
     }

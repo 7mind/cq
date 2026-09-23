@@ -78,6 +78,7 @@ import {
   type LegacyImplementationResolution,
   type UpgradeLiveImplementationQueueSummary,
 } from "@cq/config";
+import { projectGateAuthorizationForm } from "@cq/ledger";
 import type { SQL } from "bun";
 import { resolve } from "node:path";
 import { cohortEffectTargetRefV1, runWorksetGitEffectGate } from "@cq/process-control";
@@ -3131,7 +3132,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       runCanonicalQueueGate: async (candidate, command, signal) => {
         await assertCohortParentExecution(lease);
         signal.throwIfAborted();
-        const canonicalCommand = { argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] };
+        const canonicalCommand = projectGateAuthorizationForm();
         if (cohortValueDigestV1(command) !== cohortValueDigestV1(canonicalCommand)) throw new Error("cohort full gate must be the existing canonical G213 command");
         stopped = true;
         await observer;

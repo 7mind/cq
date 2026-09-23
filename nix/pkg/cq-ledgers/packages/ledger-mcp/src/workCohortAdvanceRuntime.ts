@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { projectGateAuthorizationForm } from "@cq/ledger";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -63,7 +64,7 @@ export async function createCohortAdvanceRuntimeV1(
       for (const candidate of member.boundaryCandidates) {
         resolveCohortCommandBoundaryV1(candidate.sharedRegression);
         const fullGate = resolveCohortCommandBoundaryV1(candidate.canonicalFullGate);
-        if (digest(fullGate) !== digest({ argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] })) {
+        if (digest(fullGate) !== digest(projectGateAuthorizationForm())) {
           throw new Error("cohort admission cannot substitute the canonical full gate");
         }
       }

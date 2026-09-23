@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { CANONICAL_PROJECT_GATE } from "./projectGate.js";
 import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -623,7 +624,7 @@ export function createNodeSupervisedWorkerGateRunner(
 ): SupervisedWorkerGateRunner {
   return createSerializedSupervisedRunner((request: SupervisedWorkerGateRunRequest) =>
     runAdmittedNodeSupervisedWorkerGate({ ...request, command: {
-      argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: {},
+      argv: [...CANONICAL_PROJECT_GATE.argv], cwd: CANONICAL_PROJECT_GATE.cwd, environment: {},
     } }, settlement));
 }
 
