@@ -7,10 +7,14 @@ import {
 import type { AttestationNamespace, DispatchServiceDeps } from "../../src/dispatchAttestation.js";
 
 export function runPreparedDispatchOverService(
-  request: RunPreparedDispatchRequest & { readonly namespace: AttestationNamespace },
+  request: Omit<RunPreparedDispatchRequest, "materializeOutput"> & { readonly namespace: AttestationNamespace },
   registry: Parameters<typeof runPreparedDispatch>[1],
   deps: DispatchServiceDeps,
 ): ReturnType<typeof runPreparedDispatch> {
   const { namespace, ...routed } = request;
-  return runPreparedDispatch(routed, registry, attestationServiceSettlement(namespace, deps));
+  return runPreparedDispatch(
+    { ...routed, materializeOutput: true },
+    registry,
+    attestationServiceSettlement(namespace, deps),
+  );
 }

@@ -24,7 +24,7 @@ import {
 } from "@cq/config";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import {
-  AWAIT_DISPATCH_MAX_WAIT_MS,
+  DISPATCH_WAIT_MAX_MS,
   createDispatchDriver,
   type DispatchLaunchPlanner,
   type DispatchModelResolver,
@@ -110,11 +110,15 @@ const completingChild: ScriptedLaunch = async (context, expectedChild) => {
   };
 };
 
+type Capability = ReturnType<typeof createDispatchCapability>;
+
 interface Harnessed {
   readonly backend: InMemoryAttestationBackend;
   readonly store: InMemoryAttestationStore;
   readonly launches: Array<{ adapterId: string; surface: string; model: string }>;
-  driver(): ReturnType<typeof createDispatchDriver>;
+  /** A fresh capability over the same durable backend, as after a server restart. */
+  capability(): Capability;
+  driver(capability: Capability): ReturnType<typeof createDispatchDriver>;
 }
 
 function harnessed(options: {
@@ -159,23 +163,26 @@ function harnessed(options: {
   const registry = new DispatchTransportAdapterRegistry(adapters);
   const resolveModel: DispatchModelResolver =
     options.model ?? (() => ({ token: TOKENS.claude, formatted: "claude:sonnet" }));
+  const capability = (): Capability =>
+    createDispatchCapability({
+      backend,
+      promptArtifactStore: artifactStore("claude"),
+      targetPromptArtifactStores: {
+        claude: artifactStore("claude"),
+        codex: artifactStore("codex"),
+        pi: artifactStore("pi"),
+      },
+      now: () => NOW,
+      randomBytes: sequentialDispatchRandomBytes(0),
+    });
   return {
     backend,
     store,
     launches,
-    driver: () =>
+    capability,
+    driver: (current: Capability) =>
       createDispatchDriver({
-        capability: createDispatchCapability({
-          backend,
-          promptArtifactStore: artifactStore("claude"),
-          targetPromptArtifactStores: {
-            claude: artifactStore("claude"),
-            codex: artifactStore("codex"),
-            pi: artifactStore("pi"),
-          },
-          now: () => NOW,
-          randomBytes: sequentialDispatchRandomBytes(0),
-        }),
+        capability: current,
         readEnvelope: async (handle) =>
           await backend.transact({ kind: "handle", handle }, (transaction) => {
             const row = transaction.read(handle);
@@ -199,37 +206,53 @@ async function started(driver: ReturnType<typeof createDispatchDriver>, key: str
   return outcome;
 }
 
+/** What the parent does: one bounded waiting fetch through the dispatch capability. */
+async function waitingFetch(
+  driver: ReturnType<typeof createDispatchDriver>,
+  capability: Capability,
+  handle: DispatchHandle,
+  waitMs: number,
+) {
+  await driver.waitFor({ ...handle, waitMs });
+  return await capability.fetch(handle);
+}
+
 describe("G224 dispatch driver", () => {
-  test("starts, launches through the target's process adapter, and awaits the consumed output", async () => {
+  test("starts, launches through the target's process adapter, and leaves the one fetch to the parent", async () => {
     const h = harnessed({});
-    const driver = h.driver();
+    const capability = h.capability();
+    const driver = h.driver(capability);
     const outcome = await started(driver, "G224-consumed");
     expect(outcome.route).toEqual({ activeHarness: "claude", targetHarness: "claude", model: "claude:sonnet" });
-    const awaited = await driver.await({ ...outcome.handle, waitMs: 5_000 });
-    expect(awaited).toEqual({ state: "consumed", output: OUTPUT });
+    expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({
+      state: "consumed",
+      output: OUTPUT,
+    });
     expect(h.launches).toEqual([{ adapterId: "claude:process", surface: "claude", model: "sonnet" }]);
-    expect(await driver.await({ ...outcome.handle, waitMs: 0 })).toEqual({ state: "consumed", output: OUTPUT });
+    expect(await capability.fetch(outcome.handle)).toMatchObject({ state: "output-already-materialized" });
   });
 
   test("a role configured for another harness prepares that surface and routes to its process adapter", async () => {
     const h = harnessed({ model: () => ({ token: TOKENS.codex, formatted: "codex:gpt-5.6-sol:high" }) });
-    const driver = h.driver();
+    const capability = h.capability();
+    const driver = h.driver(capability);
     const outcome = await started(driver, "G224-cross");
     expect(outcome.route.targetHarness).toBe("codex");
-    expect(await driver.await({ ...outcome.handle, waitMs: 5_000 })).toMatchObject({ state: "consumed" });
+    expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({ state: "consumed" });
     expect(h.launches).toEqual([{ adapterId: "codex:process", surface: "codex", model: "gpt-5.6-sol" }]);
     const row = h.store.read(outcome.handle);
     if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
     expect(row.promptProvenance.surface).toBe("codex");
   });
 
-  test("an adapter abort surfaces as an aborted await with its reason", async () => {
+  test("an adapter abort is what the parent's fetch reports", async () => {
     const h = harnessed({
       launch: async () => ({ outcome: "aborted", reason: "native-failure", details: { source: "scripted" } }),
     });
-    const driver = h.driver();
+    const capability = h.capability();
+    const driver = h.driver(capability);
     const outcome = await started(driver, "G224-abort");
-    expect(await driver.await({ ...outcome.handle, waitMs: 5_000 })).toEqual({
+    expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({
       state: "aborted",
       reason: "native-failure",
       details: { source: "scripted" },
@@ -241,24 +264,25 @@ describe("G224 dispatch driver", () => {
       adapters: ["claude"],
       model: () => ({ token: TOKENS.pi, formatted: "pi:openai-codex/gpt-5.6-terra:high" }),
     });
-    const driver = h.driver();
+    const capability = h.capability();
+    const driver = h.driver(capability);
     const outcome = await started(driver, "G224-no-adapter");
-    const awaited = await driver.await({ ...outcome.handle, waitMs: 5_000 });
-    expect(awaited).toMatchObject({ state: "aborted", reason: "native-failure", details: { source: "dispatch-driver" } });
-    const row = h.store.read(outcome.handle);
-    if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
-    expect(row.state).toBe("aborted");
+    expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({
+      state: "aborted",
+      reason: "native-failure",
+      details: { source: "dispatch-driver" },
+    });
     expect(h.launches).toEqual([]);
   });
 
   test("a pre-launch rejection is returned and nothing launches", async () => {
     const h = harnessed({});
-    const outcome = await h.driver().start({ ...startInput("G224-reject"), timeoutMs: -1 });
+    const outcome = await h.driver(h.capability()).start({ ...startInput("G224-reject"), timeoutMs: -1 });
     expect(outcome.accepted).toBe(false);
     expect(h.launches).toEqual([]);
   });
 
-  test("a bounded await reports running until the child completes", async () => {
+  test("a bounded wait returns while the child runs, and a later wait observes the result", async () => {
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -269,38 +293,46 @@ describe("G224 dispatch driver", () => {
         return await completingChild(context, expectedChild);
       },
     });
-    const driver = h.driver();
+    const capability = h.capability();
+    const driver = h.driver(capability);
     const outcome = await started(driver, "G224-running");
-    expect(await driver.await({ ...outcome.handle, waitMs: 20 })).toEqual({ state: "running" });
+    expect(await waitingFetch(driver, capability, outcome.handle, 20)).toMatchObject({ state: "prepared" });
     release!();
-    expect(await driver.await({ ...outcome.handle, waitMs: 5_000 })).toEqual({ state: "consumed", output: OUTPUT });
+    expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({
+      state: "consumed",
+      output: OUTPUT,
+    });
   });
 
-  test("a terminal dispatch stays observable from the durable state after a restart", async () => {
+  test("a terminal dispatch is fetched from the durable state after a restart", async () => {
     const h = harnessed({});
-    const first = h.driver();
-    const outcome = await started(first, "G224-restart");
-    expect(await first.await({ ...outcome.handle, waitMs: 5_000 })).toMatchObject({ state: "consumed" });
-    const restarted = h.driver();
-    expect(await restarted.await({ ...outcome.handle, waitMs: 0 })).toEqual({ state: "consumed", output: OUTPUT });
+    const first = h.capability();
+    const driver = h.driver(first);
+    const outcome = await started(driver, "G224-restart");
+    await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+    const restarted = h.capability();
+    expect(await waitingFetch(h.driver(restarted), restarted, outcome.handle, 0)).toMatchObject({
+      state: "consumed",
+      output: OUTPUT,
+    });
   });
 
   test("an aborted dispatch reports its reason from the durable state after a restart", async () => {
     const h = harnessed({ launch: async () => ({ outcome: "aborted", reason: "cancelled" }) });
-    const first = h.driver();
-    const outcome = await started(first, "G224-restart-abort");
-    await first.await({ ...outcome.handle, waitMs: 5_000 });
-    expect(await h.driver().await({ ...outcome.handle, waitMs: 0 })).toMatchObject({
-      state: "aborted",
-      reason: "cancelled",
-    });
+    const first = h.capability();
+    const driver = h.driver(first);
+    const outcome = await started(driver, "G224-restart-abort");
+    await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+    const restarted = h.capability();
+    expect(await restarted.fetch(outcome.handle)).toMatchObject({ state: "aborted", reason: "cancelled" });
   });
 
   test("refuses a wait outside its bound", async () => {
-    const driver = harnessed({}).driver();
+    const h = harnessed({});
+    const driver = h.driver(h.capability());
     const handle = { attestationId: `att_${"a".repeat(32)}`, generation: 1 };
-    await expect(driver.await({ ...handle, waitMs: AWAIT_DISPATCH_MAX_WAIT_MS + 1 })).rejects.toThrow(/waitMs/);
-    await expect(driver.await({ ...handle, waitMs: -1 })).rejects.toThrow(/waitMs/);
+    await expect(driver.waitFor({ ...handle, waitMs: DISPATCH_WAIT_MAX_MS + 1 })).rejects.toThrow(/waitMs/);
+    await expect(driver.waitFor({ ...handle, waitMs: -1 })).rejects.toThrow(/waitMs/);
   });
 
   test("a model the resolver refuses fails start before anything is prepared", async () => {
@@ -309,9 +341,9 @@ describe("G224 dispatch driver", () => {
         throw new Error("model claude:nope is not dispatchable");
       },
     });
-    await expect(h.driver().start({ ...startInput("G224-bad-model"), model: "claude:nope" })).rejects.toThrow(
-      /not dispatchable/,
-    );
+    await expect(
+      h.driver(h.capability()).start({ ...startInput("G224-bad-model"), model: "claude:nope" }),
+    ).rejects.toThrow(/not dispatchable/);
     expect(h.launches).toEqual([]);
   });
 });

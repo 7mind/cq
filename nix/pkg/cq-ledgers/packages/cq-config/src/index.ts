@@ -118,6 +118,10 @@ export {
   runPreparedDispatch,
   attestationServiceSettlement,
 } from "./dispatchTransportRouter.js";
+export {
+  CODEX_DISPATCHED_ROLE_SANDBOX_MODES,
+  codexDispatchedRoleSandboxMode,
+} from "./codexRoleSandboxPolicy.js";
 export type {
   NativeAdapterId,
   NativeQualificationRefusalReason,

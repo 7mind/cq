@@ -233,7 +233,26 @@ export type DispatchEvidenceObservation =
       readonly retainedAttestation?: string;
     };
 
+export type StartDispatchToolInput = Omit<PrepareDispatchToolInput, "expectedChild" | "surface"> & {
+  readonly model?: string;
+};
+
+export interface DispatchWaitToolInput extends DispatchHandle {
+  readonly waitMs: number;
+}
+
+/**
+ * G224: CQ-driven dispatch; the server prepares, launches and settles. The
+ * parent reads the outcome with `fetch_dispatch_result`, the one body surface.
+ */
+export interface DispatchDriverCapability {
+  start(input: StartDispatchToolInput): Promise<unknown>;
+  waitFor(input: DispatchWaitToolInput): Promise<void>;
+}
+
 export interface DispatchCapability {
+  /** Present when this server can launch dispatches itself (G224). */
+  readonly driver?: DispatchDriverCapability;
   /** Trusted local outer-flow operation; not exposed as a child or MCP tool. */
   resumeCohortRebaseSuccessor?(input: {
     readonly source: { readonly attestationId: string; readonly generation: number };

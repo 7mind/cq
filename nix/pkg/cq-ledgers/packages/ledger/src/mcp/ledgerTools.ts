@@ -88,7 +88,7 @@ import {
   computeConfigSection,
   type ConfigCapability,
 } from "./configCapability.js";
-import type { DispatchCapability } from "./dispatchCapability.js";
+import type { DispatchCapability, StartDispatchToolInput } from "./dispatchCapability.js";
 import {
   ABORT_DISPATCH_INPUT,
   CONFIRM_DISPATCH_COMPLETION_INPUT,
@@ -97,6 +97,7 @@ import {
   GIT_COMMIT_INPUT,
   GIT_RESOLVE_CONTINUE_INPUT,
   PREPARE_DISPATCH_INPUT,
+  START_DISPATCH_INPUT,
   STORE_RESULT_INPUT,
 } from "./dispatchToolSchemas.js";
 import {
@@ -186,6 +187,7 @@ export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
   "confirm_dispatch_completion",
   "abort_dispatch",
   "fetch_dispatch_result",
+  "start_dispatch",
   "git_commit",
   "git_resolve_continue",
 ] as const satisfies readonly LedgerToolName[];
@@ -2121,11 +2123,29 @@ export function createLedgerMcpToolSpecifications(
   );
   const fetchDispatchResultTool = tool(
     "fetch_dispatch_result",
-    "Materialize a consumed dispatch result exactly once from its dispatch handle.",
+    "Materialize a consumed dispatch result exactly once from its dispatch handle; waitMs waits for a start_dispatch launch to settle.",
     FETCH_DISPATCH_RESULT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
-      return jsonResult(await dispatchCapability.fetch(args));
+      const handle = { attestationId: args.attestationId, generation: args.generation };
+      if (args.waitMs !== undefined && dispatchCapability.driver !== undefined) {
+        await dispatchCapability.driver.waitFor({ ...handle, waitMs: args.waitMs });
+      }
+      return jsonResult(await dispatchCapability.fetch(handle));
+    },
+  );
+  const startDispatchTool = tool(
+    "start_dispatch",
+    "Prepare and launch one role through CQ's own process boundary; returns the handle and route.",
+    START_DISPATCH_INPUT,
+    async (args) => {
+      if (dispatchCapability?.driver === undefined) {
+        throw new Error("start_dispatch: CQ-driven dispatch is unavailable on this server");
+      }
+      const input = Object.fromEntries(
+        Object.entries(args).filter(([, value]) => value !== undefined),
+      ) as StartDispatchToolInput;
+      return jsonResult(await dispatchCapability.driver.start(input));
     },
   );
   const gitCommitTool = tool(
@@ -2236,6 +2256,7 @@ export function createLedgerMcpToolSpecifications(
           confirmDispatchCompletionTool,
           abortDispatchTool,
           fetchDispatchResultTool,
+          startDispatchTool,
         ];
   const tools = [
     enumerateLedgers,

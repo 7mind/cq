@@ -40,6 +40,7 @@ import {
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
   takeBoundResultCapability,
 } from "./boundResultCapability.js";
+import { createServerDispatchDriver, targetPromptArtifactStoresFrom } from "./dispatchDriverWiring.js";
 import * as path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
@@ -184,6 +185,7 @@ import {
 } from "./promptCatalogCapability.js";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
 import {
+  CQ_PROMPT_SURFACES_ROOT_ENV,
   parsePromptSurface,
   resolvePromptSurface,
   type PromptSurface,
@@ -1727,12 +1729,15 @@ export async function main(
           resolvedPromptSurface.root,
           process.env,
         );
+  const promptSurfacesRoot = process.env[CQ_PROMPT_SURFACES_ROOT_ENV] || undefined;
+  const targetPromptArtifactStores = targetPromptArtifactStoresFrom(promptSurfacesRoot);
   const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
     construction: http === null ? "stdio" : "http-single-project",
     resolved,
     ...(resolvedPromptSurface === undefined
       ? {}
       : { promptArtifactStore: resolvedPromptSurface.store }),
+    ...(targetPromptArtifactStores === undefined ? {} : { targetPromptArtifactStores }),
     environment: process.env,
     ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
   });
@@ -1741,12 +1746,32 @@ export async function main(
       `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
     );
   }
-  const dispatchCapability =
+  const boundDispatchCapability =
     dispatchRuntime.kind !== "available"
       ? undefined
       : boundResultCapability === undefined
         ? dispatchRuntime.capability
         : { ...dispatchRuntime.capability, boundResultCapability };
+  // G224: a child-owned server (bound capability) never launches dispatches itself.
+  const dispatchCapability =
+    boundDispatchCapability === undefined ||
+    dispatchRuntime.kind !== "available" ||
+    boundResultCapability !== undefined ||
+    resolvedPromptSurface === undefined ||
+    promptSurfacesRoot === undefined
+      ? boundDispatchCapability
+      : {
+          ...boundDispatchCapability,
+          driver: createServerDispatchDriver({
+            capability: boundDispatchCapability,
+            backend: dispatchRuntime.backend,
+            store,
+            activeHarness: resolvedPromptSurface.surface,
+            configRoot: resolved.configRoot,
+            promptSurfacesRoot,
+            environment: process.env,
+          }),
+        };
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
       ? createStandaloneImplementationEvidenceService({

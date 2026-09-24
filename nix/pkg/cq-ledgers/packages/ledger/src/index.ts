@@ -975,6 +975,9 @@ export type {
   QualifyImplementationCandidateOutcome,
   PrepareDispatchToolInput,
   StoreResultToolInput,
+  StartDispatchToolInput,
+  DispatchWaitToolInput,
+  DispatchDriverCapability,
 } from "./mcp/dispatchCapability.js";
 export { ListProjectsNotImplementedError } from "./mcp/listProjects.js";
 export type {

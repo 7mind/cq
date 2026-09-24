@@ -50,7 +50,7 @@ Milestones form a dependency DAG via their
 | Package          | What it is                                                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@cq/ledger`     | The library: SQLite storage, private PostgreSQL service storage, Markdown backup codecs, schema/registry, FTS index, and MCP tool definitions. |
-| `@cq/ledger-mcp` | Standalone MCP server exposing the 67-tool management ledger surface over **stdio** or **Streamable HTTP**.                                                                                                        |
+| `@cq/ledger-mcp` | Standalone MCP server exposing the 68-tool management ledger surface over **stdio** or **Streamable HTTP**.                                                                                                        |
 | `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`).                                                    |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
@@ -60,7 +60,7 @@ MCP protocol. Embedded mode does not change that invariant: it merely
 transport for the TUI; a co-hosted `/mcp` + `/ws` for the web server), so a
 single command needs no separately-running server.
 
-## Ordinary tool surface (44)
+## Ordinary tool surface (45)
 
 `enumerate_ledgers`, `fetch_ledger`, `fetch_ledger_archive`, `fetch_item`,
 `update_item`, `create_item`, `create_ledger`, `search_items`, `fts_search`,
@@ -71,19 +71,19 @@ single command needs no separately-running server.
 `revise_operator_action`, `complete_operator_action`, `reopen_item`,
 `unarchive_item`, `read_log`, `get_config`, `get_usage_stats`, `prepare_dispatch`,
 `fetch_dispatch_input`, `store_result`, `confirm_dispatch_completion`,
-`abort_dispatch`, `fetch_dispatch_result`, `fetch_prompt`, `list_projects`,
+`abort_dispatch`, `fetch_dispatch_result`, `start_dispatch`, `fetch_prompt`, `list_projects`,
 `mint_plan_claim_authority`, `claim_plan`, `publish_plan_draft`,
 `release_plan_claim`, `finalize_plan`, `worktree_manage`, `git_commit`,
 `git_resolve_continue`, `get_cohort_completion_status`, `get_cohort_status`.
 
-The six attestation dispatch-lifecycle tools require both a supported durable backend
+The seven attestation dispatch-lifecycle tools require both a supported durable backend
 (`xdg`, or PostgreSQL in its supported server construction) and an
 attested prompt surface. A server that cannot satisfy those prerequisites
-omits those six names; broker availability similarly controls the two git
-dispatch-lifecycle tools. Omitting all eight leaves the canonical 34-tool
+omits those seven names; broker availability similarly controls the two git
+dispatch-lifecycle tools. Omitting all nine leaves the canonical 34-tool
 ordinary non-dispatch surface instead of advertising handlers that can only fail.
 
-The 67-tool management ledger surface uses a single breaking wire-response contract:
+The 68-tool management ledger surface uses a single breaking wire-response contract:
 item-bearing reads require an explicit compact/complement/full projection and eligible
 mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)

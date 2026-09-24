@@ -173,7 +173,21 @@ export const ABORT_DISPATCH_INPUT = {
   details: z.json().optional(),
 } as const;
 
-export const FETCH_DISPATCH_RESULT_INPUT = handle;
+/** Upper bound on one waiting fetch, below every host's MCP tool timeout. */
+export const DISPATCH_WAIT_MAX_MS = 45_000;
+
+export const FETCH_DISPATCH_RESULT_INPUT = {
+  ...handle,
+  /** G224: wait up to this long for a server-launched dispatch to settle. */
+  waitMs: z.number().int().min(0).max(DISPATCH_WAIT_MAX_MS).optional(),
+} as const;
+
+/** G224: prepare's input minus the child identity, which CQ mints, plus an optional panel/tier token. */
+export const START_DISPATCH_INPUT = (() => {
+  const { expectedChild: _expectedChild, ...prepare } = PREPARE_DISPATCH_INPUT;
+  return { ...prepare, model: z.string().min(1).optional() } as const;
+})();
+
 
 export const GIT_COMMIT_INPUT = {
   ...handle,

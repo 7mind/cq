@@ -51,7 +51,7 @@ function rootOrdinaryToolNames(markdown: string): string[] {
   const startIndex = markdown.indexOf(heading);
   if (startIndex === -1) throw new Error(`missing documentation heading ${heading}`);
   const inventoryStart = startIndex + heading.length;
-  const inventoryEnd = markdown.indexOf("\n\nThe six attestation", inventoryStart);
+  const inventoryEnd = markdown.indexOf("\n\nThe seven attestation", inventoryStart);
   if (inventoryEnd === -1) throw new Error("ordinary tool inventory lacks its boundary prose");
   return [...markdown.slice(inventoryStart, inventoryEnd).matchAll(/`([^`]+)`/g)].map(
     (match) => match[1]!,
@@ -187,9 +187,9 @@ describe("public MCP response-contract documentation", () => {
 
     expect(rootReadme).toContain(`${MANAGEMENT_LEDGER_TOOL_NAMES.length}-tool management ledger surface`);
     expect(rootOrdinaryToolNames(rootReadme)).toEqual([...LEDGER_TOOL_NAMES]);
-    expect(LEDGER_TOOL_NAMES).toHaveLength(44);
+    expect(LEDGER_TOOL_NAMES).toHaveLength(45);
     expect(NON_DISPATCH_LEDGER_TOOL_NAMES).toHaveLength(36);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(67);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(68);
     expect(rootReadme).toContain("compact/complement/full projection");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");

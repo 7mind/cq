@@ -223,6 +223,10 @@ const dispatchCapability: DispatchCapability = {
   fetch: async () => ({ operation: "fetch_dispatch_result" }) as never,
   gitCommit: async () => ({ operation: "git_commit" }) as never,
   gitResolveContinue: async () => ({ operation: "git_resolve_continue" }) as never,
+  driver: {
+    start: async () => ({ operation: "start_dispatch" }),
+    waitFor: async () => undefined,
+  },
 };
 
 const WORKTREE_MANAGE_PARITY_ACK = {
@@ -1470,6 +1474,15 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       args: {
         attestationId: `att_${"a".repeat(32)}`,
         generation: 1,
+      },
+    },
+    {
+      name: "start_dispatch",
+      args: {
+        roleId: "plan-advance",
+        input: { goalId: "G224" },
+        idempotencyKey: "G224-parity",
+        timeoutMs: 120_000,
       },
     },
     { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },

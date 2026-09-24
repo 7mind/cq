@@ -245,6 +245,7 @@ measured savings without another batching schema.
 | `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
 | `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
 | `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
+| `start_dispatch` | `purpose-built-small` | `{accepted,handle,route}` or pre-launch rejection. |
 | `fetch_prompt` | `requested-full-content` | Default full: typed entry with prompt and available schemas. Schema: exactly {roleId,version?,inputSchema?,outputSchema?}; orchestrator-command {roleId} only, schema keys absent, never null. |
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
 | `mint_plan_claim_authority` | `purpose-built-small` | Exactly {claimRequestId,ownerFenceToken}: public ID, secret fence. |
@@ -413,7 +414,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 67-tool matrix, not as a generic
+Treat response decoding as a closed 68-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

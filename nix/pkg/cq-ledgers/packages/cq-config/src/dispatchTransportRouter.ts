@@ -687,6 +687,12 @@ export class DispatchTransportAbort extends Error {
 
 export interface RunPreparedDispatchRequest extends DispatchTransportRouteRequest {
   readonly prepared: DispatchPrepared;
+  /**
+   * Whether this run performs the dispatch's single output materialization.
+   * A server driving a dispatch for a parent passes false: the parent's own
+   * `fetch_dispatch_result` stays the sole body-returning surface (T682).
+   */
+  readonly materializeOutput: boolean;
   /** Exact per-role token resolved by cq.toml before transport selection. */
   readonly resolvedModel: ReviewerToken;
   /** Trusted queue composition invoked only after a parent-gated result is durably staged. */
@@ -784,8 +790,8 @@ export interface RoutedDispatchConsumed {
   readonly route: DispatchTransportRoute;
   readonly adapterId: `${Harness}:${DispatchTransport}`;
   readonly handle: DispatchHandle;
-  /** The sole body-bearing value, returned by the authoritative consumed fetch. */
-  readonly output: DispatchJSONValue;
+  /** The sole body-bearing value; present exactly when the run materialized the output. */
+  readonly output?: DispatchJSONValue;
 }
 
 export interface RoutedDispatchAborted {
@@ -1164,6 +1170,14 @@ export async function runPreparedDispatch(
     });
   }
 
+  if (!request.materializeOutput) {
+    return Object.freeze({
+      outcome: "consumed" as const,
+      route,
+      adapterId: adapter.id,
+      handle,
+    });
+  }
   const fetched = await settlement.fetch(handle);
   if (fetched.state !== "consumed") {
     throw new AttestationContractError(

@@ -1,0 +1,86 @@
+/**
+ * G224 — assemble the CQ-driven dispatch driver for one single-project server.
+ */
+
+import { existsSync } from "node:fs";
+import * as path from "node:path";
+import {
+  DispatchTransportAdapterRegistry,
+  isAttestationTombstone,
+  loadConfig,
+  type AttestationBackend,
+  type Harness,
+} from "@cq/config";
+import {
+  requireWorksetStore,
+  worksetEffectAdmissionProviderFromStore,
+  type DispatchCapability,
+  type LedgerStore,
+} from "@cq/ledger";
+import { createDispatchDriver, type DispatchDriver } from "./dispatchDriver.js";
+import { createDispatchLaunchBindings } from "./dispatchLaunchBindings.js";
+import { createConfiguredDispatchModelResolver } from "./dispatchModelResolver.js";
+import { FileSystemPromptArtifactStore, type PromptArtifactStore } from "./promptArtifactStore.js";
+import { PROMPT_SURFACES } from "./promptSurfaceSelection.js";
+
+export const CQ_LEDGER_COMMAND_ENV = "CQ_LEDGER_COMMAND";
+export const CQ_CLAUDE_EXECUTABLE_ENV = "CQ_CLAUDE_EXECUTABLE";
+export const CQ_CODEX_ROLE_COMMAND_ENV = "CQ_CODEX_ROLE_COMMAND";
+const DEFAULT_LEDGER_COMMAND = "cq";
+const DEFAULT_CLAUDE_EXECUTABLE = "claude";
+const DEFAULT_CODEX_ROLE_COMMAND = "cq-codex-role";
+const SURFACE_MANIFEST = "surface.json";
+
+/** One artifact store per packaged surface under the prompt-surfaces root. */
+export function targetPromptArtifactStoresFrom(
+  promptSurfacesRoot: string | undefined,
+): Readonly<Partial<Record<string, PromptArtifactStore>>> | undefined {
+  if (promptSurfacesRoot === undefined) return undefined;
+  const stores: Partial<Record<string, PromptArtifactStore>> = {};
+  for (const surface of PROMPT_SURFACES) {
+    const root = path.join(promptSurfacesRoot, surface);
+    if (existsSync(path.join(root, SURFACE_MANIFEST))) {
+      stores[surface] = new FileSystemPromptArtifactStore(surface, root);
+    }
+  }
+  return Object.freeze(stores);
+}
+
+export interface ServerDispatchDriverInput {
+  readonly capability: DispatchCapability;
+  readonly backend: AttestationBackend;
+  readonly store: LedgerStore;
+  /** The parent's harness: the prompt surface this server serves. */
+  readonly activeHarness: Harness;
+  readonly configRoot: string;
+  readonly promptSurfacesRoot: string;
+  readonly environment: Readonly<Record<string, string | undefined>>;
+}
+
+export function createServerDispatchDriver(input: ServerDispatchDriverInput): DispatchDriver {
+  const readEnvelope = async (handle: { readonly attestationId: string; readonly generation: number }) =>
+    await input.backend.transact({ kind: "handle", handle }, (transaction) => {
+      const row = transaction.read(handle);
+      return row === undefined || isAttestationTombstone(row) ? undefined : row;
+    });
+  const bindings = createDispatchLaunchBindings({
+    ledgerCwd: input.configRoot,
+    promptSurfacesRoot: input.promptSurfacesRoot,
+    ledgerCommand: input.environment[CQ_LEDGER_COMMAND_ENV] ?? DEFAULT_LEDGER_COMMAND,
+    claudeExecutable: input.environment[CQ_CLAUDE_EXECUTABLE_ENV] ?? DEFAULT_CLAUDE_EXECUTABLE,
+    codexRoleCommand: input.environment[CQ_CODEX_ROLE_COMMAND_ENV] ?? DEFAULT_CODEX_ROLE_COMMAND,
+    effectAdmission: worksetEffectAdmissionProviderFromStore(requireWorksetStore(input.store)),
+    readEnvelope,
+    now: () => new Date().toISOString(),
+  });
+  return createDispatchDriver({
+    capability: input.capability,
+    readEnvelope,
+    activeHarness: input.activeHarness,
+    resolveModel: createConfiguredDispatchModelResolver(() =>
+      loadConfig(input.configRoot, input.activeHarness),
+    ),
+    registry: new DispatchTransportAdapterRegistry(bindings.adapters),
+    planner: bindings.planner,
+  });
+}

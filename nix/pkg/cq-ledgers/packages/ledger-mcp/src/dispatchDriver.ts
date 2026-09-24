@@ -5,31 +5,30 @@
  * through that harness's process adapter, and settles through the server's own
  * dispatch capability. The parent never holds a capability and never launches.
  *
- * `start` returns as soon as the launch is underway; `await` is a bounded wait,
- * so no MCP tool call has to outlive a host's tool timeout. `await` answers
- * from this server's in-flight launch when there is one and otherwise from the
- * durable attestation state, so a terminal dispatch stays observable across a
- * server restart.
+ * `start` returns as soon as the launch is underway. The parent then calls
+ * `fetch_dispatch_result` with a bounded `waitMs`: `waitFor` holds that call
+ * until this server's in-flight launch settles or the wait elapses, and the
+ * ordinary durable fetch answers. So no MCP call outlives a host's tool
+ * timeout, the answer survives a server restart, and the parent's fetch stays
+ * the single body-returning surface (T682): the driver never materializes.
  */
 
 import {
   runPreparedDispatch,
   type AttestationEnvelope,
   type DispatchHandle,
-  type DispatchJSONValue,
   type DispatchPreLaunchRejection,
   type DispatchSettlementPort,
   type DispatchTransportAdapterRegistry,
   type Harness,
   type NativeChildIdentity,
   type ReviewerToken,
-  type RoutedDispatchResult,
   type RoutedStagedCompletionQualifier,
 } from "@cq/config";
 import type { DispatchCapability, PrepareDispatchToolInput } from "@cq/ledger";
 
-/** Upper bound on one `await_dispatch` call, below every host's MCP tool timeout. */
-export const AWAIT_DISPATCH_MAX_WAIT_MS = 45_000;
+/** Upper bound on one waiting fetch, below every host's MCP tool timeout. */
+export const DISPATCH_WAIT_MAX_MS = 45_000;
 
 export type StartDispatchInput = Omit<PrepareDispatchToolInput, "expectedChild" | "surface"> & {
   /** A panel or tier token the configuration makes dispatchable; defaults to the role's tier token. */
@@ -48,17 +47,9 @@ export interface StartedDispatch {
 
 export type StartDispatchOutcome = StartedDispatch | DispatchPreLaunchRejection;
 
-export interface AwaitDispatchInput extends DispatchHandle {
+export interface DispatchWaitInput extends DispatchHandle {
   readonly waitMs: number;
 }
-
-export type AwaitDispatchOutcome =
-  | { readonly state: "running" }
-  | { readonly state: "queued" }
-  | { readonly state: "pending"; readonly lifecycle: string }
-  | { readonly state: "consumed"; readonly output: DispatchJSONValue }
-  | { readonly state: "aborted"; readonly reason: string; readonly details?: DispatchJSONValue }
-  | { readonly state: "unknown"; readonly lifecycle: string };
 
 /** One launch's harness-specific child correlation, minted before prepare binds it. */
 export interface PlannedDispatchLaunch {
@@ -91,7 +82,8 @@ export interface DispatchDriverDeps {
 
 export interface DispatchDriver {
   start(input: StartDispatchInput): Promise<StartDispatchOutcome>;
-  await(input: AwaitDispatchInput): Promise<AwaitDispatchOutcome>;
+  /** Resolve when this server's launch of the handle settles, or after `waitMs`. */
+  waitFor(input: DispatchWaitInput): Promise<void>;
 }
 
 export class DispatchDriverError extends Error {
@@ -153,74 +145,29 @@ function settlementThrough(
   } satisfies DispatchSettlementPort);
 }
 
-function settledOutcome(result: RoutedDispatchResult): AwaitDispatchOutcome {
-  if (result.outcome === "consumed") return { state: "consumed", output: result.output };
-  if (result.outcome === "queued") return { state: "queued" };
-  return {
-    state: "aborted",
-    reason: result.abort.reason,
-    ...(result.abort.details === undefined ? {} : { details: result.abort.details }),
-  };
-}
-
 export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
   const settlement = settlementThrough(deps.capability, deps.readEnvelope);
-  const inFlight = new Map<string, Promise<AwaitDispatchOutcome>>();
-  const settled = new Map<string, AwaitDispatchOutcome>();
+  const inFlight = new Map<string, Promise<void>>();
 
   async function launch(
     handle: DispatchHandle,
     planned: PlannedDispatchLaunch,
     request: Parameters<typeof runPreparedDispatch>[0],
-  ): Promise<AwaitDispatchOutcome> {
+  ): Promise<void> {
     planned.bind(handle);
     try {
-      return settledOutcome(await runPreparedDispatch(request, deps.registry, settlement));
+      await runPreparedDispatch(request, deps.registry, settlement);
     } catch (error) {
       // A launch that throws after prepare would otherwise leave the dispatch
       // prepared until its deadline; settle it now with the cause.
       const message = error instanceof Error ? error.message : String(error);
-      const aborted = await deps.capability.abort({
+      await deps.capability.abort({
         ...handle,
         reason: "native-failure",
         details: { source: "dispatch-driver", message },
       });
-      return {
-        state: "aborted",
-        reason: aborted.reason,
-        ...(aborted.details === undefined ? {} : { details: aborted.details }),
-      };
     } finally {
       planned.release(handle);
-    }
-  }
-
-  async function durableOutcome(handle: DispatchHandle): Promise<AwaitDispatchOutcome> {
-    const fetched = await deps.capability.fetch(handle);
-    switch (fetched.state) {
-      case "consumed":
-        return { state: "consumed", output: fetched.output };
-      case "aborted":
-        return {
-          state: "aborted",
-          reason: fetched.reason,
-          ...(fetched.details === undefined ? {} : { details: fetched.details }),
-        };
-      case "output-already-materialized": {
-        if (deps.capability.observeEvidence === undefined) {
-          return { state: "unknown", lifecycle: fetched.state };
-        }
-        const evidence = await deps.capability.observeEvidence(handle);
-        return evidence.state === "consumed"
-          ? { state: "consumed", output: evidence.output }
-          : { state: "unknown", lifecycle: fetched.state };
-      }
-      case "prepared":
-      case "result-stored":
-      case "gate-pending":
-        return { state: "pending", lifecycle: fetched.state };
-      default:
-        return { state: "unknown", lifecycle: fetched.state };
     }
   }
 
@@ -244,14 +191,11 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
         targetHarness,
         // K331: a server can host only process adapters.
         forceShellout: true,
+        materializeOutput: false,
         ...(deps.qualifyStagedCompletion === undefined
           ? {}
           : { qualifyStagedCompletion: deps.qualifyStagedCompletion }),
-      }).then((result) => {
-        settled.set(key, result);
-        inFlight.delete(key);
-        return result;
-      });
+      }).finally(() => inFlight.delete(key));
       inFlight.set(key, running);
       return {
         accepted: true,
@@ -260,29 +204,20 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
       };
     },
 
-    async await(input) {
-      if (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > AWAIT_DISPATCH_MAX_WAIT_MS) {
-        throw new DispatchDriverError(
-          `await_dispatch waitMs must be an integer within [0, ${AWAIT_DISPATCH_MAX_WAIT_MS}]`,
-        );
+    async waitFor(input) {
+      if (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > DISPATCH_WAIT_MAX_MS) {
+        throw new DispatchDriverError(`waitMs must be an integer within [0, ${DISPATCH_WAIT_MAX_MS}]`);
       }
-      const handle = { attestationId: input.attestationId, generation: input.generation };
-      const key = handleKey(handle);
-      const known = settled.get(key);
-      if (known !== undefined) {
-        return known.state === "queued" ? await durableOutcome(handle) : known;
-      }
-      const running = inFlight.get(key);
-      if (running === undefined) return await durableOutcome(handle);
+      const running = inFlight.get(handleKey(input));
+      if (running === undefined) return;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const outcome = await Promise.race([
+      await Promise.race([
         running,
-        new Promise<AwaitDispatchOutcome>((resolve) => {
-          timer = setTimeout(() => resolve({ state: "running" }), input.waitMs);
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, input.waitMs);
         }),
       ]);
       clearTimeout(timer);
-      return outcome.state === "queued" ? await durableOutcome(handle) : outcome;
     },
   };
 }

@@ -289,6 +289,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_dispatch_result: requestedFullContent(
     "One typed fetch state; only the first consumed fetch can carry `output`.",
   ),
+  start_dispatch: purposeBuiltSmall("`{accepted,handle,route}` or pre-launch rejection."),
   fetch_prompt: requestedFullContent(
     "Default full: typed entry with prompt and available schemas. Schema: exactly {roleId,version?,inputSchema?,outputSchema?}; orchestrator-command {roleId} only, schema keys absent, never null.",
   ),

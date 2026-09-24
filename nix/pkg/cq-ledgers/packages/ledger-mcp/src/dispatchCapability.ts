@@ -6589,6 +6589,7 @@ function available(
   implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"],
   supervisedWorkerGateRunner?: SupervisedWorkerGateRunner,
   projectGate?: ProjectGateSpecification,
+  targetPromptArtifactStores?: DispatchCapabilityOptions["targetPromptArtifactStores"],
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -6606,6 +6607,7 @@ function available(
       ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
       ...(supervisedWorkerGateRunner === undefined ? {} : { supervisedWorkerGateRunner }),
       ...(projectGate === undefined ? {} : { projectGate }),
+      ...(targetPromptArtifactStores === undefined ? {} : { targetPromptArtifactStores }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -6757,6 +6759,7 @@ export interface SingleProjectDispatchRuntimeOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"];
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
+  readonly targetPromptArtifactStores?: DispatchCapabilityOptions["targetPromptArtifactStores"];
 }
 
 export interface SingleProjectImplementationCandidateAuthority {
@@ -6919,6 +6922,7 @@ export async function createSingleProjectDispatchRuntime(
     options.implementationSuccessorLauncher,
     options.supervisedWorkerGateRunner,
     resolveProjectGateForRoot(options.resolved.configRoot),
+    options.targetPromptArtifactStores,
   );
 }
 

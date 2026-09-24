@@ -1131,6 +1131,7 @@ const REQUIRED_CAPABILITY_COVERAGE = Object.freeze({
     "confirm_dispatch_completion",
     "abort_dispatch",
     "fetch_dispatch_result",
+    "start_dispatch",
   ],
   planFencing: [
     "mint_plan_claim_authority",
@@ -1527,7 +1528,40 @@ export async function measureToolSurfaceTarget() {
   } finally {
     await store.dispose();
   }
-  const combinedTarget = [...breakingSurfaceTarget, ...POST_TARGET_ADDITIONS, ...cohortAdditions];
+  // G224: CQ-driven dispatch tools, measured from their live specifications.
+  const driverNames = ["start_dispatch"] as const;
+  const unusedDispatch = async (): Promise<never> => {
+    throw new Error("tool-surface measurement never invokes dispatch");
+  };
+  const driverStore = new InMemoryLedgerStore();
+  let driverAdditions: ToolDefinition[];
+  try {
+    const specifications = createLedgerMcpToolSpecifications(driverStore, undefined, undefined,
+      undefined, undefined, {
+        prepare: unusedDispatch,
+        fetchInput: unusedDispatch,
+        storeResult: unusedDispatch,
+        confirmCompletion: unusedDispatch,
+        abort: unusedDispatch,
+        fetch: unusedDispatch,
+        gitCommit: unusedDispatch,
+        gitResolveContinue: unusedDispatch,
+      });
+    driverAdditions = driverNames.map((name) => {
+      const specification = specifications.find((value) => value.name === name);
+      if (specification === undefined) throw new Error(`missing dispatch driver surface target: ${name}`);
+      return { name, description: specification.description,
+        inputSchema: ledgerToolInputJsonSchema(specification) };
+    });
+  } finally {
+    await driverStore.dispose();
+  }
+  const combinedTarget = [
+    ...breakingSurfaceTarget,
+    ...POST_TARGET_ADDITIONS,
+    ...cohortAdditions,
+    ...driverAdditions,
+  ];
   const profiles = targetRoleProfiles(combinedTarget);
   const breakingSurfaceProfiles = targetRoleProfiles(breakingSurfaceTarget);
   const currentRoleSurface = currentDefaultRoleSurface(currentTools);

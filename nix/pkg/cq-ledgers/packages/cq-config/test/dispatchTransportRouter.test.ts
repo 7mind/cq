@@ -984,6 +984,7 @@ describe("T1631 shared three-harness transport router", () => {
           activeHarness: "claude",
           targetHarness: "claude",
           forceShellout: false,
+          materializeOutput: true,
         },
         registry,
         recordingSettlement(attestationServiceSettlement(NAMESPACE, fixture.deps), calls),
@@ -997,6 +998,35 @@ describe("T1631 shared three-harness transport router", () => {
         "confirm",
         "fetch",
       ]);
+    });
+
+    test("a run that does not materialize leaves the single fetch to the parent [BA]", async () => {
+      const fixture = preparedFixture("claude", 94);
+      const calls: string[] = [];
+      const registry = new DispatchTransportAdapterRegistry([
+        createNativeDispatchAdapter(
+          "claude",
+          successfulLaunch(fixture.expectedCompletion, { input: 0, store: 0 }),
+        ),
+      ]);
+      const settlement = attestationServiceSettlement(NAMESPACE, fixture.deps);
+      const result = await runPreparedDispatchBound(
+        {
+          prepared: fixture.prepared,
+          resolvedModel: RESOLVED_MODELS.claude,
+          activeHarness: "claude",
+          targetHarness: "claude",
+          forceShellout: false,
+          materializeOutput: false,
+        },
+        registry,
+        recordingSettlement(settlement, calls),
+      );
+      expect(result).toMatchObject({ outcome: "consumed" });
+      expect("output" in result).toBe(false);
+      expect(calls).not.toContain("fetch");
+      const parentFetch = await settlement.fetch(result.handle);
+      expect(parentFetch).toMatchObject({ state: "consumed", output: OUTPUT });
     });
 
     test("an adapter abort settles through the port's abort, and nothing else [BA]", async () => {
@@ -1016,6 +1046,7 @@ describe("T1631 shared three-harness transport router", () => {
           activeHarness: "claude",
           targetHarness: "claude",
           forceShellout: false,
+          materializeOutput: true,
         },
         registry,
         recordingSettlement(attestationServiceSettlement(NAMESPACE, fixture.deps), calls),
@@ -1045,6 +1076,7 @@ describe("T1631 shared three-harness transport router", () => {
             activeHarness: "claude",
             targetHarness: "claude",
             forceShellout: false,
+            materializeOutput: true,
           },
           registry,
           { ...inner, readEnvelope: async () => undefined },
