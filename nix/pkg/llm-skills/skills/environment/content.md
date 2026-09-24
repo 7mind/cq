@@ -1,9 +1,9 @@
 ### Environment
 
 - **Sandbox detection**: Check `$SMIND_SANDBOXED` in your environment. When set to `1`, you are running inside a bubblewrap sandbox via the `yolo` wrapper and the sandbox-specific guidance below applies. When unset, you are running unsandboxed with the user's normal filesystem permissions — ignore the sandbox-specific workflow and write wherever the task requires.
-- **Sandbox layout** (when `SMIND_SANDBOXED=1`): The sandbox grants access to the project directory, `/nix`, and `/tmp/exchange`. Only writes to the project directory and `/tmp/exchange` persist — everything else is ephemeral and changes will be lost.
+- **Sandbox layout** (when `SMIND_SANDBOXED=1`): The sandbox grants access to the project directory, `/nix`, `/tmp/exchange`, and any configured binds. Writes to the project directory, `/tmp/exchange`, and explicitly bound read-write paths persist across sandbox sessions. `/tmp/exchange` is host tmpfs and does not survive a reboot; sandbox `/tmp` is ephemeral even across sessions.
 - **Direct execution**: Always run project commands directly (compilation, tests, linting, git, formatting, etc.) — these work fine in or out of the sandbox. Only use the script workflow below for true sandbox escapes.
-- **For system interaction** (when `SMIND_SANDBOXED=1`): When you need to access `$HOME`, modify system configuration, or reach files outside the sandbox, use this workflow:
+- **For system interaction** (when `SMIND_SANDBOXED=1`): Access explicitly bound paths directly. When you need to access `$HOME`, modify system configuration, or reach files outside granted binds, use this workflow:
   1. Write a shell script to `/tmp/exchange/{name}.sh`.
   2. Script structure MUST be:
      ```bash

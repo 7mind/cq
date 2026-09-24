@@ -425,7 +425,7 @@ in
             target = "*";
             prompt =
               if isLinux then
-                ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes persist only inside the project directory and /tmp/exchange. For access to $HOME or system paths, follow the /environment skill.''
+                ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes survive sandbox sessions in the project directory, /tmp/exchange, and explicitly bound read-write paths; /tmp/exchange is tmpfs and does not survive a host reboot. For access outside granted binds, follow the /environment skill.''
               else
                 ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and cq's XDG state directory; unrelated home-directory paths are denied.'';
           }
