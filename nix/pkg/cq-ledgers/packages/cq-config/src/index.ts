@@ -1361,3 +1361,12 @@ export {
   managedWorktreeRegistryRoot,
   selectManagedWorktreeRegistryRoot,
 } from "./managedWorktreePlacement.js";
+export {
+  HISTORICAL_WIP_REFERENCE,
+  classifyWipArtifactReconciliation,
+  type WipArtifactHeldVerdict,
+  type WipArtifactReconciliationInput,
+  type WipArtifactReconciliationReport,
+  type WipArtifactVerdict,
+  type WipArtifactWorktreeState,
+} from "./wipArtifactReconciliation.js";

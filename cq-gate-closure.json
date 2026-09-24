@@ -2570,6 +2570,18 @@
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/managedWorktreePlacement.test.ts",
       "sha256": "b0051bd1dca0c9ac5c14d6b0a3ec743297b68b81dc84362d98e32913809369ac",
       "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/wipArtifactInventory.test.ts",
+      "sha256": "99d101e11d528cad8c81db09e6d95796c9927fb0bab7e24a61b9e5b41d7bdfe1",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/wipArtifactInventory.test.ts",
+      "sha256": "99d101e11d528cad8c81db09e6d95796c9927fb0bab7e24a61b9e5b41d7bdfe1",
+      "targets": []
     }
   ]
 }
