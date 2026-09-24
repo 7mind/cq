@@ -936,7 +936,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const expectations: Readonly<Record<PromptSurface, string>> = {
       claude: 'CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)',
       codex: "`spawn_agent` transport",
-      pi: 'dispatch_agent(agent: "<role>", task: "<dispatch-handle>", targetRef: "<canonical-ref>")',
+      // D399: `task` carries the MATERIALIZED TYPED INPUT, not a handle. A
+      // handle could never work here — researches:RS15 established that a
+      // capability is persisted only as a hash, so the extension can never
+      // resolve one, and the parent both prepares and settles on this surface.
+      pi: 'dispatch_agent(agent: "<role>", task: "<materialized typed input>", targetRef: "<canonical-ref>")',
     };
     for (const surface of PROMPT_SURFACES) {
       const fragment = readFileSync(

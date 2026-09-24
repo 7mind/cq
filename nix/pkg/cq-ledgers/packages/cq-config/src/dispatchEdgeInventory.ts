@@ -70,7 +70,15 @@ export interface SurfaceLifecycle {
     | "pi-dispatch_agent"
     | "codex-role-boundary";
   readonly intercept: "trusted-parent-bridge" | "pi-extension" | "codex-parent-gate";
-  readonly resultCapabilityOwner: "child";
+  /**
+   * Who holds the one-shot result capability and therefore stores the result.
+   * `child` on Claude (the launch envelope hands the token to the child's store
+   * server) and Codex (the child submits at the role boundary). `parent` on Pi:
+   * the Pi child fragment forbids `store_result`, and defects:D399/researches:RS15
+   * established that a capability cannot reach the extension either, since it is
+   * persisted only as a hash — so on that surface the preparer settles.
+   */
+  readonly resultCapabilityOwner: "child" | "parent";
   readonly nativeCompletionConfirmer: "parent";
   readonly aborter: "parent";
   readonly fetcher: "parent-fetch_dispatch_result";
@@ -168,7 +176,7 @@ function surfaceLifecycle(surface: PromptSurface): SurfaceLifecycle {
       prepare: "parent-prepare_dispatch",
       submit: "pi-dispatch_agent",
       intercept: "pi-extension",
-      resultCapabilityOwner: "child",
+      resultCapabilityOwner: "parent",
       nativeCompletionConfirmer: "parent",
       aborter: "parent",
       fetcher: "parent-fetch_dispatch_result",

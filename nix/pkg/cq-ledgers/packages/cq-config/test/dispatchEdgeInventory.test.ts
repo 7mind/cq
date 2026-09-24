@@ -102,7 +102,13 @@ describe("T721 ref-first dispatch edge inventory", () => {
       expect(edge.lifecycle).toHaveLength(3);
       for (const surface of edge.lifecycle) {
         expect(surface.prepare).toBe("parent-prepare_dispatch");
-        expect(surface.resultCapabilityOwner).toBe("child");
+        // Per surface, not blanket: Pi's preparer settles (defects:D399), because
+        // its child fragment forbids `store_result` and a capability cannot
+        // reach the extension. Asserting "child" everywhere recorded a topology
+        // the Pi contract had never been able to implement.
+        expect(surface.resultCapabilityOwner).toBe(
+          surface.surface === "pi" ? "parent" : "child",
+        );
         expect(surface.nativeCompletionConfirmer).toBe("parent");
         expect(surface.aborter).toBe("parent");
         expect(surface.fetcher).toBe("parent-fetch_dispatch_result");

@@ -457,7 +457,9 @@ describe("packaged Pi prompt root", () => {
     expect(roles.get("begin")).toContain('fetch_prompt("<path>")');
     expect(roles.get("begin")).toContain("CQ::advance");
     expect(roles.get("plan/advance")).toContain(
-      'dispatch_agent(agent: "<role>", task: "<dispatch-handle>", targetRef: "<canonical-ref>")',
+      // D399: `task` carries the materialized typed input, not a handle. RS15
+      // established a handle could never be resolved by the extension.
+      'dispatch_agent(agent: "<role>", task: "<materialized typed input>", targetRef: "<canonical-ref>")',
     );
     for (const call of [
       "derive_predicates({})",
