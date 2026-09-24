@@ -77,7 +77,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -90,7 +91,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -126,7 +127,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -221,7 +222,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -234,7 +236,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -270,7 +272,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -933,7 +935,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -946,7 +949,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -991,7 +994,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -1086,7 +1089,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -1099,7 +1103,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -1135,7 +1139,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -1256,7 +1260,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -1269,7 +1274,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -1314,7 +1319,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -1380,7 +1385,8 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "store_result"
+              "fenced object",
+              "final content"
             ],
             "codex": [
               "fenced object",
@@ -1393,7 +1399,7 @@ export const PROMPT_CATALOG_PROJECTION = {
           "fragment": "dispatch-result-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -1420,7 +1426,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+          "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -1966,20 +1972,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -2074,7 +2089,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -2234,20 +2249,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -2351,7 +2375,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -2462,20 +2486,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -2556,7 +2589,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -2874,20 +2907,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -2946,7 +2988,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -3269,20 +3311,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -3355,7 +3406,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -3672,20 +3723,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "subagent-dispatch",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+            "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
             "surfaces": [
               "claude",
               "codex",
@@ -3702,20 +3762,29 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "codex": [
               "Agent(",
-              "dispatch_agent("
+              "dispatch_agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ],
             "pi": [
-              "Agent("
+              "Agent(",
+              "prepare_dispatch",
+              "confirm_dispatch_completion",
+              "abort_dispatch"
             ]
           },
           "fragment": "implement-dispatch-workflow",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
+            "reason": "The parent starts and fetches through CQ on every surface; the surrounding worker, reviewer, and resolver verification rules keep their surface wording (G224).",
             "surfaces": [
               "claude",
               "codex",
@@ -3774,7 +3843,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
           "surfaces": [
             "claude",
             "codex",
@@ -3783,7 +3852,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
+          "reason": "The parent starts and fetches through CQ on every surface; the surrounding worker, reviewer, and resolver verification rules keep their surface wording (G224).",
           "surfaces": [
             "claude",
             "codex",
@@ -4255,7 +4324,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "7fc10727cc38222138a57405918ac486ca7d8b8b593ce832075badb8fc8130db",
+  "catalogMetadataHash": "b80597a54548a6ced72466e51c49cd0a6d67544dcb2726b9dd85007063e79ef7",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -4288,20 +4357,29 @@ export const PROMPT_CATALOG_PROJECTION = {
     {
       "forbiddenVocabulary": {
         "claude": [
-          "dispatch_agent("
+          "dispatch_agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ],
         "codex": [
           "Agent(",
-          "dispatch_agent("
+          "dispatch_agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ],
         "pi": [
-          "Agent("
+          "Agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ]
       },
       "fragment": "subagent-dispatch",
       "intentionalDifference": {
         "kind": "dispatch-protocol",
-        "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+        "reason": "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.",
         "surfaces": [
           "claude",
           "codex",
@@ -4317,20 +4395,29 @@ export const PROMPT_CATALOG_PROJECTION = {
     {
       "forbiddenVocabulary": {
         "claude": [
-          "dispatch_agent("
+          "dispatch_agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ],
         "codex": [
           "Agent(",
-          "dispatch_agent("
+          "dispatch_agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ],
         "pi": [
-          "Agent("
+          "Agent(",
+          "prepare_dispatch",
+          "confirm_dispatch_completion",
+          "abort_dispatch"
         ]
       },
       "fragment": "implement-dispatch-workflow",
       "intentionalDifference": {
         "kind": "dispatch-protocol",
-        "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
+        "reason": "The parent starts and fetches through CQ on every surface; the surrounding worker, reviewer, and resolver verification rules keep their surface wording (G224).",
         "surfaces": [
           "claude",
           "codex",
@@ -4376,7 +4463,8 @@ export const PROMPT_CATALOG_PROJECTION = {
     {
       "forbiddenVocabulary": {
         "claude": [
-          "store_result"
+          "fenced object",
+          "final content"
         ],
         "codex": [
           "fenced object",
@@ -4389,7 +4477,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       "fragment": "dispatch-result-delivery",
       "intentionalDifference": {
         "kind": "dispatch-protocol",
-        "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+        "reason": "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).",
         "surfaces": [
           "claude",
           "codex",

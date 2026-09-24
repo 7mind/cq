@@ -83,16 +83,29 @@ let
       fragment = "subagent-dispatch";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
-        claude = [ "dispatch_agent(" ];
+        claude = [
+          "dispatch_agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
+        ];
         codex = [
           "Agent("
           "dispatch_agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
         ];
-        pi = [ "Agent(" ];
+        pi = [
+          "Agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
+        ];
       };
       intentionalDifference = {
         kind = "dispatch-protocol";
-        reason = "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.";
+        reason = "Every surface starts CQ-driven dispatch the same way (G224); each names the host launch tool it must not use.";
         surfaces = promptSurfaces;
       };
     }
@@ -100,16 +113,29 @@ let
       fragment = "implement-dispatch-workflow";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
-        claude = [ "dispatch_agent(" ];
+        claude = [
+          "dispatch_agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
+        ];
         codex = [
           "Agent("
           "dispatch_agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
         ];
-        pi = [ "Agent(" ];
+        pi = [
+          "Agent("
+          "prepare_dispatch"
+          "confirm_dispatch_completion"
+          "abort_dispatch"
+        ];
       };
       intentionalDifference = {
         kind = "dispatch-protocol";
-        reason = "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.";
+        reason = "The parent starts and fetches through CQ on every surface; the surrounding worker, reviewer, and resolver verification rules keep their surface wording (G224).";
         surfaces = promptSurfaces;
       };
     }
@@ -135,7 +161,10 @@ let
       fragment = "dispatch-result-delivery";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
-        claude = [ "store_result" ];
+        claude = [
+          "fenced object"
+          "final content"
+        ];
         codex = [
           "fenced object"
           "final content"
@@ -144,7 +173,7 @@ let
       };
       intentionalDifference = {
         kind = "dispatch-protocol";
-        reason = "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.";
+        reason = "Claude and Codex children store through their own result capability and complete handle-only (Claude through its CQ-bound ledger server); a Pi child returns a fenced result that CQ stores (G224).";
         surfaces = promptSurfaces;
       };
     }

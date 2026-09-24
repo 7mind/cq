@@ -247,18 +247,17 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     const narrativeCourier =
       "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
     const refsOnly =
-      '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
+      '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance? }';
 
     for (const body of [claudeImplementDispatch, codexImplementDispatch, piImplementDispatch]) {
       expect(normalize(body)).toContain(normalize(refsOnly));
-      expect(body).toContain("prepare_dispatch");
+      expect(body).toContain("start_dispatch");
+      expect(body).toContain("fetch_dispatch_result");
       expect(body).not.toContain(narrativeCourier);
+      // G224: input retrieval is the child's; the parent never handles its capability.
+      expect(body).not.toContain("inputCapability");
+      expect(body).not.toContain("fetch_dispatch_input");
     }
-    for (const body of [claudeImplementDispatch, codexImplementDispatch]) {
-      expect(body).toContain("inputCapability");
-      expect(body).toContain("fetch_dispatch_input");
-    }
-    expect(piImplementDispatch).toContain("fetch_dispatch_result");
 
     expect(implementWorker).toContain("{{cq:fragment:dispatch-input-delivery}}");
     expect(implementWorker).not.toContain("Inputs (from the dispatch prompt)");

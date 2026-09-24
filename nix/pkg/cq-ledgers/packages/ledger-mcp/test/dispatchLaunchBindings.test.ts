@@ -29,9 +29,9 @@ describe("createDispatchLaunchBindings", () => {
 
   test("every harness mints a <roleId>#<nonce> child id whose qualification identity matches it", () => {
     for (const harness of ["claude", "codex", "pi"] as const) {
-      const planned = bindings().planner.plan(harness, "implement-worker", "seed-1");
+      const planned = bindings().planner.plan(harness, "plan-advance", "seed-1");
       expect(planned.expectedChild.childId, harness).toBe(
-        `implement-worker#${planned.qualificationIdentity.correlationId}`,
+        `plan-advance#${planned.qualificationIdentity.correlationId}`,
       );
       expect(planned.expectedChild.runId, harness).toBe(planned.qualificationIdentity.runId);
     }
@@ -39,9 +39,9 @@ describe("createDispatchLaunchBindings", () => {
 
   test("an idempotent replay plans the same child; a different dispatch plans a different one", () => {
     for (const harness of ["claude", "codex", "pi"] as const) {
-      const first = bindings().planner.plan(harness, "implement-worker", "key-1");
-      const replay = bindings().planner.plan(harness, "implement-worker", "key-1");
-      const other = bindings().planner.plan(harness, "implement-worker", "key-2");
+      const first = bindings().planner.plan(harness, "plan-advance", "key-1");
+      const replay = bindings().planner.plan(harness, "plan-advance", "key-1");
+      const other = bindings().planner.plan(harness, "plan-advance", "key-2");
       expect(replay.expectedChild, harness).toEqual(first.expectedChild);
       expect(other.expectedChild.childId, harness).not.toBe(first.expectedChild.childId);
     }
@@ -50,9 +50,13 @@ describe("createDispatchLaunchBindings", () => {
     );
   });
 
-  test("a Pi-configured conflict resolver is refused before anything is prepared", () => {
-    expect(() => bindings().planner.plan("pi", "implement-conflict-resolver", "seed-1")).toThrow(DispatchLaunchUnavailableError);
-    expect(() => bindings().planner.plan("pi", "implement-reviewer", "seed-1")).not.toThrow();
+  test("Pi-configured implementation roles are refused before anything is prepared; planners and explorers run", () => {
+    for (const roleId of ["implement-worker", "implement-reviewer", "implement-conflict-resolver", "implementation-auditor"]) {
+      expect(() => bindings().planner.plan("pi", roleId, "seed-1"), roleId).toThrow(DispatchLaunchUnavailableError);
+    }
+    for (const roleId of ["plan-advance", "plan-reviewer", "investigate-explorer", "research-experimenter"]) {
+      expect(() => bindings().planner.plan("pi", roleId, "seed-1"), roleId).not.toThrow();
+    }
   });
 });
 

@@ -1,6 +1,7 @@
 /**
  * defects:D399 and defects:D402 — a dispatch contract must describe a lifecycle
- * that SETTLES. Same defect shape on both surfaces, so the guards live together.
+ * that SETTLES. Their history is kept below; since G224 the settling component
+ * is CQ itself, and the guards pin that contract on every surface.
  *
  * defects:D399 — the Pi parent contract must describe a lifecycle that settles.
  *
@@ -49,116 +50,94 @@ function prose(body: string): string {
   return body.replace(/^>\s?/gmu, "").replace(/\s+/gu, " ").trim();
 }
 
-describe("D399 Pi ref-first dispatch contract", () => {
-  const parent = fragment("pi", "subagent-dispatch");
+/**
+ * G224 — the lesson of D399/D402 carried into CQ-driven dispatch: preparation
+ * and settlement must live in ONE component, because a capability exists only
+ * in prepare's return. That component is now CQ itself. The parent starts and
+ * fetches; CQ prepares, launches the target harness's process boundary, and
+ * settles; and each surface's CHILD contract must match how CQ settles it.
+ */
+const SURFACES = ["claude", "codex", "pi"] as const;
+const HOST_LAUNCH_REFUSAL: Readonly<Record<(typeof SURFACES)[number], string>> = {
+  claude: "Never launch a CQ role with the native `Agent` tool",
+  codex: "Never run `cq-codex-role` or the native `spawn_agent` transport yourself",
+  pi: "Never launch a CQ role with `dispatch_agent`",
+};
+const RETIRED_PARENT_LIFECYCLE = [
+  "prepare_dispatch",
+  "store_result",
+  "confirm_dispatch_completion",
+  "abort_dispatch",
+  "fetch_dispatch_input",
+] as const;
 
-  test("the parent is told to store the child's result", () => {
-    // The missing step. Without it a prepared attestation stays prepared and
-    // trusted completion aborts it missing-result, which is the defect.
-    expect(parent).toContain("store_result");
-    // And to submit what the child returned rather than a paraphrase of it.
-    expect(parent).toContain("verbatim");
+describe("G224 CQ-driven parent dispatch contract", () => {
+  for (const surface of SURFACES) {
+    const parent = fragment(surface, "subagent-dispatch");
+
+    test(`${surface}: the parent starts through CQ, then fetches with a bounded wait`, () => {
+      const step = (needle: string): number => parent.indexOf(needle);
+      expect(parent).toContain("CQ_SUBAGENT");
+      expect(step("start_dispatch")).toBeGreaterThanOrEqual(0);
+      expect(step("fetch_dispatch_result")).toBeGreaterThan(step("start_dispatch"));
+      expect(prose(parent)).toContain("`waitMs` (at most 45000)");
+      expect(prose(parent)).toContain("`consumed` fetch carries the validated `output` exactly once");
+    });
+
+    test(`${surface}: the parent never runs the settlement it no longer owns`, () => {
+      for (const tool of RETIRED_PARENT_LIFECYCLE) expect(parent, tool).not.toContain(tool);
+      expect(prose(parent)).toContain("never holds or relays a dispatch capability");
+    });
+
+    test(`${surface}: the parent is told not to launch with its host tool`, () => {
+      // defects:D534 required naming a concrete host call; the call named now is
+      // the one the parent must NOT make for a CQ role.
+      expect(prose(parent)).toContain(HOST_LAUNCH_REFUSAL[surface]);
+    });
+
+    test(`${surface}: the implement workflow starts through CQ and fetches`, () => {
+      const workflow = fragment(surface, "implement-dispatch-workflow");
+      for (const tool of ["prepare_dispatch", "confirm_dispatch_completion"]) {
+        expect(workflow, tool).not.toContain(tool);
+      }
+      expect(workflow).toContain("start_dispatch");
+      expect(workflow).toContain("fetch_dispatch_result");
+    });
+  }
+});
+
+describe("G224 child contracts match how CQ settles each surface", () => {
+  test("a Claude child stores through its own bound server and replies with the handle only", () => {
+    // The print bridge settles by confirming a stored result whose child final
+    // message is the handle; a fenced body here would leave it missing-result.
+    const child = prose(fragment("claude", "dispatch-result-delivery"));
+    expect(child).toContain("call the ledger MCP `fetch_dispatch_input` tool exactly once");
+    expect(child).toContain("call `store_result` exactly once");
+    expect(child).toContain("omit `resultCapability`");
+    expect(child).toContain("Reply with the dispatch handle only");
+    expect(child).not.toContain("fenced `json` block");
   });
 
-  test("the parent settles in order: prepare, materialize, dispatch, store, fetch", () => {
-    const step = (needle: string): number => parent.indexOf(needle);
-    expect(step("prepare_dispatch")).toBeGreaterThanOrEqual(0);
-    expect(step("fetch_dispatch_input")).toBeGreaterThan(step("prepare_dispatch"));
-    expect(step("dispatch_agent(")).toBeGreaterThan(step("fetch_dispatch_input"));
-    expect(step("store_result")).toBeGreaterThan(step("dispatch_agent("));
-    expect(step("fetch_dispatch_result")).toBeGreaterThan(step("store_result"));
+  test("a Claude resolver continues through its bound git-conflict capability", () => {
+    const input = prose(roleFragment("claude", "implement-conflict-resolver", "dispatch-input-delivery"));
+    expect(input).toContain("without `gitConflictCapability`");
+    expect(input).not.toContain("the resolver-only `gitConflictCapability` returned by prepare");
   });
 
-  test("`task` carries the typed input, never a handle or a capability", () => {
-    // RS15: a capability cannot reach the extension, so a handle-addressed
-    // dispatch is unimplementable. Reinstating it would silently restore the
-    // defect, since the extension forwards `task` to the child verbatim.
-    expect(prose(parent)).toContain('task: "<materialized typed input>"');
-    expect(prose(parent)).not.toContain("<dispatch-handle>");
-    expect(prose(parent)).toContain("never a capability");
-  });
-
-  test("the child contract still expects a fenced structured result", () => {
-    // The parent's step 4 reads that block. If the child stopped producing one
-    // there would be nothing to store, so the two halves are pinned together.
+  test("a Pi child returns a fenced result and never holds a capability; CQ stores it", () => {
+    // D399 still holds on Pi: the child has no ledger connection, so the
+    // settling component (now CQ) reads this block.
     const child = fragment("pi", "dispatch-result-delivery");
     expect(child).toContain("fenced `json` block");
-    expect(child).toContain("supplied by the extension");
-  });
-
-  test("the child is never told to hold a capability on this surface", () => {
-    // assets.nix forbids `store_result` in the Pi child fragment, and the
-    // parent-owned lifecycle is what makes that restriction coherent rather
-    // than a dead end.
-    expect(fragment("pi", "dispatch-result-delivery")).not.toContain("store_result");
+    expect(child).not.toContain("store_result");
     const roleInput = roleFragment("pi", "implement-worker", "dispatch-input-delivery");
     expect(roleInput).not.toContain("inputCapability");
     expect(roleInput).not.toContain("fetch_dispatch_input");
   });
-});
 
-/**
- * defects:D402 — the same defect on the Claude surface, and the same fix.
- *
- * The Claude child fragment returns a fenced structured result and assets.nix
- * forbids `store_result` in it, exactly as on Pi; the `claudeDispatchBridge`
- * that WOULD store it is only on the `claude:process` print path, which
- * production does not route to. So a Claude dispatch left the attestation
- * prepared until trusted completion aborted it missing-result.
- *
- * researches:RS14 established the boundary half from production code: the print
- * bridge already scopes a child properly — `--tools ""`, `--allowedTools` with
- * full `mcp__<server>__<tool>` names from `exposedLedgerToolsForRole`,
- * `--strict-mcp-config` and a child-owned server started `--tool-profile
- * <roleId>` — while the same-session Agent path cannot, because the child IS
- * the parent's session. The contract must therefore settle in the parent and
- * must stop promising a scoping this transport does not provide.
- */
-describe("D402 Claude ref-first dispatch contract", () => {
-  const parent = fragment("claude", "subagent-dispatch");
-
-  test("the parent is told to store the child's result", () => {
-    expect(parent).toContain("store_result");
-    expect(parent).toContain("verbatim");
-  });
-
-  test("the parent settles in order: prepare, dispatch, store, fetch", () => {
-    const step = (needle: string): number => parent.indexOf(needle);
-    expect(step("prepare_dispatch")).toBeGreaterThanOrEqual(0);
-    expect(step("CQ_SUBAGENT(")).toBeGreaterThan(step("prepare_dispatch"));
-    expect(step("store_result")).toBeGreaterThan(step("CQ_SUBAGENT("));
-    expect(step("fetch_dispatch_result")).toBeGreaterThan(step("store_result"));
-  });
-
-  test("it no longer claims a scoping this transport cannot provide", () => {
-    // The retired sentence promised the bridge "gives only that child a
-    // capability-scoped store_result". RS13 measured the opposite: the child
-    // holds the parent's full ledger surface, because it shares the session.
-    expect(prose(parent)).not.toContain("gives only that child a capability-scoped");
-    expect(prose(parent)).toContain("inherits that session's tool surface");
-  });
-
-  test("CQ_SUBAGENT names a concrete host call on every surface", () => {
-    // defects:D534. `CQ_SUBAGENT` is a NEUTRAL token, defined nowhere in the
-    // assets. Pi and Codex hid that by naming their transport in the same
-    // sentence; Claude wrote `CQ_SUBAGENT(...)` in call position with nothing
-    // to resolve it, leaving the parent to infer the host call from the
-    // `isolation:`/`run_in_background:` arguments.
-    const transports: Readonly<Record<string, string>> = {
-      claude: "Agent(",
-      codex: "spawn_agent",
-      pi: "dispatch_agent(",
-    };
-    for (const [surface, call] of Object.entries(transports)) {
-      const body = fragment(surface, "subagent-dispatch");
-      expect(body).toContain("CQ_SUBAGENT");
-      expect(body).toContain(call);
-    }
-  });
-
-  test("the child still produces the fenced block the parent reads", () => {
-    const child = fragment("claude", "dispatch-result-delivery");
-    expect(child).toContain("fenced `json` block");
-    expect(child).not.toContain("store_result");
+  test("a Codex child keeps storing at its role boundary", () => {
+    const child = prose(fragment("codex", "dispatch-result-delivery"));
+    expect(child).toContain("call `store_result` exactly once");
+    expect(child).toContain("`resultCapability`");
   });
 });

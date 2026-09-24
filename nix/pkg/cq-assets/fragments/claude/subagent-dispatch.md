@@ -1,34 +1,24 @@
-> **Subagent dispatch (Claude).** `CQ_SUBAGENT` means the ref-first Claude
-> dispatch, and on this transport the PARENT settles: the child is launched in
-> the parent's own session, so the only component holding the prepared
-> `resultCapability` is the parent that called `prepare_dispatch`.
+> **Subagent dispatch (Claude).** `CQ_SUBAGENT` means CQ-driven dispatch: CQ
+> itself prepares, launches, and settles the role in its own process boundary,
+> with the role's own narrowed ledger connection. This session never launches a
+> child and never holds or relays a dispatch capability.
 >
-> 1. Call `prepare_dispatch` with the role's typed input.
-> 2. Launch `CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)`,
->    which on this host is the native `Agent(subagent_type:, prompt:, isolation:,
->    run_in_background:)` tool — `role` selects `subagent_type` and the handle is
->    the whole prompt.
->    The launch prompt carries only the handle and the input capability; role
->    instructions and assembled input resolve inside the child boundary, where
->    the child materializes them with `fetch_dispatch_input` exactly once. Use
->    `isolation: "none"` because the orchestrator already prepared the absolute
->    worktree path carried by the typed input, and set `run_in_background: false`
->    so completion stays correlatable.
-> 3. Take the child's fenced `json` block from its final content and submit it
->    verbatim with the dispatch-scoped `store_result`, whose `resultCapability`
->    the parent alone holds. Submitting anything the child did not return is
->    fabrication, not delegation; a child that returned no fenced result is a
->    failed dispatch to abort, never a body to paraphrase.
-> 4. Confirm or abort through the parent, then materialize a validated result
->    exactly once with `fetch_dispatch_result`.
+> 1. Call `start_dispatch` with the role's typed input (`roleId` plus `input`,
+>    or `refs`), a stable `idempotencyKey`, and `timeoutMs`. Pass `model` only
+>    to select a configured panel member; otherwise CQ runs the role at its
+>    configured tier token, on whichever harness that token names. The response
+>    is only `{ accepted, handle, route }` or a pre-launch rejection. Retrying
+>    with the same `idempotencyKey` returns the same dispatch and never starts a
+>    second child.
+> 2. Call `fetch_dispatch_result` with that handle and `waitMs` (at most 45000),
+>    and repeat while it reports `prepared`, `result-stored`, or
+>    `gate-pending`. A `consumed` fetch carries the validated `output` exactly
+>    once; retain it, because a later fetch returns
+>    `output-already-materialized`. `aborted` carries the typed reason. The
+>    handle survives a restart: resume by fetching it.
+> 3. A rejected start or an aborted fetch is a failed dispatch.
+>    Never simulate the delegated role inline, and never fall back to a
+>    body-returning completion.
 >
-> Skipping step 3 is what leaves an attestation prepared until trusted
-> completion aborts it `missing-result`.
->
-> Because the child runs in the parent's session it inherits that session's tool
-> surface; this transport cannot narrow it, so never dispatch a role through it
-> whose contract depends on being denied mutating ledger tools.
->
-> Never simulate the delegated role inline, and never dispatch through a generic
-> launcher. An unavailable scoped store or bridge aborts the dispatch; it never
-> falls back to a body-returning completion.
+> Never launch a CQ role with the native `Agent` tool: a same-session child
+> inherits this session's whole tool surface, including mutating ledger tools.

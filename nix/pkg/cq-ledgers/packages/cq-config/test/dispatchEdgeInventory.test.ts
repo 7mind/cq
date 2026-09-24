@@ -101,16 +101,20 @@ describe("T721 ref-first dispatch edge inventory", () => {
       expect(edge.outputSidecar).toBe(`schemas/${edge.roleId}.ts#outputSchema`);
       expect(edge.lifecycle).toHaveLength(3);
       for (const surface of edge.lifecycle) {
-        expect(surface.prepare).toBe("parent-prepare_dispatch");
-        // Per surface, not blanket: Pi's preparer settles (defects:D399), because
-        // its child fragment forbids `store_result` and a capability cannot
-        // reach the extension. Asserting "child" everywhere recorded a topology
-        // the Pi contract had never been able to implement.
-        expect(surface.resultCapabilityOwner).toBe(
-          surface.surface === "pi" ? "parent" : "child",
+        // G224: the parent starts and fetches; CQ prepares, launches, confirms, aborts.
+        expect(surface.prepare).toBe("cq-start_dispatch");
+        expect(surface.submit).toBe(
+          ({ claude: "claude-print-bridge", codex: "codex-role-boundary", pi: "pi-print-process" } as const)[
+            surface.surface
+          ],
         );
-        expect(surface.nativeCompletionConfirmer).toBe("parent");
-        expect(surface.aborter).toBe("parent");
+        // Per surface: a Pi child returns a fenced result with no ledger
+        // connection, so the driver stores it (defects:D399 still holds for Pi).
+        expect(surface.resultCapabilityOwner).toBe(
+          surface.surface === "pi" ? "cq-dispatch-driver" : "child",
+        );
+        expect(surface.nativeCompletionConfirmer).toBe("cq-dispatch-driver");
+        expect(surface.aborter).toBe("cq-dispatch-driver");
         expect(surface.fetcher).toBe("parent-fetch_dispatch_result");
         expect(surface.handleVisibility).toBe("handle-only");
       }

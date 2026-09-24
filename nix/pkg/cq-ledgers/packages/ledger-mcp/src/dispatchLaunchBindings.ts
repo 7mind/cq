@@ -29,6 +29,7 @@ import {
   type AttestationEnvelope,
   type ClaudeChildCorrelation,
   type CodexChildCorrelation,
+  type CodexRoleBoundaryInvocation,
   type DispatchAdapterLaunchResult,
   type DispatchAdapterLaunchContext,
   type DispatchHandle,
@@ -36,7 +37,11 @@ import {
   type Harness,
   type NativeChildIdentity,
 } from "@cq/config";
-import { WorksetEffectBroker, type WorksetEffectAdmissionProvider } from "@cq/process-control";
+import {
+  WorksetEffectBroker,
+  type CohortEffectEnvelopeV1,
+  type WorksetEffectAdmissionProvider,
+} from "@cq/process-control";
 import {
   CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
@@ -74,8 +79,18 @@ type LaunchCorrelation =
   | { readonly harness: "codex"; readonly correlation: CodexChildCorrelation }
   | { readonly harness: "pi"; readonly correlation: NativeChildIdentity };
 
-/** Roles whose contract REQUIRES a brokered Git tool, which a server-settled Pi child cannot reach. */
-const PI_UNREACHABLE_BROKER_ROLES: ReadonlySet<string> = new Set(["implement-conflict-resolver"]);
+/**
+ * Roles whose shared body requires the CHILD to call `store_result` (and, for
+ * the resolver, a brokered Git tool). A server-settled Pi child has no ledger
+ * connection, and the Pi surface still holds those roles' protocol; they need a
+ * per-surface result-submission fragment before Pi can run them.
+ */
+const PI_HELD_CHILD_STORE_ROLES: ReadonlySet<string> = new Set([
+  "implement-worker",
+  "implement-reviewer",
+  "implement-conflict-resolver",
+  "implementation-auditor",
+]);
 /** Pi child ids follow the `<roleId>#<nonce>` shape staged-worker qualification checks. */
 const PI_CHILD_ID_SEPARATOR = "#";
 /** Bytes of a failed launcher's stderr kept in the abort details. */
@@ -208,10 +223,10 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           runId: correlation.threadId,
         });
       }
-      if (PI_UNREACHABLE_BROKER_ROLES.has(roleId)) {
+      if (PI_HELD_CHILD_STORE_ROLES.has(roleId)) {
         throw new DispatchLaunchUnavailableError(
-          `a CQ-launched Pi child has no ledger connection, so ${roleId} cannot reach its brokered Git tool; ` +
-            "configure a Claude or Codex model for this role",
+          `${roleId}'s role body requires the child to store its own result, which a CQ-launched Pi ` +
+            "child cannot do (the Pi protocol for this role is held); configure a Claude or Codex model for it",
         );
       }
       const nonce = derivedUuid(derive("nonce"));
@@ -294,8 +309,8 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
         input !== null && typeof input === "object" && !Array.isArray(input)
           ? (input as Readonly<Record<string, unknown>>)["cohort"]
           : undefined;
-      // The exact private request the Codex parent contract writes to cq-codex-role.
-      const request = {
+      // The exact private request cq-codex-role reads from stdin.
+      const request: CodexRoleBoundaryInvocation = {
         roleId,
         handle,
         inputCapability: context.prepared.inputCapability,
@@ -310,7 +325,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
         ...(context.prepared.gitConflictCapability === undefined
           ? {}
           : { gitConflictCapability: context.prepared.gitConflictCapability }),
-        ...(cohort === undefined ? {} : { cohort }),
+        ...(cohort === undefined ? {} : { cohort: cohort as CohortEffectEnvelopeV1 }),
         cwd: await childCwd(options, context),
         ledgerCwd: options.ledgerCwd,
         model: context.resolvedModel.model,

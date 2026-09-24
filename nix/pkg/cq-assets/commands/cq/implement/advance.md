@@ -73,7 +73,7 @@ the effect boundaries required by the shared contract.
   handle and call `worktree_manage({ operation: "resolve-dispatch-recovery", handle })`.
   Accept only the server-returned discriminated preparation authority. For
   `preparation.kind === "current"`, retain the returned opaque authority and use
-  `prepare_dispatch` with `recoveryPreparation: <preparation.recoveryPreparation>`;
+  `start_dispatch` with `recoveryPreparation: <preparation.recoveryPreparation>`;
   omit `recovery`, `reprepareOf`, `continuation`, and `guardedRebase`. For
   `preparation.kind === "legacy"`, take `recoveryReference` from `preparation.recovery`;
   persist that literal reference with the task's recovery metadata and `cq log put`
@@ -102,7 +102,7 @@ the effect boundaries required by the shared contract.
   source reference, guarded-rebase reference, and nested `preparation.reprepareOf`
   all equal the retained identities; then pass only
   `preparation.reprepareOf` and `preparation.guardedRebase` to the ordinary
-  `prepare_dispatch` successor path. `staged-rebase-successor-bound` is an
+  `start_dispatch` successor path. `staged-rebase-successor-bound` is an
   idempotent acknowledgement of the exact already-allocated successor, not
   authority to allocate another. Never restore the retired parent capability,
   use parent-lost recovery, read the private journal, reconstruct either opaque
@@ -124,7 +124,7 @@ the effect boundaries required by the shared contract.
   accept exactly one server-returned `continuationReference`. Persist that
   literal reference with the task metadata and `cq log put` record. Re-read
   `HEAD`, require it to equal the returned live tip, then call
-  `prepare_dispatch` with `continuation: <continuationReference>` and without
+  `start_dispatch` with `continuation: <continuationReference>` and without
   `reprepareOf`, `recovery`, or `guardedRebase`. The server resolves the consumed
   generation, complete receipt closure, manager identity, repository binding,
   and authorized caller lineage, and atomically claims the association while
@@ -189,7 +189,7 @@ selected workset goal. When replacement evidence is not active, use this
   `expected_phase: "historical-dispatch"`. Accept only `admitted|existing`, one
   opaque `<bootstrapRef>`, and only the exact historical task. Prepare only that
   task and pass
-  `implementationEvidenceBootstrap: <bootstrapRef>` to `prepare_dispatch`;
+  `implementationEvidenceBootstrap: <bootstrapRef>` to `start_dispatch`;
   missing, stale, local-only, predecessor, replayed, or mismatched authority
   stops before worktree preparation. After recording its terminal completion,
   stop `user-action-required` for deployment/restart at that exact result;

@@ -289,14 +289,20 @@ sandbox, but does not widen the role's ledger tool profile. Both settings
 apply identically under the `claude`, `codex`, and `pi` active harnesses;
 `[harness.*]` blocks cannot override them.
 
-Dispatch uses one 18-cell matrix: active harness × target harness ×
-`forceShellout`. A same-harness, unforced cell uses that harness's qualified
-native adapter; every cross-harness or forced cell uses the target harness's
-process adapter. The resolved per-role token must name the target harness, so
+Dispatch is CQ-driven. A parent calls `start_dispatch` with a role and its
+typed input; CQ resolves the role's token from `cq.toml` (or a configured panel
+token the parent names), and the token's harness is the dispatch's target
+harness, so cross-harness dispatch follows from configuration. CQ prepares
+against the target harness's prompt surface and launches the role through that
+harness's process boundary: `claude -p` with the role's attested built-in tools
+and its own profile-narrowed ledger server for Claude, the packaged
+`cq-codex-role` launcher for Codex, and `pi -p` for Pi (whose fenced result CQ
+stores). The parent never holds a capability; it reads the outcome with
+`fetch_dispatch_result` and a bounded `waitMs`, which returns the body exactly
+once. The resolved per-role token must name the target harness, so
 `pi:openai-codex/...` remains a Pi process/provider route rather than becoming
-a Codex route. Every adapter receives the same prepared handle, canonical
-effect target, resolved model/effort, and one-shot fetch → store → confirm →
-consume lifecycle; the public route contains only its five routing fields.
+a Codex route. A server cannot host a same-session native launch, so none is
+used.
 
 Codex repository mutation remains brokered. `implement-worker` can receive
 only `gitChangeCapability` and use it only for `git_commit`, returning the

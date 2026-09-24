@@ -291,7 +291,7 @@ const DISPATCH_EDGE_INPUTS: readonly {
 ];
 
 const T977_WORKER_REFS =
-  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
+  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance? }';
 
 describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () => {
   it(
@@ -390,7 +390,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
 
     const piAdvance = normalize(renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""));
-    expect(piAdvance).toContain("prepare_dispatch");
+    expect(piAdvance).toContain("start_dispatch");
     expect(piAdvance).toContain("fetch_dispatch_result");
     expect(piAdvance).not.toContain(normalize("held freeform"));
     expect(piAdvance).not.toContain(
@@ -549,18 +549,14 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("T1629 orders bounded Codex invalid-output diagnostics before protocol abort", () => {
-    const advance = normalize(renderedOf("codex", "implement/advance"));
-    const stored = advance.indexOf("observe the `result-stored` acknowledgement");
-    const logged = advance.indexOf("`cq log put`", stored);
-    const aborted = advance.indexOf("`abort_dispatch` with reason `protocol-violation`", logged);
-    expect(stored).toBeGreaterThanOrEqual(0);
-    expect(logged).toBeGreaterThan(stored);
-    expect(aborted).toBeGreaterThan(logged);
-    const invalidOutputContract = advance.slice(stored, aborted);
-    expect(invalidOutputContract).not.toContain("fetch_dispatch_result");
-    expect(invalidOutputContract).not.toContain("consume_dispatch_result");
-    expect(invalidOutputContract).not.toContain("result body");
+  it("T1629 (G224): CQ, not the parent, settles an invalid Codex final reply", () => {
+    // The bounded-diagnostic-then-protocol-abort ordering moved into CQ with the
+    // launcher; the parent only observes the abort through its fetch.
+    const advance = normalize(renderedOf("codex", "implement/advance").replace(/^>\s?/gm, ""));
+    expect(advance).toContain(
+      "An invalid final reply after the `result-stored` acknowledgement is settled by CQ as a `protocol-violation` abort",
+    );
+    expect(advance).not.toContain("`abort_dispatch` with reason `protocol-violation`");
   });
 
   it("T903/T1308 pins reviewer evidence as blocking and independently verifies commit object plus tip and ancestry", () => {
@@ -638,7 +634,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).toContain(
         "Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs`",
       );
-      expect(advance).toContain("`prepare_dispatch` binds those absolute values");
+      expect(advance).toContain("CQ binds those absolute values");
     }
   });
 
@@ -709,40 +705,20 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     });
   }
 
-  it("T1491 renders every CodexRoleBoundaryInvocation field on every parent edge", () => {
+  it("T1491 (G224): no Codex parent edge renders the private launch request any more", () => {
+    // CQ writes the CodexRoleBoundaryInvocation itself (typed in the server's
+    // launch bindings, so the compiler enforces every field); a parent that
+    // still rendered it would be holding capabilities it no longer receives.
     for (const edge of DISPATCH_EDGE_INPUTS) {
       const body = normalize(renderedOf("codex", edge.flowRoleId));
-      for (const field of [
-        "roleId",
-        "handle:{attestationId,generation}",
-        "inputCapability",
-        "resultCapability",
-        "effectTargetRef",
-        "parentGateCapability?",
-        "gitChangeCapability?",
-        "gitConflictCapability?",
-        "cwd",
-        "ledgerCwd",
-        "model",
-        "reasoningEffort",
-        "sandboxMode",
-        "timeoutMs",
-      ] as const) {
-        expect(body).toContain(field);
+      for (const field of ["resultCapability", "parentGateCapability?", "gitChangeCapability?", "write_stdin"] as const) {
+        expect(body, `${edge.flowRoleId} still renders ${field}`).not.toContain(field);
       }
-      expect(body).toContain("stdin");
-      expect(body).toContain("parent project");
-      expect(body).toContain("child execution worktree");
-      expect(body).toContain("capabilities off");
-      expect(body).toContain("argv");
-      expect(body).toContain("canonical");
-      expect(body).toContain("identity");
-      expect(body).not.toContain("{ attestationId, generation, inputCapability }");
+      expect(body).toContain("start_dispatch");
     }
     const implement = normalize(renderedOf("codex", "implement/advance"));
-    expect(implement).toContain("parentGateCapability");
-    expect(implement).toContain("prepare_dispatch");
-    expect(implement).toContain("forward that exact parent-only capability");
+    expect(implement).not.toContain("forward that exact parent-only capability");
+    expect(implement).toContain("never holds the input, result, parent-gate, or worker Git capability");
   });
 
   // D407: the fragment required writing one JSON request to `cq-codex-role`
@@ -791,28 +767,18 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("D407 pins the stdin-preserving PTY launch on every Codex dispatch edge", () => {
-    const recipe: readonly string[] = [
-      "`stty -echo; exec cq-codex-role`",
-      "`tty: true`",
-      "`write_stdin`",
-      "newline-terminated",
-      "same session",
-    ];
+  it("D407 (G224): the PTY launch recipe left the parent with the launch itself", () => {
+    // CQ spawns cq-codex-role with a piped stdin, so the parent needs no PTY
+    // recipe; one reappearing would mean a parent is launching the boundary again.
+    for (const edge of DISPATCH_EDGE_INPUTS) {
+      const body = normalize(renderedOf("codex", edge.flowRoleId));
+      expect(body).not.toContain("stty -echo");
+      expect(body).not.toContain("`tty: true`");
+    }
     const fragment = normalize(
       readFileSync(path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"), "utf8"),
     );
-    for (const phrase of recipe) expect(fragment).toContain(phrase);
-    for (const edge of DISPATCH_EDGE_INPUTS) {
-      const body = normalize(renderedOf("codex", edge.flowRoleId));
-      for (const phrase of recipe) expect(body).toContain(phrase);
-    }
-    // The recipe is Codex-specific: it must not leak into the other surfaces,
-    // whose transports keep stdin open by construction.
-    for (const surface of ["claude", "pi"] as const) {
-      const other = normalize(renderedOf(surface, "implement/advance"));
-      expect(other).not.toContain("stty -echo");
-    }
+    expect(fragment).toContain("Never run `cq-codex-role` or the native `spawn_agent` transport yourself");
   });
 
   it("T2045 binds each Codex Git role to its sole broker operation and receipt family", () => {
@@ -820,8 +786,9 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"),
       "utf8",
     );
-    expect(dispatch).toContain("gitChangeCapability?");
-    expect(dispatch).toContain("gitConflictCapability?");
+    // G224: CQ grants each Git role its sole capability; the parent names neither.
+    expect(dispatch).not.toContain("gitChangeCapability");
+    expect(dispatch).not.toContain("gitConflictCapability");
 
     const worker = renderedOf("codex", "implement-worker");
     expect(worker).toContain("gitChangeCapability");
@@ -930,17 +897,13 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("every surface's dispatch fragment names a transport that takes a role id, not a prompt body", () => {
-    // The three transports differ, but all three are role-NAME-addressed. The
-    // codex divergence above is in the SKILL wrapper, not in this fragment.
+  it("every surface's dispatch fragment addresses a role by id through CQ, not by prompt body", () => {
+    // G224: the parent names the role (`roleId`/`refs`) to start_dispatch and is
+    // told which host transport it must NOT use for a CQ role.
     const expectations: Readonly<Record<PromptSurface, string>> = {
-      claude: 'CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)',
+      claude: "Never launch a CQ role with the native `Agent` tool",
       codex: "`spawn_agent` transport",
-      // D399: `task` carries the MATERIALIZED TYPED INPUT, not a handle. A
-      // handle could never work here — researches:RS15 established that a
-      // capability is persisted only as a hash, so the extension can never
-      // resolve one, and the parent both prepares and settles on this surface.
-      pi: 'dispatch_agent(agent: "<role>", task: "<materialized typed input>", targetRef: "<canonical-ref>")',
+      pi: "Never launch a CQ role with `dispatch_agent`",
     };
     for (const surface of PROMPT_SURFACES) {
       const fragment = readFileSync(

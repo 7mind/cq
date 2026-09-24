@@ -48,9 +48,10 @@ describe("T696: plan/review dispatch edges are ref-first on every surface", () =
   });
 
   for (const surface of SURFACES) {
-    test(`${surface} subagent-dispatch names prepare_dispatch, handle-only launch, and fetch_dispatch_result`, () => {
+    test(`${surface} subagent-dispatch names start_dispatch and a waiting fetch_dispatch_result`, () => {
       const body = fragment(surface);
-      expect(body).toContain("prepare_dispatch");
+      expect(body).toContain("start_dispatch");
+      expect(body).not.toContain("prepare_dispatch");
       expect(body).toContain("fetch_dispatch_result");
       expect(body).toContain("CQ_SUBAGENT");
       expect(body).not.toMatch(/task: "<complete prompt>"/);
@@ -66,7 +67,7 @@ describe("T696: plan/review dispatch edges are ref-first on every surface", () =
           expect(source).not.toContain(token);
         }
         const body = composed(rel, surface);
-        expect(body).toContain("prepare_dispatch");
+        expect(body).toContain("start_dispatch");
         expect(body).toContain("fetch_dispatch_result");
       });
     }

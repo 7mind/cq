@@ -1,6 +1,6 @@
 /**
- * T715 / G94 — implement dispatch edges use the surface-owned ref-first
- * lifecycle. Independent of T696/T714. Claude/Codex already prepared; this
+ * T715 / G94 — implement dispatch edges use the ref-first lifecycle, which
+ * since G224 CQ drives on every surface (start_dispatch + waiting fetch). Independent of T696/T714. Claude/Codex already prepared; this
  * file pins the T721 implement subset after the Pi parent fragment cutover.
  */
 import { describe, expect, test } from "bun:test";
@@ -15,8 +15,9 @@ const SURFACES = ["claude", "codex", "pi"] as const;
 const WORKFLOW = "implement-dispatch-workflow.md";
 const NARRATIVE_COURIER =
   "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
+// G224: CQ resolves the worker's model from configuration, so refs carry no resolvedModel.
 const WORKER_REFS =
-  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }';
+  '{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance? }';
 const FORBIDDEN = [
   'task: "<complete prompt>"',
   "validate_input",
@@ -44,9 +45,10 @@ describe("T715: implement dispatch edges are ref-first on every surface", () => 
   });
 
   for (const surface of SURFACES) {
-    test(`${surface} implement-dispatch-workflow prepares, launches by handle, and fetches once`, () => {
+    test(`${surface} implement-dispatch-workflow starts through CQ and fetches`, () => {
       const body = fragment(surface);
-      expect(body).toContain("prepare_dispatch");
+      expect(body).toContain("start_dispatch");
+      expect(body).not.toContain("prepare_dispatch");
       expect(body).toContain("fetch_dispatch_result");
       expect(body).toContain("CQ_SUBAGENT");
       expect(body).toContain(WORKER_REFS);

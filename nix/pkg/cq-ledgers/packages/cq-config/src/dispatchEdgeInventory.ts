@@ -62,25 +62,26 @@ export interface CatalogInventoryRole {
   readonly sidecar: { readonly schemaRoleId: string } | null;
 }
 
+/**
+ * How CQ runs one dispatched role on the child role prompt's surface - the
+ * dispatch's TARGET harness (G224). The parent only starts and fetches; CQ
+ * prepares, launches through that harness's process adapter, confirms and
+ * aborts.
+ */
 export interface SurfaceLifecycle {
   readonly surface: PromptSurface;
-  readonly prepare: "parent-prepare_dispatch";
-  readonly submit:
-    | "claude-native-compact-launch"
-    | "pi-dispatch_agent"
-    | "codex-role-boundary";
-  readonly intercept: "trusted-parent-bridge" | "pi-extension" | "codex-parent-gate";
+  readonly prepare: "cq-start_dispatch";
+  readonly submit: "claude-print-bridge" | "pi-print-process" | "codex-role-boundary";
+  readonly intercept: "cq-dispatch-driver";
   /**
-   * Who holds the one-shot result capability and therefore stores the result.
-   * `child` on Claude (the launch envelope hands the token to the child's store
-   * server) and Codex (the child submits at the role boundary). `parent` on Pi:
-   * the Pi child fragment forbids `store_result`, and defects:D399/researches:RS15
-   * established that a capability cannot reach the extension either, since it is
-   * persisted only as a hash — so on that surface the preparer settles.
+   * Who stores the result. `child` on Claude (its own ledger server holds the
+   * bound result capability) and Codex (the child submits at the role
+   * boundary). `cq-dispatch-driver` on Pi: the Pi child fragment returns a
+   * fenced result and has no ledger connection, so the server settles it.
    */
-  readonly resultCapabilityOwner: "child" | "parent";
-  readonly nativeCompletionConfirmer: "parent";
-  readonly aborter: "parent";
+  readonly resultCapabilityOwner: "child" | "cq-dispatch-driver";
+  readonly nativeCompletionConfirmer: "cq-dispatch-driver";
+  readonly aborter: "cq-dispatch-driver";
   readonly fetcher: "parent-fetch_dispatch_result";
   readonly handleVisibility: "handle-only";
 }
@@ -157,40 +158,15 @@ function flowFamilyOf(sourceRoleId: string, targetRoleId: string): DispatchFlowF
 }
 
 function surfaceLifecycle(surface: PromptSurface): SurfaceLifecycle {
-  if (surface === "claude") {
-    return {
-      surface,
-      prepare: "parent-prepare_dispatch",
-      submit: "claude-native-compact-launch",
-      intercept: "trusted-parent-bridge",
-      resultCapabilityOwner: "child",
-      nativeCompletionConfirmer: "parent",
-      aborter: "parent",
-      fetcher: "parent-fetch_dispatch_result",
-      handleVisibility: "handle-only",
-    };
-  }
-  if (surface === "pi") {
-    return {
-      surface,
-      prepare: "parent-prepare_dispatch",
-      submit: "pi-dispatch_agent",
-      intercept: "pi-extension",
-      resultCapabilityOwner: "parent",
-      nativeCompletionConfirmer: "parent",
-      aborter: "parent",
-      fetcher: "parent-fetch_dispatch_result",
-      handleVisibility: "handle-only",
-    };
-  }
   return {
     surface,
-    prepare: "parent-prepare_dispatch",
-    submit: "codex-role-boundary",
-    intercept: "codex-parent-gate",
-    resultCapabilityOwner: "child",
-    nativeCompletionConfirmer: "parent",
-    aborter: "parent",
+    prepare: "cq-start_dispatch",
+    submit:
+      surface === "claude" ? "claude-print-bridge" : surface === "pi" ? "pi-print-process" : "codex-role-boundary",
+    intercept: "cq-dispatch-driver",
+    resultCapabilityOwner: surface === "pi" ? "cq-dispatch-driver" : "child",
+    nativeCompletionConfirmer: "cq-dispatch-driver",
+    aborter: "cq-dispatch-driver",
     fetcher: "parent-fetch_dispatch_result",
     handleVisibility: "handle-only",
   };

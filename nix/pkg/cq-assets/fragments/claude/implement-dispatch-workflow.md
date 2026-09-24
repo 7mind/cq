@@ -1,6 +1,5 @@
-> **Implement-worker dispatch.** In Claude's ref-first
-> procedure, for each
-> `implement-worker`, first ensure a managed worktree via
+> **Implement-worker dispatch.** In Claude, for each `implement-worker`,
+> first ensure a managed worktree via
 > `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
 > (or resume-by-handle with the retained opaque handle). Use the returned
 > absolute path as advisory `worktreePath` / coordinates. Retain the handle
@@ -11,39 +10,34 @@
 > and never supply activity-fence, registry, reconciliation, Git, or install
 > authority. Retain the returned opaque handle and refuse launch when adoption
 > refuses. Then compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }`.
-> Call `prepare_dispatch`; the server reads the task/review narrative, assembles
-> it against the generated role's `inputSchema`, and returns a handle plus a
-> distinct `inputCapability`. Retain the exact prepared handle independently of
-> every child-visible value, plus the input capability and deadlines. Dispatch
-> `CQ_SUBAGENT` with the worker role, the resolved
-> model, `isolation: "none"`, synchronous execution, and the serialized
-> `{ attestationId, generation, inputCapability }` as its entire launch prompt.
-> The child calls `fetch_dispatch_input` exactly once before work; the parent
-> never reads or launches the task narrative. Require the bridge's handle-only
-> native-completion confirmation with actual child/run/model provenance, then
-> call `fetch_dispatch_result` with the retained prepared handle exactly once.
-> Apply the blocking consumed-only rule before interpreting the
-> already-validated worker result. After terminal status, cleanup uses guarded
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance? }`
+> and dispatch through `CQ_SUBAGENT`: call `start_dispatch` with them. CQ reads
+> the task/review narrative,
+> assembles it against the role's `inputSchema` for the role's configured
+> harness, launches the worker in the managed worktree, and runs the store-time
+> gate and any parent gate itself; the parent never reads or launches the task
+> narrative and never holds a worker, Git, or parent-gate capability. Wait with
+> `fetch_dispatch_result` (`waitMs`) until the dispatch is terminal and apply
+> the blocking consumed-only rule before interpreting the already-validated
+> worker result. After terminal status, cleanup uses guarded
 > `worktree_manage({ operation: "release", handle, terminalDisposition, … })`
 > only — never raw git worktree lifecycle commands.
 >
-> **Implement-reviewer dispatch.** Apply the same sequence
-> to every native `claude:*` `implement-reviewer` with
-> `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`, using the reviewer's resolved model.
+> **Implement-reviewer dispatch.** Start every configured
+> `implement-reviewer` panel member the same way with
+> `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
+> passing the member's configured token as `model`.
 > Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
-> caller input because `prepare_dispatch` binds those absolute values. A bridge failure makes
-> that reviewer abstain under the returned-failure rule; only the fetched
-> consumed body is a usable verdict. The `pi:*` panel members remain external
-> shellouts driving the shared `CQ::implement-review` rubric.
+> caller input because CQ binds those absolute values. A rejected start or aborted fetch makes that
+> reviewer abstain under the returned-failure rule; only a consumed fetched body
+> is a usable verdict. Members whose configured launch is an external adapter
+> run through the implementation-evidence adapter path, not `start_dispatch`.
 >
-> **Conflict-resolver dispatch.** On a merge
-> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, validationIntent: "focused-only", conflictingFiles, conflictState, baseSideNote? }` for
-> `implement-conflict-resolver` and use the frontier model through the same
-> handle-only sequence. Its entire serialized launch prompt is
-> `{ attestationId, generation, inputCapability, gitConflictCapability }` from
-> that prepare; never expose the worker Git capability to the resolver. A
-> prepare, scoped-store, correlation, confirmation, or
-> fetch failure enters the command's bailout. Only the fetched consumed body is a
-> usable resolution. A second materialization attempt is a protocol violation.
-> Never fall back to a body-returning completion.
+> **Conflict-resolver dispatch.** On a merge conflict, start
+> `implement-conflict-resolver` with
+> `{ taskId, headline?, description?, worktreePath, branch, baseCommit, validationIntent: "focused-only", conflictingFiles, conflictState, baseSideNote? }`
+> at the frontier token. CQ gives the resolver its git-conflict capability
+> through the resolver's own ledger connection and never exposes the worker's
+> Git capability to it. Accept only a consumed result whose durable receipt
+> chain ends at the terminal tip. A rejected start or an aborted fetch enters
+> the command's bailout. Never fall back to a body-returning completion.

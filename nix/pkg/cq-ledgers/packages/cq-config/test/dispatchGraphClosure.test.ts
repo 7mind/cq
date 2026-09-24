@@ -82,14 +82,15 @@ describe("T698: generated dispatch graph is closed on every surface", () => {
   });
 
   for (const surface of SURFACES) {
-    test(`${surface} every dispatched edge is prepare/handle/fetch with no legacy production call`, () => {
+    test(`${surface} every dispatched edge is a CQ-driven start/fetch with no legacy production call`, () => {
       for (const edge of DISPATCH_EDGE_INVENTORY.edges.filter((item) => item.kind === "dispatch")) {
         const body = composed(surface, edge.sourceRoleId);
         expect(body).toContain(edge.roleId);
-        expect(body).toContain("prepare_dispatch");
+        expect(body).toContain("start_dispatch");
         expect(body).toContain("fetch_dispatch_result");
         expect(body).toContain("CQ_SUBAGENT");
-        expect(body).toMatch(/confirm/i);
+        expect(body).toContain("`waitMs`");
+        expect(body).not.toContain("confirm_dispatch_completion");
         for (const token of FORBIDDEN) {
           expect(body).not.toContain(token);
         }

@@ -34,10 +34,11 @@ describe("T716/T717/T718/T719 G91 bundle wiring", () => {
     expect(workerAgents).toEqual(["implement-worker.md"]);
   });
 
-  test("each surface fragment is handle-only prepare/fetch [BA]", () => {
+  test("each surface fragment starts through CQ and fetches handle-only [BA]", () => {
     for (const surface of SURFACES) {
       const body = `${fragment(surface, "subagent-dispatch.md")}\n${fragment(surface, "implement-dispatch-workflow.md")}`;
-      expect(body).toContain("prepare_dispatch");
+      expect(body).toContain("start_dispatch");
+      expect(body).not.toContain("prepare_dispatch");
       expect(body).toContain("fetch_dispatch_result");
       expect(body).not.toContain("validate_output");
       expect(body).not.toContain('task: "<complete prompt>"');

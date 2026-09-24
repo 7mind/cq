@@ -11,26 +11,20 @@
 > never supply activity-fence, registry, reconciliation, Git, or install
 > authority. Retain the returned opaque handle and refuse launch when adoption
 > refuses. Then compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance?, resolvedModel? }`,
-> then call `prepare_dispatch`. The server reads the task/review narrative and
-> validates the assembled input against the role's typed `inputSchema`. Dispatch
-> `CQ_SUBAGENT` by writing the complete private request described above to the
-> adapter's stdin. Retain the prepared handle, `inputCapability`,
-> `resultCapability`, and the `parentGateCapability` returned by
-> `prepare_dispatch`; forward that exact parent-only capability in the private
-> implement-worker request, alongside the exact prepared `effectTargetRef`.
-> Retain worker-only `gitChangeCapability`; set `cwd` to the managed worktree
-> path and `ledgerCwd` to the parent project. The child calls
-> `fetch_dispatch_input` exactly once before
-> work, so no parent-rendered task narrative enters the launch. Await its
-> handle-only final response after its capability-scoped `store_result`, confirm
-> the observed native completion, and call `fetch_dispatch_result` exactly once
-> with the exact handle retained from `prepare_dispatch`. Apply the blocking
-> consumed-only rule before interpreting the worker result; never key the
-> fetch on any child-reported identifier. Never put the input body or either
-> capability in argv. The worker uses only `git_commit` for incremental commits;
-> the parent retains every returned receipt. Before accepting a passing result,
-> require `store_result` to have run the canonical full gate at the trusted result-storage boundary
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, validationIntent: "final", priorReviewId?, guidance? }`
+> and call `start_dispatch` with them. CQ reads the task/review narrative,
+> validates the assembled input against the role's typed `inputSchema` for the
+> role's configured harness, launches the worker in the managed worktree
+> through the packaged Codex launcher (or the configured harness's own process
+> boundary), and runs the store-time gate and the parent gate itself. The
+> parent never holds the input, result, parent-gate, or worker Git capability,
+> and no parent-rendered task narrative enters the launch. Wait with
+> `fetch_dispatch_result` (`waitMs`) until the dispatch is terminal, keyed only
+> on the handle `start_dispatch` returned, never on any child-reported
+> identifier. Apply the blocking consumed-only rule before interpreting the
+> worker result. The worker uses only `git_commit` for incremental commits and
+> returns every receipt in its result. Before accepting a passing result,
+> require the dispatch-scoped `store_result` to have run the canonical full gate at the trusted result-storage boundary
 > and attached strict, versioned
 > `supervisedGateEvidence`; the sandboxed worker neither runs that gate nor
 > supplies the evidence. Require exact task/result commit/branch/worktree
@@ -62,18 +56,16 @@
 > rebased tip), its `filesTouched` equals the onto-commit-to-result diff set,
 > and fresh runner-owned `supervisedGateEvidence` binds the rebased tip before
 > any review.
-> If the adapter rejects an invalid final reply after it can observe the `result-stored` acknowledgement, the trusted parent persists only that
-> lifecycle state and the adapter's bounded diagnostic through `cq log put`,
-> then calls `abort_dispatch` with reason `protocol-violation`. Do not expose
-> the stored payload or use either materialization operation on this path.
-> After terminal status, cleanup uses guarded
+> An invalid final reply after the `result-stored` acknowledgement is settled
+> by CQ as a `protocol-violation` abort; the parent only observes it through
+> the fetch. After terminal status, cleanup uses guarded
 > `worktree_manage({ operation: "release", handle, terminalDisposition, … })`
 > only — never raw git worktree lifecycle commands.
 >
 > **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism?, supervisedGateEvidence?, parentGateAttestation? }`.
 > Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
-> caller input because `prepare_dispatch` binds those absolute values. When the
+> caller input because CQ binds those absolute values. When the
 > reviewer runs under either configured sandbox mode, pass through the trusted
 > `supervisedGateEvidence` from the consumed worker result
 > and require the reviewer to validate its exact bindings and green counts.
@@ -84,16 +76,17 @@
 > worker tip, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0`.
 > Never use `danger-full-access` to let the child re-run the gate. Non-sandboxed
 > reviewers validate the same trusted evidence and rerun only when it is absent or invalid. Then
-> dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
-> plus handle-only final response, confirm native completion, and fetch once
-> with the retained prepared handle. Only a consumed fetched body is a usable
-> verdict; every other outcome abstains. The `pi:*` panel members remain
-> external shellouts driving the shared `CQ::implement-review` rubric.
+> start it through `CQ_SUBAGENT` with the member's configured token as `model`
+> and wait with `fetch_dispatch_result`. Only a consumed fetched body is a usable
+> verdict; every other outcome abstains. Members whose configured launch is an
+> external adapter run through the implementation-evidence adapter path, not
+> `start_dispatch`.
 >
 > **Conflict-resolver dispatch.** For
-> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, validationIntent: "focused-only", conflictingFiles, conflictState, baseSideNote? }`, dispatch
-> with the frontier model and `isolation: "worktree"`, require the same
-> store/handle-only/confirm/fetch sequence, and accept only the consumed fetched
-> body. The parent-observed `conflictState` binds the first continuation; require
+> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, validationIntent: "focused-only", conflictingFiles, conflictState, baseSideNote? }`, start
+> it through `CQ_SUBAGENT` at the frontier token, wait with
+> `fetch_dispatch_result`, and accept only the consumed fetched body. CQ gives
+> the resolver its git-conflict capability through its own launch and never
+> exposes the worker's Git capability to it. The parent-observed `conflictState` binds the first continuation; require
 > a non-empty receipt chain ending at the terminal `resultCommit`. Every other lifecycle outcome enters the command's bailout; never fall back to
 > a body-returning completion.

@@ -456,11 +456,11 @@ describe("packaged Pi prompt root", () => {
     );
     expect(roles.get("begin")).toContain('fetch_prompt("<path>")');
     expect(roles.get("begin")).toContain("CQ::advance");
-    expect(roles.get("plan/advance")).toContain(
-      // D399: `task` carries the materialized typed input, not a handle. RS15
-      // established a handle could never be resolved by the extension.
-      'dispatch_agent(agent: "<role>", task: "<materialized typed input>", targetRef: "<canonical-ref>")',
-    );
+    // G224: the Pi parent starts CQ-driven dispatch and never launches with
+    // dispatch_agent; CQ launches Pi-targeted roles and settles them itself.
+    expect(roles.get("plan/advance")).toContain("Call `start_dispatch`");
+    expect(roles.get("plan/advance")).toContain("Never launch a CQ role with `dispatch_agent`");
+    expect(roles.get("plan/advance")).not.toContain("dispatch_agent(");
     for (const call of [
       "derive_predicates({})",
       'get_config({"section":"<section>"})',

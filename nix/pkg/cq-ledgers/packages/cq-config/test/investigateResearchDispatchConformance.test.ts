@@ -43,14 +43,15 @@ describe("T714: investigate/research dispatch edges are ref-first on every surfa
 
   for (const surface of SURFACES) {
     for (const rel of DISPATCH_COMMANDS) {
-      test(`${surface} ${rel} composes prepare/handle/fetch and has no legacy parent request`, () => {
+      test(`${surface} ${rel} composes start/fetch through CQ and has no legacy parent request`, () => {
         const source = commandBody(rel);
         expect(source).toContain("{{cq:fragment:subagent-dispatch}}");
         for (const token of FORBIDDEN) {
           expect(source).not.toContain(token);
         }
         const body = `${source}\n${fragment(surface)}`;
-        expect(body).toContain("prepare_dispatch");
+        expect(body).toContain("start_dispatch");
+        expect(body).not.toContain("prepare_dispatch");
         expect(body).toContain("fetch_dispatch_result");
         expect(body).not.toMatch(/task: "<complete prompt>"/);
       });
