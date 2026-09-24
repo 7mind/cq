@@ -98,13 +98,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -231,13 +231,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 71025,
-        "tokens": 17194,
-        "sha256": "0791c43eba4ecafe96f9b2ef4b76f4716cb8d3ed2d9bc4b7ec3fa33111e99fae"
+        "utf8Bytes": 71021,
+        "tokens": 17193,
+        "sha256": "ccc4fb93959ddedebd874422ba3690957cc5e783ebfbb104944463b08263fb42"
       },
-      "surfaceTokens": 17371,
+      "surfaceTokens": 17370,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": 6985,
+      "deltaTokens": 6984,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -370,13 +370,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -511,13 +511,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -814,13 +814,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -955,13 +955,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1136,13 +1136,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1357,13 +1357,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1498,13 +1498,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1762,13 +1762,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1903,13 +1903,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2082,13 +2082,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2303,13 +2303,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2482,13 +2482,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 83755,
-        "tokens": 20322,
-        "sha256": "77c22ee22dcf7ac17b748f1f64854b4c82e8e8895b6225241d62dd8c3fa485af"
+        "utf8Bytes": 83751,
+        "tokens": 20321,
+        "sha256": "e55ff66e33c280c755e4f45ab7c762b25abbad97e3438e79ef3379b13b6cee14"
       },
-      "surfaceTokens": 20499,
+      "surfaceTokens": 20498,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 8717,
+      "deltaTokens": 8716,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -6138,8 +6138,8 @@
       "name": "worktree_manage",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 859,
-        "deltaTokens": 859
+        "afterTokens": 858,
+        "deltaTokens": 858
       },
       "fields": {
         "name": {
@@ -6162,12 +6162,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 134,
-            "marginalTokens": 135
+            "serializedTokens": 133,
+            "marginalTokens": 134
           },
           "delta": {
-            "serializedTokens": 134,
-            "marginalTokens": 135
+            "serializedTokens": 133,
+            "marginalTokens": 134
           }
         },
         "inputSchema": {

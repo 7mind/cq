@@ -312,9 +312,18 @@ describe("prepareManagedWorktree", () => {
     expect(isUuidV7(b.evidence.worktreeId)).toBe(true);
     expect(a.evidence.worktreeId).not.toBe(b.evidence.worktreeId);
     expect(a.evidence.absolutePath).not.toBe(b.evidence.absolutePath);
-    expect(a.evidence.absolutePath).toContain(`${path.sep}.claude${path.sep}worktrees${path.sep}`);
+    expect(a.evidence.absolutePath).toContain(`${path.sep}.cq${path.sep}worktrees${path.sep}`);
     expect(await fs.stat(a.evidence.absolutePath).then((s) => s.isDirectory())).toBe(true);
     expect(await fs.stat(b.evidence.absolutePath).then((s) => s.isDirectory())).toBe(true);
+
+    // D404: `.cq` is not wholesale-ignored the way the harness namespace was,
+    // so the managed parent ignores ITSELF. Without this every managed tree is
+    // untracked in the repository it was cut from, and the `git status
+    // --porcelain` check that gates cohort integration sees a dirty tree.
+    const parent = path.join(repo.cwd, ".cq", "worktrees");
+    expect(await fs.readFile(path.join(parent, ".gitignore"), "utf8")).toBe("*\n");
+    const porcelain = await git(repo.cwd, ["status", "--porcelain"]);
+    expect(porcelain).not.toContain(".cq/worktrees");
   });
 
   it("duplicate prepare for the same task cannot create a second live tree", async () => {
@@ -714,7 +723,7 @@ describe("prepareManagedWorktree", () => {
     const repo = await seedRepository();
     const failingInstall: ManagedWorktreeInstallRunner = async (plan) => {
       // Observe that cwd is already under a managed path before failing.
-      expect(plan.cwd.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)).toBe(true);
+      expect(plan.cwd.includes(`${path.sep}.cq${path.sep}worktrees${path.sep}`)).toBe(true);
       return { code: 17, stdout: "", stderr: "injected install failure\n" };
     };
     const result = await prepareManagedWorktree(
@@ -745,8 +754,8 @@ describe("prepareManagedWorktree", () => {
       (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
     );
     expect(branchCheck).not.toBe(0);
-    // No residual worktrees under .claude/worktrees.
-    const parent = path.join(repo.cwd, ".claude", "worktrees");
+    // No residual worktrees under the CQ-managed parent (D404).
+    const parent = path.join(repo.cwd, ".cq", "worktrees");
     let entries: string[] = [];
     try {
       entries = (await fs.readdir(parent)).filter((name) => name !== ".cq-managed-registry");
@@ -845,7 +854,7 @@ describe("prepareManagedWorktree", () => {
     const prepared = a.status === "prepared" ? a : b.status === "prepared" ? b : null;
     expect(prepared).not.toBeNull();
     if (prepared === null) return;
-    const worktreeParent = path.join(repo.cwd, ".claude", "worktrees");
+    const worktreeParent = path.join(repo.cwd, ".cq", "worktrees");
     const dirs = (await fs.readdir(worktreeParent)).filter((name) => isUuidV7(name));
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toBe(prepared.evidence.worktreeId);

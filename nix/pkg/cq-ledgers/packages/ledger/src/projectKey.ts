@@ -48,6 +48,10 @@
  *   explicitly via `projectId`, not to manufacture an unstable one.
  */
 
+import {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+} from "@cq/config";
 import { GitPlumbing } from "./store/git/GitPlumbing.js";
 
 /**
@@ -62,11 +66,16 @@ export class ProjectKeyResolutionError extends Error {
 }
 
 /**
- * Path segment marking a harness-created agent worktree (D170). Both the native
- * `worktree-agent-<hex>` trees and `implement/<taskId>` trees the flow creates
- * live under this directory.
+ * Path segments marking an agent worktree (D170). Both the native
+ * `worktree-agent-<hex>` trees and the `implement/<taskId>` trees the flow
+ * creates live under one of these. Two entries since D404 moved CQ's own
+ * placement off the harness namespace: the guard must refuse a ledger opened
+ * inside EITHER, or the cutover would silently reopen the hole D170 closed.
  */
-export const AGENT_WORKTREE_SEGMENT = ".claude/worktrees";
+export const AGENT_WORKTREE_SEGMENTS: readonly string[] = Object.freeze([
+  CQ_MANAGED_WORKTREES_SEGMENTS.join("/"),
+  HARNESS_NATIVE_WORKTREES_SEGMENTS.join("/"),
+]);
 
 /**
  * True when `repoRoot` lies inside an agent worktree (D170). Compared on path
@@ -75,8 +84,11 @@ export const AGENT_WORKTREE_SEGMENT = ".claude/worktrees";
  */
 export function isInsideAgentWorktree(repoRoot: string): boolean {
   const segments = repoRoot.split(/[/\\]+/);
+  const parents = [CQ_MANAGED_WORKTREES_SEGMENTS, HARNESS_NATIVE_WORKTREES_SEGMENTS];
   for (let i = 0; i + 1 < segments.length; i++) {
-    if (segments[i] === ".claude" && segments[i + 1] === "worktrees") return true;
+    for (const parent of parents) {
+      if (segments[i] === parent[0] && segments[i + 1] === parent[1]) return true;
+    }
   }
   return false;
 }
@@ -144,7 +156,7 @@ export async function resolveProjectKey(opts: ResolveProjectKeyOpts): Promise<st
   if (isInsideAgentWorktree(opts.repoRoot)) {
     throw new ProjectKeyResolutionError(
       `Refusing to resolve a project key for ${opts.repoRoot}: it is inside an agent worktree ` +
-        `(${AGENT_WORKTREE_SEGMENT}). A worktree shares the repo's object database, so the ` +
+        `(${AGENT_WORKTREE_SEGMENTS.join(" or ")}). A worktree shares the repo's object database, so the ` +
         `first-commit SHA would resolve the SAME out-of-tree store as the main checkout — the ` +
         `developer's LIVE ledger — and a divergent open can reinitialise it (D170: this ` +
         `destroyed 1147 active + 2278 archived items). Dispatched workers must not touch the ` +

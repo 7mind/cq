@@ -65,7 +65,9 @@ import {
   type ManagedWorktreeHandleV1 as ConfigManagedWorktreeHandleV1,
   type ImplementTaskWorkerSupervisedGateEvidence,
   type WipClosureProjection,
+  CQ_MANAGED_WORKTREES_SEGMENTS,
   cqManagedWorktreesParent,
+  harnessNativeWorktreesParent,
   managedWorktreeRegistryRoot,
 } from "@cq/config";
 import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
@@ -83,7 +85,7 @@ import {
   verifyDispatchBase,
 } from "./dispatchBase.js";
 import { MANAGED_GATE_CLOSURE_MANIFEST, resolveManagedGateClosure } from "./gateClosure.js";
-import { AGENT_WORKTREE_SEGMENT } from "./projectKey.js";
+
 import {
   assessLegacyReconciliationActivity,
   beginLegacyWorktreeReconciliation,
@@ -704,6 +706,27 @@ function containedPath(root: string, candidate: string): boolean {
 
 function worktreesParent(repositoryRoot: string): string {
   return cqManagedWorktreesParent(repositoryRoot);
+}
+
+/**
+ * Create the managed parent and make it ignore itself (D404).
+ *
+ * Managed worktrees now live under the CQ placement, INSIDE the repository,
+ * which is not wholesale-ignored the way the harness namespace was — so without
+ * this every managed tree would show up as untracked in the repository it was
+ * cut from, and `git status --porcelain` checks that gate cohort integration
+ * would see a dirty tree. A `.gitignore` holding `*` inside the parent ignores
+ * the trees AND itself, so no consumer has to edit their own ignore rules to
+ * adopt this. Idempotent: an existing file is left exactly as it is.
+ */
+async function ensureManagedParentSelfIgnored(parent: string): Promise<void> {
+  await fs.mkdir(parent, { recursive: true });
+  const ignorePath = join(parent, ".gitignore");
+  try {
+    await fs.writeFile(ignorePath, "*\n", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 function registryRoot(repositoryRoot: string, stateDir: string | undefined): string {
@@ -2256,7 +2279,13 @@ async function prepareAdoptedWorktreeUnderLock(
   const branch = request.branch ?? defaultBranchForTask(request.taskId);
   const expectedBranch = defaultBranchForTask(request.taskId);
   const absolutePath = resolve(request.adoptWorktreePath);
-  const expectedPath = join(worktreesParent(repositoryRoot), `implement-${request.taskId}`);
+  // D404: legacy adoption adopts a tree that ALREADY EXISTS, and every such
+  // tree predates the cutover, so its expected location is the harness-native
+  // parent — not CQ's placement, which only fresh creation uses.
+  const expectedPath = join(
+    harnessNativeWorktreesParent(repositoryRoot),
+    `implement-${request.taskId}`,
+  );
   if (branch !== expectedBranch || absolutePath !== expectedPath) {
     return refusedPrepare(
       "adoption-invalid",
@@ -2854,7 +2883,7 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
     );
   }
   const parent = worktreesParent(repositoryRoot);
-  await fs.mkdir(parent, { recursive: true });
+  await ensureManagedParentSelfIgnored(parent);
   const absolutePath = join(parent, worktreeId);
 
   const branchExists = await localBranchExists(git, repositoryRoot, branch);
@@ -4456,7 +4485,7 @@ export async function withManagedWorktreeEffectLock<T>(
 }
 
 export function managedWorktreeHandleSegment(): string {
-  return AGENT_WORKTREE_SEGMENT;
+  return CQ_MANAGED_WORKTREES_SEGMENTS.join("/");
 }
 
 export function normalizeManagedPath(value: string): string {

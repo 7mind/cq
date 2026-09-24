@@ -17,6 +17,10 @@
  * worktree_manage handoff for claude:native registration.
  */
 
+import {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+} from "./managedWorktreePlacement.js";
 import type { Harness } from "./types.js";
 import {
   isRunnerOwnedCodexRoleBoundaryExecution,
@@ -646,8 +650,15 @@ function normalizeAbsPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-/** Managed implement worktrees use a v1 UUID path or v2 adopted implement-T path. */
-const MANAGED_WORKTREE_MARKER = "/.claude/worktrees/";
+/**
+ * Managed implement worktrees use a v1 UUID path or v2 adopted implement-T
+ * path, under CQ's placement or — for trees created before the D404 cutover —
+ * the harness-native parent.
+ */
+const MANAGED_WORKTREE_MARKERS: readonly string[] = Object.freeze([
+  `/${CQ_MANAGED_WORKTREES_SEGMENTS.join("/")}/`,
+  `/${HARNESS_NATIVE_WORKTREES_SEGMENTS.join("/")}/`,
+]);
 const MANAGED_WORKTREE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ADOPTED_WORKTREE_SEGMENT = /^implement-T\d+$/;
@@ -659,9 +670,12 @@ export function isManagedWorktreePath(cwd: string): boolean {
   if (normalized.includes("/../") || normalized.endsWith("/..") || normalized.includes("//")) {
     return false;
   }
-  const idx = normalized.lastIndexOf(MANAGED_WORKTREE_MARKER);
-  if (idx < 0) return false;
-  const after = normalized.slice(idx + MANAGED_WORKTREE_MARKER.length);
+  const marker = MANAGED_WORKTREE_MARKERS.map((candidate) => ({
+    candidate,
+    idx: normalized.lastIndexOf(candidate),
+  })).find((found) => found.idx >= 0);
+  if (marker === undefined) return false;
+  const after = normalized.slice(marker.idx + marker.candidate.length);
   // Exactly one path segment (the worktree id); no nested escapes.
   if (after.length === 0 || after.includes("/")) return false;
   return MANAGED_WORKTREE_ID.test(after) || ADOPTED_WORKTREE_SEGMENT.test(after);

@@ -65,11 +65,13 @@ describe("D404 managed worktree placement", () => {
   });
 
   test("keeps harness-native isolation a separate name from CQ placement", () => {
-    // They hold the same value today. The point is that they are two DECISIONS:
-    // the cutover moves CQ placement while native confinement and the D170
-    // store-safety guard must keep recognizing Claude's own namespace.
+    // Two DECISIONS, and since the cutover two VALUES: CQ places its own trees
+    // while native confinement and the D170 store-safety guard still have to
+    // recognize the harness's own namespace.
     expect([...HARNESS_NATIVE_WORKTREES_SEGMENTS]).toEqual([".claude", "worktrees"]);
-    expect([...CQ_MANAGED_WORKTREES_SEGMENTS]).toEqual([...HARNESS_NATIVE_WORKTREES_SEGMENTS]);
+    expect([...CQ_MANAGED_WORKTREES_SEGMENTS]).not.toEqual([
+      ...HARNESS_NATIVE_WORKTREES_SEGMENTS,
+    ]);
   });
 
   test("no production source names the registry directory a second time", () => {

@@ -6,6 +6,10 @@
  * an opaque UUIDv7, while task/path/branch/repository identity is canonical.
  */
 
+import {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+} from "./managedWorktreePlacement.js";
 import type { CohortWorktreeIdentityV1 } from "./cohortEffectEnvelope.js";
 
 export const MANAGED_WORKTREE_HANDLE_KIND = "cq-managed-worktree-handle" as const;
@@ -180,8 +184,16 @@ export function validateManagedWorktreeHandle(
   }
 
   const absolutePath = normalizeAbsolutePath(handle.absolutePath);
-  const managedParent = `${repositoryRoot}/.claude/worktrees`;
-  if (!absolutePath.startsWith(`${managedParent}/`)) {
+  // D404: a stored handle may sit under CQ's placement or, if it predates the
+  // cutover, the harness-native one. Both are inside the repository root, so
+  // accepting either does not widen containment — it only stops the cutover
+  // invalidating live handles. Fresh creation still only produces the first.
+  const managedParents = [
+    `${repositoryRoot}/${CQ_MANAGED_WORKTREES_SEGMENTS.join("/")}`,
+    `${repositoryRoot}/${HARNESS_NATIVE_WORKTREES_SEGMENTS.join("/")}`,
+  ];
+  const managedParent = managedParents.find((parent) => absolutePath.startsWith(`${parent}/`));
+  if (managedParent === undefined) {
     return {
       status: "invalid",
       reason: handle.version === 1 ? "handle-path-traversal" : "handle-foreign",

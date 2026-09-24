@@ -1355,6 +1355,9 @@ export {
   CQ_MANAGED_WORKTREES_SEGMENTS,
   HARNESS_NATIVE_WORKTREES_SEGMENTS,
   MANAGED_REGISTRY_DIRNAME,
+  acceptedManagedWorktreeParents,
   cqManagedWorktreesParent,
+  harnessNativeWorktreesParent,
   managedWorktreeRegistryRoot,
+  selectManagedWorktreeRegistryRoot,
 } from "./managedWorktreePlacement.js";

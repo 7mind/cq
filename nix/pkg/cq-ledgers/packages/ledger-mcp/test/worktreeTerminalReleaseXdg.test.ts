@@ -419,9 +419,10 @@ async function releaseState(
   repositoryRoot: string,
   handle: ManagedWorktreeHandle,
 ): Promise<ReleaseState> {
+  // D404: a fresh repository's registry lives under the CQ placement.
   const registryPath = path.join(
     repositoryRoot,
-    ".claude",
+    ".cq",
     "worktrees",
     ".cq-managed-registry",
     "tasks",
@@ -1191,14 +1192,14 @@ describe("D336 production XDG terminal worktree release", () => {
             handle: {
               ...prepared.handle,
               repositoryRoot: `${repositoryRoot}-foreign`,
-              absolutePath: `${repositoryRoot}-foreign/.claude/worktrees/${prepared.handle.worktreeId}`,
+              absolutePath: `${repositoryRoot}-foreign/.cq/worktrees/${prepared.handle.worktreeId}`,
             },
           },
           {
             handle: {
               ...prepared.handle,
               worktreeId: "019f2c7a-6b21-7c44-9e10-7a3f5d9b2e09",
-              absolutePath: `${repositoryRoot}/.claude/worktrees/019f2c7a-6b21-7c44-9e10-7a3f5d9b2e09`,
+              absolutePath: `${repositoryRoot}/.cq/worktrees/019f2c7a-6b21-7c44-9e10-7a3f5d9b2e09`,
             },
           },
           {
