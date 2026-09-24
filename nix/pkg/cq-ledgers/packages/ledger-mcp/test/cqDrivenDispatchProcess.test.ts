@@ -35,6 +35,18 @@ const ROLE_BYTES = [
   "Plan the goal.",
   "",
 ].join("\n");
+const PI_ROLE_BYTES = [
+  "---",
+  `name: ${ROLE_ID}`,
+  "description: fixture planner",
+  `# Pi host capabilities for ${ROLE_ID}`,
+  "disallowedTools: write, edit, bash, dispatch_agent",
+  "",
+  "---",
+  "",
+  "Plan the goal. Return one fenced json block.",
+  "",
+].join("\n");
 
 let scratch: string;
 let projectRoot: string;
@@ -45,6 +57,8 @@ let ledgerCommand: string;
 let argvCapture: string;
 let codexRoleCommand: string;
 let codexRequestCapture: string;
+let fakePi: string;
+let piArgvCapture: string;
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -68,20 +82,21 @@ beforeAll(async () => {
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
   });
-  for (const surface of ["claude", "codex"] as const) {
+  for (const surface of ["claude", "codex", "pi"] as const) {
+    const roleBytes = surface === "pi" ? PI_ROLE_BYTES : ROLE_BYTES;
     const root = path.join(surfacesRoot, surface);
     await fs.mkdir(path.join(root, "roles"), { recursive: true });
     await fs.mkdir(path.join(root, "schemas"), { recursive: true });
     await fs.writeFile(path.join(root, "catalog.json"), catalogJson);
     await fs.writeFile(path.join(root, "schemas", `${ROLE_ID}.json`), schemaJson);
-    await fs.writeFile(path.join(root, "roles", `${ROLE_ID}.md`), ROLE_BYTES);
+    await fs.writeFile(path.join(root, "roles", `${ROLE_ID}.md`), roleBytes);
     await fs.writeFile(
       path.join(root, "surface.json"),
       serializePromptSurfaceManifest(surface, sha256(catalogJson), [
         {
           roleId: ROLE_ID,
           version: planAdvanceSidecar.version,
-          sha256: sha256(ROLE_BYTES),
+          sha256: sha256(roleBytes),
           schemaSha256: sha256(schemaJson),
         },
       ]),
@@ -97,12 +112,13 @@ beforeAll(async () => {
       "[aliases]",
       '  sonnet = "claude:sonnet"',
       '  codexsol = "codex:gpt-5.6-sol:high"',
+      '  grok = "pi:xai/grok-4.6:high"',
       "",
       "[agent_tiers]",
       `  ${ROLE_ID} = "frontier"`,
       "",
       "[harness.claude]",
-      '  planners = ["codexsol"]',
+      '  planners = ["codexsol", "grok"]',
       "[harness.claude.tiers]",
       '  frontier = "sonnet"',
       "",
@@ -145,6 +161,14 @@ beforeAll(async () => {
     )} "$@"\n`,
   );
   codexRequestCapture = path.join(scratch, "codex-request.json");
+  fakePi = path.join(scratch, "pi");
+  await writeExecutable(
+    fakePi,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(
+      path.join(import.meta.dir, "fixtures", "fakePiPrintChild.ts"),
+    )} "$@"\n`,
+  );
+  piArgvCapture = path.join(scratch, "pi-argv.json");
 });
 
 afterAll(async () => {
@@ -167,6 +191,9 @@ function serverEnvironment(): Record<string, string> {
     CQ_CODEX_ROLE_COMMAND: codexRoleCommand,
     CQ_FAKE_CODEX_REQUEST_CAPTURE: codexRequestCapture,
     CQ_FAKE_CODEX_OUTPUT: JSON.stringify(OUTPUT),
+    CQ_PI_EXECUTABLE: fakePi,
+    CQ_FAKE_PI_ARGV_CAPTURE: piArgvCapture,
+    CQ_FAKE_PI_OUTPUT: JSON.stringify(OUTPUT),
   };
 }
 
@@ -218,6 +245,43 @@ async function awaitTerminal(
 }
 
 describe("G224 CQ-driven dispatch through production processes", () => {
+  test("a Claude parent dispatches a Pi-configured role; the server settles for the Pi child", async () => {
+    await withParent(async (parent) => {
+      const started = decode<{
+        accepted: boolean;
+        handle: { attestationId: string; generation: number };
+        route: { activeHarness: string; targetHarness: string; model: string };
+      }>(
+        await parent.callTool({
+          name: "start_dispatch",
+          arguments: {
+            roleId: ROLE_ID,
+            input: PLAN_INPUT,
+            model: "pi:xai/grok-4.6:high",
+            idempotencyKey: "G224-e2e-pi",
+            timeoutMs: 120_000,
+          },
+        }),
+      );
+      expect(started.route).toEqual({
+        activeHarness: "claude",
+        targetHarness: "pi",
+        model: "pi:xai/grok-4.6:high",
+      });
+      expect(await awaitTerminal(parent, started.handle)).toMatchObject({ state: "consumed", output: OUTPUT });
+      const argv = JSON.parse(await fs.readFile(piArgvCapture, "utf8")) as string[];
+      const flag = (name: string): string => argv[argv.indexOf(name) + 1]!;
+      expect(argv.slice(0, 4)).toEqual(["-p", "--mode", "json", "--no-session"]);
+      expect(flag("--provider")).toBe("xai");
+      expect(flag("--model")).toBe("grok-4.6");
+      expect(flag("--thinking")).toBe("high");
+      expect(flag("--tools")).toBe("read,grep,find");
+      expect(JSON.parse(argv.at(-1)!)).toEqual(PLAN_INPUT);
+      expect(argv.join(" ")).not.toContain("cq_result_");
+      expect(argv.join(" ")).not.toContain("cq_input_");
+    });
+  }, TIMEOUT_MS);
+
   test("a Claude parent dispatches a Codex-configured role through cq-codex-role", async () => {
     await withParent(async (parent) => {
       const started = decode<{

@@ -84,6 +84,7 @@ export type {
   DispatchTransportRoute,
   DispatchAdapterChildPort,
   DispatchSettlementPort,
+  RoutedStagedCompletionOutcome,
   DispatchAdapterLaunchContext,
   DispatchAdapterCompletion,
   DispatchAdapterAbortion,
@@ -122,6 +123,14 @@ export {
   CODEX_DISPATCHED_ROLE_SANDBOX_MODES,
   codexDispatchedRoleSandboxMode,
 } from "./codexRoleSandboxPolicy.js";
+export {
+  PI_DISPATCH_BUILTIN_TOOLS,
+  PiChildResultError,
+  piChildArgv,
+  piChildFinalText,
+  piChildResult,
+  piDispatchBuiltinTools,
+} from "./piProcessDispatch.js";
 export type {
   NativeAdapterId,
   NativeQualificationRefusalReason,

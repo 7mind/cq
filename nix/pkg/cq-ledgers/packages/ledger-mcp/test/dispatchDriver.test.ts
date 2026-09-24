@@ -13,6 +13,7 @@ import {
   isAttestationTombstone,
   sequentialDispatchRandomBytes,
   serializePromptSurfaceManifest,
+  type AttestationEnvelope,
   type AttestationNamespace,
   type DispatchAdapterLaunchContext,
   type DispatchAdapterLaunchResult,
@@ -125,6 +126,8 @@ function harnessed(options: {
   readonly model?: DispatchModelResolver;
   readonly adapters?: readonly Harness[];
   readonly launch?: ScriptedLaunch;
+  /** Wrap the durable envelope read, e.g. to present a staged worker result. */
+  readonly envelope?: (row: AttestationEnvelope | undefined) => AttestationEnvelope | undefined;
 }): Harnessed {
   const store = new InMemoryAttestationStore(NAMESPACE);
   const backend = new InMemoryAttestationBackend(store);
@@ -137,6 +140,7 @@ function harnessed(options: {
       const expectedChild = { childId: `${roleId}#${targetHarness}-${minted}`, runId: `run-${minted}` };
       return {
         expectedChild,
+        qualificationIdentity: { correlationId: `nonce-${minted}`, childThreadId: `run-${minted}`, runId: `run-${minted}` },
         bind: (handle: DispatchHandle) => correlations.set(handle.attestationId, expectedChild),
         release: (handle: DispatchHandle) => correlations.delete(handle.attestationId),
       };
@@ -183,15 +187,18 @@ function harnessed(options: {
     driver: (current: Capability) =>
       createDispatchDriver({
         capability: current,
-        readEnvelope: async (handle) =>
-          await backend.transact({ kind: "handle", handle }, (transaction) => {
-            const row = transaction.read(handle);
-            return row === undefined || isAttestationTombstone(row) ? undefined : row;
-          }),
+        readEnvelope: async (handle) => {
+          const row = await backend.transact({ kind: "handle", handle }, (transaction) => {
+            const read = transaction.read(handle);
+            return read === undefined || isAttestationTombstone(read) ? undefined : read;
+          });
+          return options.envelope === undefined ? row : options.envelope(row);
+        },
         activeHarness: "claude",
         resolveModel,
         registry,
         planner,
+        now: () => NOW,
       }),
   };
 }
@@ -345,5 +352,79 @@ describe("G224 dispatch driver", () => {
       h.driver(h.capability()).start({ ...startInput("G224-bad-model"), model: "claude:nope" }),
     ).rejects.toThrow(/not dispatchable/);
     expect(h.launches).toEqual([]);
+  });
+
+  describe("staged worker parent gate", () => {
+    const PARENT_GATE = { scope: "parent-gate", token: `cq_parent_${"p".repeat(43)}` } as const;
+    const stagedEnvelope = (row: AttestationEnvelope | undefined) =>
+      row === undefined || row.state !== "result-stored"
+        ? row
+        : ({ ...row, state: "gate-pending", gateSubmittedOutputDigest: "d".repeat(64) } as AttestationEnvelope);
+
+    function withParentGate(capability: Capability, calls: Array<{ op: string; input: unknown }>, qualifyAborts: boolean) {
+      return {
+        ...capability,
+        prepare: async (input: Parameters<Capability["prepare"]>[0]) => {
+          const outcome = await capability.prepare(input);
+          return outcome.accepted
+            ? { ...outcome, prepared: { ...outcome.prepared, parentGateCapability: PARENT_GATE } }
+            : outcome;
+        },
+        qualifyImplementationCandidate: async (input: unknown) => {
+          calls.push({ op: "qualify", input });
+          return qualifyAborts
+            ? ({ state: "aborted", result: { state: "aborted", reason: "protocol-violation" } } as never)
+            : ({ state: "queued" } as never);
+        },
+        coordinateImplementationCandidate: async (input: unknown) => {
+          calls.push({ op: "coordinate", input });
+          return {} as never;
+        },
+      } as Capability;
+    }
+
+    test("qualifies with the identity bound at prepare, then runs the parent gate with the server-held capability", async () => {
+      const h = harnessed({ envelope: stagedEnvelope });
+      const calls: Array<{ op: string; input: unknown }> = [];
+      const capability = withParentGate(h.capability(), calls, false);
+      const driver = h.driver(capability);
+      const outcome = await started(driver, "G224-staged");
+      await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+      expect(calls.map((call) => call.op)).toEqual(["qualify", "coordinate"]);
+      expect(calls[0]!.input).toMatchObject({
+        ...outcome.handle,
+        roleId: ROLE_ID,
+        correlationId: "nonce-1",
+        childThreadId: "run-1",
+        expectedRunId: "run-1",
+        outcome: "completed",
+        exitStatus: 0,
+      });
+      expect(calls[1]!.input).toMatchObject({ ...outcome.handle, parentGateCapability: PARENT_GATE });
+      expect(JSON.stringify(outcome)).not.toContain(PARENT_GATE.token);
+    });
+
+    test("an aborting qualification never reaches the parent gate", async () => {
+      const h = harnessed({ envelope: stagedEnvelope });
+      const calls: Array<{ op: string; input: unknown }> = [];
+      const driver = h.driver(withParentGate(h.capability(), calls, true));
+      const outcome = await started(driver, "G224-staged-abort");
+      await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+      expect(calls.map((call) => call.op)).toEqual(["qualify"]);
+    });
+
+    test("a dispatch without a parent gate is never qualified", async () => {
+      const h = harnessed({});
+      const calls: Array<{ op: string; input: unknown }> = [];
+      const base = h.capability();
+      const capability = {
+        ...base,
+        qualifyImplementationCandidate: async (input: unknown) => (calls.push({ op: "qualify", input }), {} as never),
+      } as Capability;
+      const driver = h.driver(capability);
+      const outcome = await started(driver, "G224-no-gate");
+      expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({ state: "consumed" });
+      expect(calls).toEqual([]);
+    });
   });
 });

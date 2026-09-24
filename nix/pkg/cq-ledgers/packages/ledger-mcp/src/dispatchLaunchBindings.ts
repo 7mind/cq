@@ -8,7 +8,8 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   CODEX_EXPECTED_RUN_ID_ENV,
@@ -19,6 +20,11 @@ import {
   codexLaunchGate,
   createClaudeProcessDispatchAdapter,
   decideCodexCompletion,
+  PiChildResultError,
+  piChildArgv,
+  piChildFinalText,
+  piChildResult,
+  piDispatchBuiltinTools,
   withoutWorksetCredentials,
   type AttestationEnvelope,
   type ClaudeChildCorrelation,
@@ -30,7 +36,7 @@ import {
   type Harness,
   type NativeChildIdentity,
 } from "@cq/config";
-import type { WorksetEffectAdmissionProvider } from "@cq/process-control";
+import { WorksetEffectBroker, type WorksetEffectAdmissionProvider } from "@cq/process-control";
 import { CQ_DISPATCH_RESULT_CAPABILITY_ENV } from "./boundResultCapability.js";
 import type { DispatchLaunchPlanner, PlannedDispatchLaunch } from "./dispatchDriver.js";
 
@@ -47,6 +53,7 @@ export interface DispatchLaunchBindingOptions {
   readonly claudeExecutable: string;
   /** The packaged Codex role launcher (`cq-codex-role`), the one production Codex launcher. */
   readonly codexRoleCommand: string;
+  readonly piExecutable: string;
   readonly effectAdmission: WorksetEffectAdmissionProvider;
   readonly readEnvelope: (handle: DispatchHandle) => Promise<AttestationEnvelope | undefined>;
   readonly now: () => string;
@@ -59,8 +66,11 @@ export interface DispatchLaunchBindings {
 
 type LaunchCorrelation =
   | { readonly harness: "claude"; readonly correlation: ClaudeChildCorrelation }
-  | { readonly harness: "codex"; readonly correlation: CodexChildCorrelation };
+  | { readonly harness: "codex"; readonly correlation: CodexChildCorrelation }
+  | { readonly harness: "pi"; readonly correlation: NativeChildIdentity };
 
+/** Pi child ids follow the `<roleId>#<nonce>` shape staged-worker qualification checks. */
+const PI_CHILD_ID_SEPARATOR = "#";
 /** Bytes of a failed launcher's stderr kept in the abort details. */
 const LAUNCHER_DIAGNOSTIC_LIMIT = 1_024;
 /** 24 random bytes encode to the 32 base64url characters a Codex correlation id requires. */
@@ -100,9 +110,14 @@ async function childCwd(
 export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptions): DispatchLaunchBindings {
   const correlations = new Map<string, LaunchCorrelation>();
 
-  function planned(expectedChild: NativeChildIdentity, correlation: LaunchCorrelation): PlannedDispatchLaunch {
+  function planned(
+    expectedChild: NativeChildIdentity,
+    correlation: LaunchCorrelation,
+    qualificationIdentity: PlannedDispatchLaunch["qualificationIdentity"],
+  ): PlannedDispatchLaunch {
     return {
       expectedChild,
+      qualificationIdentity,
       bind: (handle) => {
         correlations.set(handleKey(handle), correlation);
       },
@@ -118,7 +133,11 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
         // The print report binds the child's session id as both nonce and run.
         const sessionId = randomUUID();
         const correlation: ClaudeChildCorrelation = { roleId, launchNonce: sessionId, sessionId };
-        return planned(claudeExpectedChild(correlation), { harness: "claude", correlation });
+        return planned(
+          claudeExpectedChild(correlation),
+          { harness: "claude", correlation },
+          { correlationId: sessionId, childThreadId: sessionId, runId: sessionId },
+        );
       }
       if (targetHarness === "codex") {
         const correlation: CodexChildCorrelation = {
@@ -126,11 +145,20 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           correlationId: randomBytes(CODEX_CORRELATION_ID_BYTES).toString("base64url"),
           threadId: `cq-run-${randomUUID()}`,
         };
-        return planned(codexExpectedChild(correlation), { harness: "codex", correlation });
+        return planned(codexExpectedChild(correlation), { harness: "codex", correlation }, {
+          correlationId: correlation.correlationId,
+          childThreadId: correlation.threadId,
+          runId: correlation.threadId,
+        });
       }
-      throw new DispatchLaunchUnavailableError(
-        `no CQ process launcher is available for target harness ${JSON.stringify(targetHarness)}`,
-      );
+      const nonce = randomUUID();
+      const runId = `cq-pi-run-${randomUUID()}`;
+      const correlation: NativeChildIdentity = { childId: `${roleId}${PI_CHILD_ID_SEPARATOR}${nonce}`, runId };
+      return planned(correlation, { harness: "pi", correlation }, {
+        correlationId: nonce,
+        childThreadId: runId,
+        runId,
+      });
     },
   };
 
@@ -269,5 +297,109 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
     },
   });
 
-  return { planner, adapters: [claude, codex] };
+  const piSurfaceRoot = path.join(options.promptSurfacesRoot, "pi");
+  const pi: DispatchTransportAdapter = Object.freeze({
+    id: "pi:process" as const,
+    targetHarness: "pi" as const,
+    transport: "process" as const,
+    launch: async (context: DispatchAdapterLaunchContext): Promise<DispatchAdapterLaunchResult> => {
+      const handle = { attestationId: context.prepared.attestationId, generation: context.prepared.generation };
+      const launch = correlations.get(handleKey(handle));
+      if (launch?.harness !== "pi") {
+        throw new DispatchLaunchUnavailableError("the Pi launch has no correlation bound to its handle");
+      }
+      // The same prepared-deadline gate every process adapter applies.
+      const gate = codexLaunchGate(context.prepared, options.now());
+      if (!gate.launch) {
+        return { outcome: "aborted", reason: gate.abortReason, details: { refusal: gate.refusal, detail: gate.detail } };
+      }
+      const roleId = context.prepared.promptProvenance.roleId;
+      const rolePrompt = await readFile(path.join(piSurfaceRoot, "roles", `${roleId}.md`), "utf8");
+      const tools = piDispatchBuiltinTools(rolePrompt, roleId);
+      // The server is the Pi child's parent: it materializes the typed input
+      // and stores the fenced result, so the child needs no ledger tool.
+      const materialized = await context.child.materializeInput();
+      const scratch = await mkdtemp(path.join(tmpdir(), "cq-pi-role-"));
+      try {
+        const rolePromptFile = path.join(scratch, `${roleId}.md`);
+        await writeFile(rolePromptFile, rolePrompt, { mode: 0o600 });
+        const argv = piChildArgv({
+          piExecutable: options.piExecutable,
+          token: context.resolvedModel,
+          tools,
+          rolePromptFile,
+          task: JSON.stringify(materialized.input),
+        });
+        const broker = new WorksetEffectBroker({ provider: options.effectAdmission });
+        const launched = await broker.launch({
+          kind: "child-dispatch",
+          targetRef: context.effectTargetRef,
+          argv,
+          cwd: await childCwd(options, context),
+          env: withoutWorksetCredentials(process.env),
+          stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
+          timeoutMs: gate.childWindowMs,
+          launchBootstrap: (specification) => {
+            const child = Bun.spawn([...specification.argv], {
+              cwd: specification.cwd,
+              detached: specification.detached,
+              env: specification.env,
+              stdin: specification.stdio.stdin,
+              stdout: specification.stdio.stdout,
+              stderr: specification.stdio.stderr,
+            });
+            const stdout = new Response(child.stdout).text();
+            const stderr = new Response(child.stderr).text();
+            return {
+              process: { stdout, stderr },
+              pid: child.pid,
+              exited: child.exited,
+              outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
+              resultFromTargetOutcome: (outcome) => outcome.exitCode ?? 1,
+              terminate: (signal: NodeJS.Signals) => child.kill(signal),
+            };
+          },
+        });
+        const [exitStatus, stdout, stderr] = await Promise.all([
+          launched.exited,
+          launched.process.stdout,
+          launched.process.stderr,
+        ]);
+        if (exitStatus !== 0) {
+          return {
+            outcome: "aborted",
+            reason: launched.terminationReason === "timeout" ? "deadline-exceeded" : "native-failure",
+            details: { source: "pi-process", exitStatus, stderr: stderr.slice(-LAUNCHER_DIAGNOSTIC_LIMIT) },
+          };
+        }
+        let output;
+        try {
+          output = piChildResult(piChildFinalText(stdout));
+        } catch (error) {
+          if (!(error instanceof PiChildResultError)) throw error;
+          return { outcome: "aborted", reason: "invalid-output", details: { source: "pi-process", detail: error.message } };
+        }
+        const stored = await context.child.storeResult(output);
+        if (stored.state === "aborted") {
+          return { outcome: "aborted", reason: stored.result.reason, storeResultAbortReason: stored.result.reason };
+        }
+        return {
+          outcome: "completed",
+          handle,
+          nativeCompletion: {
+            kind: "native-completion",
+            actor: "trusted-extension",
+            childId: launch.correlation.childId,
+            runId: launch.correlation.runId,
+            completedAt: options.now(),
+          },
+          handleOnlyEnforcement: "structural",
+        };
+      } finally {
+        await rm(scratch, { recursive: true, force: true });
+      }
+    },
+  });
+
+  return { planner, adapters: [claude, codex, pi] };
 }

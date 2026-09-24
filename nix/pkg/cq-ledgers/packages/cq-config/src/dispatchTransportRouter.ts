@@ -710,9 +710,19 @@ export interface RoutedStagedCompletionObservation {
   readonly nativeCompletion: NativeCompletionProof;
 }
 
+/**
+ * A qualifier either aborts the staged dispatch or leaves it queued for its
+ * parent gate. `queued` is what a server reports when its capability owns the
+ * qualification and parent-gate coordination (G224).
+ */
+export type RoutedStagedCompletionOutcome =
+  | QualifyDispatchStagedCompletionOutcome
+  | { readonly state: "queued" }
+  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
+
 export type RoutedStagedCompletionQualifier = (
   observation: RoutedStagedCompletionObservation,
-) => QualifyDispatchStagedCompletionOutcome | Promise<QualifyDispatchStagedCompletionOutcome>;
+) => RoutedStagedCompletionOutcome | Promise<RoutedStagedCompletionOutcome>;
 
 function assertResolvedModelBinding(token: ReviewerToken, targetHarness: Harness): void {
   if (token.harness !== targetHarness) {

@@ -26,9 +26,11 @@ import { PROMPT_SURFACES } from "./promptSurfaceSelection.js";
 export const CQ_LEDGER_COMMAND_ENV = "CQ_LEDGER_COMMAND";
 export const CQ_CLAUDE_EXECUTABLE_ENV = "CQ_CLAUDE_EXECUTABLE";
 export const CQ_CODEX_ROLE_COMMAND_ENV = "CQ_CODEX_ROLE_COMMAND";
+export const CQ_PI_EXECUTABLE_ENV = "CQ_PI_EXECUTABLE";
 const DEFAULT_LEDGER_COMMAND = "cq";
 const DEFAULT_CLAUDE_EXECUTABLE = "claude";
 const DEFAULT_CODEX_ROLE_COMMAND = "cq-codex-role";
+const DEFAULT_PI_EXECUTABLE = "pi";
 const SURFACE_MANIFEST = "surface.json";
 
 /** One artifact store per packaged surface under the prompt-surfaces root. */
@@ -69,6 +71,7 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     ledgerCommand: input.environment[CQ_LEDGER_COMMAND_ENV] ?? DEFAULT_LEDGER_COMMAND,
     claudeExecutable: input.environment[CQ_CLAUDE_EXECUTABLE_ENV] ?? DEFAULT_CLAUDE_EXECUTABLE,
     codexRoleCommand: input.environment[CQ_CODEX_ROLE_COMMAND_ENV] ?? DEFAULT_CODEX_ROLE_COMMAND,
+    piExecutable: input.environment[CQ_PI_EXECUTABLE_ENV] ?? DEFAULT_PI_EXECUTABLE,
     effectAdmission: worksetEffectAdmissionProviderFromStore(requireWorksetStore(input.store)),
     readEnvelope,
     now: () => new Date().toISOString(),
@@ -82,5 +85,6 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     ),
     registry: new DispatchTransportAdapterRegistry(bindings.adapters),
     planner: bindings.planner,
+    now: () => new Date().toISOString(),
   });
 }

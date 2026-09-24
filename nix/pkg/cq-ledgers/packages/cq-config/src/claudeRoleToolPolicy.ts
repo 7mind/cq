@@ -51,8 +51,11 @@ function frontmatterValue(lines: readonly string[], key: string, roleId: string)
   return matches[0]!.slice(key.length).trim();
 }
 
-/** Built-in tools the child may use: the baseline minus the role's declared denials. */
-export function claudeDispatchBuiltinTools(rolePrompt: string, roleId: string): readonly string[] {
+/**
+ * The tools a role's attested frontmatter denies, in the surface's own tool
+ * vocabulary. Shared by every process adapter that narrows a child's tools.
+ */
+export function attestedDisallowedTools(rolePrompt: string, roleId: string): ReadonlySet<string> {
   const lines = frontmatterLines(rolePrompt);
   const declaredRole = frontmatterValue(lines, NAME_KEY, roleId);
   if (declaredRole !== roleId) {
@@ -61,11 +64,16 @@ export function claudeDispatchBuiltinTools(rolePrompt: string, roleId: string): 
       `the attested frontmatter names role "${declaredRole}", not "${roleId}"`,
     );
   }
-  const denied = new Set(
+  return new Set(
     frontmatterValue(lines, DISALLOWED_TOOLS_KEY, roleId)
       .split(",")
       .map((tool) => tool.trim())
       .filter((tool) => tool !== ""),
   );
+}
+
+/** Built-in tools the child may use: the baseline minus the role's declared denials. */
+export function claudeDispatchBuiltinTools(rolePrompt: string, roleId: string): readonly string[] {
+  const denied = attestedDisallowedTools(rolePrompt, roleId);
   return Object.freeze(CLAUDE_DISPATCH_BUILTIN_TOOLS.filter((tool) => !denied.has(tool)));
 }

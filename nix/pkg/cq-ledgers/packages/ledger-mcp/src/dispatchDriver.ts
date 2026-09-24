@@ -17,6 +17,7 @@ import {
   runPreparedDispatch,
   type AttestationEnvelope,
   type DispatchHandle,
+  type DispatchPrepared,
   type DispatchPreLaunchRejection,
   type DispatchSettlementPort,
   type DispatchTransportAdapterRegistry,
@@ -54,6 +55,15 @@ export interface DispatchWaitInput extends DispatchHandle {
 /** One launch's harness-specific child correlation, minted before prepare binds it. */
 export interface PlannedDispatchLaunch {
   readonly expectedChild: NativeChildIdentity;
+  /**
+   * The same identity in the shape a staged worker's qualification checks:
+   * `expectedChild.childId` is `<roleId>#<correlationId>` on every harness.
+   */
+  readonly qualificationIdentity: {
+    readonly correlationId: string;
+    readonly childThreadId: string;
+    readonly runId: string;
+  };
   /** Make the correlation available to the target adapter's binding resolver. */
   bind(handle: DispatchHandle): void;
   release(handle: DispatchHandle): void;
@@ -77,7 +87,7 @@ export interface DispatchDriverDeps {
   readonly resolveModel: DispatchModelResolver;
   readonly registry: DispatchTransportAdapterRegistry;
   readonly planner: DispatchLaunchPlanner;
-  readonly qualifyStagedCompletion?: RoutedStagedCompletionQualifier;
+  readonly now: () => string;
 }
 
 export interface DispatchDriver {
@@ -149,6 +159,45 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
   const settlement = settlementThrough(deps.capability, deps.readEnvelope);
   const inFlight = new Map<string, Promise<void>>();
 
+  /**
+   * A worker whose result the store staged for its parent gate: qualify it with
+   * the identity bound at prepare, then run the parent gate - what the Codex
+   * launcher does inside its own process. The parent-gate capability never
+   * leaves this server.
+   */
+  function stagedWorkerQualifier(
+    handle: DispatchHandle,
+    roleId: string,
+    planned: PlannedDispatchLaunch,
+    parentGateCapability: NonNullable<DispatchPrepared["parentGateCapability"]>,
+  ): RoutedStagedCompletionQualifier {
+    return async (observation) => {
+      const qualify = deps.capability.qualifyImplementationCandidate;
+      const coordinate = deps.capability.coordinateImplementationCandidate;
+      if (qualify === undefined || coordinate === undefined) {
+        throw new DispatchDriverError("this server cannot run a staged worker's parent gate");
+      }
+      const qualified = await qualify({
+        ...handle,
+        roleId,
+        correlationId: planned.qualificationIdentity.correlationId,
+        childThreadId: planned.qualificationIdentity.childThreadId,
+        expectedRunId: planned.qualificationIdentity.runId,
+        outcome: "completed",
+        exitStatus: 0,
+        observedAt: deps.now(),
+        promptDigest: observation.expectedProvenance.promptDigest,
+      });
+      if (qualified.state === "aborted") return { state: "aborted", result: qualified.result };
+      await coordinate({
+        ...handle,
+        holderId: `${handle.attestationId}:${String(handle.generation)}:cq-dispatch-driver`,
+        parentGateCapability,
+      });
+      return { state: "queued" };
+    };
+  }
+
   async function launch(
     handle: DispatchHandle,
     planned: PlannedDispatchLaunch,
@@ -192,9 +241,16 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
         // K331: a server can host only process adapters.
         forceShellout: true,
         materializeOutput: false,
-        ...(deps.qualifyStagedCompletion === undefined
+        ...(outcome.prepared.parentGateCapability === undefined
           ? {}
-          : { qualifyStagedCompletion: deps.qualifyStagedCompletion }),
+          : {
+              qualifyStagedCompletion: stagedWorkerQualifier(
+                handle,
+                roleId,
+                planned,
+                outcome.prepared.parentGateCapability,
+              ),
+            }),
       }).finally(() => inFlight.delete(key));
       inFlight.set(key, running);
       return {
