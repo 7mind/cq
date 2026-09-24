@@ -146,7 +146,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // its encoding and secret-handling rules remain in the tool description.
     // D461 adds adoption; concise completion/adoption acknowledgements retain the budget.
     // Cohort operations add six contracts; compact existing wording preserves all fields.
-    maximumRemainingG93AttributableTokens: 1620,
+    // 1620 -> 1619 under D400: fetch_item's archived-generation resolution adds
+    // one G93-attributable token; the surface stays below the corpus median.
+    maximumRemainingG93AttributableTokens: 1619,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

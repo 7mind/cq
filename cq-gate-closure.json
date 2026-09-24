@@ -2342,7 +2342,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.test.ts",
-      "sha256": "f0bb1b78a23106caa528c5a1dcb5a8ddb9907b39080952e163af3859f3b0036b",
+      "sha256": "1cef3396ba25c6684468e842409435033d43a4cd38a38a18e0790d7b71ce72eb",
       "targets": []
     },
     {
