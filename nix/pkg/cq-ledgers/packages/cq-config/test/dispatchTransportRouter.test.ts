@@ -52,11 +52,12 @@ import {
   type NativeCompletionProof,
   type ReviewerToken,
 } from "@cq/config";
+import { withClaudeRoleFrontmatter } from "./fixtures/claudeRoleFrontmatter.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "T1631-router" };
 const T0 = "2026-08-02T18:45:00.000Z";
 const CLAUDE_SESSION_ID = "1dea1c87-a984-448b-b038-d0078741a669";
-const CLAUDE_ROLE_PROMPT = "T688-ROLE-PROMPT implement-worker";
+const CLAUDE_ROLE_PROMPT = withClaudeRoleFrontmatter("implement-worker", "Agent", "T688-ROLE-PROMPT implement-worker");
 const CLAUDE_RECORDING_FIXTURE = fileURLToPath(
   new URL("fixtures/claude-print-recording.ts", import.meta.url),
 );

@@ -80,6 +80,7 @@ import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
 import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
 import type { JSONSchema } from "./promptCatalog.js";
 import { exposedLedgerToolsForRole } from "./roleToolProfiles.js";
+import { claudeDispatchBuiltinTools } from "./claudeRoleToolPolicy.js";
 import { withoutWorksetCredentials } from "./worksetManagementCommand.js";
 import {
   WorksetEffectBroker,
@@ -495,9 +496,11 @@ function claudePrintInvocation(
 ): ClaudePrintInvocation {
   const boundRoleId = boundClaudePrintRole(context, options.rolePrompt);
   const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
-  const allowedToolNames = exposedLedgerToolsForRole(boundRoleId).map(
-    (toolName) => `mcp__${serverName}__${toolName}`,
-  );
+  const builtinTools = claudeDispatchBuiltinTools(options.rolePrompt, boundRoleId);
+  const allowedToolNames = [
+    ...builtinTools,
+    ...exposedLedgerToolsForRole(boundRoleId).map((toolName) => `mcp__${serverName}__${toolName}`),
+  ];
   const mcpConfig = JSON.stringify({
     mcpServers: {
       [serverName]: {
@@ -530,7 +533,7 @@ function claudePrintInvocation(
       "--append-system-prompt",
       options.rolePrompt,
       "--tools",
-      "",
+      builtinTools.join(","),
       "--allowedTools",
       allowedToolNames.join(","),
       "--strict-mcp-config",

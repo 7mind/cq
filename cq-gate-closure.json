@@ -333,7 +333,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/claudeDispatchBridge.ts",
-      "sha256": "98833c653c29e707b5c874d30e2f4cae3ec1af307995ad64697893a7e82adcec",
+      "sha256": "7ce044eca584ac433cfb42a1254884cd85df38aeb38234da1cf5a947925fdeb1",
       "targets": []
     },
     {
@@ -363,7 +363,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeDispatchBridge.test.ts",
-      "sha256": "76ba0901a75d05932ca6dfe2420efce7b19e695104a4327e5c1f9cd7d3bf12d3",
+      "sha256": "2e5c5b620d23d3ca0c045484314e49c56b43ff41caf9d025c4adaaa9b4e7d5f1",
       "targets": []
     },
     {
@@ -447,7 +447,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "3fea1d33bee2c2d14ac23ecd9dda70bd1616aca9f99a22a86012d4f67dbb5ae2",
+      "sha256": "dd1240f6fa370b16297bb820c2a84b6c5235f7682f321cc4224627c03d63d622",
       "targets": []
     },
     {
@@ -1130,7 +1130,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeRefFirstEnforcement.test.ts",
-      "sha256": "36584f342b36fac7f23c1d26bef05f4b71e0d6e6825b4c7a4f2eed7de1316e6f",
+      "sha256": "b01482eccdb394538da942ef385e86fd0879c23542f6f50ab196f8f847eee388",
       "targets": []
     },
     {
@@ -1220,7 +1220,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "3fea1d33bee2c2d14ac23ecd9dda70bd1616aca9f99a22a86012d4f67dbb5ae2",
+      "sha256": "dd1240f6fa370b16297bb820c2a84b6c5235f7682f321cc4224627c03d63d622",
       "targets": []
     },
     {
@@ -2623,6 +2623,12 @@
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/successorLauncherPromptProvenance.test.ts",
       "sha256": "75c54e502a693ec96a4b5b83daf9fc048dab7a8288b399d4086c7fd91f86db57",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeRoleToolPolicy.test.ts",
+      "sha256": "f109cc3fd810d3ccfc7b1e4ce6d28fbed0d957b4924bf403a1f60209f5b2a1e7",
       "targets": []
     }
   ]

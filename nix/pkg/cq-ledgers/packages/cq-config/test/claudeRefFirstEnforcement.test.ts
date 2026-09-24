@@ -51,6 +51,7 @@ import {
   type DispatchServiceDeps,
   type PrepareDispatchDeps,
 } from "@cq/config";
+import { withClaudeRoleFrontmatter } from "./fixtures/claudeRoleFrontmatter.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "cq-ledger-suite" };
 const T0 = "2026-07-28T12:00:00.000Z";
@@ -59,7 +60,7 @@ const MODEL = "opus-5[1m]";
 const TIMEOUT_MS = 600_000;
 const PROMPT_DIGEST = "c".repeat(64);
 const CATALOG_HASH = "d".repeat(64);
-const RECORDED_ROLE_PROMPT = "T688-ROLE-PROMPT implement-worker T689 enforcement";
+const RECORDED_ROLE_PROMPT = withClaudeRoleFrontmatter("implement-worker", "Agent", "T688-ROLE-PROMPT implement-worker T689 enforcement");
 const promptDigestOf = (prompt: string): string =>
   new Bun.CryptoHasher("sha256").update(prompt).digest("hex");
 const liveClaudeTest = process.env["CQ_T689_LIVE_CLAUDE"] === "1" ? test : test.skip;
@@ -477,7 +478,7 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
           claudeExecutable: "this-must-not-run",
           claudeArgsPrefix: [],
           cwd: import.meta.dir,
-          rolePrompt: `${RECORDED_ROLE_PROMPT} OVERRIDDEN`,
+          rolePrompt: `${RECORDED_ROLE_PROMPT}OVERRIDDEN`,
           storeServer: {
             name: "t688store",
             command: "cq",
@@ -497,10 +498,13 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
     const scratch = mkdtempSync(path.join(tmpdir(), "cq-t689-live-"));
     try {
       const sessionId = crypto.randomUUID();
-      const liveRolePrompt =
+      const liveRolePrompt = withClaudeRoleFrontmatter(
+        ROLE_ID,
+        "Agent",
         `T688-ROLE-PROMPT You are the selected ${ROLE_ID}. Read the dispatch handle from the ` +
-        `user prompt. Call mcp__t688store__store_result exactly once with output ` +
-        `${JSON.stringify(OUTPUT)}. After its acknowledgement, reply with exactly that handle JSON.`;
+          `user prompt. Call mcp__t688store__store_result exactly once with output ` +
+          `${JSON.stringify(OUTPUT)}. After its acknowledgement, reply with exactly that handle JSON.`,
+      );
       const h = harness({ seed: 83 });
       const prepared = prepare(h, sessionId, "T689-live-process", {
         promptDigest: promptDigestOf(liveRolePrompt),

@@ -38,14 +38,17 @@ if (outputSchema.title !== "dispatch handle") {
 if (!value("--append-system-prompt").includes("T688-ROLE-PROMPT")) {
   throw new Error("wrong generated role prompt");
 }
+// G224 / K331: the worker's attested frontmatter denies only Agent, so it keeps
+// the whole built-in baseline, and every other built-in stays unavailable.
+const WORKER_BUILTIN_TOOLS = "Read,Glob,Grep,Bash,Edit,Write,NotebookEdit";
 if (
   value("--allowedTools") !==
-    "mcp__t688store__fetch_dispatch_input,mcp__t688store__store_result,mcp__t688store__git_commit"
+    `${WORKER_BUILTIN_TOOLS},mcp__t688store__fetch_dispatch_input,mcp__t688store__store_result,mcp__t688store__git_commit`
 ) {
   throw new Error("wrong scoped dispatch tools");
 }
-if (value("--tools") !== "") {
-  throw new Error("unexpected inherited tools");
+if (value("--tools") !== WORKER_BUILTIN_TOOLS) {
+  throw new Error("unexpected built-in tool surface");
 }
 if (!args.includes("--strict-mcp-config") || args.includes("--setting-sources")) {
   throw new Error("MCP endpoint was not strictly scoped");

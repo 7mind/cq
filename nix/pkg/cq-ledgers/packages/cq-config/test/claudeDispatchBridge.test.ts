@@ -76,12 +76,13 @@ import {
   type DispatchServiceDeps,
   type PrepareDispatchRequest,
 } from "@cq/config";
+import { withClaudeRoleFrontmatter } from "./fixtures/claudeRoleFrontmatter.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "cq-ledger-suite" };
 const T0 = "2026-07-28T12:00:00.000Z";
-const ROLE_PROMPT = "T688-ROLE-PROMPT implement-worker";
+const ROLE_PROMPT = withClaudeRoleFrontmatter("implement-worker", "Agent", "T688-ROLE-PROMPT implement-worker");
 const REVIEWER_ROLE_ID = "implement-reviewer";
-const REVIEWER_ROLE_PROMPT = "T688-ROLE-PROMPT implement-reviewer";
+const REVIEWER_ROLE_PROMPT = withClaudeRoleFrontmatter("implement-reviewer", "Write, Edit, MultiEdit, NotebookEdit, Agent", "T688-ROLE-PROMPT implement-reviewer");
 const promptDigestOf = (prompt: string): string =>
   new Bun.CryptoHasher("sha256").update(prompt).digest("hex");
 const PROMPT_DIGEST = promptDigestOf(ROLE_PROMPT);
@@ -579,6 +580,61 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     expect(provider.events()).toEqual([]);
   });
 
+  test("G224: a reviewer child reaches claude with only its attested read and shell tools", async () => {
+    const dispatch = preparedReviewer();
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const scratch = mkdtempSync(path.join(tmpdir(), "cq-g224-argv-"));
+    const capturePath = path.join(scratch, "argv.json");
+    const previousCapture = process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+    process.env["CQ_CLAUDE_ARGV_CAPTURE"] = capturePath;
+    try {
+      await launchClaudePrint(
+        {
+          envelope: buildClaudeCompactNativeLaunch({
+            roleId: REVIEWER_ROLE_ID,
+            model: MODEL,
+            handle: handleOf(dispatch),
+            inputCapability: dispatch.inputCapability,
+          }),
+          preparedProvenance: provenanceBindingOf(dispatch),
+          expectedCorrelation: { roleId: REVIEWER_ROLE_ID, launchNonce: SESSION_ID, sessionId: SESSION_ID },
+          resultCapability: dispatch.resultCapability,
+          childWindowMs: 30_000,
+        },
+        {
+          claudeExecutable: "bun",
+          claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-argv-capture.ts")],
+          cwd: import.meta.dir,
+          rolePrompt: REVIEWER_ROLE_PROMPT,
+          storeServer: {
+            name: "t688store",
+            command: "cq",
+            args: ["mcp", "--dispatch-store"],
+            cwd: import.meta.dir,
+            env: { T688_SCOPE: "one-dispatch" },
+            capabilityEnv: "T688_CAPABILITY",
+          },
+          worksetEffect: { provider, targetRef: "tasks:T1983" },
+        },
+      );
+      const argv = JSON.parse(readFileSync(capturePath, "utf8")) as string[];
+      const flag = (name: string): string => argv[argv.indexOf(name) + 1]!;
+      expect(flag("--tools")).toBe("Read,Glob,Grep,Bash");
+      const allowed = flag("--allowedTools").split(",");
+      expect(allowed.slice(0, 4)).toEqual(["Read", "Glob", "Grep", "Bash"]);
+      for (const writeTool of ["Write", "Edit", "NotebookEdit", "Agent"]) {
+        expect(allowed).not.toContain(writeTool);
+      }
+      expect(allowed.slice(4).every((name) => name.startsWith("mcp__t688store__"))).toBe(true);
+      expect(flag("--permission-mode")).toBe("dontAsk");
+      expect(argv).toContain("--strict-mcp-config");
+    } finally {
+      if (previousCapture === undefined) delete process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+      else process.env["CQ_CLAUDE_ARGV_CAPTURE"] = previousCapture;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   test("a malformed claude -p terminal result becomes a typed transport failure", async () => {
     const dispatch = prepared();
     const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
@@ -621,10 +677,13 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
   liveClaudeTest("ON-DEMAND: real claude -p submits through the scoped endpoint", async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), "cq-t688-live-"));
     try {
-      const liveRolePrompt =
+      const liveRolePrompt = withClaudeRoleFrontmatter(
+        "implement-worker",
+        "Agent",
         `You are the selected implement-worker. Read the dispatch handle from the user prompt. ` +
-        `Call mcp__t688store__store_result exactly once with output ${JSON.stringify(OUTPUT)}. ` +
-        `After its acknowledgement, reply with exactly that handle JSON and no other text.`;
+          `Call mcp__t688store__store_result exactly once with output ${JSON.stringify(OUTPUT)}. ` +
+          `After its acknowledgement, reply with exactly that handle JSON and no other text.`,
+      );
       const dispatch = prepared(promptDigestOf(liveRolePrompt));
       const handle = handleOf(dispatch);
       const capturePath = path.join(scratch, "store-result.json");
