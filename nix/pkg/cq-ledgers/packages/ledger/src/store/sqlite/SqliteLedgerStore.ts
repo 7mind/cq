@@ -759,6 +759,20 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       db.query(
         "INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
       ).run(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_ACTIVE_GROUP_TITLE);
+      // The INSERT above cannot repair a row that already exists with the wrong
+      // title: IGNORE makes it a no-op. Two lazy group-materialisation paths
+      // insert groups with an empty title and never update them, so a store
+      // whose active group was first minted by one of them kept title "" and was
+      // rejected by the XDG catalog as invalid-bootstrap-state on every open —
+      // which is how `cq web` came to refuse this project's own live ledger.
+      // Scoped to the milestones active group only; other lazily created groups
+      // legitimately carry an empty title and are not bootstrap state.
+      db.query("UPDATE groups SET title = ? WHERE ledger = ? AND id = ? AND title <> ?").run(
+        MILESTONES_ACTIVE_GROUP_TITLE,
+        MILESTONES_LEDGER,
+        MILESTONES_ACTIVE_GROUP_ID,
+        MILESTONES_ACTIVE_GROUP_TITLE,
+      );
       const ambient = db
         .query("SELECT id FROM items WHERE ledger = ? AND id = ?")
         .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
