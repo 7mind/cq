@@ -3,7 +3,7 @@
   "target": {
     "packageJson": "nix/pkg/cq-ledgers/package.json",
     "script": "check",
-    "scriptDagSha256": "7a8a3267e42a62f1a3cfe417158680fa0859ef09d52e516b367d4bd1e405e463"
+    "scriptDagSha256": "5429105637aa1cda85acebbabc447ca9d4723dd56c28fbb6bd9186a897e3373b"
   },
   "opaqueEdges": [
     {
@@ -179,7 +179,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "e873e0ab2fdf63247a6b750c4becc141c2ed10d3fdc0cac08815ab8f21e624ae",
+      "sha256": "7b0f9c0f011ff868f3237a74735853d7e77eebcd78e57f800f3e174a1cb6e484",
       "targets": []
     },
     {
@@ -477,7 +477,19 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedCodexPromptRoot.test.ts",
-      "sha256": "5879a5f28544e4d116a12f869b04b8ac50f48a909066c07b20faea06f65a1fce",
+      "sha256": "337ffe2602bac9b68ab041325aba38b1140008c5ec67ff5601e2a6391fa46fd0",
+      "targets": ["nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh",
+      "sha256": "a1fd9c421d37bfc4840f012e51aa89fa1d7f624fa554f3e5f31cf775ff1bf52b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh",
+      "sha256": "a1fd9c421d37bfc4840f012e51aa89fa1d7f624fa554f3e5f31cf775ff1bf52b",
       "targets": []
     },
     {
@@ -716,7 +728,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/src/serve.ts",
-      "sha256": "b0f7871a5c5f6970971c2acb5d2b789ae0fcdbb9eab74d11a75a2e7285528419",
+      "sha256": "0c61a04214e98e5fad761bc06774bf37d252c3a36757020920f589f9e4a70869",
       "targets": []
     },
     {
@@ -1280,7 +1292,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedCodexPromptRoot.test.ts",
-      "sha256": "5879a5f28544e4d116a12f869b04b8ac50f48a909066c07b20faea06f65a1fce",
+      "sha256": "337ffe2602bac9b68ab041325aba38b1140008c5ec67ff5601e2a6391fa46fd0",
       "targets": []
     },
     {
@@ -1448,7 +1460,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workspaceScriptContract.test.ts",
-      "sha256": "d0d44ea980fbf7bffa97d455c815964d2e52dcca389d15e82eed4b6bba7f3a38",
+      "sha256": "dbd3a21257b221fe4a36c46c490f723be1df6d9ba1bae6b240ed380348e7fe2a",
       "targets": []
     },
     {
@@ -1628,7 +1640,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/webMode.test.ts",
-      "sha256": "d65a495474cdff309cd68342bcc87ad1a83c4cf306f6521ccee25e5db09f8eba",
+      "sha256": "56d7615acc4ba14d161e399f0db001c88ca0b17ab9f062881a692dee06eba19b",
       "targets": []
     },
     {

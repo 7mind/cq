@@ -56,12 +56,26 @@ function run(command: readonly string[]): string {
   return new TextDecoder().decode(result.stdout).trimEnd();
 }
 
-function evaluateRaw(attribute: string): string {
-  return run(["nix", "eval", "--raw", `.#llmAssets.${attribute}`]);
+const WORKING_TREE_FLAKE_REF_SCRIPT = path.join(
+  REPO_ROOT,
+  "nix",
+  "pkg",
+  "cq-ledgers",
+  "scripts",
+  "working-tree-flake-ref.sh",
+);
+
+// D539: `.#` refuses a dirty tree; the snapshot ref evaluates the working tree.
+function workingTreeFlakeRef(): string {
+  return run([WORKING_TREE_FLAKE_REF_SCRIPT]);
 }
 
-function build(attribute: string): string {
-  return run(["nix", "build", "--no-link", "--print-out-paths", attribute]);
+function evaluateRaw(flake: string, attribute: string): string {
+  return run(["nix", "eval", "--raw", `${flake}#llmAssets.${attribute}`]);
+}
+
+function build(flake: string, attribute: string): string {
+  return run(["nix", "build", "--no-link", "--print-out-paths", `${flake}#${attribute}`]);
 }
 
 function skillName(roleId: string): string {
@@ -100,12 +114,13 @@ describe("packaged Codex prompt root and command skills", () => {
   test(
     "renders the direct Nix catalog and projects every manifest closure",
     () => {
-      const promptRoot = build(".#codex-prompt-root");
-      const skillsRoot = build(".#checks.x86_64-linux.codex-cq-skills");
-      const catalogJson = evaluateRaw("catalogJson");
+      const flake = workingTreeFlakeRef();
+      const promptRoot = build(flake, "codex-prompt-root");
+      const skillsRoot = build(flake, "checks.x86_64-linux.codex-cq-skills");
+      const catalogJson = evaluateRaw(flake, "catalogJson");
       const catalog = JSON.parse(catalogJson) as readonly CatalogRole[];
       const fragmentSources = JSON.parse(
-        evaluateRaw("promptFragmentSourcesJson"),
+        evaluateRaw(flake, "promptFragmentSourcesJson"),
       ) as readonly FragmentSource[];
       const sourcePaths: PromptCatalogFileInput[] = catalog.map((role) => ({
         canonicalSource: role.canonicalSource,
@@ -216,11 +231,12 @@ describe("packaged Codex prompt root and command skills", () => {
   test(
     "has repeatable outputs without a generated TypeScript catalog input",
     () => {
-      expect(build(".#codex-prompt-root")).toBe(build(".#codex-prompt-root"));
-      expect(build(".#checks.x86_64-linux.codex-cq-skills")).toBe(
-        build(".#checks.x86_64-linux.codex-cq-skills"),
+      const flake = workingTreeFlakeRef();
+      expect(build(flake, "codex-prompt-root")).toBe(build(flake, "codex-prompt-root"));
+      expect(build(flake, "checks.x86_64-linux.codex-cq-skills")).toBe(
+        build(flake, "checks.x86_64-linux.codex-cq-skills"),
       );
-      const derivation = run(["nix", "derivation", "show", ".#codex-prompt-root"]);
+      const derivation = run(["nix", "derivation", "show", `${flake}#codex-prompt-root`]);
       expect(derivation).not.toContain("promptCatalog.gen.ts");
       expect(derivation).not.toContain("PROMPT_CATALOG_PROJECTION");
     },

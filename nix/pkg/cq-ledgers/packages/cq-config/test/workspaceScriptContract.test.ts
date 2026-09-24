@@ -50,10 +50,10 @@ describe("workspace script contract", () => {
       'tsc -b && bun run lint && bun test --only-failures --reporter=junit --reporter-outfile="${CQ_TEST_JUNIT_PATH:-/dev/null}" && bun run check:pi-extensions && bun run check:codex-installed-gate && bun run check:flake-enumeration',
     );
     expect(workspacePackage.scripts["check:codex-installed-gate"]).toBe(
-      "cd ../../.. && nix build --no-link .#cq",
+      'nix build --no-link "$(scripts/working-tree-flake-ref.sh)#cq"',
     );
     expect(workspacePackage.scripts["check:flake-enumeration"]).toBe(
-      "cd ../../.. && nix flake show --all-systems --json",
+      'nix flake show --all-systems --json "$(scripts/working-tree-flake-ref.sh)"',
     );
   });
 });
