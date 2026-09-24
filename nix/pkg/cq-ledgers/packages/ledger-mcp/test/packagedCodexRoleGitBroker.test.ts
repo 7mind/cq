@@ -64,6 +64,24 @@ const installedGateTest =
     ? test.skip
     : test;
 
+// D414: the packaged check exports BOTH codex role executables on every
+// supported platform; only the sandbox executable was Linux-only. So inside
+// the packaged check on Darwin the installed provider qualification below —
+// and with it the codex:native registry assertion — skipped itself, and the
+// supported matrix lost that evidence with no signal at all. Outside the
+// packaged check a skip is honest, because there is nothing installed to
+// qualify. Inside it, a missing sandbox executable is a hole, not an
+// exemption, so it has to FAIL rather than skip.
+test("D414: packaged provider qualification is never silently skipped", () => {
+  const packagedCheck = INSTALLED_ROLE !== undefined || SUBSTITUTED_ROLE !== undefined;
+  expect(
+    !packagedCheck || INSTALLED_CODEX !== undefined,
+    `${process.platform}: the packaged check exports the codex role executables but no ` +
+      "CQ_TEST_CODEX_SANDBOX_EXECUTABLE, so the installed provider qualification would " +
+      "skip and this platform would ship unqualified",
+  ).toBe(true);
+});
+
 function codexWorksetEffect(targetRef: string) {
   return {
     provider: worksetEffectAdmissionProviderFromStore(createInMemoryWorksetStore()),

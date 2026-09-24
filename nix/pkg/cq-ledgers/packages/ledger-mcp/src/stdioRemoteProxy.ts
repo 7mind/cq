@@ -11,13 +11,26 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { remoteMcpUrl } from "@cq/ledger";
+import {
+  FULL_LEDGER_TOOL_PROFILE,
+  LEDGER_TOOL_PROFILE_HEADER,
+  remoteMcpUrl,
+  type LedgerToolProfileName,
+} from "@cq/ledger";
 
 export interface RemoteStdioProxyOptions {
   readonly serverUrl: string;
   readonly projectKey: string;
   readonly token: string;
   readonly displayName?: string;
+  /**
+   * D411 — the role profile this process was launched with. It is asked for on
+   * the upstream initialize; the server binds the session to it (refusing
+   * anything wider than its own configured profile) and the forwarded
+   * `tools/list` and instructions are already narrowed when they arrive, so
+   * the proxy never filters locally.
+   */
+  readonly toolProfile?: LedgerToolProfileName;
 }
 
 export interface RemoteMcpProxy {
@@ -31,11 +44,21 @@ export async function connectRemoteMcpProxy(
   serverUrl: string,
   projectKey: string,
   token: string,
+  toolProfile?: LedgerToolProfileName,
 ): Promise<RemoteMcpProxy> {
   const endpoint = remoteMcpUrl(serverUrl, projectKey);
   const transport = new StreamableHTTPClientTransport(
     new URL(endpoint),
-    { requestInit: { headers: { authorization: `Bearer ${token}` } } },
+    {
+      requestInit: {
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(toolProfile !== undefined && toolProfile !== FULL_LEDGER_TOOL_PROFILE
+            ? { [LEDGER_TOOL_PROFILE_HEADER]: toolProfile }
+            : {}),
+        },
+      },
+    },
   );
   const upstream = new Client(
     { name: "cq-mcp-remote-proxy", version: "0.0.1" },
@@ -87,6 +110,7 @@ export async function serveRemoteStdioProxy(options: RemoteStdioProxyOptions): P
     options.serverUrl,
     options.projectKey,
     options.token,
+    options.toolProfile,
   );
   const transport = new StdioServerTransport();
   await proxy.server.connect(transport);

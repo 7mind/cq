@@ -3,7 +3,9 @@ import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  CANONICAL_PROJECT_GATE,
   CODEX_STAGED_TIMING_BASIS,
+  DISPATCH_INVOCATION_ENV_NAMES,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
@@ -14,6 +16,7 @@ import {
   type DispatchJSONValue,
   type ImplementWorkerSupervisedGateRejectionDetails,
   type ImplementWorkerSupervisedGateEvidence,
+  type ProjectGateSpecification,
 } from "@cq/config";
 import {
   launchRegisteredProcessGroup,
@@ -49,11 +52,6 @@ const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
 const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
 const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT;
-const DISPATCH_INVOCATION_ENVIRONMENT_KEYS = [
-  "CQ_CODEX_ROLE_CORRELATION_ID",
-  "CQ_CODEX_ROLE_EXPECTED_RUN_ID",
-  "CQ_CODEX_PRETURN_OBSERVATION_PATH",
-] as const;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -571,7 +569,7 @@ function outputTail(
 
 function hostGateEnvironment(junitPath: string): NodeJS.ProcessEnv {
   const environment = { ...process.env };
-  for (const key of DISPATCH_INVOCATION_ENVIRONMENT_KEYS) delete environment[key];
+  for (const key of DISPATCH_INVOCATION_ENV_NAMES) delete environment[key];
   environment["CQ_TEST_JUNIT_PATH"] = junitPath;
   return environment;
 }
@@ -622,12 +620,20 @@ function createSerializedSupervisedRunner<Request extends SupervisedWorkerGateRu
   });
 }
 
+/**
+ * D403 / H310: the gate this runner executes is the PROJECT's, resolved from
+ * `[gate]`. It is a constructor parameter rather than a module literal so a
+ * consumer project is not handed CQ's `nix/pkg/cq-ledgers` layout. Omitting it
+ * keeps {@link CANONICAL_PROJECT_GATE} for compatibility with existing stores
+ * and fixtures.
+ */
 export function createNodeSupervisedWorkerGateRunner(
   settlement: NodeSupervisedWorkerGateSettlement,
+  gate: ProjectGateSpecification = CANONICAL_PROJECT_GATE,
 ): SupervisedWorkerGateRunner {
   return createSerializedSupervisedRunner((request: SupervisedWorkerGateRunRequest) =>
     runAdmittedNodeSupervisedWorkerGate({ ...request, command: {
-      argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: {},
+      argv: [...gate.argv], cwd: gate.cwd, environment: {},
     } }, settlement));
 }
 
@@ -735,7 +741,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
     throw new Error("supervised command cwd escapes its managed worktree");
   }
   const environment = { ...hostGateEnvironment(junitPath), ...command.environment };
-  for (const key of DISPATCH_INVOCATION_ENVIRONMENT_KEYS) delete environment[key];
+  for (const key of DISPATCH_INVOCATION_ENV_NAMES) delete environment[key];
   environment["CQ_TEST_JUNIT_PATH"] = junitPath;
   const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
   const launchSpecification = {

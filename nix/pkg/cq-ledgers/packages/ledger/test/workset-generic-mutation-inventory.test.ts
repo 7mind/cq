@@ -91,8 +91,11 @@ describe("workset generic-mutation inventory [T1961]", () => {
       "deny",
     );
     expect(clauseForGenericMutationOperation("create-ledger").restrictive).toBe("deny");
+    // Ambient records are never executable work, and a fault must be
+    // REPORTABLE without first admitting the thing it is about.
     expect(clauseForGenericMutationOperation("create-item").exemptions).toEqual([
-      "idea-only",
+      "ambient-record",
+      "defect-intake",
     ]);
   });
 
@@ -101,8 +104,8 @@ describe("workset generic-mutation inventory [T1961]", () => {
       "require-target-in-graph",
     );
     expect(clauseForGenericMutationOperation("update-item").exemptions).toEqual([
-      "idea-only",
-      "pure-question-answer",
+      "ambient-record",
+      "question-operator-input",
     ]);
     expect(clauseForGenericMutationOperation("update-milestone").restrictive).toBe(
       "require-target-in-graph",
@@ -123,10 +126,10 @@ describe("workset generic-mutation inventory [T1961]", () => {
       clauseForGenericMutationOperation("archive-terminal-items").restrictive,
     ).toBe("require-affected-targets-in-graph");
     expect(clauseForGenericMutationOperation("archive-terminal-items").exemptions).toEqual([
-      "idea-only",
+      "ambient-record",
     ]);
     expect(clauseForGenericMutationOperation("execute-finalize").exemptions).toEqual([
-      "idea-only",
+      "ambient-record",
     ]);
   });
 

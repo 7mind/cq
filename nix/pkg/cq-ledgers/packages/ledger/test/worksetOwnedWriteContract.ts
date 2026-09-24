@@ -18,6 +18,7 @@ import { describe, expect, it } from "bun:test";
 import {
   WorksetOwnedLifecycleError,
   WorksetGenericMutationError,
+  type WorksetGenericMutationErrorCode,
   assertNoPublicRawWriteEscape,
   assertOwnedWriteAdmissionNotCallerMinted,
   createTrustedWorksetManagementAuthority,
@@ -80,6 +81,21 @@ async function expectOwnedRejection(
     const ownedError = error as WorksetOwnedLifecycleError;
     expect(ownedError.code).toBe(code);
     return ownedError;
+  }
+}
+
+async function expectGenericRejection(
+  promise: Promise<unknown>,
+  code: WorksetGenericMutationErrorCode,
+): Promise<WorksetGenericMutationError> {
+  try {
+    await promise;
+    throw new Error(`expected WorksetGenericMutationError(${code})`);
+  } catch (error) {
+    expect(error).toBeInstanceOf(WorksetGenericMutationError);
+    const gatewayError = error as WorksetGenericMutationError;
+    expect(gatewayError.code).toBe(code);
+    return gatewayError;
   }
 }
 
@@ -663,6 +679,210 @@ export function runWorksetOwnedWriteContract(
         "owner-policy-denied",
       );
       expect(ledger.fetch(GOALS_LEDGER).counters.item).toBe(before);
+    });
+
+    // D487: execution readiness and archival cleanup are different authorities.
+    // Workset traversal deliberately drops an ANSWERED gate question and a DONE
+    // task's children, because neither is runnable — but a milestone only
+    // becomes archivable once its members are terminal, so that same filter
+    // removes exactly the members an archival sweep must cover. The observed
+    // production refusal named `questions:Q408`, an answered gate question
+    // sealed to `tasks:T6518`, while T6518 itself was admitted.
+    async function seedTerminalOwnedGateQuestion(
+      ledger: WorksetOwnedGuardedLedger,
+      withUnrelatedSibling = false,
+    ): Promise<{
+      readonly milestoneId: string;
+      readonly taskId: string;
+      readonly questionId: string;
+      readonly siblingId: string | null;
+    }> {
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "D487 cleanup" });
+      const task = await ledger.owned.createOwnerless({
+        ledgerId: TASKS_LEDGER,
+        milestoneId: milestone.id,
+        status: "planned",
+        fields: { headline: "owner of the gate question" },
+      });
+      const question = await ledger.owned.createOwned({
+        owner: { ledgerId: TASKS_LEDGER, itemId: task.id },
+        creationKind: "exact-gate-question",
+        child: {
+          ledgerId: QUESTIONS_LEDGER,
+          milestoneId: milestone.id,
+          status: "open",
+          fields: { question: "which runtime does the gate pin?" },
+        },
+      });
+      // Sealed ownership is what makes this a canonical descendant rather than
+      // an advisory neighbour.
+      const sealed = readCanonicalOwnership(
+        ledger.fetchItem(QUESTIONS_LEDGER, question.child.id),
+      );
+      expect(sealed).toEqual({
+        ownerRef: `${TASKS_LEDGER}:${task.id}`,
+        edgeKind: "exact-gate-question",
+      });
+      await ledger.mutations.updateItem(QUESTIONS_LEDGER, question.child.id, {
+        status: "answered",
+        fields: { answer: "the pinned one" },
+        author: "user",
+      });
+      await ledger.mutations.updateItem(TASKS_LEDGER, task.id, { status: "done" });
+      // A sibling with no ownership edge to anything admitted: advisory-only
+      // proximity (same milestone) must never buy admission. Seeded before the
+      // milestone goes terminal, since creation requires an active milestone.
+      const sibling = withUnrelatedSibling
+        ? await ledger.owned.createOwnerless({
+            ledgerId: TASKS_LEDGER,
+            milestoneId: milestone.id,
+            status: "planned",
+            fields: { headline: "unrelated sibling" },
+          })
+        : null;
+      if (sibling !== null) {
+        await ledger.mutations.updateItem(TASKS_LEDGER, sibling.id, { status: "done" });
+      }
+      await ledger.mutations.updateMilestone(milestone.id, { status: "done" });
+      return {
+        milestoneId: milestone.id,
+        taskId: task.id,
+        questionId: question.child.id,
+        siblingId: sibling?.id ?? null,
+      };
+    }
+
+    it("D487 archives a terminal canonically owned gate question without rooting it", async () => {
+      const ledger = await factory.build();
+      const { milestoneId, taskId, questionId } = await seedTerminalOwnedGateQuestion(ledger);
+
+      // The question is NOT a root and is NOT reachable by runnable traversal:
+      // its owner is done and it is answered.
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${milestoneId}`,
+        `${TASKS_LEDGER}:${taskId}`,
+      ]);
+      const graph = closeWorkset(
+        (await ledger.snapshotRoots()).roots,
+        buildActiveStateFromLedgerStore(ledger),
+      );
+      expect(worksetMemberRefSet(graph).has(`${QUESTIONS_LEDGER}:${questionId}`)).toBe(false);
+
+      const pointer = await ledger.mutations.archiveMilestone(milestoneId, "D487 cleanup");
+      expect(pointer.id).toBe(milestoneId);
+      expect(() => ledger.fetchItem(QUESTIONS_LEDGER, questionId)).toThrow();
+      expect(() => ledger.fetchItem(TASKS_LEDGER, taskId)).toThrow();
+    });
+
+    it("D487 still refuses an unrelated terminal member of the same milestone", async () => {
+      const ledger = await factory.build();
+      const { milestoneId, taskId, siblingId } = await seedTerminalOwnedGateQuestion(
+        ledger,
+        true,
+      );
+      if (siblingId === null) throw new Error("unrelated sibling was not seeded");
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${milestoneId}`,
+        `${TASKS_LEDGER}:${taskId}`,
+      ]);
+      const before = ledger.fetchItem(MILESTONES_LEDGER, milestoneId);
+      const error = await expectGenericRejection(
+        ledger.mutations.archiveMilestone(milestoneId, "should-fail"),
+        "archive-sweep-incomplete",
+      );
+      expect(error.message).toContain(`${TASKS_LEDGER}:${siblingId}`);
+      expect(ledger.fetchItem(MILESTONES_LEDGER, milestoneId)).toEqual(before);
+    });
+
+    it("D487 refuses a canonically owned terminal child whose owner is not admitted", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      // The owner lives in ANOTHER milestone, so it is not swept in with the
+      // archived group. Sealed ownership alone must not admit the child: the
+      // OWNER has to be an admitted member.
+      const ownerMilestone = await ledger.mutations.createMilestone({ title: "D487 owner" });
+      const gateMilestone = await ledger.mutations.createMilestone({ title: "D487 gate" });
+      const task = await ledger.owned.createOwnerless({
+        ledgerId: TASKS_LEDGER,
+        milestoneId: ownerMilestone.id,
+        status: "planned",
+        fields: { headline: "owner in another milestone" },
+      });
+      const question = await ledger.owned.createOwned({
+        owner: { ledgerId: TASKS_LEDGER, itemId: task.id },
+        creationKind: "exact-gate-question",
+        child: {
+          ledgerId: QUESTIONS_LEDGER,
+          milestoneId: gateMilestone.id,
+          status: "open",
+          fields: { question: "cross-milestone gate" },
+        },
+      });
+      await ledger.mutations.updateItem(QUESTIONS_LEDGER, question.child.id, {
+        status: "answered",
+        fields: { answer: "yes" },
+        author: "user",
+      });
+      await ledger.mutations.updateItem(TASKS_LEDGER, task.id, { status: "done" });
+      await ledger.mutations.updateMilestone(gateMilestone.id, { status: "done" });
+
+      await ledger.setRoots([`${MILESTONES_LEDGER}:${gateMilestone.id}`]);
+      const before = ledger.fetchItem(MILESTONES_LEDGER, gateMilestone.id);
+      const error = await expectGenericRejection(
+        ledger.mutations.archiveMilestone(gateMilestone.id, "owner-not-admitted"),
+        "archive-sweep-incomplete",
+      );
+      expect(error.message).toContain(`${QUESTIONS_LEDGER}:${question.child.id}`);
+      expect(ledger.fetchItem(MILESTONES_LEDGER, gateMilestone.id)).toEqual(before);
+
+      // Admitting the owner — still without rooting the question — releases it.
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${gateMilestone.id}`,
+        `${TASKS_LEDGER}:${task.id}`,
+      ]);
+      const pointer = await ledger.mutations.archiveMilestone(gateMilestone.id, "owner-admitted");
+      expect(pointer.id).toBe(gateMilestone.id);
+    });
+
+    it("D487 refuses a canonically owned child that is not terminal", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "D487 live child" });
+      const task = await ledger.owned.createOwnerless({
+        ledgerId: TASKS_LEDGER,
+        milestoneId: milestone.id,
+        status: "planned",
+        fields: { headline: "owner of a live gate question" },
+      });
+      const question = await ledger.owned.createOwned({
+        owner: { ledgerId: TASKS_LEDGER, itemId: task.id },
+        creationKind: "exact-gate-question",
+        child: {
+          ledgerId: QUESTIONS_LEDGER,
+          milestoneId: milestone.id,
+          status: "open",
+          fields: { question: "still unanswered" },
+        },
+      });
+      // The owner goes terminal while its gate question stays OPEN, so runnable
+      // traversal drops the question (a done task owns no live children) and
+      // cleanup must not pick it up either: an unanswered gate is live work.
+      // The milestone is deliberately left open, because closing it is itself
+      // refused while a child is non-terminal — this is the one shape that
+      // reaches the archive path with a live member.
+      await ledger.mutations.updateItem(TASKS_LEDGER, task.id, { status: "done" });
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${milestone.id}`,
+        `${TASKS_LEDGER}:${task.id}`,
+      ]);
+      const before = ledger.fetchItem(MILESTONES_LEDGER, milestone.id);
+      const error = await expectGenericRejection(
+        ledger.mutations.archiveMilestone(milestone.id, "live-child"),
+        "archive-sweep-incomplete",
+      );
+      expect(error.message).toContain(`${QUESTIONS_LEDGER}:${question.child.id}`);
+      expect(ledger.fetchItem(MILESTONES_LEDGER, milestone.id)).toEqual(before);
     });
   });
 }

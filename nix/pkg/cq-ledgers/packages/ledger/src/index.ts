@@ -319,6 +319,7 @@ export type { ParsedFrontmatter } from "./parser/frontmatter.js";
 export type {
   LedgerStore,
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -423,7 +424,6 @@ export {
   generateUuidV7,
   isUuidV7,
   listManagedLiveWorktrees,
-  managedWorktreeHandleSegment,
   nodeManagedWorktreeGitRunner,
   normalizeManagedPath,
   prepareManagedWorktree,
@@ -770,6 +770,7 @@ export type {
   AttestationConstructionStoreInput,
 } from "./store/attestationConstruction.js";
 export {
+  LEDGER_TOOL_PROFILE_HEADER,
   PROJECT_DISPLAY_NAME_HEADER,
   PROJECT_DISPLAY_NAME_MAX_BYTES,
   RemoteLedgerClient,

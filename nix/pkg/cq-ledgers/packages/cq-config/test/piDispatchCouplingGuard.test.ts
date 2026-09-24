@@ -769,15 +769,31 @@ describe("pi dispatch cross-artifact coupling (T1145 / defects:D186)", () => {
         expect(refProbe.status).not.toBe(0);
         expect(objectProbe.status).not.toBe(0);
 
-        const child = spawnSync(process.execPath, ["test", TEST_RELATIVE_PATH], {
-          cwd: path.join(cloneRoot, "nix", "pkg", "cq-ledgers"),
-          encoding: "utf8",
-          env: { ...process.env, [CANDIDATE_ONLY_PROBE_ENV]: "1" },
-        });
+        // Observe the child through the JUnit reporter, not through its
+        // human-readable output: `bun test` prints a per-test line only for
+        // FAILING tests, so asserting a PASSING guard's name against stdout
+        // contradicts the `status === 0` assertion beside it and can never
+        // hold. The JUnit report names every case regardless of outcome.
+        const childReport = path.join(isolatedRoot, "candidate-only-probe.xml");
+        const child = spawnSync(
+          process.execPath,
+          [
+            "test",
+            TEST_RELATIVE_PATH,
+            "--reporter=junit",
+            `--reporter-outfile=${childReport}`,
+          ],
+          {
+            cwd: path.join(cloneRoot, "nix", "pkg", "cq-ledgers"),
+            encoding: "utf8",
+            env: { ...process.env, [CANDIDATE_ONLY_PROBE_ENV]: "1" },
+          },
+        );
         const childOutput = `${child.stdout}\n${child.stderr}`;
         expect(child.status, childOutput).toBe(0);
-        expect(childOutput).toContain(
-          "detects real T693 {roleId,input} bytes diverging from the fragment's {agent,task,targetRef}",
+        expect(existsSync(childReport), childOutput).toBe(true);
+        expect(readFileSync(childReport, "utf8")).toContain(
+          "detects real T693 {roleId,input} bytes diverging from the fragment&apos;s {agent,task,targetRef}",
         );
       } finally {
         rmSync(isolatedRoot, { recursive: true, force: true });

@@ -35,6 +35,7 @@
  * traffic only; all logs go to stderr.
  */
 
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
@@ -60,6 +61,7 @@ import {
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
+  LEDGER_TOOL_PROFILE_HEADER,
   MANAGEMENT_LEDGER_TOOL_NAMES,
   ledgerToolNamesForProfile,
   registerLedgerStdioToolSpecifications,
@@ -705,6 +707,31 @@ export function createImplementationSuccessorLauncher(
     const effectTargetRef = managed.cohort === undefined
       ? assertCodexBoundaryEffectTargetRef(`tasks:${managed.taskId}`)
       : assertCodexBoundaryEffectTargetRef(cohortEffectTargetRefV1(managed.cohort), managed.cohort);
+    // D538: enforce the attested prompt binding BEFORE spawning. The prepared
+    // attestation records the digest of the exact role instructions it was
+    // prepared against; this launcher points the child at a prompt root and
+    // lets it resolve its own role, so without this a drifted root launches a
+    // successor carrying parentGateCapability and gitChangeCapability whose
+    // attestation asserts a provenance the running child does not have. The
+    // qualified transport adapter makes the same comparison, but defects:D535
+    // leaves it with no production consumer.
+    const roleId = prepared.promptProvenance.roleId;
+    let roleInstructions: string;
+    try {
+      roleInstructions = await readFile(path.join(promptRoot, "roles", `${roleId}.md`), "utf8");
+    } catch (cause) {
+      throw new Error(
+        `implementation successor cannot read role instructions for ${roleId} under ` +
+          `${promptRoot} to verify its attested prompt digest: ${String(cause)}`,
+      );
+    }
+    const observedPromptDigest = createHash("sha256").update(roleInstructions).digest("hex");
+    if (observedPromptDigest !== prepared.promptProvenance.promptDigest) {
+      throw new Error(
+        `implementation successor role instructions prompt digest ${observedPromptDigest} does not ` +
+          `match the attested ${prepared.promptProvenance.promptDigest}`,
+      );
+    }
     const invocation = {
       roleId: "implement-worker",
       handle: {
@@ -1365,6 +1392,43 @@ function sessionUnauthorized(): Response {
   return new Response("unauthorized", { status: 401 });
 }
 
+/**
+ * D411 — resolve the tool profile ONE initializing session is bound to.
+ *
+ * `configured` is the profile this attachment was constructed with; it is the
+ * ceiling. A session may name a narrower role profile on
+ * {@link LEDGER_TOOL_PROFILE_HEADER} (this is how a `backend=remote` stdio
+ * process carries its `--tool-profile` across the remote boundary), but the
+ * request is honoured ONLY when its tool set is a subset of the configured
+ * one. Widening and unknown role ids are refused outright rather than
+ * silently downgraded to the configured profile, so a misconfigured client
+ * cannot quietly acquire the full surface — which is exactly the failure this
+ * resolver exists to prevent.
+ */
+function resolveSessionToolProfile(
+  req: Request,
+  configured: LedgerToolProfileName,
+): LedgerToolProfileName | Response {
+  const raw = req.headers.get(LEDGER_TOOL_PROFILE_HEADER);
+  if (raw === null) return configured;
+  const requested = raw.trim();
+  if (requested === "" || requested === configured) return configured;
+  let requestedNames: readonly LedgerToolName[];
+  try {
+    requestedNames = ledgerToolNamesForProfile(requested);
+  } catch {
+    return new Response(`unknown tool profile '${requested}'`, { status: 400 });
+  }
+  const available = new Set<LedgerToolName>(ledgerToolNamesForProfile(configured));
+  if (!requestedNames.every((name) => available.has(name))) {
+    return new Response(
+      `tool profile '${requested}' is not within the configured profile '${configured}'`,
+      { status: 403 },
+    );
+  }
+  return requested;
+}
+
 export type McpSessionDisplayName = string | ((req: Request) => Promise<string> | string);
 
 export function attachMcpHttp(
@@ -1422,6 +1486,9 @@ export function attachMcpHttp(
     const scope = resolveInitialSessionScope(req, credentials, trustedDefaultScope);
     if (scope === null) return sessionUnauthorized();
 
+    const sessionToolProfile = resolveSessionToolProfile(req, toolProfile);
+    if (sessionToolProfile instanceof Response) return sessionToolProfile;
+
     const sessionDisplayName =
       typeof displayName === "string" ? displayName : await displayName(req);
     const transport = new WebStandardStreamableHTTPServerTransport({
@@ -1447,7 +1514,7 @@ export function attachMcpHttp(
         scope === "management"
           ? createTrustedWorksetManagementAuthority()
           : createObserveOnlyWorksetInvocationAuthority(),
-      toolProfile,
+      toolProfile: sessionToolProfile,
       ...(enableLogWrite ? { enableLogWrite: true } : {}),
       ...(implementationEvidence !== undefined ? { implementationEvidence } : {}),
       ...(cohortCompletion !== undefined ? { cohortCompletion } : {}),
@@ -1635,6 +1702,7 @@ export async function main(
       projectKey,
       token: resolveRemoteLedgerTokenFromProcess(),
       displayName,
+      toolProfile,
     });
     return;
   }

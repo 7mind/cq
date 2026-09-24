@@ -127,6 +127,9 @@ class GoalsClient implements LedgerClient {
   async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
+  async fetchItemIncludingArchived(l: string, i: string, p: ItemProjection): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(l, i, p), archived: [] };
+  }
   async createItem(_l: string, _m: string, _i: ItemInit): Promise<ItemMutationAckDto> {
     throw new Error("not used");
   }

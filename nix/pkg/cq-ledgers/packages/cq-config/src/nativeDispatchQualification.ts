@@ -17,6 +17,10 @@
  * worktree_manage handoff for claude:native registration.
  */
 
+import {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+} from "./managedWorktreePlacement.js";
 import type { Harness } from "./types.js";
 import {
   isRunnerOwnedCodexRoleBoundaryExecution,
@@ -71,6 +75,19 @@ export interface NativeAdapterQualified {
   readonly confinement: "structural" | "harness-owned";
   readonly evidence: string;
   readonly defectClosed: "D263" | "D160" | "D307" | null;
+  /**
+   * D412 — the incompatibility this adapter STILL carries after qualifying, or
+   * null when qualification closed it.
+   *
+   * `confinement` and cutover-readiness are independent axes: `pi:native`
+   * qualifies with STRUCTURAL placement evidence while D160 remains open, so a
+   * consumer reading `confinement` alone would claim a confinement this project
+   * has never proven. The field is REQUIRED so that every qualified verdict has
+   * to state its residual rather than omit it, and
+   * {@link isCutoverReadyNativeQualification} is the only supported way to ask
+   * whether an adapter may be claimed as cutover-ready.
+   */
+  readonly residualDefect: "D263" | "D160" | "D307" | null;
 }
 
 export interface NativeAdapterIncompatible {
@@ -633,8 +650,15 @@ function normalizeAbsPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-/** Managed implement worktrees use a v1 UUID path or v2 adopted implement-T path. */
-const MANAGED_WORKTREE_MARKER = "/.claude/worktrees/";
+/**
+ * Managed implement worktrees use a v1 UUID path or v2 adopted implement-T
+ * path, under CQ's placement or — for trees created before the D404 cutover —
+ * the harness-native parent.
+ */
+const MANAGED_WORKTREE_MARKERS: readonly string[] = Object.freeze([
+  `/${CQ_MANAGED_WORKTREES_SEGMENTS.join("/")}/`,
+  `/${HARNESS_NATIVE_WORKTREES_SEGMENTS.join("/")}/`,
+]);
 const MANAGED_WORKTREE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ADOPTED_WORKTREE_SEGMENT = /^implement-T\d+$/;
@@ -646,9 +670,12 @@ export function isManagedWorktreePath(cwd: string): boolean {
   if (normalized.includes("/../") || normalized.endsWith("/..") || normalized.includes("//")) {
     return false;
   }
-  const idx = normalized.lastIndexOf(MANAGED_WORKTREE_MARKER);
-  if (idx < 0) return false;
-  const after = normalized.slice(idx + MANAGED_WORKTREE_MARKER.length);
+  const marker = MANAGED_WORKTREE_MARKERS.map((candidate) => ({
+    candidate,
+    idx: normalized.lastIndexOf(candidate),
+  })).find((found) => found.idx >= 0);
+  if (marker === undefined) return false;
+  const after = normalized.slice(marker.idx + marker.candidate.length);
   // Exactly one path segment (the worktree id); no nested escapes.
   if (after.length === 0 || after.includes("/")) return false;
   return MANAGED_WORKTREE_ID.test(after) || ADOPTED_WORKTREE_SEGMENT.test(after);
@@ -781,6 +808,7 @@ export function qualifyClaudeNativeAdapter(
     transport: "native" as const,
     confinement: "harness-owned" as const,
     defectClosed: "D263" as const,
+    residualDefect: null,
     evidence:
       "decisions:K238 / Q383(b) / D287: harness-owned Claude native isolation accepted after " +
       `worktree_manage handle+path handoff to ${JSON.stringify(input.cwd)} ` +
@@ -879,6 +907,7 @@ export function qualifyPiNativeAdapter(
     confinement: "structural" as const,
     // D160 stays OPEN: qualification is placement evidence, not cutover/closure.
     defectClosed: null,
+    residualDefect: "D160" as const,
     evidence:
       "createAgentSession({cwd}) (or equivalent) binds built-in tools to the manager-returned " +
       `absolute path ${JSON.stringify(input.cwd)}; same-harness forceShellout=false must not ` +
@@ -1130,6 +1159,7 @@ export function qualifyCodexNativeAdapter(
     transport: "native" as const,
     confinement: "structural" as const,
     defectClosed: "D307" as const,
+    residualDefect: null,
     evidence:
       "T2044: exact worktree_manage path/handle/repository/task binding plus unsubstituted " +
       "packaged implement-worker and implement-conflict-resolver provider gates proved preturn " +
@@ -1161,6 +1191,21 @@ export function assertNativeAdapterQualified(
   if (qualification.status !== "qualified") {
     throw new NativeAdapterIncompatibilityError(qualification);
   }
+}
+
+/**
+ * D412 — may this adapter be reported as cutover-ready / fully confined?
+ *
+ * Registration and cutover-readiness are NOT the same question:
+ * {@link selectQualifiedNativeAdapterIds} answers the first, and `pi:native`
+ * passes it while carrying an open D160. Any report, matrix or summary that
+ * would assert full confinement must ask THIS instead of reading `status` or
+ * `confinement`.
+ */
+export function isCutoverReadyNativeQualification(
+  qualification: NativeAdapterQualification,
+): qualification is NativeAdapterQualified {
+  return qualification.status === "qualified" && qualification.residualDefect === null;
 }
 
 /** Filter qualifications down to adapter ids that may be registered. */

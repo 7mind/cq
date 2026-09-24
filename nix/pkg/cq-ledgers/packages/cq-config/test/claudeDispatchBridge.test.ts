@@ -35,7 +35,6 @@ import {
   CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
   CLAUDE_DISPATCH_RUN_OUTCOMES,
   CLAUDE_NATIVE_DELIVERY_MODE,
-  CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   CLAUDE_REF_FIRST_ARTIFACTS,
   ClaudeUnsupportedModeError,
@@ -229,15 +228,17 @@ describe("T688 §1 — the compact native launch carries the input reference, no
     // the gen-agents-baked agents/<role>.md for the selected agent.
     expect(launch.subagent_type).toBe(ROLE_ID);
     expect(launch.model).toBe(MODEL);
-    // T687: "none" keeps the harness out of worktree allocation (D119), and
-    // background dispatch has no correlatable transport field (T722 §4.1/§5.3).
-    expect(launch.isolation).toBe(CLAUDE_NATIVE_ISOLATION_ARGUMENT);
-    expect(launch.isolation).toBe("none");
+    // D402: the launch carries NO isolation argument. The old `"none"` pin was
+    // inert — the provider's enum is `worktree | remote` — and the allocation
+    // it meant to prevent comes from generated frontmatter, not the call site.
+    expect(Object.keys(launch)).not.toContain("isolation");
+    // Background dispatch has no correlatable transport field (T722 §4.1/§5.3).
     expect(launch.run_in_background).toBe(CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT);
     expect(launch.run_in_background).toBe(false);
-    // Exactly five keys — the Agent tool's whole field set, nothing smuggled.
+    // Exactly four keys — the Agent arguments a ref-first launch sets, nothing
+    // smuggled. D402 removed `isolation`: the provider's enum is
+    // `worktree | remote`, so the old `"none"` pin was never a real argument.
     expect(Object.keys(launch).sort()).toEqual([
-      "isolation",
       "model",
       "prompt",
       "run_in_background",
@@ -1211,8 +1212,9 @@ describe("T688 §3 — the generated Claude assets are ref-first", () => {
     const envelope = JSON.stringify(b.launches[0]!.envelope, null, 2);
     expect(scanClaudeRefFirstArtifact("bridge-launch-envelope", envelope)).toEqual([]);
     expect(() => assertClaudeRefFirstArtifact("bridge-launch-envelope", envelope)).not.toThrow();
-    // And it pins the two arguments whose wrong values ARE `generic-launcher`.
-    expect(envelope).toContain('"isolation": "none"');
+    // D402: the envelope passes NO isolation argument at all, and still pins
+    // the background argument whose wrong value is a `generic-launcher`.
+    expect(envelope).not.toContain('"isolation"');
     expect(envelope).toContain('"run_in_background": false');
   });
 
@@ -1252,6 +1254,42 @@ Then await its result and \`validate_output("implement-worker", output)\`.
     expect(() => assertClaudeRefFirstArtifact(artifact, regressed)).toThrow(
       AttestationContractError,
     );
+  });
+
+  // D402 / researches:RS12: a controlled two-dispatch experiment on the
+  // installed provider proved the generated role FRONTMATTER alone makes the
+  // harness allocate a worktree — at a stale commit — even though the call
+  // site passes no isolation argument. The bridge's protection was in the
+  // wrong place twice over: the constant is expressed at the call site, and
+  // the marker below only ever saw the QUOTED spelling `isolation: "worktree"`
+  // while generated frontmatter is unquoted YAML.
+  test("D402: the generated implement-worker frontmatter declares no harness isolation", () => {
+    const frontmatter = artifactText(
+      "fragments/claude/agents/implement-worker/host-tool-vocabulary.md",
+    );
+    expect(frontmatter).not.toContain("isolation:");
+  });
+
+  test("D402: the scanner catches an UNQUOTED isolation declaration", () => {
+    // The spelling that actually appears in generated frontmatter.
+    const artifact = "fragments/claude/agents/implement-worker/host-tool-vocabulary.md";
+    const regressed = `${artifactText(artifact)}\nisolation: worktree\n`;
+    expect(claudeArtifactViolations(artifact, regressed)).toContain("generic-launcher");
+  });
+
+  test("D402: generated bridge-dispatched frontmatter is in the scanned closure", () => {
+    expect(CLAUDE_REF_FIRST_ARTIFACTS).toContain(
+      "fragments/claude/agents/implement-worker/host-tool-vocabulary.md",
+    );
+  });
+
+  test("D402: Step 0 refuses the parent checkout instead of continuing in a pinned tree", () => {
+    const worker = artifactText("agents/implement-worker.md").replace(/\s+/gu, " ");
+    // The coupled hazard: with the frontmatter declaration gone, "continue in
+    // the pinned tree" would let a dispatch with an absent advisory path commit
+    // straight to the live parent branch — worse than a stale isolated tree.
+    expect(worker).not.toContain("continue in the pinned tree");
+    expect(worker).toContain("never operate in the parent checkout");
   });
 
   test("NEGATIVE CONTROL: a generic-launcher regression in a real asset is caught", () => {

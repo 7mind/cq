@@ -19,6 +19,16 @@ export function schemasEqual(a: LedgerSchema, b: LedgerSchema): boolean {
   for (let i = 0; i < a.terminalStatuses.length; i++) {
     if (a.terminalStatuses[i] !== b.terminalStatuses[i]) return false;
   }
+  // D406: dependency-satisfaction policy is part of schema identity. Omitting
+  // it here classified a policy-only canonical change as EQUAL, so no adapter
+  // ever reached its reconciliation path and the stale policy was served for
+  // the life of the store. Absence is NOT the empty list: absent means "every
+  // terminal status satisfies", empty means "nothing does".
+  if (
+    !optionalStatusListEqual(a.satisfiesDependencyStatuses, b.satisfiesDependencyStatuses)
+  ) {
+    return false;
+  }
   const aFieldNames = Object.keys(a.fields).sort();
   const bFieldNames = Object.keys(b.fields).sort();
   if (aFieldNames.length !== bFieldNames.length) return false;
@@ -47,6 +57,12 @@ export function schemasEqual(a: LedgerSchema, b: LedgerSchema): boolean {
  * Existing items and transitions therefore retain their meaning, and the store
  * can upgrade the persisted schema in place.
  *
+ * A changed `satisfiesDependencyStatuses` is likewise compatible (D406): which
+ * statuses satisfy a dependency is gating POLICY, not item validity, so no
+ * stored row can be invalidated by it. It is deliberately not part of any check
+ * below — `schemasEqual` reports the difference so the adapter reconciles, and
+ * reaching here means the change is safe to apply in place.
+ *
  * Everything else remains divergent: removals/reordering, changed transitions
  * among existing statuses, a field present on disk but absent from canon, an
  * added required field, a field whose type changed, or a field canon TIGHTENS
@@ -71,6 +87,14 @@ export function schemaCompatible(a: LedgerSchema, b: LedgerSchema): boolean {
     if (a.fields[name] === undefined && bf.required) return false;
   }
   return true;
+}
+
+function optionalStatusListEqual(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function orderedPrefix<T>(prefix: readonly T[], whole: readonly T[]): boolean {

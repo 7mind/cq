@@ -240,6 +240,9 @@ class FinalizeClient implements LedgerClient {
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> { throw new Error("not used"); }
+  async fetchItemIncludingArchived(l: string, i: string, p: ItemProjection): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(l, i, p), archived: [] };
+  }
   async createItem(): Promise<ItemMutationAckDto> { throw new Error("not used"); }
   async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.calls.push({ op: "updateItem", ledger, id, status: patch.status });

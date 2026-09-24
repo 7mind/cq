@@ -116,7 +116,9 @@ Rules:
 
 ## Environment
 - If $SMIND_SANDBOXED is set you are inside a bubblewrap sandbox: writes
-  persist only under the project directory and /tmp/exchange. For $HOME or
-  system-path access use the `environment` skill's exchange-script workflow.
+  persist under the project directory, /tmp/exchange, and explicitly bound
+  read-write paths across sandbox sessions. /tmp/exchange is host tmpfs and
+  does not survive a reboot. Use granted binds directly; for access outside
+  them use the `environment` skill's exchange-script workflow.
 - This harness injects no host/session banner; run `hostname -s` when the
   host identity matters.

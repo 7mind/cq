@@ -48,7 +48,27 @@ export interface GenericMutationResolvedClosure {
 }
 
 export interface ResolveGenericMutationClosureOptions {
+  /**
+   * ADVISORY candidates. These include refs copied straight out of item
+   * fields (`ledgerRefs`, `dependsOn`, `blockedBy`, `worksetOwnerRef`), where
+   * an unknown ledger or unregistered alpha prefix is legal free text — so an
+   * unresolvable entry here is skipped, not an error.
+   */
   readonly candidateRefs: readonly string[];
+  /**
+   * AUTHORITATIVE subset of {@link candidateRefs}: server-derived membership
+   * the mutation is about to act on (a milestone's members, a ledger's
+   * terminal items). These are built from registered ledger ids and stored
+   * item ids, so one that fails to canonicalize is a violated internal
+   * invariant, not free text. Dropping it silently is what let an archive
+   * sweep report success while leaving a terminal record active (D484), so it
+   * fails observably instead.
+   *
+   * This list drives VALIDATION ONLY. Callers must still pass these refs in
+   * `candidateRefs` at their natural position, because traversal order is
+   * governed there and closure output is insertion-ordered.
+   */
+  readonly requiredRefs?: readonly string[];
   readonly incidentReferenceFields: readonly string[];
 }
 
@@ -97,7 +117,15 @@ function* genericMutationClosureReads(roots: readonly string[], options: Resolve
     seen.add(ref);
     queued.push(ref);
   };
+  // Validate the authoritative refs BEFORE enqueueing anything. Doing it here
+  // rather than inside `enqueue` keeps the check independent of traversal
+  // order and still runs for a ref that also arrives through `candidateRefs`
+  // (where `seen` would otherwise short-circuit past it).
+  for (const ref of options.requiredRefs ?? []) canonicalizeRef(ref, prefixRegistry);
 
+  // Traversal order is unchanged from before `requiredRefs` existed: roots,
+  // then candidates in caller order. Closure output is insertion-ordered, so
+  // enqueueing the authoritative refs separately here would perturb it.
   for (const ref of canonicalRoots) enqueue(ref);
   for (const ref of options.candidateRefs) enqueue(ref);
 

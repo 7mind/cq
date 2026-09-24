@@ -50,6 +50,9 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
     const rows = createPostgresLifecycleRowRepository(observed);
     const metadata = await source.listLedgers();
     const candidates = [...scope.targetRefs, ...scope.referenceCandidates, ...scope.milestoneIds.map((id) => `milestones:${id}`)];
+    // Server-derived membership also recorded as authoritative for validation
+    // (D484); it stays in `candidates` so traversal order is unchanged.
+    const requiredRefs: string[] = [];
     const membership = new Set(scope.operation === "archive-milestone" || scope.operation === "execute-finalize" || scope.operation === "update-milestone"
       ? scope.milestoneIds : []);
     if (scope.operation === "update-item" || scope.operation === "execute-finalize") {
@@ -58,6 +61,7 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
     for (const id of membership) {
       const refs = await source.itemRefsByMilestone(id);
       candidates.push(...refs);
+      requiredRefs.push(...refs);
       if (scope.operation === "archive-milestone" || scope.operation === "execute-finalize") {
         archiveParents.add(id);
         for (const ref of refs) writable.add(ref);
@@ -69,6 +73,7 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
         if (selected === undefined) continue;
         const refs = await source.itemRefsByLedgerStatuses(ledgerId, selected.schema.terminalStatuses);
         candidates.push(...refs);
+        requiredRefs.push(...refs);
         for (const ref of refs) writable.add(ref);
       }
     }
@@ -86,7 +91,7 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
     if (scope.operation === "create-ledger") {
       for (const ledgerId of scope.ledgerIds) observed.recordReadTarget({ table: "ledgers", ledgerId });
     }
-    const closure = await resolveAsyncGenericMutationClosure(source, admission.roots, { candidateRefs: candidates,
+    const closure = await resolveAsyncGenericMutationClosure(source, admission.roots, { candidateRefs: candidates, requiredRefs,
       incidentReferenceFields: scope.operation === "archive-terminal-items" || scope.operation === "archive-milestone" || scope.operation === "execute-finalize"
         ? ["dependsOn", "blockedBy"] : [] });
     const ledgers = new Map<string, Ledger>(metadata.map(({ id, schema, counters }) =>

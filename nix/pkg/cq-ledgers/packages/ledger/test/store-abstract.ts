@@ -338,6 +338,34 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
       }
     }, TIMEOUT);
 
+    it("D434: an explicit item id is refused after that id was archived", async () => {
+      const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+      try {
+        const first = await store.createMilestone({ title: "first round" });
+        await store.createItem(WIDGETS, first.id, {
+          id: "W7",
+          status: "resolved",
+          fields: { severity: "minor", location: "a.ts", description: "first" },
+        });
+        await store.updateMilestone(first.id, { status: "done" });
+        await store.archiveMilestone(first.id, "first round archived");
+
+        // Archiving moves the group out of the ACTIVE collection, but the id
+        // is still the canonical identity of a durable archived record. Reusing
+        // it makes `<ledger>:<id>` resolve to two generations.
+        const second = await store.createMilestone({ title: "second round" });
+        await expect(
+          store.createItem(WIDGETS, second.id, {
+            id: "W7",
+            status: "open",
+            fields: { severity: "minor", location: "b.ts", description: "second" },
+          }),
+        ).rejects.toThrow(/Duplicate item id/);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
     it("archiveMilestone (global) refuses non-terminal items in ANY ledger, succeeds when all terminal", async () => {
       const store = await factory.build([
         { name: WIDGETS, schema: widgetsSchema },

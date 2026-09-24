@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { managedWorktreeRegistryRoot } from "@cq/config";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { cohortEffectTargetRefV1, type RebaseContinueEffectBinding } from "@cq/process-control";
@@ -657,7 +658,7 @@ function operationRoot(
   operationId: string,
   stateDir?: string,
 ): string {
-  const root = stateDir ?? join(authorization.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
+  const root = managedWorktreeRegistryRoot(authorization.repositoryRoot, stateDir);
   const key = sha256(`${authorization.attestationId}\n${authorization.generation}\n${operationId}`);
   return join(root, "git-conflict-broker", key);
 }
@@ -1251,7 +1252,7 @@ export async function continueManagedWorktreeRebase(
 }
 
 function brokerRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
-  return stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
+  return managedWorktreeRegistryRoot(binding.repositoryRoot, stateDir);
 }
 
 function orderReceiptChain(

@@ -35,17 +35,22 @@ import {
   WORKSET_OWNER_EDGE_KIND_FIELD,
   WORKSET_OWNER_REF_FIELD,
   WORKSET_OWNED_FIELD_NAMES,
+  DECISIONS_LEDGER,
+  DEFECTS_LEDGER,
   GOALS_LEDGER,
   IDEAS_LEDGER,
+  MEMORIES_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_LEDGER,
-  QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
 } from "./constants.js";
 import { closeWorkset, defaultWorksetPrefixRegistry, type WorksetGraph } from "./worksetGraph.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
+  PREREQUISITE_EDGE,
+  readCanonicalOwnership,
   WorksetOwnershipFieldError,
+  type CanonicalOwnership,
 } from "./worksetOwnerEdges.js";
 import type { FinalizeBatchOperation } from "./finalize.js";
 import { ledgerItemRevisionV1 } from "./itemRevision.js";
@@ -72,6 +77,7 @@ export { buildActiveStateFromLedgerStore, closedGraphIsTargetAdmitted } from "./
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -140,8 +146,9 @@ export type WorksetGenericMutationRestrictivePolicy =
   | "require-sweep-in-graph";
 
 export type WorksetGenericMutationSemanticExemption =
-  | "idea-only"
-  | "pure-question-answer";
+  | "ambient-record"
+  | "question-operator-input"
+  | "defect-intake";
 
 export interface WorksetGenericMutationOperationClause {
   readonly kind: WorksetGenericMutationOperationKind;
@@ -176,7 +183,7 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES: readonly WorksetGeneric
       kind: "create-item",
       method: "createItem",
       restrictive: "deny",
-      exemptions: ["idea-only"],
+      exemptions: ["ambient-record", "defect-intake"],
       unrestricted: "allow",
     },
     {
@@ -190,35 +197,35 @@ export const WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES: readonly WorksetGeneric
       kind: "update-item",
       method: "updateItem",
       restrictive: "require-target-in-graph",
-      exemptions: ["idea-only", "pure-question-answer"],
+      exemptions: ["ambient-record", "question-operator-input"],
       unrestricted: "allow",
     },
     {
       kind: "reopen-item",
       method: "reopenItem",
       restrictive: "require-target-in-graph",
-      exemptions: ["idea-only"],
+      exemptions: ["ambient-record"],
       unrestricted: "allow",
     },
     {
       kind: "unarchive-item",
       method: "unarchiveItem",
       restrictive: "require-exact-inactive-root",
-      exemptions: ["idea-only"],
+      exemptions: ["ambient-record"],
       unrestricted: "allow",
     },
     {
       kind: "archive-terminal-items",
       method: "archiveTerminalItems",
       restrictive: "require-affected-targets-in-graph",
-      exemptions: ["idea-only"],
+      exemptions: ["ambient-record"],
       unrestricted: "allow",
     },
     {
       kind: "execute-finalize",
       method: "executeFinalize",
       restrictive: "require-affected-targets-in-graph",
-      exemptions: ["idea-only"],
+      exemptions: ["ambient-record"],
       unrestricted: "allow",
     },
     {
@@ -346,6 +353,10 @@ export interface WorksetLedgerReadSurface {
   enumerate(): string[];
   fetch(ledgerId: string): FetchedLedger;
   fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
+  fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]>;
   fetchItem(ledgerId: string, itemId: string): Item;
   fetchMilestone(milestoneId: string): FetchedMilestoneItem;
   search(ledgerId: string, query: string): Item[];
@@ -477,6 +488,13 @@ function itemRef(ledgerId: string, itemId: string): string {
   return `${ledgerId}:${itemId}`;
 }
 
+function splitRefParts(ref: string): { readonly ledger: string; readonly id: string } {
+  const colon = ref.indexOf(":");
+  return colon === -1
+    ? { ledger: ref, id: "" }
+    : { ledger: ref.slice(0, colon), id: ref.slice(colon + 1) };
+}
+
 function asStringArray(value: FieldValue | undefined): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === "string");
@@ -512,28 +530,58 @@ export function effectiveGenericMutationDelta(
 
 export type WorksetGenericMutationSemanticClass =
   | "ordinary"
-  | "idea-only"
-  | "pure-question-answer";
+  | "ambient-record"
+  | "question-operator-input"
+  | "defect-intake";
+
+/**
+ * Ledgers whose contents are RECORDS, not executable work: nothing dispatches
+ * on them and no readiness predicate reads them, so workset membership - which
+ * scopes EXECUTION - has nothing to say about them. Intake and record-keeping
+ * must not require admitting the thing you are writing about first.
+ */
+const AMBIENT_RECORD_LEDGERS: ReadonlySet<string> = new Set([
+  IDEAS_LEDGER,
+  MEMORIES_LEDGER,
+  DECISIONS_LEDGER,
+]);
+
+export function isAmbientRecordLedger(ledgerId: string): boolean {
+  return AMBIENT_RECORD_LEDGERS.has(ledgerId);
+}
+
+/** The status a newly reported defect may be created at outside the workset. */
+export const DEFECT_INTAKE_STATUS = "open" as const;
+
+/**
+ * Classify one item CREATE. Ambient records are always exempt; a defect may be
+ * REPORTED from outside the workset, because requiring a fault to be admitted
+ * before it can be reported is circular. Creating a defect at any later status
+ * is not intake - `open -> root-caused` drives seeding - so it stays ordinary.
+ */
+export function classifyGenericItemCreate(
+  ledgerId: string,
+  init: CreateItemInit,
+): WorksetGenericMutationSemanticClass {
+  if (isAmbientRecordLedger(ledgerId)) return "ambient-record";
+  if (ledgerId === DEFECTS_LEDGER && init.status === DEFECT_INTAKE_STATUS) return "defect-intake";
+  return "ordinary";
+}
 
 /** Classify one item update from its stored value and effective semantic delta. */
 export function classifyGenericItemUpdate(
   ledgerId: string,
-  existing: Item,
-  patch: UpdateItemPatch,
 ): WorksetGenericMutationSemanticClass {
-  if (ledgerId === IDEAS_LEDGER) return "idea-only";
-  if (ledgerId !== QUESTIONS_LEDGER) return "ordinary";
-  const delta = effectiveGenericMutationDelta(existing, patch);
-  const answerOnly =
-    delta.changedFields.length === 1 && delta.changedFields[0] === QUESTIONS_ANSWER_FIELD;
-  if (!delta.statusChanged) return answerOnly ? "pure-question-answer" : "ordinary";
-  if (patch.status !== "answered") return "ordinary";
-  if (answerOnly) return "pure-question-answer";
-  if (delta.changedFields.length !== 0) return "ordinary";
-  const storedAnswer = existing.fields[QUESTIONS_ANSWER_FIELD];
-  return typeof storedAnswer === "string" && storedAnswer.trim().length > 0
-    ? "pure-question-answer"
-    : "ordinary";
+  if (isAmbientRecordLedger(ledgerId)) return "ambient-record";
+  // Every question UPDATE is operator input. The narrower answer-only rule
+  // this replaces blocked ordinary maintenance - fixing a question's context,
+  // recording a recommendation - which gates nothing. It is safe to widen
+  // because the schema admits only `open -> answered | withdrawn` and both are
+  // terminal: no update can move a question BACK to open and re-block its
+  // owner. Re-opening is `reopen-item`, a separate clause that stays gated,
+  // as does question CREATION, which can inject a blocker into unadmitted work.
+  if (ledgerId === QUESTIONS_LEDGER) return "question-operator-input";
+  return "ordinary";
 }
 
 function canonicalizeRefList(
@@ -593,6 +641,104 @@ export function introducedClosureRefs(
     }
   }
   return introduced;
+}
+
+
+// ---------------------------------------------------------------------------
+// D487 — terminal-cleanup closure
+// ---------------------------------------------------------------------------
+
+/**
+ * Archival cleanup and runnable traversal are different authorities.
+ *
+ * `closeWorkset` deliberately drops an ANSWERED exact-gate question and a DONE
+ * task's children: neither is executable, so neither belongs to a runnable
+ * workset. But a milestone only becomes archivable once its members ARE
+ * terminal, so that same readiness filter removes precisely the members an
+ * archival sweep has to cover — and the sweep then refuses, with no legal way
+ * to finish the cleanup short of adding every child as a root.
+ *
+ * These two predicates admit an exact canonically owned TERMINAL descendant of
+ * admitted work into its own owner's archival sweep. They never widen ordinary
+ * execution or generic intake: they are consulted only by `archiveMilestone`,
+ * and only for members of the milestone being archived.
+ */
+function terminalCleanupShape(
+  schemaOf: (ledgerId: string) => LedgerSchema | undefined,
+  item: Item,
+  ledgerId: string,
+): CanonicalOwnership | null {
+  // The milestone boundary needs no check here: every ref this is asked about
+  // comes from `collectArchiveSweepRefs(milestoneId)`, which returns only that
+  // group's members plus the milestone item itself — and the milestone item
+  // carries no sealed ownership, so it fails below like any other unowned row.
+  // Terminal only — live work is never cleanup.
+  const schema = schemaOf(ledgerId);
+  if (schema === undefined || !schema.terminalStatuses.includes(item.status)) return null;
+  // Forged, partial and advisory-only links fail closed: `readCanonicalOwnership`
+  // is total and returns null for a missing or non-string field, an ownerRef
+  // with no `<ledger>:` prefix, and an unknown edge kind — which is exactly the
+  // set `isAmbiguousLegacyOwnership` flags, so one check settles both. An
+  // advisory `ledgerRefs` link never reaches here at all.
+  const ownership = readCanonicalOwnership(item);
+  if (ownership === null) return null;
+  // `prerequisite` is an ordering edge, never sealed ownership.
+  if (ownership.edgeKind === PREREQUISITE_EDGE.edgeKind) return null;
+  return ownership;
+}
+
+/**
+ * Pre-admission half: owner-agnostic, so a candidate can be withheld from the
+ * admission targets before the admitted graph is known. Withholding a target
+ * never grants authority — the in-transaction half below re-derives it.
+ */
+function isTerminalCleanupCandidate(
+  store: Pick<LedgerStore, "fetch" | "fetchItem">,
+  ref: string,
+): boolean {
+  const { ledger: ledgerId, id } = splitRefParts(ref);
+  let item: Item;
+  try {
+    item = store.fetchItem(ledgerId, id);
+  } catch {
+    return false;
+  }
+  const schemaOf = (name: string): LedgerSchema | undefined => {
+    try {
+      return store.fetch(name).schema;
+    } catch {
+      return undefined;
+    }
+  };
+  return terminalCleanupShape(schemaOf, item, ledgerId) !== null;
+}
+
+/**
+ * Authoritative half: decided inside the critical section against the live
+ * graph, so the owner must be an admitted member at the admitted epoch.
+ */
+function terminalCleanupAdmissible(
+  store: Pick<LedgerStore, "fetch">,
+  tx: WorksetGenericMutationTx,
+  ctx: ValidationContext,
+  ref: string,
+): boolean {
+  const { ledger: ledgerId, id } = splitRefParts(ref);
+  let item: Item;
+  try {
+    item = tx.fetchItem(ledgerId, id);
+  } catch {
+    return false;
+  }
+  const schemaOf = (name: string): LedgerSchema | undefined => {
+    try {
+      return store.fetch(name).schema;
+    } catch {
+      return undefined;
+    }
+  };
+  const ownership = terminalCleanupShape(schemaOf, item, ledgerId);
+  return ownership !== null && ctx.members.has(ownership.ownerRef);
 }
 
 function collectArchiveSweepRefs(
@@ -1045,7 +1191,7 @@ export function createWorksetGenericMutationGateway(
     async updateItem(ledgerId, itemId, patch, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        ledgerId === IDEAS_LEDGER || ledgerId === QUESTIONS_LEDGER ? [] : [ref],
+        isAmbientRecordLedger(ledgerId) || ledgerId === QUESTIONS_LEDGER ? [] : [ref],
         "update-item",
         "ordinary",
         measurement,
@@ -1059,7 +1205,7 @@ export function createWorksetGenericMutationGateway(
           const semanticClass =
             existing === undefined
               ? "ordinary"
-              : classifyGenericItemUpdate(ledgerId, existing, patch);
+              : classifyGenericItemUpdate(ledgerId);
           if (semanticClass === "ordinary") assertTargetInGraph(ctx, ref);
           assertSealedOwnershipAbsent(patch.fields, existing);
           const introduced = introducedClosureRefs(
@@ -1103,7 +1249,7 @@ export function createWorksetGenericMutationGateway(
         "ordinary",
         measurement,
         (tx, adm) => {
-          if (adm.roots.length > 0 && ledgerId !== IDEAS_LEDGER) {
+          if (adm.roots.length > 0 && classifyGenericItemCreate(ledgerId, init) === "ordinary") {
             throw new WorksetGenericMutationError(
               "creation-denied",
               "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
@@ -1188,12 +1334,12 @@ export function createWorksetGenericMutationGateway(
     async reopenItem(ledgerId, itemId, toStatus, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        ledgerId === IDEAS_LEDGER ? [] : [ref],
+        isAmbientRecordLedger(ledgerId) ? [] : [ref],
         "reopen-item",
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
-          if (ledgerId !== IDEAS_LEDGER) assertTargetInGraph(ctx, ref);
+          if (!isAmbientRecordLedger(ledgerId)) assertTargetInGraph(ctx, ref);
           return tx.reopenItem(ledgerId, itemId, toStatus);
         },
         {
@@ -1210,12 +1356,12 @@ export function createWorksetGenericMutationGateway(
     async unarchiveItem(ledgerId, milestoneId, itemId, measurement) {
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
-        ledgerId === IDEAS_LEDGER ? [] : [ref],
+        isAmbientRecordLedger(ledgerId) ? [] : [ref],
         "unarchive-item",
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
-          if (ctx.restrictive && ledgerId !== IDEAS_LEDGER) {
+          if (ctx.restrictive && !isAmbientRecordLedger(ledgerId)) {
             if (!ctx.graph.inactiveRoots.includes(ref)) {
               throw new WorksetGenericMutationError(
                 "unarchive-not-exact-inactive-root",
@@ -1326,7 +1472,7 @@ export function createWorksetGenericMutationGateway(
                 const separator = operation.targetId.indexOf(":");
                 const ledgerId = operation.targetId.slice(0, separator);
                 const itemId = operation.targetId.slice(separator + 1);
-                if (ledgerId !== IDEAS_LEDGER) assertTargetInGraph(ctx, operation.targetId);
+                if (!isAmbientRecordLedger(ledgerId)) assertTargetInGraph(ctx, operation.targetId);
                 const item = tx.fetchItem(ledgerId, itemId);
                 if (item.milestoneId !== operation.expectedMilestoneId ||
                     item.updatedAt !== operation.expectedUpdatedAt ||
@@ -1397,8 +1543,19 @@ export function createWorksetGenericMutationGateway(
       // Resolve the live sweep first so admission targets cover every member;
       // re-check inside the critical section for linearizability.
       const preSweep = collectArchiveSweepRefs(rawStore, milestoneId);
+      // D487: withhold terminal-cleanup candidates from the ADMISSION targets.
+      // The coordinator probe is shared by every mutation kind and cannot be
+      // told which operation is asking, so the operation-specific relaxation
+      // has to happen where the operation is known. Withholding a target
+      // grants nothing on its own: the critical section below re-derives
+      // eligibility from the live graph at the admitted epoch, and any ref
+      // that fails there still ends the archive as `archive-sweep-incomplete`.
+      const withheld = new Set(
+        preSweep.filter((ref) => isTerminalCleanupCandidate(rawStore, ref)),
+      );
+      const presented = preSweep.filter((ref) => !withheld.has(ref));
       const admitTargets =
-        preSweep.length > 0 ? preSweep : [itemRef(MILESTONES_LEDGER, milestoneId)];
+        presented.length > 0 ? presented : [itemRef(MILESTONES_LEDGER, milestoneId)];
       return withGenericAdmission(
         admitTargets,
         "archive-milestone",
@@ -1407,7 +1564,11 @@ export function createWorksetGenericMutationGateway(
         (tx, _adm, ctx) => {
           const sweep = tx.collectArchiveSweepRefs(milestoneId);
           if (ctx.restrictive) {
-            const missing = sweep.filter((ref) => !ctx.members.has(ref));
+            const missing = sweep.filter(
+              (ref) =>
+                !ctx.members.has(ref) &&
+                !terminalCleanupAdmissible(rawStore, tx, ctx, ref),
+            );
             if (missing.length > 0) {
               throw new WorksetGenericMutationError(
                 "archive-sweep-incomplete",
@@ -1421,6 +1582,7 @@ export function createWorksetGenericMutationGateway(
           return tx.archiveMilestone(milestoneId, summary);
         },
         {
+          scopeTargetRefs: preSweep,
           accessScope: {
             ledgerIds: [MILESTONES_LEDGER],
             milestoneIds: [milestoneId],
@@ -1457,6 +1619,7 @@ export function createWorksetGuardedLedger(
     enumerate: () => rawStore.enumerate(),
     fetch: (id) => rawStore.fetch(id),
     fetchArchive: (ledgerId, archiveId) => rawStore.fetchArchive(ledgerId, archiveId),
+    fetchArchivedItems: (ledgerId, itemId) => rawStore.fetchArchivedItems(ledgerId, itemId),
     fetchItem: (ledgerId, itemId) => rawStore.fetchItem(ledgerId, itemId),
     fetchMilestone: (milestoneId) => rawStore.fetchMilestone(milestoneId),
     search: (ledgerId, query) => rawStore.search(ledgerId, query),

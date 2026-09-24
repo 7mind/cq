@@ -943,6 +943,45 @@ describe("T1631 shared three-harness transport router", () => {
     expect(exhaustionStates).toEqual([false, true]);
   });
 
+  test("D431: a claude:native completion carrying trusted-extension is refused", async () => {
+    // The matching positive case is covered by the full route matrix above,
+    // which derives the actor from the route. This pins the REFUSAL, so an
+    // adapter that regresses to the process/pi actor on a same-harness Claude
+    // route fails here rather than silently aborting every dispatch.
+    const fixture = preparedFixture("claude", 77);
+    const counts = { input: 0, store: 0 };
+    const registry = new DispatchTransportAdapterRegistry([
+      createNativeDispatchAdapter(
+        "claude",
+        successfulLaunch({ ...fixture.expectedCompletion, actor: "trusted-extension" }, counts),
+      ),
+    ]);
+    const result = await runPreparedDispatch(
+      {
+        namespace: NAMESPACE,
+        prepared: fixture.prepared,
+        activeHarness: "claude",
+        targetHarness: "claude",
+        forceShellout: false,
+      },
+      registry,
+      fixture.deps,
+    );
+    expect(result).toMatchObject({
+      outcome: "aborted",
+      adapterId: "claude:native",
+      abort: {
+        state: "aborted",
+        reason: "protocol-violation",
+        details: {
+          violation: "completion-actor-does-not-match-transport",
+          expected: "trusted-parent",
+          observed: "trusted-extension",
+        },
+      },
+    });
+  });
+
   test("fails closed before launch when a selected native or process adapter is unavailable", () => {
     let launches = 0;
     const registry = new DispatchTransportAdapterRegistry([

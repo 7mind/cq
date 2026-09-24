@@ -77,6 +77,10 @@ import {
   type PrepareDispatchRequest,
   type LegacyImplementationResolution,
   type UpgradeLiveImplementationQueueSummary,
+  CANONICAL_PROJECT_GATE,
+  projectGateAuthorizationForm,
+  resolveProjectGateForRoot,
+  type ProjectGateSpecification,
 } from "@cq/config";
 import type { SQL } from "bun";
 import { resolve } from "node:path";
@@ -104,6 +108,7 @@ import {
   readAuthorizedCohortG213GateV1,
   resolveCohortCommandBoundaryV1,
   createNodeSupervisedWorkerCommandRunner,
+  createNodeSupervisedWorkerGateRunner,
   settleProcessGroups,
   gitBrokerSubjectsMatch,
   createCohortWorksetEffectAdmissionProvider,
@@ -369,6 +374,13 @@ export interface DispatchCapabilityOptions {
   readonly worktreeStateDir?: string;
   /** Host-owned gate adapter; tests inject a deterministic contract dummy. */
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
+  /**
+   * D403 / H310: the PROJECT's full gate, resolved from its `[gate]`. Omitting
+   * it takes the compatibility fallback documented on `resolveProjectGate`; the
+   * production single-project runtime always resolves it from `configRoot`, so
+   * a consumer project is never handed CQ's `nix/pkg/cq-ledgers` layout.
+   */
+  readonly projectGate?: ProjectGateSpecification;
   readonly cohortCommandRunner?: SupervisedWorkerCommandRunner;
   /** Recovery authority journal; defaults to the managed registry when repository-bound. */
   readonly recoveryJournal?: CurrentRecoverySealJournalStore;
@@ -754,6 +766,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   const workset = options.ledgerStore?.worksetStore?.();
   const managerDeps = options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir };
   const cohortCommandRunner = options.cohortCommandRunner ?? createNodeSupervisedWorkerCommandRunner({ settleProcessGroups, settleWorktreeGateCommands });
+  const projectGate = options.projectGate ?? CANONICAL_PROJECT_GATE;
+  // The gate the supervised runner EXECUTES is this project's, not the module
+  // singleton's — which is built with CQ's own layout (D403 / H310).
+  const supervisedWorkerGateRunner = options.supervisedWorkerGateRunner
+    ?? createNodeSupervisedWorkerGateRunner({ settleProcessGroups, settleWorktreeGateCommands }, projectGate);
 
   async function resolveCohortAuthority(envelope: CohortEffectEnvelopeV1, allowDetachedRebase: boolean) {
     if (!localImplementationExecutorAvailable || options.repositoryRoot === undefined || cohortStore === undefined) {
@@ -2891,9 +2908,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         { context: claimed.context, output: claimed.output },
         {
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
-          ...(options.supervisedWorkerGateRunner === undefined
-            ? {}
-            : { runner: options.supervisedWorkerGateRunner }),
+          runner: supervisedWorkerGateRunner,
           cancellationSignal: cancellation.signal,
           ...(cohortAuthority === undefined ? {} : { cohortAuthority,
             effectAdmission: { provider: createCohortWorksetEffectAdmissionProvider(cohortAuthority, workset!),
@@ -3131,7 +3146,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       runCanonicalQueueGate: async (candidate, command, signal) => {
         await assertCohortParentExecution(lease);
         signal.throwIfAborted();
-        const canonicalCommand = { argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] };
+        const canonicalCommand = projectGateAuthorizationForm(projectGate);
         if (cohortValueDigestV1(command) !== cohortValueDigestV1(canonicalCommand)) throw new Error("cohort full gate must be the existing canonical G213 command");
         stopped = true;
         await observer;
@@ -6530,6 +6545,8 @@ export type DispatchRuntime =
       readonly capability: DispatchCapability;
       readonly backend: AttestationBackend;
       readonly implementationQueueRollout: UpgradeLiveImplementationQueueSummary | null;
+      /** The gate this runtime's supervised runner executes (D403 / H310). */
+      readonly projectGate: ProjectGateSpecification;
       close(): Promise<void>;
     }
   | {
@@ -6557,11 +6574,13 @@ function available(
   implementationEvidenceStore?: ImplementationEvidenceStore,
   implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"],
   supervisedWorkerGateRunner?: SupervisedWorkerGateRunner,
+  projectGate?: ProjectGateSpecification,
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
     backend,
     implementationQueueRollout,
+    projectGate: projectGate ?? CANONICAL_PROJECT_GATE,
     capability: createDispatchCapability({
       backend,
       promptArtifactStore,
@@ -6572,6 +6591,7 @@ function available(
       ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
       ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
       ...(supervisedWorkerGateRunner === undefined ? {} : { supervisedWorkerGateRunner }),
+      ...(projectGate === undefined ? {} : { projectGate }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -6884,6 +6904,7 @@ export async function createSingleProjectDispatchRuntime(
     options.resolved.implementationEvidenceStore,
     options.implementationSuccessorLauncher,
     options.supervisedWorkerGateRunner,
+    resolveProjectGateForRoot(options.resolved.configRoot),
   );
 }
 

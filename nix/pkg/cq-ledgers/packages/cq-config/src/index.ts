@@ -150,6 +150,7 @@ export {
   qualifyPiNativeAdapter,
   assertNativeAdapterQualified,
   selectQualifiedNativeAdapterIds,
+  isCutoverReadyNativeQualification,
   isNativeAdapterId,
   nativeAdapterIdFor,
 } from "./nativeDispatchQualification.js";
@@ -268,6 +269,8 @@ export {
 export {
   WORKSET_CREDENTIAL_ENV_NAMES,
   withoutWorksetCredentials,
+  withoutDispatchInvocationIdentity,
+  DISPATCH_INVOCATION_ENV_NAMES,
   createWorksetManagementCommand,
 } from "./worksetManagementCommand.js";
 export type {
@@ -1162,7 +1165,6 @@ export {
   claudeWorktreePlacement,
   CLAUDE_WORKTREE_INPUT_PROPERTY,
   CLAUDE_WORKTREE_OUTPUT_PROPERTY,
-  CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   CLAUDE_WORKTREE_ADDRESSING,
   CLAUDE_WORKTREE_RECONCILIATION,
@@ -1341,3 +1343,30 @@ export {
   ensurePgAttestationSchema,
   openAttestationPgPool,
 } from "./dispatchAttestationPostgres.js";
+export {
+  CANONICAL_PROJECT_GATE,
+  PROJECT_GATE_ROOT_CWD,
+  projectGateAuthorizationForm,
+  resolveProjectGate,
+  type ProjectGateSpecification,
+} from "./projectGate.js";
+export { resolveProjectGateForRoot } from "./projectGateConfig.js";
+export {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+  MANAGED_REGISTRY_DIRNAME,
+  acceptedManagedWorktreeParents,
+  cqManagedWorktreesParent,
+  harnessNativeWorktreesParent,
+  managedWorktreeRegistryRoot,
+  selectManagedWorktreeRegistryRoot,
+} from "./managedWorktreePlacement.js";
+export {
+  HISTORICAL_WIP_REFERENCE,
+  classifyWipArtifactReconciliation,
+  type WipArtifactHeldVerdict,
+  type WipArtifactReconciliationInput,
+  type WipArtifactReconciliationReport,
+  type WipArtifactVerdict,
+  type WipArtifactWorktreeState,
+} from "./wipArtifactReconciliation.js";

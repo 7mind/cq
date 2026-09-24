@@ -11,6 +11,13 @@
 > and `ledgerCwd` is
 > the parent project that owns the prepared dispatch. Keep capabilities off
 > argv.
+> Launch it stdin-preserving: run `stty -echo; exec cq-codex-role` through
+> `exec_command` with `tty: true`, keep the returned session id, deliver the
+> single newline-terminated JSON request through `write_stdin`, then poll that
+> same session until it reports terminal completion.
+> A default non-PTY `exec_command` reads EOF before `write_stdin` can attach —
+> the boundary then exits with `request ended before a newline-terminated JSON
+> value` — and `write_stdin` refuses a nonempty body on a non-TTY session.
 > The adapter supplies the packaged role body as native developer instructions,
 > starts `codex exec` in `cwd` with the selected model, effort, and sandbox,
 > disables child collaboration, and exposes only the role matrix's ledger

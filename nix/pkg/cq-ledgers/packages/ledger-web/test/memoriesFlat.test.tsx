@@ -5,8 +5,17 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
-import { FakeClient } from "./fakeClient";
-import type { FetchedLedger, ItemProjection, LedgerSchema, LedgerSummary } from "../src/types";
+import { FakeClient, itemAck } from "./fakeClient";
+import { HOLD_MS, type HoldClock } from "../src/HoldButton.js";
+import type {
+  FetchedLedger,
+  Item,
+  ItemInit,
+  ItemMutationAckDto,
+  ItemProjection,
+  LedgerSchema,
+  LedgerSummary,
+} from "../src/types";
 
 const TS = "2026-01-01T00:00:00.000Z";
 const memoriesSchema: LedgerSchema = {
@@ -23,6 +32,27 @@ const memoriesSchema: LedgerSchema = {
 };
 
 class MemoriesClient extends FakeClient {
+  /** D408: FakeClient carries no `memories` data, so record the create here. */
+  readonly memoryCreates: Array<{ milestoneId: string; init: ItemInit }> = [];
+
+  override async createItem(
+    ledgerId: string,
+    milestoneId: string,
+    init: ItemInit,
+  ): Promise<ItemMutationAckDto> {
+    if (ledgerId !== "memories") return super.createItem(ledgerId, milestoneId, init);
+    this.memoryCreates.push({ milestoneId, init });
+    const created: Item = {
+      id: "MEM2",
+      milestoneId,
+      status: init.status,
+      fields: init.fields,
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    return itemAck(created);
+  }
+
   override async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [...(await super.enumerateLedgers()), { name: "memories", itemCount: 1 }];
   }
@@ -83,13 +113,78 @@ function click(element: Element | null): void {
   });
 }
 
+/** Mirrors the hold clock in ideasFlat.test.tsx; HoldButton schedules on it. */
+class FakeClock implements HoldClock {
+  private current = 0;
+  private nextHandle = 1;
+  private scheduled = new Map<number, { due: number; cb: () => void }>();
+  now(): number {
+    return this.current;
+  }
+  setTimeout(cb: () => void, ms: number): number {
+    const handle = this.nextHandle++;
+    this.scheduled.set(handle, { due: this.current + ms, cb });
+    return handle;
+  }
+  clearTimeout(handle: number): void {
+    this.scheduled.delete(handle);
+  }
+  advance(ms: number): void {
+    const target = this.current + ms;
+    for (;;) {
+      let nextHandle: number | null = null;
+      let nextDue = Infinity;
+      for (const [handle, entry] of this.scheduled) {
+        if (entry.due <= target && entry.due < nextDue) {
+          nextDue = entry.due;
+          nextHandle = handle;
+        }
+      }
+      if (nextHandle === null) break;
+      const entry = this.scheduled.get(nextHandle)!;
+      this.scheduled.delete(nextHandle);
+      this.current = entry.due;
+      entry.cb();
+    }
+    this.current = target;
+  }
+}
+
+let fakeClient: MemoriesClient;
+let holdClock: FakeClock;
+
+async function holdFull(element: Element | null): Promise<void> {
+  if (element === null) throw new Error("holdFull: element not found");
+  act(() => {
+    element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  });
+  act(() => {
+    holdClock.advance(HOLD_MS);
+  });
+  await flush();
+}
+
+function setValue(element: Element | null, value: string): void {
+  if (element === null) throw new Error("setValue: element not found");
+  act(() => {
+    const node = element as HTMLInputElement | HTMLSelectElement;
+    node.focus();
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
+    desc?.set?.call(node, value);
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+    node.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 async function mount(): Promise<void> {
-  const fake = new MemoriesClient();
+  holdClock = new FakeClock();
+  fakeClient = new MemoriesClient();
   await act(async () => {
     root.render(
       createElement(App, {
-        connect: async () => fake,
+        connect: async () => fakeClient,
         initialUrl: "http://x/mcp",
+        holdClock,
       }),
     );
   });
@@ -127,7 +222,36 @@ describe("canonical Memories destination", () => {
     expect(testid("item-MEM1")?.textContent).toContain("Canonical memory");
     expect(testid("ms-section-M-AMBIENT")).toBeNull();
     expect(container.querySelectorAll("table.lw-table")).toHaveLength(1);
-    expect(testid("new-item-or-milestone")).toBeNull();
+  });
+
+  it("D408: creates a memory under M-AMBIENT with no work-milestone selector", async () => {
+    await mount();
+    click(testid("ledger-memories"));
+    await flush();
+
+    // The control was previously suppressed for Memories only, and a test
+    // asserted that absence. Memories is intrinsically attached to M-AMBIENT
+    // exactly like Ideas, so it gets the same create affordance.
+    click(testid("new-item-or-milestone"));
+    await flush();
+
+    // Ambient-attached ledgers offer no work-milestone choice.
+    expect(testid("edit-milestone")).toBeNull();
+
+    setValue(testid("edit-field-title"), "a durable project fact");
+    setValue(testid("edit-field-content"), "with its evidence");
+    await holdFull(testid("save"));
+
+    expect(fakeClient.memoryCreates).toEqual([
+      {
+        milestoneId: "M-AMBIENT",
+        init: {
+          status: "active",
+          fields: { title: "a durable project fact", content: "with its evidence" },
+          author: "user",
+        },
+      },
+    ]);
   });
 
   it("shows full content in detail and never offers content as a table column", async () => {

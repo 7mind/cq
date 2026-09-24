@@ -149,6 +149,20 @@ describe("cq web whole-store mode selection", () => {
     }
   });
 
+  it("fails fast on an invalid repository cq.toml instead of silently serving the whole store (D541)", async () => {
+    const root = await makeRepository({
+      commit: true,
+      projectId: null,
+      webPort: null,
+      ledgerBackend: "xdg",
+    });
+    await fs.appendFile(path.join(root, "cq.toml"), "\n[not_a_cq_section]\nkey = 1\n", "utf8");
+
+    await expect(resolveWebMode(parseArgs(["--cwd", root]))).rejects.toThrow(
+      /unexpected top-level key not_a_cq_section/,
+    );
+  });
+
   it("rejects fabricated directory and file .git markers even with projectId", async () => {
     for (const marker of ["directory", "file"] as const) {
       const root = await makeDirectory(`ledger-web-mode-fake-${marker}-`);

@@ -45,7 +45,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
+import { DISPATCHED_ROLE_VERSIONS, DISPATCHED_ROLE_SIDECARS, exposedLedgerToolsForRole } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -745,6 +745,76 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     expect(implement).toContain("forward that exact parent-only capability");
   });
 
+  // D407: the fragment required writing one JSON request to `cq-codex-role`
+  // stdin but never said how Codex must keep stdin open to deliver it. On the
+  // pinned Codex contract a default `exec_command` is non-TTY, so the boundary
+  // reads EOF and exits before `write_stdin` can attach, and `write_stdin`
+  // itself refuses a nonempty body on a non-TTY session. Only the PTY recipe
+  // below actually delivers the request, so pin it on the fragment AND on every
+  // rendered parent edge that carries it.
+  // D410: CQ's only retrieval instruction was the MCP initialization sentence,
+  // scoped generically to "Plan/build" and replaced entirely by a bare tool
+  // inventory under a narrow role profile. No decision procedure required it,
+  // so durable project facts never entered planning or execution. Bind one
+  // shared policy to every parent flow that FORMS a decision, on all three
+  // surfaces, and pin its order — retrieve before the decision, not after.
+  it("D410 requires memory grounding before every parent flow forms a decision", () => {
+    const required: readonly string[] = [
+      "`fts_search`",
+      "`memories`",
+      "Before forming or dispatching",
+      "no relevant memory",
+      "typed input",
+    ];
+    const parentFlows = [
+      "investigate/advance",
+      "plan/advance",
+      "research/advance",
+      "implement/advance",
+    ] as const;
+    for (const surface of PROMPT_SURFACES) {
+      for (const flow of parentFlows) {
+        const body = normalize(renderedOf(surface, flow));
+        for (const phrase of required) {
+          expect(body, `${surface} ${flow} is missing ${phrase}`).toContain(phrase);
+        }
+        // The ORDER is part of the contract and has to be stated, not merely
+        // implied by where the fragment happens to render.
+        expect(body).toContain("Memory grounding");
+      }
+    }
+    // The parent forwards selected memory content; a dispatched role's tool
+    // profile is NOT widened to compensate for missing orchestration.
+    for (const roleId of ["implement-worker", "plan-advance"] as const) {
+      const exposed = new Set<string>(exposedLedgerToolsForRole(roleId));
+      expect(exposed.has("fts_search")).toBe(roleId === "plan-advance");
+    }
+  });
+
+  it("D407 pins the stdin-preserving PTY launch on every Codex dispatch edge", () => {
+    const recipe: readonly string[] = [
+      "`stty -echo; exec cq-codex-role`",
+      "`tty: true`",
+      "`write_stdin`",
+      "newline-terminated",
+      "same session",
+    ];
+    const fragment = normalize(
+      readFileSync(path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"), "utf8"),
+    );
+    for (const phrase of recipe) expect(fragment).toContain(phrase);
+    for (const edge of DISPATCH_EDGE_INPUTS) {
+      const body = normalize(renderedOf("codex", edge.flowRoleId));
+      for (const phrase of recipe) expect(body).toContain(phrase);
+    }
+    // The recipe is Codex-specific: it must not leak into the other surfaces,
+    // whose transports keep stdin open by construction.
+    for (const surface of ["claude", "pi"] as const) {
+      const other = normalize(renderedOf(surface, "implement/advance"));
+      expect(other).not.toContain("stty -echo");
+    }
+  });
+
   it("T2045 binds each Codex Git role to its sole broker operation and receipt family", () => {
     const dispatch = readFileSync(
       path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"),
@@ -866,7 +936,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const expectations: Readonly<Record<PromptSurface, string>> = {
       claude: 'CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)',
       codex: "`spawn_agent` transport",
-      pi: 'dispatch_agent(agent: "<role>", task: "<dispatch-handle>", targetRef: "<canonical-ref>")',
+      // D399: `task` carries the MATERIALIZED TYPED INPUT, not a handle. A
+      // handle could never work here — researches:RS15 established that a
+      // capability is persisted only as a hash, so the extension can never
+      // resolve one, and the parent both prepares and settles on this surface.
+      pi: 'dispatch_agent(agent: "<role>", task: "<materialized typed input>", targetRef: "<canonical-ref>")',
     };
     for (const surface of PROMPT_SURFACES) {
       const fragment = readFileSync(

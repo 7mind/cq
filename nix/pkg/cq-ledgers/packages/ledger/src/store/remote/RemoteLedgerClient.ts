@@ -125,6 +125,17 @@ export const PROJECT_DISPLAY_NAME_HEADER = "x-cq-project-display-name";
 /** Bound untrusted request metadata before persisting it or echoing it in MCP metadata. */
 export const PROJECT_DISPLAY_NAME_MAX_BYTES = 256;
 
+/**
+ * D411 — the role tool profile an initializing session asks its upstream
+ * server to bind. Like {@link PROJECT_DISPLAY_NAME_HEADER} this is the SINGLE
+ * definition shared by the remote stdio proxy and the `cq serve` hub.
+ *
+ * The header only ever NARROWS: the server resolves it against the profile it
+ * was configured with and refuses a request that is not a subset, so a client
+ * cannot use it to reach a tool the server did not already expose.
+ */
+export const LEDGER_TOOL_PROFILE_HEADER = "x-cq-tool-profile";
+
 /** Base class of every error this client raises on a service boundary. */
 export class RemoteLedgerClientError extends Error {
   constructor(message: string) {

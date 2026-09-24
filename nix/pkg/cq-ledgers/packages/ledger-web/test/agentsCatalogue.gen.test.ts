@@ -96,7 +96,7 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
     expect(role!.privilege).toBe("RW");
     expect(role!.kind).toBe("agent-subagent");
     // implement-worker uses an isolated worktree — its exposedTools reflects that
-    expect(role!.exposedTools).toContain("isolation: worktree");
+    expect(role!.exposedTools).toContain("Disallowed: Agent");
   });
 
   it("all 10 subagents are agent-subagent kind", () => {

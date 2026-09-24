@@ -78,7 +78,7 @@ function projectItem(item: Item, projection: ItemProjection): Item {
   };
 }
 
-function itemAck(item: Item): ItemMutationAckDto {
+export function itemAck(item: Item): ItemMutationAckDto {
   const fields: ItemMutationAckDto["fields"] = {};
   if (Array.isArray(item.fields["dependsOn"])) fields.dependsOn = item.fields["dependsOn"];
   if (Array.isArray(item.fields["blockedBy"])) fields.blockedBy = item.fields["blockedBy"];
@@ -711,6 +711,14 @@ export class FakeClient implements WorksetCapableLedgerClient {
   async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
     this.fetchItemCalls.push({ ledgerId, itemId, projection });
     return projectItem(this.find(ledgerId, itemId), projection);
+  }
+  /** D400 — no archived data in the fake, so this is the active read. */
+  async fetchItemIncludingArchived(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(ledgerId, itemId, projection), archived: [] };
   }
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
     this.createItemCalls.push({ ledgerId, milestoneId });

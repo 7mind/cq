@@ -45,7 +45,6 @@
 
 import {
   CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
-  CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   assertClaudeChildCorrelation,
   assertSupportedClaudeDeliveryMode,
@@ -132,8 +131,6 @@ export interface ClaudeNativeLaunchEnvelope {
    */
   readonly prompt: string;
   readonly model: string;
-  /** `"none"` — keeps the harness out of worktree allocation (defects:D119). */
-  readonly isolation: typeof CLAUDE_NATIVE_ISOLATION_ARGUMENT;
   /** `false` explicitly, against the harness default (T722 §4.1/§5.3). */
   readonly run_in_background: typeof CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT;
 }
@@ -217,7 +214,6 @@ export function buildClaudeCompactNativeLaunch(
     subagent_type: roleId,
     prompt,
     model,
-    isolation: CLAUDE_NATIVE_ISOLATION_ARGUMENT,
     run_in_background: CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   });
 }
@@ -1206,11 +1202,16 @@ const CLAUDE_ARTIFACT_MARKERS: readonly ClaudeArtifactMarker[] = Object.freeze([
   }),
   Object.freeze({
     violation: "generic-launcher" as const,
-    marker: /isolation:\s*"worktree"/,
+    // D402 / researches:RS12: the quoted spelling is the CALL-SITE form. The
+    // leak was in generated FRONTMATTER, which is unquoted YAML, so the old
+    // marker could not match the artifact that actually caused it. Accept both.
+    marker: /isolation:\s*"?worktree"?/,
     rationale:
-      'defects:D119\'s root cause. `isolation: "worktree"` makes the HARNESS allocate-or-REUSE a ' +
+      'defects:D119\'s root cause. `isolation: worktree` makes the HARNESS allocate-or-REUSE a ' +
       "tree at whatever commit it was left; questions:Q363 abolished that in favour of an " +
-      'orchestrator-prepared fresh tree, so T687 pins the argument to `"none"`.',
+      "orchestrator-prepared fresh tree. defects:D402 measured the consequence directly: a role " +
+      "whose generated frontmatter declared it ran in a harness tree six commits stale while the " +
+      "call site passed no isolation argument at all.",
   }),
   Object.freeze({
     violation: "generic-launcher" as const,
@@ -1314,11 +1315,22 @@ export function assertClaudeRefFirstArtifact(artifact: string, text: string): vo
   }
 }
 
-/** The deployed Claude assets that must remain ref-first clean. */
+/**
+ * The deployed Claude assets that must remain ref-first clean.
+ *
+ * D402: the first three are LAUNCHER-side. Generated agent frontmatter is in
+ * this closure too, because researches:RS12 proved the frontmatter alone
+ * causes harness allocation — scanning only the launcher left the actual cause
+ * unscanned. `investigate-prober` and `research-experimenter` are deliberately
+ * absent: a discardable harness tree is arguably correct for a throwaway probe,
+ * and their prompts forbid running in the main checkout, so removing their
+ * declaration would be the opposite error. They are tracked separately.
+ */
 export const CLAUDE_REF_FIRST_ARTIFACTS = Object.freeze([
   "fragments/claude/subagent-dispatch.md",
   "fragments/claude/implement-dispatch-workflow.md",
   "commands/cq/implement/advance.md",
+  "fragments/claude/agents/implement-worker/host-tool-vocabulary.md",
 ] as const);
 
 // ---------------------------------------------------------------------------

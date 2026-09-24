@@ -44,6 +44,10 @@
  *    createItem shim that no longer materialises the whole target ledger.
  */
 
+import {
+  assertLifetimeIdNamespace,
+  type LifetimeIdCollision,
+} from "../lifetimeIdNamespace.js";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type { Database } from "bun:sqlite";
@@ -81,6 +85,7 @@ import {
 } from "../../types.js";
 import type {
   ArchiveContent,
+  ArchivedItemGeneration,
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
@@ -392,6 +397,31 @@ function rowToItem(row: ItemRow): Item {
  */
 const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * D434 — one indexed pass over both namespaces. Returns only ids occupying
+ * more than one durable slot, so the classifier decides which arm applies.
+ */
+function readLifetimeIdCollisions(db: Database): readonly LifetimeIdCollision[] {
+  const rows = db
+    .query(
+      `SELECT ledger, id, MAX(is_active) AS active, GROUP_CONCAT(pointer_id) AS pointers
+       FROM (
+         SELECT ledger, id, 1 AS is_active, NULL AS pointer_id FROM items
+         UNION ALL
+         SELECT ledger, id, 0 AS is_active, pointer_id FROM archived_items
+       )
+       GROUP BY ledger, id
+       HAVING COUNT(*) > 1`,
+    )
+    .all() as { ledger: string; id: string; active: number; pointers: string | null }[];
+  return rows.map((row) => ({
+    ledgerId: row.ledger,
+    itemId: row.id,
+    active: row.active === 1,
+    archivePointerIds: row.pointers === null ? [] : row.pointers.split(","),
+  }));
+}
+
 export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly dbPath: string;
   private readonly logsDir: string | undefined;
@@ -591,6 +621,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       }
     });
 
+    // D434 / questions:Q417 — apply the lifetime id-namespace policy before
+    // this store is usable: an id that is BOTH active and archived makes a
+    // live canonical reference ambiguous and refuses the store; two archived
+    // generations are pointer-qualified history and are only reported.
+    assertLifetimeIdNamespace(
+      `SqliteLedgerStore(${this.dbPath})`,
+      readLifetimeIdCollisions(db),
+      (line) => process.stderr.write(`${line}\n`),
+    );
+
     this.handle = db;
     this.initialised = true;
     // T1957: mount the project WorksetStore over the same connection. Roots
@@ -719,6 +759,20 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       db.query(
         "INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
       ).run(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_ACTIVE_GROUP_TITLE);
+      // The INSERT above cannot repair a row that already exists with the wrong
+      // title: IGNORE makes it a no-op. Two lazy group-materialisation paths
+      // insert groups with an empty title and never update them, so a store
+      // whose active group was first minted by one of them kept title "" and was
+      // rejected by the XDG catalog as invalid-bootstrap-state on every open —
+      // which is how `cq web` came to refuse this project's own live ledger.
+      // Scoped to the milestones active group only; other lazily created groups
+      // legitimately carry an empty title and are not bootstrap state.
+      db.query("UPDATE groups SET title = ? WHERE ledger = ? AND id = ? AND title <> ?").run(
+        MILESTONES_ACTIVE_GROUP_TITLE,
+        MILESTONES_LEDGER,
+        MILESTONES_ACTIVE_GROUP_ID,
+        MILESTONES_ACTIVE_GROUP_TITLE,
+      );
       const ambient = db
         .query("SELECT id FROM items WHERE ledger = ? AND id = ?")
         .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
@@ -1284,6 +1338,24 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         kind: "group",
         milestone: { id: archiveId, title: "", description: "", items: rows.map(rowToItem) },
       };
+    });
+  }
+
+  /** D400 — exact archived lookup by canonical ledger + item id (indexed). */
+  async fetchArchivedItems(
+    ledgerId: string,
+    itemId: string,
+  ): Promise<readonly ArchivedItemGeneration[]> {
+    return this.read(() => {
+      this.assertLedgerExists(ledgerId);
+      const rows = this.db()
+        .query(
+          `SELECT pointer_id, id, milestone_id, status, fields_json,
+                  created_at, updated_at, author, session
+           FROM archived_items WHERE ledger = ? AND id = ? ORDER BY rowid`,
+        )
+        .all(ledgerId, itemId) as (ItemRow & { pointer_id: string })[];
+      return rows.map((row) => ({ pointerId: row.pointer_id, item: rowToItem(row) }));
     });
   }
 
@@ -2069,13 +2141,18 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       ...scope.referenceCandidates,
       ...scope.milestoneIds.map((milestoneId) => `${MILESTONES_LEDGER}:${milestoneId}`),
     ];
+    // Server-derived membership also recorded as authoritative for validation
+    // (D484); it stays in `candidateRefs` so traversal order is unchanged.
+    const requiredRefs: string[] = [];
     if (
       operation === "archive-milestone" ||
       operation === "execute-finalize" ||
       operation === "update-milestone"
     ) {
       for (const milestoneId of scope.milestoneIds) {
-        candidateRefs.push(...source.itemRefsByMilestone(milestoneId));
+        const refs = source.itemRefsByMilestone(milestoneId);
+        candidateRefs.push(...refs);
+        requiredRefs.push(...refs);
       }
     }
     if (operation === "archive-terminal-items") {
@@ -2083,13 +2160,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of scope.ledgerIds) {
         const metadata = metadataById.get(ledgerId);
         if (metadata === undefined) continue;
-        candidateRefs.push(
-          ...source.itemRefsByLedgerStatuses(ledgerId, metadata.schema.terminalStatuses),
+        const refs = source.itemRefsByLedgerStatuses(
+          ledgerId,
+          metadata.schema.terminalStatuses,
         );
+        candidateRefs.push(...refs);
+        requiredRefs.push(...refs);
       }
     }
     const resolved = resolveGenericMutationClosure(source, roots, {
       candidateRefs,
+      requiredRefs,
       incidentReferenceFields:
         operation === "archive-milestone" ||
         operation === "archive-terminal-items" ||

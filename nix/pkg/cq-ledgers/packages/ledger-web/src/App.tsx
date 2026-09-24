@@ -104,6 +104,21 @@ const QUESTIONS_LEDGER = "questions";
 const GOALS_LEDGER = "goals";
 /** The `id[]` field on a goal holding its work-milestone ids (e.g. M12,M13). */
 const GOAL_MILESTONES_FIELD = "milestones";
+/**
+ * Ledgers whose items are INTRINSICALLY attached to `M-AMBIENT` (D408).
+ *
+ * The store already requires this for both, so the frontend must agree with it
+ * in one place rather than repeating `ledger === IDEAS_LEDGER` at each decision
+ * point. Getting that wrong is what hid the Memories create control: Memories
+ * was added as a flat ambient ledger for display but omitted from this policy,
+ * so the toolbar suppressed `+ item` instead of attaching to `M-AMBIENT`.
+ *
+ * NOTE this is NOT the flat-display predicate — goals render flat too but carry
+ * a real coordination milestone.
+ */
+function isAmbientAttachedLedger(ledger: string | null): boolean {
+  return ledger === IDEAS_LEDGER || ledger === MEMORIES_LEDGER;
+}
 import {
   statusBucket,
   isTerminal,
@@ -1383,7 +1398,7 @@ export function App({
   // shows a milestone selector in create mode).
   useEffect(() => {
     if (creating !== "item" || client === null) return;
-    if (ledger === IDEAS_LEDGER) {
+    if (isAmbientAttachedLedger(ledger)) {
       setDraftMilestones([]);
       return;
     }
@@ -1886,18 +1901,16 @@ export function App({
           ) : view !== null ? (
             <>
               <div className="lw-toolbar">
-                {ledger !== MEMORIES_LEDGER && (
-                  <button
-                    type="button"
-                    data-testid="new-item-or-milestone"
-                    onClick={() => {
-                      setSelected(null);
-                      setCreating(isMilestones ? "milestone" : "item");
-                    }}
-                  >
-                    {isMilestones ? "+ milestone" : "+ item"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  data-testid="new-item-or-milestone"
+                  onClick={() => {
+                    setSelected(null);
+                    setCreating(isMilestones ? "milestone" : "item");
+                  }}
+                >
+                  {isMilestones ? "+ milestone" : "+ item"}
+                </button>
                 {(isMilestones || ledger === GOALS_LEDGER) && (
                   <FinalizeControl
                     scope={isMilestones ? "global" : "goals"}
@@ -1926,7 +1939,7 @@ export function App({
                     </option>
                   ))}
                 </select>
-                {!isMilestones && ledger !== IDEAS_LEDGER && (
+                {!isMilestones && !isAmbientAttachedLedger(ledger) && (
                   <select
                     className="lw-filter"
                     data-testid="milestone-filter"
@@ -4178,7 +4191,7 @@ function DetailPanel({
   onReadLog?: (path: string) => Promise<import("./types.js").ReadLogResult>;
 }): React.ReactElement {
   const isDraft = draftMilestones !== undefined;
-  const ambientOnly = ledger === IDEAS_LEDGER;
+  const ambientOnly = isAmbientAttachedLedger(ledger);
   const fieldNames = Object.keys(schema.fields);
   const [editing, setEditing] = useState(isDraft);
   const [status, setStatus] = useState(row.item.status);

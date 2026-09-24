@@ -259,14 +259,42 @@ export function createPiNativeDispatchAdapter(
         parsed !== null &&
         typeof parsed === "object" &&
         !Array.isArray(parsed) &&
-        "attestationId" in parsed &&
-        Object.keys(parsed as object).some((key) => key !== "attestationId" && key !== "generation")
+        "attestationId" in parsed
       ) {
-        return {
-          outcome: "aborted",
-          reason: "protocol-violation",
-          details: { violation: "pi-native-echoed-body", finalTextBytes: sessionResult.finalText.length },
-        };
+        if (
+          Object.keys(parsed as object).some(
+            (key) => key !== "attestationId" && key !== "generation",
+          )
+        ) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: { violation: "pi-native-echoed-body", finalTextBytes: sessionResult.finalText.length },
+          };
+        }
+        // D432: same substitution as the Claude adapter — the handle came from
+        // `context.prepared`, so the child's claimed handle was never compared.
+        const claimed = parsed as Readonly<Record<string, unknown>>;
+        if (
+          typeof claimed["attestationId"] !== "string" ||
+          typeof claimed["generation"] !== "number" ||
+          claimed["attestationId"] !== handle.attestationId ||
+          claimed["generation"] !== handle.generation
+        ) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "pi-native-final-handle-mismatch",
+              expectedAttestationId: handle.attestationId,
+              expectedGeneration: handle.generation,
+              observedAttestationId:
+                typeof claimed["attestationId"] === "string" ? claimed["attestationId"] : null,
+              observedGeneration:
+                typeof claimed["generation"] === "number" ? claimed["generation"] : null,
+            },
+          };
+        }
       }
     } catch {
       // non-JSON final text is acceptable for non-compact pi tool dispatches

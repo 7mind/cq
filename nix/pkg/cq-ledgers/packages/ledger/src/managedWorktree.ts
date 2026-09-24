@@ -4,7 +4,8 @@
  * Owns the durable lifecycle of an implement-flow task worktree:
  *   - fresh prepare verifies base + transitive dependency result commits
  *     BEFORE any git worktree mutation, then creates a UUIDv7-named tree
- *     under `.claude/worktrees/`, retains branch identity `implement/<taskId>`,
+ *     under the CQ-managed parent (`cqManagedWorktreesParent`, defects:D404),
+ *     retains branch identity `implement/<taskId>`,
  *     runs a locked-down Bun install, and returns an opaque handle;
  *   - resume revalidates handle/path/branch/task and never reset/rebases
  *     criticism-round commits;
@@ -64,6 +65,9 @@ import {
   type ManagedWorktreeHandleV1 as ConfigManagedWorktreeHandleV1,
   type ImplementTaskWorkerSupervisedGateEvidence,
   type WipClosureProjection,
+  cqManagedWorktreesParent,
+  harnessNativeWorktreesParent,
+  managedWorktreeRegistryRoot,
 } from "@cq/config";
 import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
 import {
@@ -80,7 +84,7 @@ import {
   verifyDispatchBase,
 } from "./dispatchBase.js";
 import { MANAGED_GATE_CLOSURE_MANIFEST, resolveManagedGateClosure } from "./gateClosure.js";
-import { AGENT_WORKTREE_SEGMENT } from "./projectKey.js";
+
 import {
   assessLegacyReconciliationActivity,
   beginLegacyWorktreeReconciliation,
@@ -119,7 +123,6 @@ import type {
 const FRESH_HANDLE_VERSION = 1 as const;
 const ADOPTED_HANDLE_VERSION = 2 as const;
 const DEFAULT_BRANCH_PREFIX = "implement/";
-const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
 const HANDLES_DIRNAME = "handles";
 const TASK_REGISTRY_DIRNAME = "tasks";
@@ -286,6 +289,7 @@ export type ReleaseManagedWorktreeRefusalReason =
   | "dirty"
   | "wip-open"
   | "wip-malformed"
+  | "wip-retained"
   | "not-terminal"
   | "commit-mismatch"
   | "ambiguous"
@@ -700,12 +704,32 @@ function containedPath(root: string, candidate: string): boolean {
 }
 
 function worktreesParent(repositoryRoot: string): string {
-  return join(repositoryRoot, ".claude", "worktrees");
+  return cqManagedWorktreesParent(repositoryRoot);
+}
+
+/**
+ * Create the managed parent and make it ignore itself (D404).
+ *
+ * Managed worktrees now live under the CQ placement, INSIDE the repository,
+ * which is not wholesale-ignored the way the harness namespace was — so without
+ * this every managed tree would show up as untracked in the repository it was
+ * cut from, and `git status --porcelain` checks that gate cohort integration
+ * would see a dirty tree. A `.gitignore` holding `*` inside the parent ignores
+ * the trees AND itself, so no consumer has to edit their own ignore rules to
+ * adopt this. Idempotent: an existing file is left exactly as it is.
+ */
+async function ensureManagedParentSelfIgnored(parent: string): Promise<void> {
+  await fs.mkdir(parent, { recursive: true });
+  const ignorePath = join(parent, ".gitignore");
+  try {
+    await fs.writeFile(ignorePath, "*\n", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 function registryRoot(repositoryRoot: string, stateDir: string | undefined): string {
-  if (stateDir !== undefined) return stateDir;
-  return join(worktreesParent(repositoryRoot), REGISTRY_DIRNAME);
+  return managedWorktreeRegistryRoot(repositoryRoot, stateDir);
 }
 
 function legacyHandlePath(regRoot: string, token: string): string {
@@ -1646,6 +1670,32 @@ async function revParse(
   return result.stdout.trim();
 }
 
+/**
+ * D405 — task ids whose `WIP-<taskId>.md` is STILL PRESENT in `commit`'s tree.
+ *
+ * Closing every checkpoint makes an artifact "clean" for G122, but release
+ * fast-forwards this exact commit into the integration tree, so a clean-but-
+ * retained artifact lands there permanently. Recovery durability is unaffected:
+ * the WIP remains reachable through the branch history that release parks under
+ * the recovery ref, so only the TERMINAL tree has to be free of it.
+ */
+async function wipPathsRetainedInTree(
+  git: ManagedWorktreeGitRunner,
+  worktreePath: string,
+  commit: string,
+  taskIds: readonly string[],
+): Promise<readonly string[]> {
+  if (taskIds.length === 0) return [];
+  const paths = taskIds.map((taskId) => `WIP-${taskId}.md`);
+  const listed = await git(worktreePath, ["ls-tree", "--name-only", "-z", commit, "--", ...paths]);
+  if (listed.code !== 0) {
+    throw new Error(
+      `managed release could not inspect the terminal tree: ${listed.stderr.trim() || listed.stdout.trim()}`,
+    );
+  }
+  return listed.stdout.split("\0").filter((name: string) => name !== "");
+}
+
 function rootWipNames(output: string): readonly string[] {
   return output
     .split("\0")
@@ -2228,7 +2278,13 @@ async function prepareAdoptedWorktreeUnderLock(
   const branch = request.branch ?? defaultBranchForTask(request.taskId);
   const expectedBranch = defaultBranchForTask(request.taskId);
   const absolutePath = resolve(request.adoptWorktreePath);
-  const expectedPath = join(worktreesParent(repositoryRoot), `implement-${request.taskId}`);
+  // D404: legacy adoption adopts a tree that ALREADY EXISTS, and every such
+  // tree predates the cutover, so its expected location is the harness-native
+  // parent — not CQ's placement, which only fresh creation uses.
+  const expectedPath = join(
+    harnessNativeWorktreesParent(repositoryRoot),
+    `implement-${request.taskId}`,
+  );
   if (branch !== expectedBranch || absolutePath !== expectedPath) {
     return refusedPrepare(
       "adoption-invalid",
@@ -2826,7 +2882,7 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
     );
   }
   const parent = worktreesParent(repositoryRoot);
-  await fs.mkdir(parent, { recursive: true });
+  await ensureManagedParentSelfIgnored(parent);
   const absolutePath = join(parent, worktreeId);
 
   const branchExists = await localBranchExists(git, repositoryRoot, branch);
@@ -3140,6 +3196,15 @@ export async function releaseCompletedManagedCohortWorktree(input: {
           if (wip.status === "malformed") return refusedRelease("wip-malformed", `WIP artifact malformed at ${wip.path}: ${wip.detail}`, { absolutePath });
           if (wip.status === "open") return refusedRelease("wip-open", "cohort worktree retains open WIP checkpoints", { absolutePath });
         }
+        let cohortRetained: readonly string[];
+        try {
+          cohortRetained = await wipPathsRetainedInTree(git, absolutePath, batch.resultCommit, taskIds);
+        } catch (error) {
+          return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), { absolutePath });
+        }
+        if (cohortRetained.length > 0) {
+          return refusedRelease("wip-retained", `cohort terminal tree still contains ${cohortRetained.join(", ")}`, { absolutePath });
+        }
         await fault("before-worktree-remove", { absolutePath, token: handle.token });
         const removed = await git(input.repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
         if (removed.code !== 0) return refusedRelease("ambiguous", `cohort worktree removal failed: ${removed.stderr}`, { absolutePath });
@@ -3421,6 +3486,27 @@ async function releaseManagedWorktreeUnderEffectLock(
         absolutePath,
         openCheckpoints,
       });
+    }
+
+    // Only a `done` release hands its tip to integration, so only that tip has
+    // to be free of the artifact. An abandoned worktree merges nothing, and
+    // refusing it here would strand work this guard was never meant to touch.
+    if (request.terminalDisposition === "done") {
+      let retained: readonly string[];
+      try {
+        retained = await wipPathsRetainedInTree(git, absolutePath, head, [stored.handle.taskId]);
+      } catch (error) {
+        return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), {
+          absolutePath,
+        });
+      }
+      if (retained.length > 0) {
+        return refusedRelease(
+          "wip-retained",
+          `terminal tree still contains ${retained.join(", ")}; delete the artifact and commit that deletion before release`,
+          { absolutePath },
+        );
+      }
     }
 
     await fault("before-worktree-remove", {
@@ -4395,10 +4481,6 @@ export async function withManagedWorktreeEffectLock<T>(
   } finally {
     await releaseLock();
   }
-}
-
-export function managedWorktreeHandleSegment(): string {
-  return AGENT_WORKTREE_SEGMENT;
 }
 
 export function normalizeManagedPath(value: string): string {

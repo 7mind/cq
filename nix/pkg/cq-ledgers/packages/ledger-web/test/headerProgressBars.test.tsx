@@ -145,6 +145,9 @@ class ProgressFakeClient implements LedgerClient {
   async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
     return this.base.fetchItem(ledgerId, itemId, projection);
   }
+  async fetchItemIncludingArchived(l: string, i: string, p: ItemProjection): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(l, i, p), archived: [] };
+  }
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
     return this.base.createItem(ledgerId, milestoneId, init);
   }

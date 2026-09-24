@@ -2219,6 +2219,20 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "memory-grounding",
+          "sourceBlock": "shared durable-memory retrieval precondition and child forwarding rule",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
             "claude": [
               "dispatch_agent("
             ],
@@ -2845,6 +2859,20 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "memory-grounding",
+          "sourceBlock": "shared durable-memory retrieval precondition and child forwarding rule",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
             "claude": [
               "dispatch_agent("
             ],
@@ -3218,6 +3246,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "memory-grounding",
+          "sourceBlock": "shared durable-memory retrieval precondition and child forwarding rule",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -3607,6 +3649,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "memory-grounding",
+          "sourceBlock": "shared durable-memory retrieval precondition and child forwarding rule",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -4199,7 +4255,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "b247175d164001cd66ded0d89e5d8923faeb69d42530b5b22611ddfc5b0d3126",
+  "catalogMetadataHash": "7fc10727cc38222138a57405918ac486ca7d8b8b593ce832075badb8fc8130db",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -4510,6 +4566,19 @@ export const PROMPT_CATALOG_PROJECTION = {
         "pi": []
       },
       "fragment": "workset-effect-discipline",
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [],
+        "codex": [],
+        "pi": []
+      },
+      "fragment": "memory-grounding",
       "supportedSurfaces": [
         "claude",
         "codex",

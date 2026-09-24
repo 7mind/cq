@@ -97,11 +97,16 @@ receipt path union.
    `fail` with a precise `blockedReason` containing the literal diagnosis
    `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`
    plus the supplied path and the resolved toplevel — do not rediscover the
-   confinement by trial-and-error across sibling checkouts. When the surface
-   adapter already pinned a harness-minted worktree and the advisory path is
-   absent or unusable for that reason, continue in the pinned tree and still
-   report its absolute toplevel as `actualWorktreePath`. Always include
-   `actualWorktreePath` in the stored result.
+   confinement by trial-and-error across sibling checkouts. When no CQ-prepared worktree can be
+   entered — the advisory `worktreePath` is absent, unreachable, or not a git
+   worktree of this repository — STOP and return `fail` with a precise
+   `blockedReason` naming the supplied path and the resolved toplevel. You must
+   never operate in the parent checkout: the orchestrator prepared a worktree
+   precisely so your commits land on the task branch, and a turn that proceeds
+   in whatever tree it happens to hold commits to the live integration branch
+   instead. An absent advisory path is a dispatch fault to report, not a
+   placement to improvise. Always include `actualWorktreePath` in the stored
+   result.
 
    Verify placement evidence:
    - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);
@@ -253,7 +258,21 @@ receipt path union.
    an A/B reproduction of the same selector and signature on this tree and the
    recorded base; if confinement prevents that proof, return `fail`.
 
-6. **Commit and verify.** Commit all task changes through the applicable path, then require:
+6. **Dispose the WIP artifact.** After every worker-owned checkpoint is closed
+   and BEFORE the terminal commit, delete `WIP-<taskId>.md` (every member's file
+   for a cohort) from the worktree and persist that deletion through the
+   applicable commit path — the `git_commit` broker when one was supplied,
+   otherwise the confined commit path. Release fast-forwards the terminal tree
+   into the integration branch, so an artifact left there stays there forever;
+   closing its checkpoints is not disposal. Durability is unaffected: every
+   checkpoint commit remains reachable in the task branch history that managed
+   release parks under its recovery ref. Managed release refuses `wip-retained`
+   and completion refuses a `resultCommit` that still contains the path, so a
+   skipped disposal blocks the result rather than polluting the tree. A
+   no-effect round that reports `resultCommit === startingCommit` performs no
+   deletion, because its tip was already disposed when it was produced.
+
+7. **Commit and verify.** Commit all task changes through the applicable path, then require:
    - `git rev-parse --verify HEAD` succeeds;
    - `git cat-file -t <head>` returns `commit`;
    - `git status --porcelain --untracked-files=all` is empty;

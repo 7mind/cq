@@ -95,7 +95,13 @@ describe("prompt fragment inventory closure", () => {
     expect(new Set(PROMPT_FRAGMENT_INVENTORY.map((entry) => entry.targetFragment))).toEqual(
       new Set(PROMPT_FRAGMENT_SLOTS),
     );
-    const sharedContracts = new Set(["ledger-response-contract", "workset-effect-discipline"]);
+    // Surface-neutral policies: identical prose on every surface, so they
+    // carry no intentionalDifference by construction (D410 adds the third).
+    const sharedContracts = new Set([
+      "ledger-response-contract",
+      "workset-effect-discipline",
+      "memory-grounding",
+    ]);
     for (const contract of PROMPT_FRAGMENT_SLOT_CONTRACTS.filter(({ fragment }) =>
       sharedContracts.has(fragment),
     )) {

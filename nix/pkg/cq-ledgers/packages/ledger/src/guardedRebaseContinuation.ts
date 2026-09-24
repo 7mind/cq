@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
+import { managedWorktreeRegistryRoot } from "@cq/config";
 import type { DispatchGitEffectBinding, DispatchGuardedRebaseBridge } from "@cq/config";
 import { cohortEffectTargetRefV1, runWorksetGitEffectGate } from "@cq/process-control";
 import {
@@ -251,7 +252,7 @@ async function checkedGit(
 
 function guardedRebaseRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
   return join(
-    stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry"),
+    managedWorktreeRegistryRoot(binding.repositoryRoot, stateDir),
     "guarded-rebase",
   );
 }

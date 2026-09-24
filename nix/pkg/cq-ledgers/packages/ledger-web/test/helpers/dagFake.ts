@@ -157,6 +157,9 @@ export class DagFakeClient implements LedgerClient {
   async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> {
     throw new Error("not used in DAG tests");
   }
+  async fetchItemIncludingArchived(l: string, i: string, p: ItemProjection): Promise<{ item: Item; archived: readonly { pointerId: string }[] }> {
+    return { item: await this.fetchItem(l, i, p), archived: [] };
+  }
   async createItem(): Promise<ItemMutationAckDto> {
     throw new Error("not used in DAG tests");
   }

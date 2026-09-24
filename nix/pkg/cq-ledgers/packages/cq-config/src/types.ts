@@ -353,6 +353,21 @@ export interface DispatchConfig {
   readonly unsafeDisableCodexReadOnlySandbox: boolean;
 }
 
+/**
+ * D403 / H310 — the project's own full-gate command, worktree-relative.
+ *
+ * A generic implementation worker cannot hardcode one repository's layout: CQ
+ * runs `bun run check` in `nix/pkg/cq-ledgers`, and a consumer project that
+ * inherits that path fails with ENOENT. Declaring it here is what makes the
+ * dispatched gate portable.
+ */
+export interface GateConfig {
+  /** Exact argv; never a shell string. */
+  readonly argv: readonly string[];
+  /** Directory the command runs in, RELATIVE to the managed worktree root. */
+  readonly cwd: string;
+}
+
 /** Kill-switch value for `[upstream]` filing and recheck (Q336). */
 export const UPSTREAM_SWITCHES = ["enabled", "disabled"] as const;
 
@@ -423,6 +438,8 @@ export interface CqConfig {
   /** The `[project]` table (name), or null if absent. */
   readonly project: ProjectConfig | null;
   readonly dispatch: DispatchConfig;
+  /** The `[gate]` table, or null when the project declares no gate. */
+  readonly gate: GateConfig | null;
   /** The `[upstream]` kill-switches; defaults to both enabled when the table is absent. */
   readonly upstream: UpstreamConfig;
   /**

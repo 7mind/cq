@@ -8,6 +8,11 @@ argument-hint: [goalId]
 {{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:inline-command-recursion}}
 {{cq:fragment:ledger-response-contract}}
+
+Durable project facts enter this flow through the shared policy below:
+
+{{cq:fragment:memory-grounding}}
+
 Effect-boundary authority follows this shared contract:
 
 {{cq:fragment:workset-effect-discipline}}

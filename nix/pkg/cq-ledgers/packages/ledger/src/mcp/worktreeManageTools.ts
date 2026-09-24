@@ -494,7 +494,7 @@ export interface WorktreeManageToolSpec {
 const WORKTREE_MANAGE_DESCRIPTION =
   "Manage one implement worktree: prepare/resume/adopt, observe rebase conflict, " +
   "resolve sealed recovery/continuation or retired staged-rebase authority, or guarded release. Prepare mints " +
-  "a UUIDv7 tree under `.claude/worktrees/`; legacy adoption requires `adoptWorktreePath`+" +
+  "a UUIDv7 tree under `.cq/worktrees/`; legacy adoption requires `adoptWorktreePath`+" +
   "`expectedHead`. Server derives adoption and dependency evidence. Release checks " +
   "dirty/WIP/terminal state and is idempotent. Returns typed acknowledgements, never " +
   "filesystem primitives.";

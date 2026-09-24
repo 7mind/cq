@@ -71,5 +71,54 @@ describe.skipIf(setupPool === undefined)(
       expect(JSON.parse(liveRows[0]!.roots_json)).toEqual([]);
       expect(Number(liveRows[0]!.epoch)).toBe(0);
     });
+
+    // D406: a policy-only canonical change must be DETECTED (so the adapter
+    // reconciles it) yet classed COMPATIBLE — reconciled in place under the
+    // default abort policy, with no destructive backup-reinit.
+    it("upgrades a policy-only satisfiesDependencyStatuses difference in place", async () => {
+      if (setupPool === undefined || pgUrl === undefined) {
+        throw new Error("fixture: PostgreSQL connection missing");
+      }
+      const projectKey = `d406_policy_${randomUUID().replaceAll("-", "")}`;
+      const stalePolicySchema = {
+        ...GOALS_SCHEMA,
+        satisfiesDependencyStatuses: ["done", "abandoned"],
+      };
+      expect(stalePolicySchema.satisfiesDependencyStatuses).not.toEqual(
+        GOALS_SCHEMA.satisfiesDependencyStatuses,
+      );
+      await setupPool`
+      INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${projectKey})
+    `;
+      await setupPool`
+      INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+      VALUES (${projectKey}, ${GOALS_LEDGER}, ${JSON.stringify(stalePolicySchema)}, 0, 0)
+    `;
+
+      const store = new PostgresLedgerStore({
+        pool: openPgPool(pgUrl),
+        projectKey,
+        displayName: projectKey,
+        // Default abort policy: a compatible widening must NOT trip it.
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
+      });
+      await store.init();
+      await store.dispose();
+
+      const persisted = await setupPool<Array<{ schema_json: string }>>`
+      SELECT schema_json FROM ledgers
+      WHERE project_key = ${projectKey} AND name = ${GOALS_LEDGER}
+    `;
+      expect(persisted).toHaveLength(1);
+      expect(JSON.parse(persisted[0]!.schema_json).satisfiesDependencyStatuses).toEqual(
+        GOALS_SCHEMA.satisfiesDependencyStatuses,
+      );
+
+      const shadowRows = await setupPool<Array<{ project_key: string }>>`
+      SELECT project_key FROM projects
+      WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
+    `;
+      expect(shadowRows).toEqual([]);
+    });
   },
 );

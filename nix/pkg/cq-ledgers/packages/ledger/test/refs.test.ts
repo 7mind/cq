@@ -45,9 +45,27 @@ describe("parseRef", () => {
     expect(() => parseRef("tasks:T5:extra")).toThrow(RefParseError);
   });
 
-  it.each(["", "t5", "tasks:", ":T5", "123"])("rejects malformed input %p", (raw) => {
-    expect(() => parseRef(raw)).toThrow(RefParseError);
+  it("parses the camelCase operatorActions ledger name (D483/D484)", () => {
+    expect(parseRef("operatorActions:OA6483")).toEqual({
+      kind: "prefixed",
+      ledger: "operatorActions",
+      id: "OA6483",
+    });
   });
+
+  it("canonicalizes every registered ledger name against itself (D483/D484)", () => {
+    for (const { name, schema } of CANONICAL_LEDGERS) {
+      const id = `${schema.idPrefix ?? name[0]!.toUpperCase()}1`;
+      expect(canonicalizeRef(`${name}:${id}`, canonicalRegistry)).toBe(`${name}:${id}`);
+    }
+  });
+
+  it.each(["", "t5", "tasks:", ":T5", "123", "Tasks:T5"])(
+    "rejects malformed input %p",
+    (raw) => {
+      expect(() => parseRef(raw)).toThrow(RefParseError);
+    },
+  );
 });
 
 describe("buildPrefixRegistry", () => {

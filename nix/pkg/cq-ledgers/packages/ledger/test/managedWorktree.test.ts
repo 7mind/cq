@@ -312,9 +312,18 @@ describe("prepareManagedWorktree", () => {
     expect(isUuidV7(b.evidence.worktreeId)).toBe(true);
     expect(a.evidence.worktreeId).not.toBe(b.evidence.worktreeId);
     expect(a.evidence.absolutePath).not.toBe(b.evidence.absolutePath);
-    expect(a.evidence.absolutePath).toContain(`${path.sep}.claude${path.sep}worktrees${path.sep}`);
+    expect(a.evidence.absolutePath).toContain(`${path.sep}.cq${path.sep}worktrees${path.sep}`);
     expect(await fs.stat(a.evidence.absolutePath).then((s) => s.isDirectory())).toBe(true);
     expect(await fs.stat(b.evidence.absolutePath).then((s) => s.isDirectory())).toBe(true);
+
+    // D404: `.cq` is not wholesale-ignored the way the harness namespace was,
+    // so the managed parent ignores ITSELF. Without this every managed tree is
+    // untracked in the repository it was cut from, and the `git status
+    // --porcelain` check that gates cohort integration sees a dirty tree.
+    const parent = path.join(repo.cwd, ".cq", "worktrees");
+    expect(await fs.readFile(path.join(parent, ".gitignore"), "utf8")).toBe("*\n");
+    const porcelain = await git(repo.cwd, ["status", "--porcelain"]);
+    expect(porcelain).not.toContain(".cq/worktrees");
   });
 
   it("duplicate prepare for the same task cannot create a second live tree", async () => {
@@ -714,7 +723,7 @@ describe("prepareManagedWorktree", () => {
     const repo = await seedRepository();
     const failingInstall: ManagedWorktreeInstallRunner = async (plan) => {
       // Observe that cwd is already under a managed path before failing.
-      expect(plan.cwd.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)).toBe(true);
+      expect(plan.cwd.includes(`${path.sep}.cq${path.sep}worktrees${path.sep}`)).toBe(true);
       return { code: 17, stdout: "", stderr: "injected install failure\n" };
     };
     const result = await prepareManagedWorktree(
@@ -745,8 +754,8 @@ describe("prepareManagedWorktree", () => {
       (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
     );
     expect(branchCheck).not.toBe(0);
-    // No residual worktrees under .claude/worktrees.
-    const parent = path.join(repo.cwd, ".claude", "worktrees");
+    // No residual worktrees under the CQ-managed parent (D404).
+    const parent = path.join(repo.cwd, ".cq", "worktrees");
     let entries: string[] = [];
     try {
       entries = (await fs.readdir(parent)).filter((name) => name !== ".cq-managed-registry");
@@ -845,7 +854,7 @@ describe("prepareManagedWorktree", () => {
     const prepared = a.status === "prepared" ? a : b.status === "prepared" ? b : null;
     expect(prepared).not.toBeNull();
     if (prepared === null) return;
-    const worktreeParent = path.join(repo.cwd, ".claude", "worktrees");
+    const worktreeParent = path.join(repo.cwd, ".cq", "worktrees");
     const dirs = (await fs.readdir(worktreeParent)).filter((name) => isUuidV7(name));
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).toBe(prepared.evidence.worktreeId);
@@ -1614,6 +1623,12 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     await fs.writeFile(path.join(prepared.evidence.absolutePath, "done.txt"), "ok\n");
     await git(prepared.evidence.absolutePath, ["add", "."]);
     await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "complete"]);
+    const carrying = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    // D405: terminal disposal. The completed artifact must leave the tree that
+    // release fast-forwards into the integration branch.
+    await git(prepared.evidence.absolutePath, ["rm", "-q", "WIP-T1310.md"]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "dispose WIP-T1310.md"]);
     const tip = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
 
     const released = await releaseManagedWorktree(
@@ -1627,6 +1642,79 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     );
     expect(released.status).toBe("released");
     expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(0);
+
+    // Durability is unchanged: the artifact is gone from the terminal tree but
+    // every checkpoint commit remains reachable through the parked recovery ref.
+    const inTip = await exec("git", ["cat-file", "-e", `${tip}:WIP-T1310.md`], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    }).then(() => true, () => false);
+    expect(inTip).toBe(false);
+    const parked = await git(repo.cwd, [
+      "rev-parse",
+      `refs/cq-managed-recovery/${prepared.handle.branch}`,
+    ]);
+    expect(parked).toBe(tip);
+    const carriedFromRecovery = await exec(
+      "git",
+      ["cat-file", "-e", `${carrying}:WIP-T1310.md`],
+      { cwd: repo.cwd, encoding: "utf8" },
+    ).then(() => true, () => false);
+    expect(carriedFromRecovery).toBe(true);
+    const reachable = await exec(
+      "git",
+      ["merge-base", "--is-ancestor", carrying, parked],
+      { cwd: repo.cwd, encoding: "utf8" },
+    ).then(() => true, () => false);
+    expect(reachable).toBe(true);
+  });
+
+  it("D405: terminal release refuses a resultCommit that still carries its WIP artifact", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1311", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    const complete = serializeWipArtifact({
+      id: "T1311",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "implementation", status: "done", body: "done\n" }],
+      complete: true,
+      openCheckpoints: [],
+    });
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "WIP-T1311.md"), complete);
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "done.txt"), "ok\n");
+    await git(prepared.evidence.absolutePath, ["add", "."]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "complete with wip"]);
+    const retained = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    // Every checkpoint is closed, so the G122 open-checkpoint guard is
+    // satisfied. The artifact is nonetheless still IN the terminal tree, and
+    // release fast-forwards exactly this commit into the integration tree.
+    const refused = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: retained,
+        deleteBranch: true,
+      },
+      deps,
+    );
+    expect(refused.status).toBe("refused");
+    if (refused.status === "refused") expect(refused.reason).toBe("wip-retained");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1311", repo.stateDir)).toHaveLength(1);
   });
 
   it("category-(iii): dependency resultCommit absent from base refuses before worktree add", async () => {

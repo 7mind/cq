@@ -13,9 +13,10 @@
     "packages/ledger-web"
   ],
   "scripts": {
-    "check": "tsc -b && bun run lint && bun test --only-failures --reporter=junit --reporter-outfile=\"${CQ_TEST_JUNIT_PATH:-/dev/null}\" && bun run check:codex-installed-gate && bun run check:flake-enumeration",
-    "check:codex-installed-gate": "cd ../../.. && nix build --no-link .#cq",
-    "check:flake-enumeration": "cd ../../.. && nix flake show --all-systems --json",
+    "check": "tsc -b && bun run lint && bun test --only-failures --reporter=junit --reporter-outfile=\"${CQ_TEST_JUNIT_PATH:-/dev/null}\" && bun run check:pi-extensions && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+    "check:codex-installed-gate": "nix build --no-link \"$(scripts/working-tree-flake-ref.sh)#cq\"",
+    "check:pi-extensions": "cd ../pi-extensions && bun test",
+    "check:flake-enumeration": "nix flake show --all-systems --json \"$(scripts/working-tree-flake-ref.sh)\"",
     "check:sqlite-responsiveness": "bun run packages/ledger-web/test/sqliteResponsivenessGate.ts",
     "check:postgres-required": "bun run packages/ledger/bench/checkPostgresRequired.ts",
     "check:postgres-lifecycle-bounds": "bun run packages/ledger/bench/checkPostgresLifecycleBounds.ts",

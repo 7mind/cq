@@ -122,6 +122,15 @@ export interface LedgerClient {
   fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger>;
   fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
   fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item>;
+  /**
+   * D400 — resolve an exact `<ledger>:<id>` that may have been archived.
+   * `archived` is empty when the active store answered.
+   */
+  fetchItemIncludingArchived(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<{ item: Item; archived: readonly { pointerId: string }[] }>;
   /** Additive typed prompt metadata; optional so pre-catalog UI test fakes remain valid. */
   fetchPromptResult?(roleId: string): Promise<FetchPromptResult>;
   createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto>;

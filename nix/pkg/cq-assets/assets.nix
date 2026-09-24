@@ -262,6 +262,15 @@ let
         pi = [ ];
       };
     }
+    {
+      fragment = "memory-grounding";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ ];
+        codex = [ ];
+        pi = [ ];
+      };
+    }
   ];
 
   sourceBlockByFragment = {
@@ -277,6 +286,7 @@ let
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
     ledger-response-contract = "ledger item-read projection and mutation response contract";
     workset-effect-discipline = "shared workset membership, admission, and effect-boundary discipline";
+    memory-grounding = "shared durable-memory retrieval precondition and child forwarding rule";
   };
   sharedSourceBlock = {
     sourceBlock = "all prose outside the classified surface-sensitive blocks";
@@ -433,6 +443,7 @@ let
   O = "operational-tool-vocabulary";
   C = "ledger-response-contract";
   E = "workset-effect-discipline";
+  M = "memory-grounding";
 
   authoredCatalog = [
     (mkAgent "plan-advance" [ I T Y ])
@@ -462,7 +473,7 @@ let
       (dispatch "plan-advance")
       (recursion "investigate/advance")
     ])
-    (mkCommand "plan/advance" [ I T O D R C E ] [
+    (mkCommand "plan/advance" [ I T O M D R C E ] [
       (dispatch "plan-advance")
       (dispatch "plan-reviewer")
       (recursion "investigate/advance")
@@ -474,21 +485,21 @@ let
     (mkCommand "investigate" [ I T R E ] [
       (recursion "investigate/advance")
     ])
-    (mkCommand "investigate/advance" [ I T O D E ] [
+    (mkCommand "investigate/advance" [ I T O M D E ] [
       (dispatch "investigate-explorer")
       (dispatch "investigate-prober")
     ])
     (mkCommand "research" [ I T R C E ] [
       (recursion "research/advance")
     ])
-    (mkCommand "research/advance" [ I T O D C E ] [
+    (mkCommand "research/advance" [ I T O M D C E ] [
       (dispatch "research-explorer")
       (dispatch "research-experimenter")
     ])
     (mkCommand "implement/start" [ I T R E ] [
       (recursion "implement/advance")
     ])
-    (mkCommand "implement/advance" [ I T O D W E ] [
+    (mkCommand "implement/advance" [ I T O M D W E ] [
       (dispatch "implement-worker")
       (dispatch "implement-reviewer")
       (dispatch "implementation-auditor")
@@ -676,7 +687,7 @@ let
   catalogMetadataHash = builtins.hashString "sha256" catalogJson;
   promptFragmentSource =
     surface: role: binding:
-    if binding.fragment == C || binding.fragment == E then
+    if binding.fragment == C || binding.fragment == E || binding.fragment == M then
       "fragments/${binding.fragment}.md"
     else if binding.fragment == X then
       "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"

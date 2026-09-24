@@ -66,12 +66,31 @@ BWRAP_ARGS=(
   --unshare-all
   --share-net
   --die-with-parent
+  --clearenv
   --dev /dev
   --proc /proc
   --tmpfs /tmp
   --dir /var
   --symlink /run /var/run
 )
+
+# Keep process identity, terminal and Nix runtime settings, locale, and XDG
+# locations. Callers add integrations and credentials explicitly with --env.
+BASE_ENV_NAMES=(
+  HOME USER LOGNAME SHELL PATH TERM COLORTERM TERMINFO_DIRS TERM_PROGRAM TERM_PROGRAM_VERSION
+  LANG LANGUAGE LOCALE_ARCHIVE XDG_SESSION_TYPE
+  LC_ALL LC_CTYPE LC_MESSAGES LC_COLLATE LC_NUMERIC LC_TIME LC_MONETARY
+  LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
+  XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
+  XDG_CONFIG_DIRS XDG_DATA_DIRS TZ TZDIR EDITOR VISUAL PAGER GIT_PAGER GH_PAGER NO_COLOR
+  NIX_LD NIX_LD_LIBRARY_PATH NIX_PATH NIX_PROFILES NIX_USER_PROFILE_DIR
+  NIX_DEBUG_INFO_DIRS NIXPKGS_CONFIG NIX_SSL_CERT_FILE SSL_CERT_FILE
+)
+for name in "${BASE_ENV_NAMES[@]}"; do
+  if [[ -v "$name" ]]; then
+    BWRAP_ARGS+=(--setenv "$name" "${!name}")
+  fi
+done
 
 # Bind /tmp/exchange for host<->sandbox file sharing (create if missing)
 EXCHANGE_DIR="/tmp/exchange"

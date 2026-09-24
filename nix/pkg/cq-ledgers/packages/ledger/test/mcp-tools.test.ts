@@ -961,6 +961,56 @@ describe("ledger MCP tools", () => {
     expect(archiveResult.content[0]?.text).toBe(JSON.stringify(ptr));
   });
 
+  it("D400: fetch_item resolves an archived item when include_archived is set", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await createRoot(tools, { title: "archived host" });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "done",
+      fields: {},
+    });
+    await updateRoot(tools, { milestone_id: "M1", status: "done" });
+    await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "archived" });
+
+    // The active fast path still reports not-found, unchanged.
+    await expect(
+      callTool(tools, "fetch_item", {
+        ledger_id: "xenos",
+        item_id: "X1",
+        projection: "compact",
+      }),
+    ).rejects.toThrow(/not found/i);
+
+    // Opting in resolves the exact canonical ledger/id out of the archive and
+    // carries the provenance needed to say WHERE it went.
+    const archived = decode<{
+      item: { id: string; status: string };
+      archived: { pointerId: string }[];
+    }>(
+      await callTool(tools, "fetch_item", {
+        ledger_id: "xenos",
+        item_id: "X1",
+        projection: "compact",
+        include_archived: true,
+      }),
+    );
+    expect(archived.item.id).toBe("X1");
+    expect(archived.item.status).toBe("done");
+    expect(archived.archived).toEqual([{ pointerId: "M1" }]);
+
+    // A genuinely missing id still fails, opt-in or not.
+    await expect(
+      callTool(tools, "fetch_item", {
+        ledger_id: "xenos",
+        item_id: "X9999",
+        projection: "compact",
+        include_archived: true,
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
   it("archive_terminal_items detaches terminal items and reports retained active gates [D396]", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);

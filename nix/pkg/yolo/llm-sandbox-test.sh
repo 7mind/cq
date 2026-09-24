@@ -44,6 +44,26 @@ assert_contains \
   "sandbox provides the NixOS runtime-directory alias" \
   "$OUT" \
   $'--dir\n/var\n--symlink\n/run\n/var/run'
+assert_contains "sandbox clears inherited environment" "$OUT" "--clearenv"
+assert_contains "sandbox preserves HOME" "$OUT" $'--setenv\nHOME\n'"$HOME"
+assert_contains "sandbox preserves PATH" "$OUT" $'--setenv\nPATH\n'
+
+OUT_RUNTIME="$(PATH="$FAKE_BIN:$PATH" TERMINFO_DIRS=/test/terminfo \
+  TERM_PROGRAM=tmux XDG_SESSION_TYPE=tty NIX_LD=/test/ld NIXPKGS_CONFIG=/test/nixpkgs.nix \
+  LOCALE_ARCHIVE=/test/locale NIX_CONFIG=host-only bash "$SCRIPT" -- true 2>&1)"
+assert_contains "terminal database is retained" "$OUT_RUNTIME" $'--setenv\nTERMINFO_DIRS\n/test/terminfo'
+assert_contains "terminal program is retained" "$OUT_RUNTIME" $'--setenv\nTERM_PROGRAM\ntmux'
+assert_contains "session type is retained" "$OUT_RUNTIME" $'--setenv\nXDG_SESSION_TYPE\ntty'
+assert_contains "Nix loader is retained" "$OUT_RUNTIME" $'--setenv\nNIX_LD\n/test/ld'
+assert_contains "nixpkgs configuration path is retained" "$OUT_RUNTIME" $'--setenv\nNIXPKGS_CONFIG\n/test/nixpkgs.nix'
+assert_contains "locale archive is retained" "$OUT_RUNTIME" $'--setenv\nLOCALE_ARCHIVE\n/test/locale'
+if [[ "$OUT_RUNTIME" == *$'--setenv\nNIX_CONFIG\n'* ]]; then
+  echo "FAIL: NIX_CONFIG was forwarded"
+  FAILURES=$((FAILURES + 1))
+fi
+
+OUT_EXPLICIT="$(PATH="$FAKE_BIN:$PATH" GH_TOKEN=host-token bash "$SCRIPT" --env GH_TOKEN=explicit-token -- true 2>&1)"
+assert_contains "explicit environment is added" "$OUT_EXPLICIT" $'--setenv\nGH_TOKEN\nexplicit-token'
 
 # Bind precedence: bwrap applies mounts in argv order, so the caller's own
 # ordering must survive verbatim — a later --ro/--rw/--bind must be able to

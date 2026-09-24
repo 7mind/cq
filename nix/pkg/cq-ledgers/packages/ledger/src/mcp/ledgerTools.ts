@@ -59,7 +59,7 @@ import {
   TASKS_LEDGER,
 } from "../constants.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
-import { LedgerError } from "../types.js";
+import { ItemNotFoundError, LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
 import { deriveWorksetPredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
@@ -727,11 +727,12 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchItem = tool(
     "fetch_item",
-    `Fetch one active item. For ledger_id=milestones, item_id is the milestone id and the response is {item,resolved,references}, preserving resolved metadata and per-ledger active reference counts; other ledgers return {item}. ${ITEM_PROJECTION_DESCRIPTION}.`,
+    `Fetch one active item. For ledger_id=milestones, item_id is the milestone id and the response is {item,resolved,references}, preserving resolved metadata and per-ledger active reference counts; other ledgers return {item}. With include_archived, an id the active store does not hold is resolved out of the archive instead and the response adds archived:[{pointerId}] naming each archived generation; a genuinely unknown id still fails. ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       ledger_id: z.string(),
       item_id: z.string(),
       projection: projectionSchema,
+      include_archived: z.boolean().optional(),
     } as const,
     async (args) => {
       if (args.ledger_id === MILESTONES_LEDGER) {
@@ -747,11 +748,28 @@ export function createLedgerMcpToolSpecifications(
           }),
         );
       }
-      return wireResult(
-        produceWireDto({
-          item: projectItemDto(store.fetchItem(args.ledger_id, args.item_id), args.projection),
-        }),
-      );
+      // D400: the active store stays the fast path and its not-found is still
+      // the answer by default. Only an explicit opt-in falls through to the
+      // archive, so an archived-but-real reference can be told apart from an
+      // id that never existed.
+      try {
+        return wireResult(
+          produceWireDto({
+            item: projectItemDto(store.fetchItem(args.ledger_id, args.item_id), args.projection),
+          }),
+        );
+      } catch (error) {
+        if (args.include_archived !== true || !(error instanceof ItemNotFoundError)) throw error;
+        const generations = await store.fetchArchivedItems(args.ledger_id, args.item_id);
+        const newest = generations[generations.length - 1];
+        if (newest === undefined) throw error;
+        return wireResult(
+          produceWireDto({
+            item: projectItemDto(newest.item, args.projection),
+            archived: generations.map(({ pointerId }) => ({ pointerId })),
+          }),
+        );
+      }
     },
   );
 

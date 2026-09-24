@@ -9,6 +9,7 @@ import {
   type MemberAcceptancePlanV1,
   type StagedCohortCandidateAttemptV1,
 } from "./workCohort.js";
+import { projectGateAuthorizationForm } from "@cq/config";
 import type {
   CohortCommandEvidenceV1,
   WorkCohortLeaseV1,
@@ -280,9 +281,8 @@ export class CohortAcceptanceRunnerV1 {
       ) => {
         await revalidate();
         const commandDigest = digest(command);
-        if (purpose === "full-gate" && commandDigest !== digest({
-          argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [],
-        })) throw new Error("cohort full gate must use the fixed canonical command");
+        if (purpose === "full-gate" && commandDigest !== digest(projectGateAuthorizationForm()))
+          throw new Error("cohort full gate must use the fixed canonical command");
         const memberPlanDigests = memberPlans.map((plan) => plan.planDigest).sort();
         const records = (await this.#store.snapshot()).portable.commandEvidence;
         if (boundaryDigest !== null && records.some((entry) => entry.execution !== null &&

@@ -62,6 +62,12 @@ export class PostgresReadCache {
   schema(ledgerId: string): LedgerSchema | undefined { const row = this.ledgers.get(ledgerId); return row === undefined ? undefined : structuredClone(row.schema); }
   hasItem(ledgerId: string, itemId: string): boolean { return this.active.get(ledgerId)?.has(itemId) === true; }
   archivedItemsById(ledgerId: string, itemId: string): Item[] { return [...(this.archivedById.get(ledgerId)?.get(itemId)?.values() ?? [])].map(({ item }) => structuredClone(item)); }
+  /** D400 — the same index, keeping each generation's archive pointer. */
+  archivedGenerationsById(ledgerId: string, itemId: string): { pointerId: string; item: Item }[] {
+    return [...(this.archivedById.get(ledgerId)?.get(itemId)?.entries() ?? [])].map(
+      ([pointerId, { item }]) => ({ pointerId, item: structuredClone(item) }),
+    );
+  }
 
   item(ledgerId: string, itemId: string): Item {
     if (!this.ledgers.has(ledgerId)) throw new LedgerNotFoundError(ledgerId);

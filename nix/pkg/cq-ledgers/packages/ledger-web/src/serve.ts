@@ -47,6 +47,7 @@ import {
   FilesystemXdgProjectCatalogSource,
   ReadOnlyXdgProjectCatalog,
   resolveProjectKey,
+  ProjectKeyResolutionError,
   resolveRemoteLaunch,
   resolveStateDirBase,
   type XdgProjectCatalogEntry,
@@ -693,6 +694,23 @@ function resolveWholeStoreOpts(args: ParsedWebArgs): XdgWholeStoreOpts {
 }
 
 async function resolveRepositoryRoot(cwd: string): Promise<string | null> {
+  const root = await resolveGitTopLevel(cwd);
+  if (root === null) return null;
+  // D541: an invalid cq.toml is a startup error, not "not a repository".
+  const config = loadConfig(root);
+  try {
+    await resolveProjectKey({
+      repoRoot: root,
+      projectId: config?.ledger?.projectId ?? null,
+    });
+  } catch (error) {
+    if (error instanceof ProjectKeyResolutionError) return null;
+    throw error;
+  }
+  return root;
+}
+
+async function resolveGitTopLevel(cwd: string): Promise<string | null> {
   try {
     const resolvedCwd = await fs.realpath(cwd);
     const cwdInfo = await fs.lstat(resolvedCwd);
@@ -708,13 +726,7 @@ async function resolveRepositoryRoot(cwd: string): Promise<string | null> {
       ["rev-parse", "--show-toplevel"],
       { cwd: resolvedCwd, encoding: "utf8" },
     );
-    const root = await fs.realpath(topLevel.trim());
-    const config = loadConfig(root);
-    await resolveProjectKey({
-      repoRoot: root,
-      projectId: config?.ledger?.projectId ?? null,
-    });
-    return root;
+    return await fs.realpath(topLevel.trim());
   } catch {
     return null;
   }
