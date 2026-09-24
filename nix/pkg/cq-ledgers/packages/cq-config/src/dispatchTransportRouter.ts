@@ -10,6 +10,8 @@ import {
   isAttestationTombstone,
   provenanceBindingOf,
   storeDispatchResult,
+  type AttestationEnvelope,
+  type ConfirmDispatchCompletionOutcome,
   type DispatchServiceDeps,
   type StoreDispatchResultOutcome,
 } from "./dispatchAttestation.js";
@@ -21,6 +23,7 @@ import type {
   DispatchHandle,
   DispatchJSONValue,
   DispatchPrepared,
+  FetchDispatchResult,
   MaterializedDispatchInput,
   NativeCompletionProof,
 } from "./compactDispatchProtocol.js";
@@ -100,8 +103,81 @@ export class DispatchTransportRoutingError extends AttestationContractError {
 }
 
 export interface DispatchAdapterChildPort {
-  materializeInput(): MaterializedDispatchInput;
-  storeResult(output: DispatchJSONValue): StoreDispatchResultOutcome;
+  materializeInput(): Promise<MaterializedDispatchInput>;
+  storeResult(output: DispatchJSONValue): Promise<StoreDispatchResultOutcome>;
+}
+
+/**
+ * G224 / K331: every state transition `runPreparedDispatch` performs. A server
+ * backs it with its own dispatch capability so worktree effect locks, inherited
+ * Git receipts, parent-gate cancellation and recovery apply exactly as they do
+ * for a parent-driven dispatch; {@link attestationServiceSettlement} is the
+ * in-process form over the bare attestation service.
+ */
+export interface DispatchSettlementPort {
+  readEnvelope(handle: DispatchHandle): Promise<AttestationEnvelope | undefined>;
+  materializeInput(
+    handle: DispatchHandle,
+    inputCapability: DispatchPrepared["inputCapability"],
+  ): Promise<MaterializedDispatchInput>;
+  storeResult(
+    resultCapability: DispatchPrepared["resultCapability"],
+    output: DispatchJSONValue,
+  ): Promise<StoreDispatchResultOutcome>;
+  confirm(input: {
+    readonly handle: DispatchHandle;
+    readonly nativeCompletion: NativeCompletionProof;
+    readonly expectedProvenance: ReturnType<typeof provenanceBindingOf>;
+  }): Promise<ConfirmDispatchCompletionOutcome>;
+  abort(input: {
+    readonly handle: DispatchHandle;
+    readonly reason: DispatchAbortReason;
+    readonly details?: DispatchJSONValue;
+  }): Promise<AbortedDispatchResult>;
+  fetch(handle: DispatchHandle): Promise<FetchDispatchResult>;
+}
+
+export function attestationServiceSettlement(
+  namespace: AttestationNamespace,
+  deps: DispatchServiceDeps,
+): DispatchSettlementPort {
+  return Object.freeze({
+    readEnvelope: async (handle: DispatchHandle) => {
+      const row = deps.store.read(handle);
+      return row === undefined || isAttestationTombstone(row) ? undefined : row;
+    },
+    materializeInput: async (
+      handle: DispatchHandle,
+      inputCapability: DispatchPrepared["inputCapability"],
+    ) => fetchDispatchInput({ namespace, ...handle, inputCapability }, deps),
+    storeResult: async (
+      resultCapability: DispatchPrepared["resultCapability"],
+      output: DispatchJSONValue,
+    ) => storeDispatchResult({ resultCapability, output }, deps),
+    confirm: async (input: Parameters<DispatchSettlementPort["confirm"]>[0]) =>
+      confirmDispatchCompletion(
+        {
+          namespace,
+          ...input.handle,
+          nativeCompletion: input.nativeCompletion,
+          expectedProvenance: input.expectedProvenance,
+        },
+        deps,
+      ),
+    abort: async (input: Parameters<DispatchSettlementPort["abort"]>[0]) =>
+      abortDispatch(
+        {
+          namespace,
+          actor: "trusted-parent",
+          ...input.handle,
+          reason: input.reason,
+          ...(input.details === undefined ? {} : { details: input.details }),
+        },
+        deps,
+      ),
+    fetch: async (handle: DispatchHandle) =>
+      fetchDispatchResult({ namespace, actor: "trusted-parent", ...handle }, deps),
+  });
 }
 
 export interface DispatchAdapterLaunchContext {
@@ -170,14 +246,14 @@ export interface ClaudeProcessAdapterBinding {
 
 export type ClaudeProcessAdapterBindingResolver = (
   context: DispatchAdapterLaunchContext,
-) => ClaudeProcessAdapterBinding;
+) => ClaudeProcessAdapterBinding | Promise<ClaudeProcessAdapterBinding>;
 
 export function createClaudeProcessDispatchAdapter(
   effectAdmissionProvider: WorksetEffectAdmissionProvider,
   resolve: ClaudeProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
   return createAdapter("claude", "process", async (context) => {
-    const binding = resolve(context);
+    const binding = await resolve(context);
     if (binding.model !== context.resolvedModel.model) {
       throw new DispatchTransportRoutingError(
         `Claude process model ${JSON.stringify(binding.model)} does not match resolved model ${JSON.stringify(context.resolvedModel.model)}`,
@@ -269,14 +345,14 @@ export interface CodexProcessAdapterBinding {
 
 export type CodexProcessAdapterBindingResolver = (
   context: DispatchAdapterLaunchContext,
-) => CodexProcessAdapterBinding;
+) => CodexProcessAdapterBinding | Promise<CodexProcessAdapterBinding>;
 
 export function createCodexProcessDispatchAdapter(
   effectAdmissionProvider: WorksetEffectAdmissionProvider,
   resolve: CodexProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
   return createAdapter("codex", "process", async (context) => {
-    const binding = resolve(context);
+    const binding = await resolve(context);
     if (binding.boundary.model !== context.resolvedModel.model) {
       throw new DispatchTransportRoutingError(
         `Codex process model ${JSON.stringify(binding.boundary.model)} does not match resolved model ${JSON.stringify(context.resolvedModel.model)}`,
@@ -610,7 +686,6 @@ export class DispatchTransportAbort extends Error {
 }
 
 export interface RunPreparedDispatchRequest extends DispatchTransportRouteRequest {
-  readonly namespace: AttestationNamespace;
   readonly prepared: DispatchPrepared;
   /** Exact per-role token resolved by cq.toml before transport selection. */
   readonly resolvedModel: ReviewerToken;
@@ -750,25 +825,19 @@ function handleOf(prepared: DispatchPrepared): DispatchHandle {
   });
 }
 
-function adapterAbort(
-  request: RunPreparedDispatchRequest,
+async function adapterAbort(
   route: DispatchTransportRoute,
   adapter: DispatchTransportAdapter,
   handle: DispatchHandle,
   reason: DispatchAbortReason,
   details: DispatchJSONValue | undefined,
-  deps: DispatchServiceDeps,
-): RoutedDispatchAborted {
-  const abort = abortDispatch(
-    {
-      namespace: request.namespace,
-      actor: "trusted-parent",
-      ...handle,
-      reason,
-      ...(details === undefined ? {} : { details }),
-    },
-    deps,
-  );
+  settlement: DispatchSettlementPort,
+): Promise<RoutedDispatchAborted> {
+  const abort = await settlement.abort({
+    handle,
+    reason,
+    ...(details === undefined ? {} : { details }),
+  });
   return Object.freeze({
     outcome: "aborted" as const,
     route,
@@ -778,18 +847,14 @@ function adapterAbort(
   });
 }
 
-function reconcileStoreResultAbort(
-  request: RunPreparedDispatchRequest,
+async function reconcileStoreResultAbort(
   route: DispatchTransportRoute,
   adapter: DispatchTransportAdapter,
   handle: DispatchHandle,
   reason: DispatchAbortReason,
-  deps: DispatchServiceDeps,
-): RoutedDispatchAborted {
-  const abort = fetchDispatchResult(
-    { namespace: request.namespace, actor: "trusted-parent", ...handle },
-    deps,
-  );
+  settlement: DispatchSettlementPort,
+): Promise<RoutedDispatchAborted> {
+  const abort = await settlement.fetch(handle);
   if (abort.state !== "aborted" || abort.reason !== reason) {
     throw new AttestationContractError(
       "adapter.storeResultAbortReason",
@@ -969,7 +1034,7 @@ function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAda
 export async function runPreparedDispatch(
   request: RunPreparedDispatchRequest,
   registry: DispatchTransportAdapterRegistry,
-  deps: DispatchServiceDeps,
+  settlement: DispatchSettlementPort,
 ): Promise<RoutedDispatchResult> {
   const route = routeDispatchTransport(request);
   assertResolvedModelBinding(request.resolvedModel, request.targetHarness);
@@ -981,8 +1046,8 @@ export async function runPreparedDispatch(
   }
   const adapter = registry.resolve(route);
   const handle = handleOf(request.prepared);
-  const row = deps.store.read(handle);
-  if (row === undefined || isAttestationTombstone(row)) {
+  const row = await settlement.readEnvelope(handle);
+  if (row === undefined) {
     throw new DispatchTransportRoutingError(
       `prepared dispatch ${handle.attestationId}/${handle.generation} has no live envelope`,
     );
@@ -990,16 +1055,9 @@ export async function runPreparedDispatch(
   const effectTargetRef = dispatchEffectTargetRef(row.input);
   const child: DispatchAdapterChildPort = Object.freeze({
     materializeInput: () =>
-      fetchDispatchInput(
-        {
-          namespace: request.namespace,
-          ...handle,
-          inputCapability: request.prepared.inputCapability,
-        },
-        deps,
-      ),
+      settlement.materializeInput(handle, request.prepared.inputCapability),
     storeResult: (output: DispatchJSONValue) =>
-      storeDispatchResult({ resultCapability: request.prepared.resultCapability, output }, deps),
+      settlement.storeResult(request.prepared.resultCapability, output),
   });
 
   let result: DispatchAdapterLaunchResult;
@@ -1016,27 +1074,26 @@ export async function runPreparedDispatch(
     assertAdapterLaunchResult(result);
     if (result.outcome === "aborted") {
       if (result.storeResultAbortReason !== undefined) {
-        return reconcileStoreResultAbort(
-          request,
+        return await reconcileStoreResultAbort(
           route,
           adapter,
           handle,
           result.storeResultAbortReason,
-          deps,
+          settlement,
         );
       }
-      return adapterAbort(request, route, adapter, handle, result.reason, result.details, deps);
+      return await adapterAbort(route, adapter, handle, result.reason, result.details, settlement);
     }
     assertCompletionShape(result, route, handle);
   } catch (error) {
     if (error instanceof DispatchTransportAbort) {
-      return adapterAbort(request, route, adapter, handle, error.reason, error.details, deps);
+      return await adapterAbort(route, adapter, handle, error.reason, error.details, settlement);
     }
     throw error;
   }
 
-  const staged = deps.store.read(handle);
-  if (staged === undefined || isAttestationTombstone(staged)) {
+  const staged = await settlement.readEnvelope(handle);
+  if (staged === undefined) {
     throw new DispatchTransportRoutingError(
       `completed dispatch ${handle.attestationId}/${handle.generation} has no live envelope`,
     );
@@ -1079,25 +1136,20 @@ export async function runPreparedDispatch(
 
   let confirmation;
   try {
-    confirmation = confirmDispatchCompletion(
-      {
-        namespace: request.namespace,
-        ...handle,
-        nativeCompletion: result.nativeCompletion,
-        expectedProvenance: provenanceBindingOf(request.prepared),
-      },
-      deps,
-    );
+    confirmation = await settlement.confirm({
+      handle,
+      nativeCompletion: result.nativeCompletion,
+      expectedProvenance: provenanceBindingOf(request.prepared),
+    });
   } catch (error) {
     if (error instanceof AttestationBindingError) {
-      return adapterAbort(
-        request,
+      return await adapterAbort(
         route,
         adapter,
         handle,
         "native-failure",
         { violation: "completion-correlation-mismatch", detail: error.message },
-        deps,
+        settlement,
       );
     }
     throw error;
@@ -1112,10 +1164,7 @@ export async function runPreparedDispatch(
     });
   }
 
-  const fetched = fetchDispatchResult(
-    { namespace: request.namespace, actor: "trusted-parent", ...handle },
-    deps,
-  );
+  const fetched = await settlement.fetch(handle);
   if (fetched.state !== "consumed") {
     throw new AttestationContractError(
       "fetch.state",

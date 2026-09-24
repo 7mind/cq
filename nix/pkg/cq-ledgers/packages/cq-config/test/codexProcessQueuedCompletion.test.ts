@@ -20,7 +20,6 @@ import {
   prepareDispatch,
   provenanceBindingOf,
   qualifyDispatchStagedCompletion,
-  runPreparedDispatch,
   sequentialDispatchRandomBytes,
   type AttestationEnvelope,
   type AttestationNamespace,
@@ -28,6 +27,7 @@ import {
   type DispatchJSONValue,
   type NativeCompletionProof,
 } from "../src/index.js";
+import { runPreparedDispatchOverService } from "./fixtures/routedDispatchOverService.js";
 
 const namespace: AttestationNamespace = { backend: "xdg", projectKey: "queued-completion" };
 const clock = new FakeDispatchClock("2026-09-16T09:00:00.000Z");
@@ -111,9 +111,9 @@ describe("Codex process queued completion [Behavioral-Active, Blackbox-Group]", 
         id: "codex:process",
         targetHarness: "codex",
         transport: "process",
-        launch: (context) => {
-        context.child.materializeInput();
-        const staged = context.child.storeResult(output);
+        launch: async (context) => {
+        await context.child.materializeInput();
+        const staged = await context.child.storeResult(output);
         expect(staged.state).toBe("gate-pending");
         return {
           outcome: "completed",
@@ -176,9 +176,9 @@ describe("Codex process queued completion [Behavioral-Active, Blackbox-Group]", 
           deps,
         );
       },
-    } as unknown as Parameters<typeof runPreparedDispatch>[0];
+    } as unknown as Parameters<typeof runPreparedDispatchOverService>[0];
 
-    const result = await runPreparedDispatch(request, registry, deps);
+    const result = await runPreparedDispatchOverService(request, registry, deps);
 
     expect(result).toEqual({
       outcome: "queued",
@@ -279,9 +279,9 @@ process.stdout.write([
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
           createStrictInMemoryWorksetEffectAdmissionProvider(),
-          (context) => {
-            context.child.materializeInput();
-            stagedAcknowledgement = context.child.storeResult(output);
+          async (context) => {
+            await context.child.materializeInput();
+            stagedAcknowledgement = await context.child.storeResult(output);
             return {
               correlation,
               now: processClock.now,
@@ -300,7 +300,7 @@ process.stdout.write([
           },
         ),
       ]);
-      const result = await runPreparedDispatch(
+      const result = await runPreparedDispatchOverService(
         {
           namespace: processNamespace,
           prepared,
@@ -418,11 +418,11 @@ process.stdout.write([
               generation: prepared.generation,
               inputCapability: prepared.inputCapability,
             });
-            return Response.json(launchContext.child.materializeInput());
+            return Response.json(await launchContext.child.materializeInput());
           }
           if (url.pathname === "/store") {
             expect(body).toEqual({ resultCapability: prepared.resultCapability, output });
-            return Response.json(launchContext.child.storeResult(output));
+            return Response.json(await launchContext.child.storeResult(output));
           }
           return new Response("unknown", { status: 404 });
         },
@@ -472,7 +472,7 @@ process.stdout.write([
             },
           ),
         ]);
-        const result = await runPreparedDispatch(
+        const result = await runPreparedDispatchOverService(
           {
             namespace: processNamespace,
             prepared,

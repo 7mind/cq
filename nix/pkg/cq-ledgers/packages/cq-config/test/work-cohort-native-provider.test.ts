@@ -13,8 +13,9 @@ import { createPiNativeDispatchAdapter } from "../src/piNativeDispatch.js";
 import type { ManagedWorktreeHandleV3 } from "../src/managedWorktreeHandle.js";
 import { cohortRoleEnvelope, cohortRoleMembers } from "./workCohortRoleFixture.js";
 import { InMemoryAttestationStore, prepareDispatch, DISPATCH_OVERLAY_REGISTRY,
-  sequentialDispatchRandomBytes, runPreparedDispatch, DispatchTransportAdapterRegistry,
+  sequentialDispatchRandomBytes, DispatchTransportAdapterRegistry,
   createNativeDispatchAdapter, dispatchEffectTargetRef, type DispatchJSONValue } from "../src/index.js";
+import { runPreparedDispatchOverService } from "./fixtures/routedDispatchOverService.js";
 
 function wire(value: unknown): DispatchJSONValue {
   return JSON.parse(JSON.stringify(value)) as DispatchJSONValue;
@@ -54,12 +55,12 @@ describe("native full-cohort provider binding [Blackbox-Atomic]", () => {
       }, { store, now, randomBytes: sequentialDispatchRandomBytes() });
       if (!prepared.accepted) throw new Error(JSON.stringify(prepared));
       const targets: string[] = [];
-      const registry = new DispatchTransportAdapterRegistry([createNativeDispatchAdapter(harness, (context) => {
+      const registry = new DispatchTransportAdapterRegistry([createNativeDispatchAdapter(harness, async (context) => {
         targets.push(context.effectTargetRef);
-        expect(context.child.materializeInput().input).toMatchObject({ cohort });
+        expect((await context.child.materializeInput()).input).toMatchObject({ cohort });
         return { outcome: "aborted", reason: "native-failure" };
       })]);
-      const result = await runPreparedDispatch({ namespace, prepared: prepared.prepared,
+      const result = await runPreparedDispatchOverService({ namespace, prepared: prepared.prepared,
         activeHarness: harness, targetHarness: harness, forceShellout: false,
         resolvedModel: { harness, model: "test-model", provider: harness === "pi" ? "test-provider" : null, effort: null },
       }, registry, { store, now });

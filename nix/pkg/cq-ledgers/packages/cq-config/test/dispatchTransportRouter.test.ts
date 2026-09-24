@@ -33,7 +33,6 @@ import {
   fetchDispatchResult,
   prepareDispatch,
   routeDispatchTransport,
-  runPreparedDispatch as runPreparedDispatchBound,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
   type AttestationRow,
@@ -53,6 +52,12 @@ import {
   type ReviewerToken,
 } from "@cq/config";
 import { withClaudeRoleFrontmatter } from "./fixtures/claudeRoleFrontmatter.js";
+import { runPreparedDispatchOverService } from "./fixtures/routedDispatchOverService.js";
+import {
+  attestationServiceSettlement,
+  runPreparedDispatch as runPreparedDispatchBound,
+  type DispatchSettlementPort,
+} from "../src/dispatchTransportRouter.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "T1631-router" };
 const T0 = "2026-08-02T18:45:00.000Z";
@@ -199,7 +204,7 @@ function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
             throw new Error("recorded child sent the wrong fetch capability request");
           }
           counts.input += 1;
-          return Response.json(context.child.materializeInput());
+          return Response.json(await context.child.materializeInput());
         }
         if (new URL(request.url).pathname === "/store") {
           if (
@@ -212,7 +217,7 @@ function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
             throw new Error("recorded child sent the wrong store capability request");
           }
           counts.store += 1;
-          return Response.json(context.child.storeResult(OUTPUT));
+          return Response.json(await context.child.storeResult(OUTPUT));
         }
         if (new URL(request.url).pathname === "/abort") {
           const reason = body["reason"];
@@ -437,11 +442,11 @@ function handleOf(prepared: DispatchPrepared): DispatchHandle {
 }
 
 function runPreparedDispatch(
-  request: Omit<Parameters<typeof runPreparedDispatchBound>[0], "resolvedModel">,
-  registry: Parameters<typeof runPreparedDispatchBound>[1],
-  deps: Parameters<typeof runPreparedDispatchBound>[2],
-): ReturnType<typeof runPreparedDispatchBound> {
-  return runPreparedDispatchBound(
+  request: Omit<Parameters<typeof runPreparedDispatchOverService>[0], "resolvedModel">,
+  registry: Parameters<typeof runPreparedDispatchOverService>[1],
+  deps: Parameters<typeof runPreparedDispatchOverService>[2],
+): ReturnType<typeof runPreparedDispatchOverService> {
+  return runPreparedDispatchOverService(
     { ...request, resolvedModel: RESOLVED_MODELS[request.targetHarness] },
     registry,
     deps,
@@ -453,12 +458,12 @@ function successfulLaunch(
   counts: { input: number; store: number },
 ): (
   context: Parameters<ReturnType<typeof createNativeDispatchAdapter>["launch"]>[0],
-) => DispatchAdapterLaunchResult {
-  return (context) => {
+) => Promise<DispatchAdapterLaunchResult> {
+  return async (context) => {
     counts.input += 1;
-    context.child.materializeInput();
+    await context.child.materializeInput();
     counts.store += 1;
-    const stored = context.child.storeResult(OUTPUT);
+    const stored = await context.child.storeResult(OUTPUT);
     if (stored.state === "aborted") {
       return {
         outcome: "aborted",
@@ -594,7 +599,7 @@ describe("T1631 shared three-harness transport router", () => {
         id: `${targetHarness}:${transport}`,
         targetHarness,
         transport,
-        launch: (context: DispatchAdapterLaunchContext): DispatchAdapterLaunchResult => {
+        launch: async (context: DispatchAdapterLaunchContext): Promise<DispatchAdapterLaunchResult> => {
           expect(context.resolvedModel).toEqual(RESOLVED_MODELS[targetHarness]);
           expect(Object.keys(context.route).sort()).toEqual([
             "activeHarness",
@@ -610,7 +615,7 @@ describe("T1631 shared three-harness transport router", () => {
           expect(context.effectTargetRef).toBe("tasks:T1631");
           expect(Date.parse(context.prepared.launchDeadline)).toBeGreaterThan(Date.parse(T0));
           counts.input += 1;
-          const materialized = context.child.materializeInput();
+          const materialized = await context.child.materializeInput();
           expect(materialized).toMatchObject({
             attestationId: context.prepared.attestationId,
             generation: context.prepared.generation,
@@ -622,7 +627,7 @@ describe("T1631 shared three-harness transport router", () => {
             },
           });
           counts.store += 1;
-          const stored = context.child.storeResult(OUTPUT);
+          const stored = await context.child.storeResult(OUTPUT);
           if (stored.state === "aborted") {
             return { outcome: "aborted", reason: stored.result.reason };
           }
@@ -652,7 +657,7 @@ describe("T1631 shared three-harness transport router", () => {
       for (const targetHarness of HARNESSES) {
         for (const forceShellout of [false, true] as const) {
           const fixture = preparedFixture(targetHarness, sequence++);
-          const result = await runPreparedDispatchBound(
+          const result = await runPreparedDispatchOverService(
             {
               namespace: NAMESPACE,
               prepared: fixture.prepared,
@@ -691,7 +696,7 @@ describe("T1631 shared three-harness transport router", () => {
     ]);
 
     await expect(
-      runPreparedDispatchBound(
+      runPreparedDispatchOverService(
         {
           namespace: NAMESPACE,
           prepared: fixture.prepared,
@@ -719,7 +724,7 @@ describe("T1631 shared three-harness transport router", () => {
     ]);
     try {
       await expect(
-        runPreparedDispatchBound(
+        runPreparedDispatchOverService(
           {
             namespace: NAMESPACE,
             prepared: fixture.prepared,
@@ -753,7 +758,7 @@ describe("T1631 shared three-harness transport router", () => {
     ]);
     try {
       await expect(
-        runPreparedDispatchBound(
+        runPreparedDispatchOverService(
           {
             namespace: NAMESPACE,
             prepared: fixture.prepared,
@@ -777,10 +782,10 @@ describe("T1631 shared three-harness transport router", () => {
     const fixture = preparedFixture("codex", 61);
     const observedTargets: Array<string | undefined> = [];
     const registry = new DispatchTransportAdapterRegistry([
-      createNativeDispatchAdapter("codex", (context) => {
+      createNativeDispatchAdapter("codex", async (context) => {
         observedTargets.push(context.effectTargetRef);
-        context.child.materializeInput();
-        const stored = context.child.storeResult(OUTPUT);
+        await context.child.materializeInput();
+        const stored = await context.child.storeResult(OUTPUT);
         if (stored.state === "aborted") {
           return { outcome: "aborted", reason: stored.result.reason };
         }
@@ -840,10 +845,10 @@ describe("T1631 shared three-harness transport router", () => {
         id: `${targetHarness}:${transport}`,
         targetHarness,
         transport,
-        launch: (context) => {
-          const input = context.child.materializeInput().input;
+        launch: async (context) => {
+          const input = (await context.child.materializeInput()).input;
           observed.push({ adapterId: context.route.adapterId, input });
-          const stored = context.child.storeResult(REVIEWER_OUTPUT);
+          const stored = await context.child.storeResult(REVIEWER_OUTPUT);
           if (stored.state === "aborted") {
             return { outcome: "aborted", reason: stored.result.reason };
           }
@@ -903,15 +908,15 @@ describe("T1631 shared three-harness transport router", () => {
     fixture.clock.advance(59_999);
     const exhaustionStates: boolean[] = [];
     const registry = new DispatchTransportAdapterRegistry([
-      createNativeDispatchAdapter("codex", (context) => {
-        const materialized = context.child.materializeInput();
+      createNativeDispatchAdapter("codex", async (context) => {
+        const materialized = await context.child.materializeInput();
         const input = materialized.input as Readonly<Record<string, DispatchJSONValue>>;
         const gateCompleteBy = input["gateCompleteBy"];
         if (typeof gateCompleteBy !== "string") throw new Error("missing gateCompleteBy");
         exhaustionStates.push(Date.parse(fixture.clock.peek()) >= Date.parse(gateCompleteBy));
         fixture.clock.advance(1);
         exhaustionStates.push(Date.parse(fixture.clock.peek()) >= Date.parse(gateCompleteBy));
-        const stored = context.child.storeResult(REVIEWER_EXHAUSTION_OUTPUT);
+        const stored = await context.child.storeResult(REVIEWER_EXHAUSTION_OUTPUT);
         if (stored.state === "aborted") {
           return { outcome: "aborted", reason: stored.result.reason };
         }
@@ -942,6 +947,111 @@ describe("T1631 shared three-harness transport router", () => {
     );
     expect(result.outcome).toBe("consumed");
     expect(exhaustionStates).toEqual([false, true]);
+  });
+
+  describe("G224 settlement port", () => {
+    function recordingSettlement(
+      inner: DispatchSettlementPort,
+      calls: string[],
+    ): DispatchSettlementPort {
+      return {
+        readEnvelope: async (handle) => (calls.push("readEnvelope"), await inner.readEnvelope(handle)),
+        materializeInput: async (handle, capability) => (
+          calls.push("materializeInput"), await inner.materializeInput(handle, capability)
+        ),
+        storeResult: async (capability, output) => (
+          calls.push("storeResult"), await inner.storeResult(capability, output)
+        ),
+        confirm: async (input) => (calls.push("confirm"), await inner.confirm(input)),
+        abort: async (input) => (calls.push("abort"), await inner.abort(input)),
+        fetch: async (handle) => (calls.push("fetch"), await inner.fetch(handle)),
+      };
+    }
+
+    test("a consumed dispatch performs every transition through the port, in order [BA]", async () => {
+      const fixture = preparedFixture("claude", 91);
+      const calls: string[] = [];
+      const registry = new DispatchTransportAdapterRegistry([
+        createNativeDispatchAdapter(
+          "claude",
+          successfulLaunch(fixture.expectedCompletion, { input: 0, store: 0 }),
+        ),
+      ]);
+      const result = await runPreparedDispatchBound(
+        {
+          prepared: fixture.prepared,
+          resolvedModel: RESOLVED_MODELS.claude,
+          activeHarness: "claude",
+          targetHarness: "claude",
+          forceShellout: false,
+        },
+        registry,
+        recordingSettlement(attestationServiceSettlement(NAMESPACE, fixture.deps), calls),
+      );
+      expect(result.outcome).toBe("consumed");
+      expect(calls).toEqual([
+        "readEnvelope",
+        "materializeInput",
+        "storeResult",
+        "readEnvelope",
+        "confirm",
+        "fetch",
+      ]);
+    });
+
+    test("an adapter abort settles through the port's abort, and nothing else [BA]", async () => {
+      const fixture = preparedFixture("claude", 92);
+      const calls: string[] = [];
+      const registry = new DispatchTransportAdapterRegistry([
+        createNativeDispatchAdapter("claude", () => ({
+          outcome: "aborted",
+          reason: "native-failure",
+          details: { source: "g224-settlement-port" },
+        })),
+      ]);
+      const result = await runPreparedDispatchBound(
+        {
+          prepared: fixture.prepared,
+          resolvedModel: RESOLVED_MODELS.claude,
+          activeHarness: "claude",
+          targetHarness: "claude",
+          forceShellout: false,
+        },
+        registry,
+        recordingSettlement(attestationServiceSettlement(NAMESPACE, fixture.deps), calls),
+      );
+      expect(result).toMatchObject({
+        outcome: "aborted",
+        abort: { state: "aborted", reason: "native-failure" },
+      });
+      expect(calls).toEqual(["readEnvelope", "abort"]);
+    });
+
+    test("a port that reports no live envelope refuses before any launch", async () => {
+      const fixture = preparedFixture("claude", 93);
+      let launched = false;
+      const registry = new DispatchTransportAdapterRegistry([
+        createNativeDispatchAdapter("claude", () => {
+          launched = true;
+          throw new Error("must not launch");
+        }),
+      ]);
+      const inner = attestationServiceSettlement(NAMESPACE, fixture.deps);
+      await expect(
+        runPreparedDispatchBound(
+          {
+            prepared: fixture.prepared,
+            resolvedModel: RESOLVED_MODELS.claude,
+            activeHarness: "claude",
+            targetHarness: "claude",
+            forceShellout: false,
+          },
+          registry,
+          { ...inner, readEnvelope: async () => undefined },
+        ),
+      ).rejects.toThrow(/has no live envelope/);
+      expect(launched).toBe(false);
+    });
   });
 
   test("D431: a claude:native completion carrying trusted-extension is refused", async () => {
@@ -1695,9 +1805,9 @@ describe("T1631 shared three-harness transport router", () => {
         60 + malformedCompletionProofs.findIndex(([name]) => name === label),
       );
       const registry = new DispatchTransportAdapterRegistry([
-        createPiProcessDispatchAdapter((context) => {
-          context.child.materializeInput();
-          context.child.storeResult(OUTPUT);
+        createPiProcessDispatchAdapter(async (context) => {
+          await context.child.materializeInput();
+          await context.child.storeResult(OUTPUT);
           return {
             outcome: "completed",
             handle: handleOf(context.prepared),
@@ -1731,9 +1841,9 @@ describe("T1631 shared three-harness transport router", () => {
   test("invalid structured output aborts through capability-scoped storage", async () => {
     const fixture = preparedFixture("pi", 40);
     const registry = new DispatchTransportAdapterRegistry([
-      createPiProcessDispatchAdapter((context) => {
-        context.child.materializeInput();
-        const stored = context.child.storeResult({ not: "an implement-worker result" });
+      createPiProcessDispatchAdapter(async (context) => {
+        await context.child.materializeInput();
+        const stored = await context.child.storeResult({ not: "an implement-worker result" });
         if (stored.state !== "aborted") throw new Error("invalid output unexpectedly stored");
         return {
           outcome: "aborted",
@@ -1801,9 +1911,9 @@ describe("T1631 shared three-harness transport router", () => {
           : {}),
       };
       const registry = new DispatchTransportAdapterRegistry([
-        createPiProcessDispatchAdapter((context) => {
-          context.child.materializeInput();
-          context.child.storeResult(OUTPUT);
+        createPiProcessDispatchAdapter(async (context) => {
+          await context.child.materializeInput();
+          await context.child.storeResult(OUTPUT);
           return {
             outcome: "completed",
             handle,

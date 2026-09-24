@@ -447,7 +447,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "dd1240f6fa370b16297bb820c2a84b6c5235f7682f321cc4224627c03d63d622",
+      "sha256": "95bf13f04717bff1973a0b84fb08bcb88ccee26059fa1f1a52cc19a9e6aa4dd1",
       "targets": []
     },
     {
@@ -1220,7 +1220,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
-      "sha256": "dd1240f6fa370b16297bb820c2a84b6c5235f7682f321cc4224627c03d63d622",
+      "sha256": "95bf13f04717bff1973a0b84fb08bcb88ccee26059fa1f1a52cc19a9e6aa4dd1",
       "targets": []
     },
     {
@@ -2408,13 +2408,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
-      "sha256": "df28ebd9bbfd9e0d9c22960e481fcf5e752430d81f24fdeca557921ea7bb8d00",
+      "sha256": "c94e3c3d0c93a895dda8e273c2c3fe1f9faafcbc3a9efc6bb1ae8dcc4c183f18",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexProcessQueuedCompletion.test.ts",
-      "sha256": "df28ebd9bbfd9e0d9c22960e481fcf5e752430d81f24fdeca557921ea7bb8d00",
+      "sha256": "c94e3c3d0c93a895dda8e273c2c3fe1f9faafcbc3a9efc6bb1ae8dcc4c183f18",
       "targets": []
     },
     {

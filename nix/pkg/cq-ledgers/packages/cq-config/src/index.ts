@@ -83,6 +83,7 @@ export type {
   DispatchTransportRouteRequest,
   DispatchTransportRoute,
   DispatchAdapterChildPort,
+  DispatchSettlementPort,
   DispatchAdapterLaunchContext,
   DispatchAdapterCompletion,
   DispatchAdapterAbortion,
@@ -115,6 +116,7 @@ export {
   createPiProcessDispatchAdapter,
   buildPositiveOnlyDispatchRegistry,
   runPreparedDispatch,
+  attestationServiceSettlement,
 } from "./dispatchTransportRouter.js";
 export type {
   NativeAdapterId,
