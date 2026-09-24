@@ -151,7 +151,8 @@ export const FETCH_DISPATCH_INPUT_INPUT = {
 } as const;
 
 export const STORE_RESULT_INPUT = {
-  resultCapability,
+  /** Omitted by a child whose ledger server binds the capability from its environment (G224). */
+  resultCapability: resultCapability.optional(),
   output: z.json(),
 } as const;
 

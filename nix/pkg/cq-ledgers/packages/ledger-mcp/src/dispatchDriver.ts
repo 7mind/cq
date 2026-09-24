@@ -1,0 +1,288 @@
+/**
+ * G224 / K331 / K332 — CQ-driven dispatch. The parent names a role and its
+ * typed input; this driver resolves the role's model from trusted
+ * configuration, prepares against the TARGET harness's prompt surface, launches
+ * through that harness's process adapter, and settles through the server's own
+ * dispatch capability. The parent never holds a capability and never launches.
+ *
+ * `start` returns as soon as the launch is underway; `await` is a bounded wait,
+ * so no MCP tool call has to outlive a host's tool timeout. `await` answers
+ * from this server's in-flight launch when there is one and otherwise from the
+ * durable attestation state, so a terminal dispatch stays observable across a
+ * server restart.
+ */
+
+import {
+  runPreparedDispatch,
+  type AttestationEnvelope,
+  type DispatchHandle,
+  type DispatchJSONValue,
+  type DispatchPreLaunchRejection,
+  type DispatchSettlementPort,
+  type DispatchTransportAdapterRegistry,
+  type Harness,
+  type NativeChildIdentity,
+  type ReviewerToken,
+  type RoutedDispatchResult,
+  type RoutedStagedCompletionQualifier,
+} from "@cq/config";
+import type { DispatchCapability, PrepareDispatchToolInput } from "@cq/ledger";
+
+/** Upper bound on one `await_dispatch` call, below every host's MCP tool timeout. */
+export const AWAIT_DISPATCH_MAX_WAIT_MS = 45_000;
+
+export type StartDispatchInput = Omit<PrepareDispatchToolInput, "expectedChild" | "surface"> & {
+  /** A panel or tier token the configuration makes dispatchable; defaults to the role's tier token. */
+  readonly model?: string;
+};
+
+export interface StartedDispatch {
+  readonly accepted: true;
+  readonly handle: DispatchHandle;
+  readonly route: {
+    readonly activeHarness: Harness;
+    readonly targetHarness: Harness;
+    readonly model: string;
+  };
+}
+
+export type StartDispatchOutcome = StartedDispatch | DispatchPreLaunchRejection;
+
+export interface AwaitDispatchInput extends DispatchHandle {
+  readonly waitMs: number;
+}
+
+export type AwaitDispatchOutcome =
+  | { readonly state: "running" }
+  | { readonly state: "queued" }
+  | { readonly state: "pending"; readonly lifecycle: string }
+  | { readonly state: "consumed"; readonly output: DispatchJSONValue }
+  | { readonly state: "aborted"; readonly reason: string; readonly details?: DispatchJSONValue }
+  | { readonly state: "unknown"; readonly lifecycle: string };
+
+/** One launch's harness-specific child correlation, minted before prepare binds it. */
+export interface PlannedDispatchLaunch {
+  readonly expectedChild: NativeChildIdentity;
+  /** Make the correlation available to the target adapter's binding resolver. */
+  bind(handle: DispatchHandle): void;
+  release(handle: DispatchHandle): void;
+}
+
+export interface DispatchLaunchPlanner {
+  plan(targetHarness: Harness, roleId: string): PlannedDispatchLaunch;
+}
+
+/** Resolves which token a role runs at; throws when a requested token is not dispatchable. */
+export type DispatchModelResolver = (roleId: string, requestedModel: string | undefined) => {
+  readonly token: ReviewerToken;
+  readonly formatted: string;
+};
+
+export interface DispatchDriverDeps {
+  readonly capability: DispatchCapability;
+  readonly readEnvelope: (handle: DispatchHandle) => Promise<AttestationEnvelope | undefined>;
+  /** The parent's harness: the prompt surface this server serves. */
+  readonly activeHarness: Harness;
+  readonly resolveModel: DispatchModelResolver;
+  readonly registry: DispatchTransportAdapterRegistry;
+  readonly planner: DispatchLaunchPlanner;
+  readonly qualifyStagedCompletion?: RoutedStagedCompletionQualifier;
+}
+
+export interface DispatchDriver {
+  start(input: StartDispatchInput): Promise<StartDispatchOutcome>;
+  await(input: AwaitDispatchInput): Promise<AwaitDispatchOutcome>;
+}
+
+export class DispatchDriverError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DispatchDriverError";
+  }
+}
+
+function handleKey(handle: DispatchHandle): string {
+  return `${handle.attestationId}:${String(handle.generation)}`;
+}
+
+function roleIdOf(input: StartDispatchInput): string {
+  if (input.roleId !== undefined) return input.roleId;
+  const refs = input.refs;
+  if (refs !== null && typeof refs === "object" && !Array.isArray(refs)) {
+    const roleId = (refs as Readonly<Record<string, unknown>>)["roleId"];
+    if (typeof roleId === "string" && roleId !== "") return roleId;
+  }
+  throw new DispatchDriverError("start_dispatch requires roleId or refs naming a roleId");
+}
+
+function withTargetSurface(input: StartDispatchInput, targetHarness: Harness): PrepareDispatchToolInput {
+  const { model: _model, ...prepare } = input;
+  if (prepare.refs === undefined) return { ...prepare, surface: targetHarness } as PrepareDispatchToolInput;
+  const refs = prepare.refs as Readonly<Record<string, unknown>>;
+  if (refs["surface"] !== undefined && refs["surface"] !== targetHarness) {
+    throw new DispatchDriverError(
+      `refs.surface ${JSON.stringify(refs["surface"])} does not match the role's configured harness ${JSON.stringify(targetHarness)}`,
+    );
+  }
+  return { ...prepare, refs: { ...refs, surface: targetHarness } } as PrepareDispatchToolInput;
+}
+
+function settlementThrough(
+  capability: DispatchCapability,
+  readEnvelope: DispatchDriverDeps["readEnvelope"],
+): DispatchSettlementPort {
+  return Object.freeze({
+    readEnvelope,
+    materializeInput: async (handle, inputCapability) =>
+      await capability.fetchInput({ ...handle, inputCapability }),
+    storeResult: async (resultCapability, output) =>
+      await capability.storeResult({ resultCapability, output }),
+    confirm: async (input) =>
+      await capability.confirmCompletion({
+        ...input.handle,
+        nativeCompletion: input.nativeCompletion,
+        expectedProvenance: input.expectedProvenance,
+      }),
+    abort: async (input) =>
+      await capability.abort({
+        ...input.handle,
+        reason: input.reason,
+        ...(input.details === undefined ? {} : { details: input.details }),
+      }),
+    fetch: async (handle) => await capability.fetch(handle),
+  } satisfies DispatchSettlementPort);
+}
+
+function settledOutcome(result: RoutedDispatchResult): AwaitDispatchOutcome {
+  if (result.outcome === "consumed") return { state: "consumed", output: result.output };
+  if (result.outcome === "queued") return { state: "queued" };
+  return {
+    state: "aborted",
+    reason: result.abort.reason,
+    ...(result.abort.details === undefined ? {} : { details: result.abort.details }),
+  };
+}
+
+export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
+  const settlement = settlementThrough(deps.capability, deps.readEnvelope);
+  const inFlight = new Map<string, Promise<AwaitDispatchOutcome>>();
+  const settled = new Map<string, AwaitDispatchOutcome>();
+
+  async function launch(
+    handle: DispatchHandle,
+    planned: PlannedDispatchLaunch,
+    request: Parameters<typeof runPreparedDispatch>[0],
+  ): Promise<AwaitDispatchOutcome> {
+    planned.bind(handle);
+    try {
+      return settledOutcome(await runPreparedDispatch(request, deps.registry, settlement));
+    } catch (error) {
+      // A launch that throws after prepare would otherwise leave the dispatch
+      // prepared until its deadline; settle it now with the cause.
+      const message = error instanceof Error ? error.message : String(error);
+      const aborted = await deps.capability.abort({
+        ...handle,
+        reason: "native-failure",
+        details: { source: "dispatch-driver", message },
+      });
+      return {
+        state: "aborted",
+        reason: aborted.reason,
+        ...(aborted.details === undefined ? {} : { details: aborted.details }),
+      };
+    } finally {
+      planned.release(handle);
+    }
+  }
+
+  async function durableOutcome(handle: DispatchHandle): Promise<AwaitDispatchOutcome> {
+    const fetched = await deps.capability.fetch(handle);
+    switch (fetched.state) {
+      case "consumed":
+        return { state: "consumed", output: fetched.output };
+      case "aborted":
+        return {
+          state: "aborted",
+          reason: fetched.reason,
+          ...(fetched.details === undefined ? {} : { details: fetched.details }),
+        };
+      case "output-already-materialized": {
+        if (deps.capability.observeEvidence === undefined) {
+          return { state: "unknown", lifecycle: fetched.state };
+        }
+        const evidence = await deps.capability.observeEvidence(handle);
+        return evidence.state === "consumed"
+          ? { state: "consumed", output: evidence.output }
+          : { state: "unknown", lifecycle: fetched.state };
+      }
+      case "prepared":
+      case "result-stored":
+      case "gate-pending":
+        return { state: "pending", lifecycle: fetched.state };
+      default:
+        return { state: "unknown", lifecycle: fetched.state };
+    }
+  }
+
+  return {
+    async start(input) {
+      const roleId = roleIdOf(input);
+      const { token, formatted } = deps.resolveModel(roleId, input.model);
+      const targetHarness = token.harness;
+      const planned = deps.planner.plan(targetHarness, roleId);
+      const outcome = await deps.capability.prepare({
+        ...withTargetSurface(input, targetHarness),
+        expectedChild: planned.expectedChild,
+      });
+      if (!outcome.accepted) return outcome;
+      const handle = outcome.handle;
+      const key = handleKey(handle);
+      const running = launch(handle, planned, {
+        prepared: outcome.prepared,
+        resolvedModel: token,
+        activeHarness: deps.activeHarness,
+        targetHarness,
+        // K331: a server can host only process adapters.
+        forceShellout: true,
+        ...(deps.qualifyStagedCompletion === undefined
+          ? {}
+          : { qualifyStagedCompletion: deps.qualifyStagedCompletion }),
+      }).then((result) => {
+        settled.set(key, result);
+        inFlight.delete(key);
+        return result;
+      });
+      inFlight.set(key, running);
+      return {
+        accepted: true,
+        handle,
+        route: { activeHarness: deps.activeHarness, targetHarness, model: formatted },
+      };
+    },
+
+    async await(input) {
+      if (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > AWAIT_DISPATCH_MAX_WAIT_MS) {
+        throw new DispatchDriverError(
+          `await_dispatch waitMs must be an integer within [0, ${AWAIT_DISPATCH_MAX_WAIT_MS}]`,
+        );
+      }
+      const handle = { attestationId: input.attestationId, generation: input.generation };
+      const key = handleKey(handle);
+      const known = settled.get(key);
+      if (known !== undefined) {
+        return known.state === "queued" ? await durableOutcome(handle) : known;
+      }
+      const running = inFlight.get(key);
+      if (running === undefined) return await durableOutcome(handle);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        running,
+        new Promise<AwaitDispatchOutcome>((resolve) => {
+          timer = setTimeout(() => resolve({ state: "running" }), input.waitMs);
+        }),
+      ]);
+      clearTimeout(timer);
+      return outcome.state === "queued" ? await durableOutcome(handle) : outcome;
+    },
+  };
+}

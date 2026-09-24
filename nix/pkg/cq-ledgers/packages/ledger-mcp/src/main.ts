@@ -36,6 +36,10 @@
  */
 
 import { readFile } from "node:fs/promises";
+import {
+  CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+  takeBoundResultCapability,
+} from "./boundResultCapability.js";
 import * as path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
@@ -1707,6 +1711,7 @@ export async function main(
     return;
   }
 
+  const boundResultCapability = takeBoundResultCapability(process.env);
   // Reject unsupported local configuration before opening persistent state.
   const resolved = await createEmbeddedStore(cwd);
   const store = resolved.store;
@@ -1731,8 +1736,17 @@ export async function main(
     environment: process.env,
     ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
   });
+  if (boundResultCapability !== undefined && dispatchRuntime.kind !== "available") {
+    throw new Error(
+      `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
+    );
+  }
   const dispatchCapability =
-    dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
+    dispatchRuntime.kind !== "available"
+      ? undefined
+      : boundResultCapability === undefined
+        ? dispatchRuntime.capability
+        : { ...dispatchRuntime.capability, boundResultCapability };
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
       ? createStandaloneImplementationEvidenceService({

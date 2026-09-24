@@ -2079,7 +2079,19 @@ export function createLedgerMcpToolSpecifications(
     STORE_RESULT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
-      return jsonResult(await dispatchCapability.storeResult(args));
+      const bound = dispatchCapability.boundResultCapability;
+      if (
+        bound !== undefined &&
+        args.resultCapability !== undefined &&
+        (args.resultCapability.scope !== bound.scope || args.resultCapability.token !== bound.token)
+      ) {
+        throw new Error("store_result: this server accepts only its bound result capability");
+      }
+      const resultCapability = args.resultCapability ?? bound;
+      if (resultCapability === undefined) {
+        throw new Error("store_result requires resultCapability on a server with no bound capability");
+      }
+      return jsonResult(await dispatchCapability.storeResult({ resultCapability, output: args.output }));
     },
   );
   const confirmDispatchCompletionTool = tool(

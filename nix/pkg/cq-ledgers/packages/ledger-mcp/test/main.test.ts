@@ -369,6 +369,79 @@ describe("ledger-mcp stdio binary", () => {
     );
   }, DISPATCH_PROCESS_CONTRACT_TIMEOUT_MS);
 
+  it("G224: a child-owned server stores with its environment-bound capability", async () => {
+    await withClient(
+      async (parent) => {
+        const expectedChild = { childId: "child-g224", runId: "run-g224" };
+        const prepared = decode<{
+          accepted: true;
+          prepared: {
+            attestationId: string;
+            generation: number;
+            resultCapability: { scope: "store-result"; token: string };
+            promptProvenance: { roleId: string; version: number; promptDigest: string; inputDigest: string };
+          };
+        }>(
+          await parent.callTool({
+            name: "prepare_dispatch",
+            arguments: {
+              roleId: "plan-advance",
+              input: {
+                goalId: "G224",
+                activeClaim: { goalId: "G224", claimId: "claim_G224_1", generation: 1, purpose: "initial" },
+                currentDraftIdentity: null,
+                latestReviewId: null,
+              },
+              idempotencyKey: "G224-bound-capability",
+              timeoutMs: 120_000,
+              expectedChild,
+            },
+          }),
+        );
+        expect(prepared.accepted).toBe(true);
+        const handle = {
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+        };
+
+        await withClient(
+          async (child) => {
+            const stored = decode<{ state: string }>(
+              await child.callTool({
+                name: "store_result",
+                arguments: { output: { mode: "default", action: "noop" } },
+              }),
+            );
+            expect(stored.state).toBe("result-stored");
+          },
+          {
+            CQ_PROMPT_ROOT: dispatchPromptRoot,
+            CQ_DISPATCH_RESULT_CAPABILITY: prepared.prepared.resultCapability.token,
+          },
+          ["--tool-profile", "plan-advance"],
+        );
+
+        const confirmed = decode<{ state: string }>(
+          await parent.callTool({
+            name: "confirm_dispatch_completion",
+            arguments: {
+              ...handle,
+              nativeCompletion: {
+                kind: "native-completion",
+                actor: "trusted-parent",
+                ...expectedChild,
+                completedAt: new Date().toISOString(),
+              },
+              expectedProvenance: prepared.prepared.promptProvenance,
+            },
+          }),
+        );
+        expect(confirmed.state).toBe("consumed");
+      },
+      { CQ_PROMPT_ROOT: dispatchPromptRoot },
+    );
+  }, DISPATCH_PROCESS_CONTRACT_TIMEOUT_MS);
+
   it("supports ack, compact, and full round-trips that persist", async () => {
     let ideaId = "";
     await withClient(async (client) => {

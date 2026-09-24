@@ -35,6 +35,8 @@ import type {
 export interface PrepareDispatchToolInput {
   readonly roleId?: string;
   readonly input?: DispatchJSONValue;
+  /** G224: the TARGET harness's prompt surface for an inline-input prepare (refs carry their own). */
+  readonly surface?: string;
   readonly refs?: unknown;
   readonly idempotencyKey: string;
   readonly timeoutMs: number;
@@ -248,6 +250,11 @@ export interface DispatchCapability {
     readonly workerDispatch: DispatchHandle;
     readonly cohort: CohortEffectEnvelopeV1;
   }): Promise<ParentGateCapability>;
+  /**
+   * G224: the one result capability a child-owned server was started with.
+   * `store_result` then stores with it, and refuses any other capability.
+   */
+  readonly boundResultCapability?: StoreResultToolInput["resultCapability"];
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;

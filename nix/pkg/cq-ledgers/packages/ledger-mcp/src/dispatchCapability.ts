@@ -364,6 +364,12 @@ async function withinStagingDeadline<T>(
 export interface DispatchCapabilityOptions {
   readonly backend: AttestationBackend;
   readonly promptArtifactStore: PromptArtifactStore;
+  /**
+   * G224: per-surface artifact stores for cross-harness dispatch. A prepare
+   * that requests a surface binds that surface's store; without one it binds
+   * `promptArtifactStore`, the server's own surface.
+   */
+  readonly targetPromptArtifactStores?: Readonly<Partial<Record<string, PromptArtifactStore>>>;
   readonly narrativeSource?: DispatchNarrativeSource;
   readonly now?: () => string;
   readonly randomBytes?: (count: number) => Uint8Array;
@@ -4313,6 +4319,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         roleId = input.roleId;
         dispatchInput = input.input;
+        requestedSurface = input.surface;
+      }
+      if (input.refs !== undefined && input.surface !== undefined) {
+        return rejectLaunch("surface", "a refs prepare names its surface in refs, not at top level");
       }
       const { refs: _refs, ...prepareAuthority } = input;
       const canonicalPrepareInput = {
@@ -4497,7 +4507,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
       }
 
-      const manifest = options.promptArtifactStore.readManifest();
+      const promptArtifactStore =
+        requestedSurface === undefined
+          ? options.promptArtifactStore
+          : (options.targetPromptArtifactStores?.[requestedSurface] ?? options.promptArtifactStore);
+      const manifest = promptArtifactStore.readManifest();
       const manifestSurface = manifest.promptSurface;
       if (manifestSurface === undefined) {
         throw new Error("prepare_dispatch requires an attested prompt surface");
@@ -4532,7 +4546,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       // Resolve the catalog artifact only after the role/input/overlay boundary
       // has produced a typed acceptance. Unknown roles therefore never escape
       // as artifact lookup errors.
-      const artifact = options.promptArtifactStore.readRole(roleId);
+      const artifact = promptArtifactStore.readRole(roleId);
       const promptDigest = artifact.metadata.promptDigest;
       const catalogHash = manifest.catalogHash;
       const artifactSurface = artifact.metadata.promptSurface;
