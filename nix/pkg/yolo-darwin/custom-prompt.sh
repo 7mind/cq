@@ -1,1 +1,0 @@
-../yolo/custom-prompt.sh

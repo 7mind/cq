@@ -1,21 +1,15 @@
 # cq
 
-One flake, two products:
-
-1. **ledger-suite** — SQLite-backed _ledgers_: an MCP server plus terminal
-   and browser frontends for browsing and editing them.
-2. **LLM coding-agent harness** — a portable home-manager module
-   (`homeManagerModules.dev-llm`) that configures Claude Code, Codex and Pi,
-   the `yolo` sandbox (bubblewrap on Linux, Seatbelt on macOS), a shared MCP
-   registry, and the prompt/skill asset bundles they share.
-
-The two are independent: consume the ledger products on their own, the harness
-module on its own, or both.
+This flake packages the ledger suite: an MCP server plus terminal and browser
+frontends. The coding-agent packages, settings, and `yolo` sandbox live in the
+separate [ponygirls](https://github.com/7mind/ponygirls) flake. CQ imports it
+and adds the ledger MCP server and CQ prompt assets through
+`homeManagerModules.dev-llm`.
 
 ## Repository layout
 
 ```
-flake.nix                     # all outputs (packages, apps, devShell, module, llmAssets)
+flake.nix                     # ledger outputs and ponygirls integration
 nix/
   pkg/
     cq-ledgers/               # the Bun/TypeScript ledger workspace (run `bun` here)
@@ -23,14 +17,8 @@ nix/
       package.json bun.lock tsconfig*.json …
       examples/sample-ledger/ # ready-made dataset
     cq-assets/                # ledger's contributed LLM assets (assets.nix, commands/, agents/)
-    yolo/ yolo-darwin/       # Linux bubblewrap and macOS Seatbelt wrappers
-    llm-skills/               # SKILL.md set + meta.yaml validation
-    llm-contexts/             # general-context.md + pi-context.md
-    claude-code/ codex/       # vendored agent CLIs (pinned releases)
-    pi-coding-agent/ pi-extensions/
-    reattach-llm/
-  hm/                         # home-manager modules: dev-llm.nix, programs-pi.nix
-  lib/                        # mk-agent-harness.nix (harness module factory)
+    pi-extensions/            # CQ-specific Pi dispatch and status extensions
+  lib/                        # CQ prompt and integration checks
 docs/                         # operator documentation and historical research
 ```
 
@@ -179,10 +167,12 @@ effects; it is not a primary ledger backend. Remote checkouts use
 
 # LLM coding-agent harness
 
-`homeManagerModules.dev-llm` is a portable home-manager module — curried over
-this flake's own `inputs` and `self` — that sets up the Claude Code / Codex /
-Pi coding agents, the platform `yolo` sandbox, a shared `programs.mcp` registry
-(codegraph + ledger), and the merged prompt/skill/command/agent asset bundles.
+`homeManagerModules.dev-llm` composes the ponygirls Home Manager module with
+CQ's ledger package and prompt assets. The ponygirls module also works on its
+own, without CQ. The composed module sets up Claude Code, Codex, Pi, the
+platform `yolo` sandbox, and a shared `programs.mcp` registry (codegraph and
+ledger).
+
 Any local-model (ollama) provider config is deliberately **left to the
 consumer**.
 
@@ -198,6 +188,11 @@ inputs.cq.url = "github:7mind/cq";
 imports = [ inputs.cq.homeManagerModules.dev-llm ];
 smind.hm.dev.llm.enable = true;
 ```
+
+For the agents and sandbox without CQ, import
+`inputs.ponygirls.homeManagerModules.dev-llm` from
+`github:7mind/ponygirls` instead. Both modules use the same
+`smind.hm.dev.llm` option namespace.
 
 Host/hardware facts the module cannot infer are surfaced as plain options the
 consumer wires from its own system config:
@@ -218,7 +213,7 @@ Other modules can append their own `assetBundles` (same shape as
 `smind.hm.dev.llm.merged.{skills,commands,agents,memoryText}` for sibling
 modules to reuse.
 
-The harness building blocks are also exposed as individual packages —
+The harness building blocks are exposed by ponygirls as individual packages —
 `packages.<system>.{claude-code,codex,pi-coding-agent,llm-skills,llm-contexts}`
 plus Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — so they can be built
 or consumed directly.
@@ -338,7 +333,6 @@ dependencies. After changing dependencies (and `bun.lock`), refresh its
 Outputs:
 
 - `packages.{cq,node-modules}` + `apps.{default,cq}` (default is `cq mcp`).
-- `packages.{claude-code,codex,pi-coding-agent,codegraph,llm-skills,llm-contexts,llm-context-with-env}` plus platform-specific Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — harness building blocks.
-- `homeManagerModules.dev-llm` — the coding-agent harness module.
+- `homeManagerModules.dev-llm` — ponygirls with CQ's ledger and prompts.
 - `nixosModules.cq-server` — runs `cq serve` over a native, tuned PostgreSQL.
 - `llmAssets` — the ledger's system-agnostic prompt/skill asset bundle.

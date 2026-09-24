@@ -1,5 +1,5 @@
 {
-  description = "cq — markdown-backed ledger suite (MCP + TUI/web) and a portable LLM coding-agent harness (Claude/Codex/Pi + yolo)";
+  description = "cq — markdown-backed ledger suite (MCP + TUI/web)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,24 +14,11 @@
     # This rev is the one this flake tracked before df88248c8 bumped it.
     nixpkgs-bun.url = "github:NixOS/nixpkgs/eaad089433ca2bb662274377d33df3d0e51ef28b";
     flake-utils.url = "github:numtide/flake-utils";
-
-    # LLM coding-agent harness dependencies, consumed by
-    # homeManagerModules.dev-llm (the extracted Claude/Codex/Pi + yolo setup).
-    # CodeGraph — semantic code-intelligence MCP server (colbymchenry/codegraph).
-    # Upstream ships NO nix support, so `flake = false` (source only) tracking
-    # `main` (the lock pins the rev); we vendor the build
-    # (nix/pkg/codegraph/package.nix) with THIS flake's nixpkgs.
-    # `nix flake update codegraph` to advance main.
-    codegraph = {
-      url = "github:colbymchenry/codegraph";
-      flake = false;
+    ponygirls = {
+      url = "github:7mind/ponygirls";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
     };
-    openai-codex-plugin = {
-      url = "github:openai/codex-plugin-cc";
-      flake = false;
-    };
-    # Darwin sandbox wrapper for claude-code (Linux uses the bubblewrap yolo).
-    claude-code-sandbox.url = "github:neko-kai/claude-code-sandbox";
   };
 
   outputs = inputs@{ self, nixpkgs, flake-utils, ... }:
@@ -108,8 +95,11 @@
           lib = pkgs.lib;
           inherit
             pkgs
-            mkCodexCommandSkills
+          mkCodexCommandSkills
             ;
+          codexModule = import (inputs.ponygirls.outPath + "/nix/hm/codex.nix") {
+            cqSource = ./.;
+          };
           catalog = llmAssets.catalog;
           commands = llmAssets.commands;
           promptRoot = codexPromptRoot;
@@ -152,7 +142,11 @@
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
           inherit pkgs claudePromptRoot;
-          claudeModule = import ./nix/hm/claude.nix { inherit inputs self; };
+          claudeModule = import (inputs.ponygirls.outPath + "/nix/hm/claude.nix") {
+            inputs = inputs.ponygirls.inputs;
+            cq = self;
+            cqSource = ./.;
+          };
         };
         globalCqConfigHomeTest = import ./nix/lib/global-cq-config-home-test.nix {
           lib = pkgs.lib;
@@ -170,8 +164,11 @@
         piPromptRootTest = import ./nix/lib/pi-prompt-root-test.nix {
           lib = pkgs.lib;
           inherit pkgs piPromptRoot;
+          piModule = import (inputs.ponygirls.outPath + "/nix/hm/pi.nix") {
+            cqSource = ./.;
+          };
         };
-        piCodingAgent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+        piCodingAgent = inputs.ponygirls.packages.${system}.pi-coding-agent;
 
         packagedPromptSurfaceVerifierSource =
           let
@@ -677,7 +674,7 @@ EOF
             "$WORKSPACE/packages/ledger-web/node_modules/@cq/config"
         '';
 
-        codexPackage = pkgs.callPackage ./nix/pkg/codex/package.nix { };
+        codexPackage = inputs.ponygirls.packages.${system}.codex;
         substitutedCodexRole = pkgs.writeShellScriptBin "cq-codex-role" "exit 0";
 
         # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
@@ -1082,53 +1079,9 @@ EOF
           # Expose for debugging / hash refresh.
           node-modules = bunNodeModules;
 
-          # ── LLM coding-agent harness support packages ──────────────── #
-          # The building blocks of homeManagerModules.dev-llm, exposed so
-          # consumers (and CI) can build them directly.
-          # llm-skills: the validated SKILL.md set (also carries $out/skills).
-          llm-skills = (pkgs.callPackage ./nix/pkg/llm-skills/default.nix { }).package;
-          # llm-contexts: the general + Pi context fragments as files.
-          llm-contexts = (pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { }).package;
-          # llm-context-with-env: general context + the environment skill folded
-          # in, for skill-less agents (consumers that can't load SKILL.md trees).
-          # The file IS the store path; referencing llm-skills.package keeps
-          # meta.yaml validation in the consumer's build graph.
-          llm-context-with-env =
-            let
-              skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
-              contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
-            in
-            pkgs.runCommandLocal "context-with-env.md" { } ''
-              : "${skills.package}" # pull skill validation into the build graph
-              cp ${pkgs.writeText "context-with-env-body" (contexts.general + "\n\n" + skills.environmentContent)} "$out"
-            '';
-          claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
-          codex = codexPackage;
-          pi-coding-agent = piCodingAgent;
           claude-prompt-root = claudePromptRoot;
           codex-prompt-root = codexPromptRoot;
           pi-prompt-root = piPromptRoot;
-          # CodeGraph — vendored from its `main` source (flake = false input),
-          # built with our nixpkgs. platforms.unix -> builds on linux + darwin.
-          codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix {
-            src = inputs.codegraph;
-          };
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          # ── Linux-only harness packages ────────────────────────────── #
-          # yolo execs bubblewrap + nix-ld (Linux-only); the standalone
-          # reattach-llm declares meta.platforms = linux. Excluded on macOS,
-          # where the Darwin claude-code sandbox rides via claude-code-sandbox.
-          reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
-          # yolo builds its internal llm-sandbox helper itself. codegraph is no
-          # longer a package input — it rides in via sandboxPackages (wired by
-          # the home-manager module), so the bare package needs no args.
-          yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-          # Darwin uses Seatbelt via claude-code-sandbox; Linux uses bwrap above.
-          yolo-darwin = pkgs.callPackage ./nix/pkg/yolo-darwin/default.nix {
-            claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
-          };
-          yolo = self.packages.${system}.yolo-darwin;
         };
 
         # Deterministic launcher/policy checks run on every build system. A live
@@ -1265,8 +1218,8 @@ EOF
                 while IFS= read -r testPath; do
                   set -- "$@" "$testPath"
                 done < "$testManifest"
-                if [ "$#" -ne 11 ]; then
-                  echo "expected eleven Pi extension test arguments, got $#" >&2
+                if [ "$#" -ne 10 ]; then
+                  echo "expected ten CQ Pi extension test arguments, got $#" >&2
                   exit 1
                 fi
                 set -x
@@ -1290,7 +1243,7 @@ EOF
                     pkgs.jq
                     pkgs.git
                     pkgs.python3
-                    self.packages.${system}.codegraph
+                    inputs.ponygirls.packages.${system}.codegraph
                     # Confinement/lifecycle/hook suites: nested-bubblewrap probe,
                     # mount-namespace fixtures, real tmux for the private server,
                     # and the procps tools the lifecycle suite measures with.
@@ -1306,7 +1259,7 @@ EOF
                   ];
                 }
                 ''
-                  cp -r ${./nix/pkg/yolo} yolo
+                  cp -r ${inputs.ponygirls.outPath + "/nix/pkg/yolo"} yolo
                   chmod -R u+w yolo
                   cd yolo
                   shellcheck --severity=warning custom-prompt.sh yolo.sh llm-sandbox.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh llm-sandbox-test.sh clipboard-confinement-test.sh clipboard-proxy-test.sh clipboard-proxy-lifecycle-test.sh clipboard-proxy-hook-test.sh
@@ -1315,7 +1268,7 @@ EOF
                   bash llm-sandbox-test.sh
                   echo "yolo-profile: profile suites passed"
 
-                  PROXY=${self.packages.${system}.yolo.passthru.clipboardProxy}/bin/yolo-clipboard-proxy
+                  PROXY=${inputs.ponygirls.packages.${system}.yolo.passthru.clipboardProxy}/bin/yolo-clipboard-proxy
                   bash clipboard-proxy-test.sh "$PROXY"
                   echo "yolo-profile: framing suite passed"
                   bash clipboard-proxy-lifecycle-test.sh "$PROXY"
@@ -1343,15 +1296,15 @@ EOF
                   nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.python3 ];
                 }
                 ''
-                  cp -r ${./nix/pkg/yolo} yolo
-                  cp -r ${./nix/pkg/yolo-darwin} yolo-darwin
+                  cp -r ${inputs.ponygirls.outPath + "/nix/pkg/yolo"} yolo
+                  cp -r ${inputs.ponygirls.outPath + "/nix/pkg/yolo-darwin"} yolo-darwin
                   chmod -R u+w yolo-darwin
                   cd yolo-darwin
                   shellcheck ../yolo/custom-prompt.sh yolo-darwin.sh profile-test.sh
-                  grep -Fq '"/.config/mcp"' ${inputs.claude-code-sandbox}/noread.sb
-                  grep -Fq '"/.config/direnv"' ${inputs.claude-code-sandbox}/noread.sb
-                  grep -Fq '"/.local/share/direnv"' ${inputs.claude-code-sandbox}/noread.sb
-                  grep -Fq '"/.direnvrc"' ${inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.config/mcp"' ${inputs.ponygirls.inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.config/direnv"' ${inputs.ponygirls.inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.local/share/direnv"' ${inputs.ponygirls.inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.direnvrc"' ${inputs.ponygirls.inputs.claude-code-sandbox}/noread.sb
                   bash profile-test.sh
                   touch $out
                 '';
@@ -2278,7 +2231,7 @@ PY
       # its own local-model provider config.
       homeManagerModules.dev-llm = {
         imports = [
-          (import ./nix/hm/dev-llm.nix { inherit inputs self; })
+          (inputs.ponygirls.lib.mkDevLlm { cq = self; cqSource = ./.; })
         ];
       };
 

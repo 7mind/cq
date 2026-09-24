@@ -2,12 +2,13 @@
   lib,
   pkgs,
   piPromptRoot,
+  piModule,
 }:
 let
   evaluatedPiModule = lib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = [
-      ../hm/pi.nix
+      piModule
       (
         { lib, ... }:
         {

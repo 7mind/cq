@@ -5,7 +5,11 @@
   self,
 }:
 let
-  toolsModule = import ../hm/tools.nix { inherit inputs self; };
+  toolsModule = import (inputs.ponygirls.outPath + "/nix/hm/tools.nix") {
+    inputs = inputs.ponygirls.inputs;
+    cq = self;
+    cqSource = ../..;
+  };
   configBody = ''
     reviewers = ["reviewer-a", "reviewer-b"]
   '';

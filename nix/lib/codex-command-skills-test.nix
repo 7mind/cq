@@ -6,6 +6,7 @@
   promptRoot,
   mkCodexCommandSkills,
   ledgerMcpRegistration,
+  codexModule,
 }:
 let
   command =
@@ -164,7 +165,7 @@ let
   evaluatedCodexModule = homeManagerTestLib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = [
-      ../hm/codex.nix
+      codexModule
       (
         { lib, ... }:
         {

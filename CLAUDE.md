@@ -9,8 +9,9 @@ state, not a checkout backend. Frontends access either through MCP.
 
 The Bun workspace lives under `nix/pkg/cq-ledgers/` (run the `bun` commands
 below from there); the contributed LLM assets live under `nix/pkg/cq-assets/`.
-The repo root holds only the flake plus the migrated coding-agent harness
-under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
+The reusable coding-agent packages, Home Manager settings, and yolo sandbox
+live in the sibling `ponygirls` flake. CQ imports that flake and supplies its
+ledger package, prompt assets, and Pi extensions.
 
 ## Build / test / check
 
