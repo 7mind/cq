@@ -1,15 +1,23 @@
 /**
- * G224 / K332 — the server-side `pi:process` launch protocol. It follows the
- * Pi surface's held contract: the child receives its complete typed input as
- * the task and returns one fenced `json` block, and the trusted SERVER plays
- * the parent's part, materializing the input and storing the result. The child
- * therefore needs no ledger tool and never sees a capability; `--tools` is a
- * positive list of Pi built-ins minus the role's attested denials, which also
- * keeps `dispatch_agent` and every ledger tool out of reach.
+ * G224 / K332 — the server-side `pi:process` launch protocol.
+ *
+ * A server-settled child receives its complete typed input as the task and
+ * returns one fenced `json` block; the trusted SERVER plays the parent's part,
+ * materializing the input and storing the result, so the child needs no ledger
+ * tool and never sees a capability.
+ *
+ * A child-stored child (D544: a role whose body stores its own result) instead
+ * loads the CQ Pi extension, which connects it to its own dispatch-scoped
+ * ledger server; it retrieves its input, stores its result, and replies with
+ * the dispatch handle only.
+ *
+ * Either way `--tools` is a positive list: Pi built-ins minus the role's
+ * attested denials, plus exactly the ledger tools the extension registers,
+ * which keeps `dispatch_agent` out of reach.
  */
 
 import { attestedDisallowedTools } from "./claudeRoleToolPolicy.js";
-import type { DispatchJSONValue } from "./compactDispatchProtocol.js";
+import type { DispatchHandle, DispatchJSONValue } from "./compactDispatchProtocol.js";
 import type { ReviewerToken } from "./types.js";
 
 export const PI_DISPATCH_BUILTIN_TOOLS = Object.freeze(["read", "grep", "find", "bash", "edit", "write"] as const);
@@ -33,6 +41,8 @@ export interface PiChildLaunch {
   readonly piExecutable: string;
   readonly token: ReviewerToken;
   readonly tools: readonly string[];
+  /** Extensions the child loads explicitly (`-e`); empty for a server-settled child. */
+  readonly extensionPaths: readonly string[];
   readonly rolePromptFile: string;
   readonly task: string;
 }
@@ -46,6 +56,7 @@ export function piChildArgv(launch: PiChildLaunch): readonly string[] {
     "--provider", launch.token.provider, "--model", launch.token.model,
     ...(launch.token.effort === null || launch.token.effort === undefined ? [] : ["--thinking", launch.token.effort]),
     "--tools", launch.tools.join(","),
+    ...launch.extensionPaths.flatMap((extensionPath) => ["-e", extensionPath]),
     "--append-system-prompt", launch.rolePromptFile,
     launch.task,
   ]);
@@ -93,5 +104,31 @@ export function piChildResult(finalText: string): DispatchJSONValue {
     return JSON.parse(last[1]!) as DispatchJSONValue;
   } catch {
     throw new PiChildResultError("the Pi child's fenced json result is not valid JSON");
+  }
+}
+
+/**
+ * A child-stored child's completion: its final text is exactly the dispatch
+ * handle, as raw JSON or as its last fenced `json` block.
+ */
+export function piChildHandleReply(finalText: string, expected: DispatchHandle): void {
+  const trimmed = finalText.trim();
+  let reply: unknown;
+  try {
+    reply = JSON.parse(trimmed) as unknown;
+  } catch {
+    reply = piChildResult(trimmed);
+  }
+  if (
+    reply === null ||
+    typeof reply !== "object" ||
+    Array.isArray(reply) ||
+    Object.keys(reply).sort().join(",") !== "attestationId,generation"
+  ) {
+    throw new PiChildResultError("the Pi child's final reply is not exactly the dispatch handle");
+  }
+  const handle = reply as Record<string, unknown>;
+  if (handle["attestationId"] !== expected.attestationId || handle["generation"] !== expected.generation) {
+    throw new PiChildResultError("the Pi child replied with another dispatch's handle");
   }
 }

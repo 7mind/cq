@@ -38,23 +38,6 @@ import {
   decideClaudeCompletion,
   type ClaudeChildCorrelation,
 } from "./claudeDispatchProtocol.js";
-import {
-  CodexBrokeredStoreResultError,
-  CodexParentGateAbortedError,
-  CodexParentGateRejectedError,
-  CodexRoleBoundaryError,
-  CodexOperationalAbstentionError,
-  createCodexRoleBoundaryPlan,
-  executeCodexRoleBoundary,
-  type CodexRoleBoundaryRequest,
-  type CodexRoleSandboxMode,
-} from "./codexRoleBoundary.js";
-import {
-  CODEX_FALLBACK_DELIVERY_MODE,
-  codexLaunchGate,
-  decideCodexCompletion,
-  type CodexChildCorrelation,
-} from "./codexDispatchProtocol.js";
 import { isEffort, type ActiveHarness, type Harness, type ReviewerToken } from "./types.js";
 import {
   NativeAdapterIncompatibilityError,
@@ -326,232 +309,6 @@ export function createClaudeProcessDispatchAdapter(
       handleOnlyEnforcement: decision.handleOnlyEnforcement,
     };
   });
-}
-
-export interface CodexProcessAdapterBoundary {
-  readonly roleInstructions: string;
-  readonly cwd: string;
-  readonly ledgerCwd: string;
-  readonly model: string;
-  readonly reasoningEffort: string;
-  readonly sandboxMode: CodexRoleSandboxMode;
-  readonly promptRoot: string;
-  readonly ledgerCommand: string;
-  readonly codexExecutable: string;
-}
-
-export interface CodexProcessAdapterBinding {
-  readonly boundary: CodexProcessAdapterBoundary;
-  readonly correlation: CodexChildCorrelation;
-  readonly now: () => string;
-}
-
-export type CodexProcessAdapterBindingResolver = (
-  context: DispatchAdapterLaunchContext,
-) => CodexProcessAdapterBinding | Promise<CodexProcessAdapterBinding>;
-
-export function createCodexProcessDispatchAdapter(
-  effectAdmissionProvider: WorksetEffectAdmissionProvider,
-  resolve: CodexProcessAdapterBindingResolver,
-): DispatchTransportAdapter {
-  return createAdapter("codex", "process", async (context) => {
-    const binding = await resolve(context);
-    if (binding.boundary.model !== context.resolvedModel.model) {
-      throw new DispatchTransportRoutingError(
-        `Codex process model ${JSON.stringify(binding.boundary.model)} does not match resolved model ${JSON.stringify(context.resolvedModel.model)}`,
-      );
-    }
-    if (
-      context.resolvedModel.effort !== undefined &&
-      context.resolvedModel.effort !== null &&
-      binding.boundary.reasoningEffort !== context.resolvedModel.effort
-    ) {
-      throw new DispatchTransportRoutingError(
-        `Codex process effort ${JSON.stringify(binding.boundary.reasoningEffort)} does not match resolved effort ${JSON.stringify(context.resolvedModel.effort)}`,
-      );
-    }
-    const gate = codexLaunchGate(context.prepared, binding.now());
-    if (!gate.launch) {
-      return {
-        outcome: "aborted",
-        reason: gate.abortReason,
-        details: { refusal: gate.refusal, detail: gate.detail },
-      };
-    }
-    const handle = handleOf(context.prepared);
-    const promptDigest = new Bun.CryptoHasher("sha256")
-      .update(binding.boundary.roleInstructions)
-      .digest("hex");
-    if (promptDigest !== context.prepared.promptProvenance.promptDigest) {
-      throw new DispatchTransportRoutingError(
-        `Codex role instructions digest ${JSON.stringify(promptDigest)} does not match prepared ` +
-          `digest ${JSON.stringify(context.prepared.promptProvenance.promptDigest)}`,
-      );
-    }
-    const request: CodexRoleBoundaryRequest = {
-      ...binding.boundary,
-      roleId: context.prepared.promptProvenance.roleId,
-      handle,
-      inputCapability: context.prepared.inputCapability,
-      resultCapability: context.prepared.resultCapability,
-      ...(context.prepared.parentGateCapability === undefined
-        ? {}
-        : { parentGateCapability: context.prepared.parentGateCapability }),
-      ...(context.prepared.gitChangeCapability === undefined
-        ? {}
-        : { gitChangeCapability: context.prepared.gitChangeCapability }),
-      ...(context.prepared.gitConflictCapability === undefined
-        ? {}
-        : { gitConflictCapability: context.prepared.gitConflictCapability }),
-      timeoutMs: gate.childWindowMs,
-    };
-    const plan = createCodexRoleBoundaryPlan(request);
-    try {
-      const observed = await executeCodexRoleBoundary(
-        plan,
-        binding.correlation.correlationId,
-        undefined,
-        {
-          provider: effectAdmissionProvider,
-          targetRef: context.effectTargetRef,
-        },
-      );
-      if (observed.observation.exitStatus !== 0) {
-        return {
-          outcome: "aborted",
-          reason: "native-failure",
-          details: {
-            source: "codex-role-boundary",
-            outcome: observed.observation.outcome,
-            exitStatus: observed.observation.exitStatus,
-          },
-        };
-      }
-      const observedAt = binding.now();
-      const decision = decideCodexCompletion({
-        handle,
-        expectedChild: binding.correlation,
-        observation: {
-          source: "transport",
-          mode: CODEX_FALLBACK_DELIVERY_MODE,
-          agentType: observed.observation.agentType,
-          correlationId: observed.observation.correlationId,
-          // Fresh `codex exec` runs mint their own child thread; completion stays bound to this parent-minted run identity.
-          threadId: binding.correlation.threadId,
-          outcome: observed.observation.outcome,
-          exitStatus: observed.observation.exitStatus,
-          finalMessage: JSON.stringify(observed.handle),
-          observedAt,
-        },
-      });
-      if (decision.action === "abort") {
-        return { outcome: "aborted", reason: decision.reason, details: decision.details };
-      }
-      return {
-        outcome: "completed",
-        handle: observed.handle,
-        nativeCompletion: decision.nativeCompletion,
-        handleOnlyEnforcement: "structural",
-      };
-    } catch (error) {
-      return codexProcessBoundaryFailure(error, "codex:process");
-    }
-  });
-}
-
-function codexProcessBoundaryFailure(
-  error: unknown,
-  adapterId: "codex:process",
-): DispatchAdapterAbortion {
-  const boundaryError = findCodexRoleBoundaryError(error);
-  if (
-    boundaryError instanceof CodexBrokeredStoreResultError &&
-    boundaryError.outcome === "typed-abort" &&
-    boundaryError.abortReason !== undefined
-  ) {
-    return {
-      outcome: "aborted",
-      reason: boundaryError.abortReason,
-      storeResultAbortReason: boundaryError.abortReason,
-    };
-  }
-  if (boundaryError instanceof CodexParentGateRejectedError) {
-    return {
-      outcome: "aborted",
-      reason: boundaryError.reason,
-      storeResultAbortReason: boundaryError.reason,
-    };
-  }
-  if (boundaryError instanceof CodexParentGateAbortedError) {
-    return {
-      outcome: "aborted",
-      reason: boundaryError.reason,
-      storeResultAbortReason: boundaryError.reason,
-      ...(boundaryError.details === undefined ? {} : { details: boundaryError.details }),
-    };
-  }
-  if (boundaryError instanceof CodexOperationalAbstentionError) {
-    return {
-      outcome: "aborted",
-      reason: "operational-abstention",
-      details: {
-        adapterId,
-        source: boundaryError.operationalAbstention.source,
-        verdict: boundaryError.operationalAbstention.verdict,
-        message: boundaryError.message,
-      },
-    };
-  }
-  if (boundaryError?.diagnostic !== undefined) {
-    return {
-      outcome: "aborted",
-      reason: "protocol-violation",
-      details: {
-        source: "codex-role-boundary",
-        verdict: boundaryError.diagnostic.verdict,
-        detailCode: boundaryError.diagnostic.detailCode,
-      },
-    };
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/child exceeded .* ms window/u.test(message)) {
-    return {
-      outcome: "aborted",
-      reason: "deadline-exceeded",
-      details: { source: "codex-role-boundary", message },
-    };
-  }
-  if (/wrapper received SIG(?:INT|TERM)/u.test(message)) {
-    return {
-      outcome: "aborted",
-      reason: "cancelled",
-      details: { source: "codex-role-boundary", message },
-    };
-  }
-  return {
-    outcome: "aborted",
-    reason: "native-failure",
-    details: { source: "codex-role-boundary", message },
-  };
-}
-
-function findCodexRoleBoundaryError(error: unknown): CodexRoleBoundaryError | undefined {
-  if (error instanceof CodexRoleBoundaryError) return error;
-  if (error instanceof AggregateError) {
-    let fallback: CodexRoleBoundaryError | undefined;
-    for (const nested of error.errors) {
-      const found = findCodexRoleBoundaryError(nested);
-      if (
-        found instanceof CodexParentGateRejectedError ||
-        found instanceof CodexParentGateAbortedError
-      ) {
-        return found;
-      }
-      fallback ??= found;
-    }
-    return fallback;
-  }
-  return undefined;
 }
 
 /** Lifecycle-conformant target-Pi process seam; T1632 supplies its launcher. */
@@ -866,6 +623,30 @@ async function adapterAbort(
   });
 }
 
+/**
+ * D546: a child whose own dispatch-scoped store recorded a typed abort has
+ * already settled the envelope; that abort is authoritative, so the router
+ * returns it rather than aborting again or confirming a completion.
+ */
+async function childSettledAbort(
+  route: DispatchTransportRoute,
+  adapter: DispatchTransportAdapter,
+  handle: DispatchHandle,
+  settlement: DispatchSettlementPort,
+): Promise<RoutedDispatchAborted | undefined> {
+  const row = await settlement.readEnvelope(handle);
+  if (row?.state !== "aborted") return undefined;
+  const abort = await settlement.fetch(handle);
+  if (abort.state !== "aborted") return undefined;
+  return Object.freeze({
+    outcome: "aborted" as const,
+    route,
+    adapterId: adapter.id,
+    handle,
+    abort,
+  });
+}
+
 async function reconcileStoreResultAbort(
   route: DispatchTransportRoute,
   adapter: DispatchTransportAdapter,
@@ -1101,7 +882,10 @@ export async function runPreparedDispatch(
           settlement,
         );
       }
-      return await adapterAbort(route, adapter, handle, result.reason, result.details, settlement);
+      return (
+        (await childSettledAbort(route, adapter, handle, settlement)) ??
+        (await adapterAbort(route, adapter, handle, result.reason, result.details, settlement))
+      );
     }
     assertCompletionShape(result, route, handle);
   } catch (error) {
@@ -1116,6 +900,15 @@ export async function runPreparedDispatch(
     throw new DispatchTransportRoutingError(
       `completed dispatch ${handle.attestationId}/${handle.generation} has no live envelope`,
     );
+  }
+  if (staged.state === "aborted") {
+    const settled = await childSettledAbort(route, adapter, handle, settlement);
+    if (settled === undefined) {
+      throw new DispatchTransportRoutingError(
+        `completed dispatch ${handle.attestationId}/${handle.generation} read aborted but fetched otherwise`,
+      );
+    }
+    return settled;
   }
   if (staged.state === "gate-pending") {
     if (

@@ -8,6 +8,7 @@ import {
   PiChildResultError,
   piChildArgv,
   piChildFinalText,
+  piChildHandleReply,
   piChildResult,
   piDispatchBuiltinTools,
 } from "../src/piProcessDispatch.js";
@@ -55,6 +56,7 @@ describe("piChildArgv", () => {
         piExecutable: "pi",
         token: { harness: "pi", provider: "xai", model: "grok-4.6", effort: "high" },
         tools: ["read", "grep"],
+        extensionPaths: [],
         rolePromptFile: "/tmp/role.md",
         task: "{\"taskId\":\"T1\"}",
       }),
@@ -72,10 +74,25 @@ describe("piChildArgv", () => {
       piExecutable: "pi",
       token: { harness: "pi", provider: "xai", model: "grok-4.6", effort: null },
       tools: ["read"],
+      extensionPaths: [],
       rolePromptFile: "/tmp/role.md",
       task: "{}",
     });
     expect(argv).not.toContain("--thinking");
+  });
+
+  test("loads each explicit extension with -e, after the tool allowlist", () => {
+    const argv = piChildArgv({
+      piExecutable: "pi",
+      token: { harness: "pi", provider: "openai-codex", model: "gpt-6-luna", effort: null },
+      tools: ["read", "store_result"],
+      extensionPaths: ["/cq/piChildLedgerExtension.ts"],
+      rolePromptFile: "/tmp/role.md",
+      task: "{}",
+    });
+    expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--append-system-prompt"))).toEqual([
+      "--tools", "read,store_result", "-e", "/cq/piChildLedgerExtension.ts",
+    ]);
   });
 });
 
@@ -101,5 +118,25 @@ describe("piChildFinalText and piChildResult", () => {
 
   test("a fenced block that is not JSON is a typed failure", () => {
     expect(() => piChildResult("```json\n{not json}\n```")).toThrow(PiChildResultError);
+  });
+});
+
+describe("piChildHandleReply", () => {
+  const handle = { attestationId: "att_1", generation: 2 };
+
+  test("accepts the exact handle as raw JSON or as the last fenced json block", () => {
+    expect(() => piChildHandleReply(' {"attestationId":"att_1","generation":2}\n', handle)).not.toThrow();
+    expect(() => piChildHandleReply('stored.\n```json\n{"generation":2,"attestationId":"att_1"}\n```', handle)).not.toThrow();
+  });
+
+  test("a reply that carries anything besides the handle is a typed failure", () => {
+    expect(() => piChildHandleReply('{"attestationId":"att_1","generation":2,"status":"pass"}', handle))
+      .toThrow(PiChildResultError);
+    expect(() => piChildHandleReply("done", handle)).toThrow(PiChildResultError);
+  });
+
+  test("another dispatch's handle is a typed failure", () => {
+    expect(() => piChildHandleReply('{"attestationId":"att_9","generation":2}', handle)).toThrow(PiChildResultError);
+    expect(() => piChildHandleReply('{"attestationId":"att_1","generation":3}', handle)).toThrow(PiChildResultError);
   });
 });

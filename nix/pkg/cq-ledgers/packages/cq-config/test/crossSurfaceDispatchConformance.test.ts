@@ -821,17 +821,13 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("T977 renders one-shot fetch for Claude/Codex and direct delivery for the held Pi worker", () => {
-    for (const surface of ["claude", "codex"] as const) {
+  it("T977/D544 renders one-shot fetch for the implement-worker on every surface", () => {
+    for (const surface of ["claude", "codex", "pi"] as const) {
       const worker = renderedOf(surface, "implement-worker");
-      expect(countOccurrences(worker, "fetch_dispatch_input")).toBe(1);
-      expect(worker).toContain("exactly once");
-      expect(worker).not.toContain("passes the complete typed worker input directly");
+      expect(countOccurrences(worker, "fetch_dispatch_input"), surface).toBe(1);
+      expect(worker, surface).toContain("exactly once");
+      expect(worker, surface).not.toContain("passes the complete typed worker input directly");
     }
-    const piWorker = renderedOf("pi", "implement-worker");
-    expect(countOccurrences(piWorker, "fetch_dispatch_input")).toBe(0);
-    expect(piWorker).toContain("passes the complete typed worker input directly");
-    expect(piWorker).not.toContain("call `fetch_dispatch_input` exactly once");
   });
 
   // ── CHECK 1 — the per-surface child-boundary injection MECHANISM ────────

@@ -4,6 +4,7 @@
 
 import { existsSync } from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DispatchTransportAdapterRegistry,
   isAttestationTombstone,
@@ -34,6 +35,8 @@ const DEFAULT_CLAUDE_EXECUTABLE = "claude";
 const DEFAULT_CODEX_ROLE_COMMAND = "cq-codex-role";
 const DEFAULT_PI_EXECUTABLE = "pi";
 const SURFACE_MANIFEST = "surface.json";
+/** The CQ Pi extension ships beside this module; Pi loads it by absolute path. */
+const PI_CHILD_LEDGER_EXTENSION = fileURLToPath(new URL("./piChildLedgerExtension.ts", import.meta.url));
 
 /** One artifact store per packaged surface under the prompt-surfaces root. */
 export function targetPromptArtifactStoresFrom(
@@ -74,6 +77,7 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     claudeExecutable: input.environment[CQ_CLAUDE_EXECUTABLE_ENV] ?? DEFAULT_CLAUDE_EXECUTABLE,
     codexRoleCommand: input.environment[CQ_CODEX_ROLE_COMMAND_ENV] ?? DEFAULT_CODEX_ROLE_COMMAND,
     piExecutable: input.environment[CQ_PI_EXECUTABLE_ENV] ?? DEFAULT_PI_EXECUTABLE,
+    piChildLedgerExtension: PI_CHILD_LEDGER_EXTENSION,
     effectAdmission: worksetEffectAdmissionProviderFromStore(requireWorksetStore(input.store)),
     cohortEffectAdmission: async (cohort, roleId) => {
       const cohortStore = input.store.workCohortStore?.();

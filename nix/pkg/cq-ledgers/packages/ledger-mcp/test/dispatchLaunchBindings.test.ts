@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { createStrictInMemoryWorksetEffectAdmissionProvider } from "@cq/process-control";
-import { createDispatchLaunchBindings, DispatchLaunchUnavailableError } from "../src/dispatchLaunchBindings.js";
+import { createDispatchLaunchBindings } from "../src/dispatchLaunchBindings.js";
 
 function bindings() {
   return createDispatchLaunchBindings({
@@ -15,6 +15,7 @@ function bindings() {
     claudeExecutable: "claude",
     codexRoleCommand: "cq-codex-role",
     piExecutable: "pi",
+    piChildLedgerExtension: "/cq/piChildLedgerExtension.ts",
     effectAdmission: createStrictInMemoryWorksetEffectAdmissionProvider(),
     cohortEffectAdmission: async () => createStrictInMemoryWorksetEffectAdmissionProvider(),
     readEnvelope: async () => undefined,
@@ -50,12 +51,12 @@ describe("createDispatchLaunchBindings", () => {
     );
   });
 
-  test("Pi-configured implementation roles are refused before anything is prepared; planners and explorers run", () => {
-    for (const roleId of ["implement-worker", "implement-reviewer", "implement-conflict-resolver", "implementation-auditor"]) {
-      expect(() => bindings().planner.plan("pi", roleId, "seed-1"), roleId).toThrow(DispatchLaunchUnavailableError);
-    }
-    for (const roleId of ["plan-advance", "plan-reviewer", "investigate-explorer", "research-experimenter"]) {
-      expect(() => bindings().planner.plan("pi", roleId, "seed-1"), roleId).not.toThrow();
+  test("every role plans on Pi, including the child-stored implementation roles (D544)", () => {
+    for (const roleId of [
+      "implement-worker", "implement-reviewer", "implement-conflict-resolver", "implementation-auditor",
+      "plan-advance", "plan-reviewer", "investigate-explorer", "research-experimenter",
+    ]) {
+      expect(bindings().planner.plan("pi", roleId, "seed-1").expectedChild.childId, roleId).toStartWith(`${roleId}#`);
     }
   });
 });
@@ -79,6 +80,7 @@ describe("per-dispatch admission", () => {
       claudeExecutable: "claude",
       codexRoleCommand: "cq-codex-role",
       piExecutable: "pi",
+      piChildLedgerExtension: "/cq/piChildLedgerExtension.ts",
       effectAdmission: createStrictInMemoryWorksetEffectAdmissionProvider(),
       cohortEffectAdmission: async (cohort, roleId) => {
         cohortCalls.push({ cohort, roleId });

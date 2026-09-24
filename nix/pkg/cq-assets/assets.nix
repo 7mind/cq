@@ -146,14 +146,14 @@ let
         claude = [ "input delivered via dispatch prompt" ];
         codex = [ "input delivered via dispatch prompt" ];
         pi = [
-          "fetch_dispatch_input"
-          "inputCapability"
+          "input delivered via dispatch prompt"
           "prepare_dispatch"
+          "held protocol"
         ];
       };
       intentionalDifference = {
         kind = "dispatch-protocol";
-        reason = "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.";
+        reason = "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).";
         surfaces = promptSurfaces;
       };
     }

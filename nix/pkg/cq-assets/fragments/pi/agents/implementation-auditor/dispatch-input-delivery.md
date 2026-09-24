@@ -1,4 +1,7 @@
-### Dispatch input delivery (Pi — held protocol)
+### Dispatch input delivery (Pi)
 
-The Pi orchestrator supplies the complete typed audit input directly. Do not
-attempt one-shot capability retrieval until the coordinated extension migration.
+The launch prompt carries `attestationId`, `generation`, and `inputCapability`.
+Before inspecting the historical record, call the `fetch_dispatch_input` tool
+exactly once and treat its typed input as the complete audit assignment. A
+failed or second retrieval is a protocol failure. Call `store_result` without
+`resultCapability`: your ledger connection holds it for this dispatch.

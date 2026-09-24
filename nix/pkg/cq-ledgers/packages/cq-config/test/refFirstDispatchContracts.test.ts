@@ -124,15 +124,24 @@ describe("G224 child contracts match how CQ settles each surface", () => {
     expect(input).not.toContain("the resolver-only `gitConflictCapability` returned by prepare");
   });
 
-  test("a Pi child returns a fenced result and never holds a capability; CQ stores it", () => {
-    // D399 still holds on Pi: the child has no ledger connection, so the
-    // settling component (now CQ) reads this block.
+  test("a server-settled Pi child returns a fenced result and never holds a capability; CQ stores it", () => {
+    // D399 still holds for server-settled Pi roles: the child has no ledger
+    // connection, so the settling component (now CQ) reads this block.
     const child = fragment("pi", "dispatch-result-delivery");
     expect(child).toContain("fenced `json` block");
     expect(child).not.toContain("store_result");
-    const roleInput = roleFragment("pi", "implement-worker", "dispatch-input-delivery");
-    expect(roleInput).not.toContain("inputCapability");
-    expect(roleInput).not.toContain("fetch_dispatch_input");
+  });
+
+  test("a child-stored Pi implementation role retrieves and stores through its CQ-bound connection (D544)", () => {
+    for (const roleId of ["implement-worker", "implement-reviewer", "implementation-auditor", "implement-conflict-resolver"]) {
+      const roleInput = prose(roleFragment("pi", roleId, "dispatch-input-delivery"));
+      expect(roleInput, roleId).toContain("`fetch_dispatch_input` tool exactly once");
+      expect(roleInput, roleId).toContain("`store_result` without `resultCapability`");
+      expect(roleInput, roleId).not.toContain("held protocol");
+    }
+    expect(prose(roleFragment("pi", "implement-conflict-resolver", "dispatch-input-delivery"))).toContain(
+      "`git_resolve_continue` without `gitConflictCapability`",
+    );
   });
 
   test("a Codex child keeps storing at its role boundary", () => {

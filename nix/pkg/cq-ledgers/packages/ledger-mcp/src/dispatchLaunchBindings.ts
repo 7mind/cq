@@ -14,15 +14,18 @@ import * as path from "node:path";
 import {
   CODEX_EXPECTED_RUN_ID_ENV,
   CODEX_FALLBACK_DELIVERY_MODE,
+  claudeCompactLaunchPrompt,
   claudeExpectedChild,
   codexDispatchedRoleSandboxMode,
   codexExpectedChild,
   codexLaunchGate,
   createClaudeProcessDispatchAdapter,
   decideCodexCompletion,
+  exposedLedgerToolsForRole,
   PiChildResultError,
   piChildArgv,
   piChildFinalText,
+  piChildHandleReply,
   piChildResult,
   piDispatchBuiltinTools,
   withoutWorksetCredentials,
@@ -47,6 +50,7 @@ import {
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
 } from "./boundResultCapability.js";
 import type { DispatchLaunchPlanner, PlannedDispatchLaunch } from "./dispatchDriver.js";
+import { PI_CHILD_LEDGER_CONFIG_ENV, type PiChildLedgerConfig } from "./piChildLedgerExtension.js";
 
 /** The ledger server name a child sees; role prompts address `mcp__ledger__*`. */
 export const CHILD_LEDGER_SERVER_NAME = "ledger";
@@ -62,6 +66,8 @@ export interface DispatchLaunchBindingOptions {
   /** The packaged Codex role launcher (`cq-codex-role`), the one production Codex launcher. */
   readonly codexRoleCommand: string;
   readonly piExecutable: string;
+  /** The CQ Pi extension a child-stored Pi child loads for its own ledger server. */
+  readonly piChildLedgerExtension: string;
   readonly effectAdmission: WorksetEffectAdmissionProvider;
   /** Admission for a cohort dispatch: its retained managed cohort authority. */
   readonly cohortEffectAdmission: (cohort: unknown, roleId: string) => Promise<WorksetEffectAdmissionProvider>;
@@ -80,12 +86,12 @@ type LaunchCorrelation =
   | { readonly harness: "pi"; readonly correlation: NativeChildIdentity };
 
 /**
- * Roles whose shared body requires the CHILD to call `store_result` (and, for
- * the resolver, a brokered Git tool). A server-settled Pi child has no ledger
- * connection, and the Pi surface still holds those roles' protocol; they need a
- * per-surface result-submission fragment before Pi can run them.
+ * Roles whose shared body has the CHILD retrieve its input and store its own
+ * result (the resolver also continues its rebase through the broker). A Pi
+ * child for one of these loads the CQ Pi extension for its own ledger server;
+ * every other Pi role is server-settled.
  */
-const PI_HELD_CHILD_STORE_ROLES: ReadonlySet<string> = new Set([
+const PI_CHILD_STORED_RESULT_ROLES: ReadonlySet<string> = new Set([
   "implement-worker",
   "implement-reviewer",
   "implement-conflict-resolver",
@@ -222,12 +228,6 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           childThreadId: correlation.threadId,
           runId: correlation.threadId,
         });
-      }
-      if (PI_HELD_CHILD_STORE_ROLES.has(roleId)) {
-        throw new DispatchLaunchUnavailableError(
-          `${roleId}'s role body requires the child to store its own result, which a CQ-launched Pi ` +
-            "child cannot do (the Pi protocol for this role is held); configure a Claude or Codex model for it",
-        );
       }
       const nonce = derivedUuid(derive("nonce"));
       const runId = `cq-pi-run-${derivedUuid(derive("run"))}`;
@@ -406,20 +406,54 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
       }
       const roleId = context.prepared.promptProvenance.roleId;
       const rolePrompt = await readFile(path.join(piSurfaceRoot, "roles", `${roleId}.md`), "utf8");
-      const tools = piDispatchBuiltinTools(rolePrompt, roleId);
-      // The server is the Pi child's parent: it materializes the typed input
-      // and stores the fenced result, so the child needs no ledger tool.
-      const materialized = await context.child.materializeInput();
+      const builtinTools = piDispatchBuiltinTools(rolePrompt, roleId);
+      const childStored = PI_CHILD_STORED_RESULT_ROLES.has(roleId);
       const scratch = await mkdtemp(path.join(tmpdir(), "cq-pi-role-"));
       try {
         const rolePromptFile = path.join(scratch, `${roleId}.md`);
         await writeFile(rolePromptFile, rolePrompt, { mode: 0o600 });
+        let tools = builtinTools;
+        let task: string;
+        let extensionPaths: readonly string[] = [];
+        let childEnvironment: Readonly<Record<string, string>> = {};
+        if (childStored) {
+          // The child's own ledger server holds the capabilities; the prompt
+          // carries only the compact reference the child retrieves input with.
+          const ledgerTools = exposedLedgerToolsForRole(roleId);
+          const ledgerConfig: PiChildLedgerConfig = {
+            command: options.ledgerCommand,
+            args: ["mcp", "--cwd", options.ledgerCwd, "--prompt-surface", "pi", "--prompt-root", piSurfaceRoot,
+              "--tool-profile", roleId],
+            cwd: options.ledgerCwd,
+            env: {
+              CQ_HARNESS: "pi",
+              CQ_PROMPT_SURFACE: "pi",
+              CQ_PROMPT_ROOT: piSurfaceRoot,
+              [CQ_DISPATCH_RESULT_CAPABILITY_ENV]: context.prepared.resultCapability.token,
+              ...(context.prepared.gitConflictCapability === undefined
+                ? {}
+                : { [CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV]: context.prepared.gitConflictCapability.token }),
+            },
+            tools: ledgerTools,
+          };
+          const ledgerConfigFile = path.join(scratch, "ledger.json");
+          await writeFile(ledgerConfigFile, JSON.stringify(ledgerConfig), { mode: 0o600 });
+          tools = [...builtinTools, ...ledgerTools];
+          task = claudeCompactLaunchPrompt({ ...handle, inputCapability: context.prepared.inputCapability });
+          extensionPaths = [options.piChildLedgerExtension];
+          childEnvironment = { [PI_CHILD_LEDGER_CONFIG_ENV]: ledgerConfigFile };
+        } else {
+          // The server is the Pi child's parent: it materializes the typed input
+          // and stores the fenced result, so the child needs no ledger tool.
+          task = JSON.stringify((await context.child.materializeInput()).input);
+        }
         const argv = piChildArgv({
           piExecutable: options.piExecutable,
           token: context.resolvedModel,
           tools,
+          extensionPaths,
           rolePromptFile,
-          task: JSON.stringify(materialized.input),
+          task,
         });
         const broker = new WorksetEffectBroker({ provider: await effectAdmissionFor(options, context) });
         const launched = await broker.launch({
@@ -427,7 +461,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           targetRef: context.effectTargetRef,
           argv,
           cwd: await childCwd(options, context),
-          env: withoutWorksetCredentials(process.env),
+          env: { ...withoutWorksetCredentials(process.env), ...childEnvironment },
           stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
           timeoutMs: gate.childWindowMs,
           launchBootstrap: (specification) => {
@@ -463,16 +497,22 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
             details: { source: "pi-process", exitStatus, stderr: stderr.slice(-LAUNCHER_DIAGNOSTIC_LIMIT) },
           };
         }
-        let output;
         try {
-          output = piChildResult(piChildFinalText(stdout));
+          if (childStored) {
+            piChildHandleReply(piChildFinalText(stdout), handle);
+          } else {
+            const stored = await context.child.storeResult(piChildResult(piChildFinalText(stdout)));
+            if (stored.state === "aborted") {
+              return { outcome: "aborted", reason: stored.result.reason, storeResultAbortReason: stored.result.reason };
+            }
+          }
         } catch (error) {
           if (!(error instanceof PiChildResultError)) throw error;
-          return { outcome: "aborted", reason: "invalid-output", details: { source: "pi-process", detail: error.message } };
-        }
-        const stored = await context.child.storeResult(output);
-        if (stored.state === "aborted") {
-          return { outcome: "aborted", reason: stored.result.reason, storeResultAbortReason: stored.result.reason };
+          return {
+            outcome: "aborted",
+            reason: childStored ? "protocol-violation" : "invalid-output",
+            details: { source: "pi-process", detail: error.message },
+          };
         }
         return {
           outcome: "completed",

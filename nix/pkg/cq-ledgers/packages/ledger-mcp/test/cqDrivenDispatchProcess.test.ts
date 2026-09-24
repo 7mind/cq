@@ -18,7 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
+import { implementReviewerSidecar, planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
 
 const TIMEOUT_MS = 60_000;
 const ROLE_ID = "plan-advance";
@@ -59,6 +59,53 @@ let codexRoleCommand: string;
 let codexRequestCapture: string;
 let fakePi: string;
 let piArgvCapture: string;
+let piEnvCapture: string;
+
+const REVIEWER_ROLE_ID = "implement-reviewer";
+const PI_REVIEWER_BYTES = [
+  "---",
+  `name: ${REVIEWER_ROLE_ID}`,
+  "description: fixture reviewer",
+  `# Pi host capabilities for ${REVIEWER_ROLE_ID}`,
+  "disallowedTools: write, edit, dispatch_agent",
+  "",
+  "---",
+  "",
+  "Review the task; store the verdict and reply with the handle.",
+  "",
+].join("\n");
+const REVIEWER_INPUT = {
+  taskId: "T1696",
+  acceptance: "The Pi reviewer stores its own verdict.",
+  branch: "implement/T1696",
+  baseCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+  workerResult: {
+    resultCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+    checkSummary: "REAL_CHECK_EXIT=0",
+    filesTouched: [],
+  },
+  round: 1,
+  priorCriticism: [],
+} as const;
+const REVIEWER_OUTPUT = {
+  taskId: "T1696",
+  verdict: "disapprove",
+  criticism: ["Recorded fixture disapproval."],
+  questions: [],
+  defects: [],
+  rationale: "The fixture intentionally stores a non-exhaustion disapproval.",
+  gateReRan: false,
+  resultCommitVerified: false,
+  gateReRanReason: "transport-fixture-does-not-run-gate",
+  resultCommitEvidence: { status: "unresolvable", reason: "worktree-unresolvable", resultCommit: null, branchTip: null },
+  baseAncestry: {
+    status: "unresolvable",
+    reason: "result-commit-missing",
+    baseCommit: null,
+    resultCommit: null,
+    mergeBase: null,
+  },
+} as const;
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -73,33 +120,39 @@ beforeAll(async () => {
   projectRoot = path.join(scratch, "project");
   surfacesRoot = path.join(scratch, "prompt-surfaces");
   await fs.mkdir(projectRoot, { recursive: true });
-  const catalogJson = JSON.stringify([
-    { roleId: ROLE_ID, roleKind: "dispatched-subagent", sidecar: { schemaRoleId: ROLE_ID } },
-  ]);
-  const schemaJson = JSON.stringify({
-    id: ROLE_ID,
-    version: planAdvanceSidecar.version,
-    inputSchema: { type: "object" },
-    outputSchema: { type: "object" },
-  });
+  const roles = [
+    { roleId: ROLE_ID, version: planAdvanceSidecar.version },
+    { roleId: REVIEWER_ROLE_ID, version: implementReviewerSidecar.version },
+  ] as const;
+  const catalogJson = JSON.stringify(
+    roles.map(({ roleId }) => ({ roleId, roleKind: "dispatched-subagent", sidecar: { schemaRoleId: roleId } })),
+  );
   for (const surface of ["claude", "codex", "pi"] as const) {
-    const roleBytes = surface === "pi" ? PI_ROLE_BYTES : ROLE_BYTES;
     const root = path.join(surfacesRoot, surface);
     await fs.mkdir(path.join(root, "roles"), { recursive: true });
     await fs.mkdir(path.join(root, "schemas"), { recursive: true });
     await fs.writeFile(path.join(root, "catalog.json"), catalogJson);
-    await fs.writeFile(path.join(root, "schemas", `${ROLE_ID}.json`), schemaJson);
-    await fs.writeFile(path.join(root, "roles", `${ROLE_ID}.md`), roleBytes);
+    const entries = [];
+    for (const { roleId, version } of roles) {
+      const roleBytes =
+        roleId === REVIEWER_ROLE_ID
+          ? PI_REVIEWER_BYTES
+          : surface === "pi"
+            ? PI_ROLE_BYTES
+            : ROLE_BYTES;
+      const schemaJson = JSON.stringify({
+        id: roleId,
+        version,
+        inputSchema: { type: "object" },
+        outputSchema: { type: "object" },
+      });
+      await fs.writeFile(path.join(root, "schemas", `${roleId}.json`), schemaJson);
+      await fs.writeFile(path.join(root, "roles", `${roleId}.md`), roleBytes);
+      entries.push({ roleId, version, sha256: sha256(roleBytes), schemaSha256: sha256(schemaJson) });
+    }
     await fs.writeFile(
       path.join(root, "surface.json"),
-      serializePromptSurfaceManifest(surface, sha256(catalogJson), [
-        {
-          roleId: ROLE_ID,
-          version: planAdvanceSidecar.version,
-          sha256: sha256(roleBytes),
-          schemaSha256: sha256(schemaJson),
-        },
-      ]),
+      serializePromptSurfaceManifest(surface, sha256(catalogJson), entries),
     );
   }
   await fs.writeFile(
@@ -113,12 +166,14 @@ beforeAll(async () => {
       '  sonnet = "claude:sonnet"',
       '  codexsol = "codex:gpt-5.6-sol:high"',
       '  grok = "pi:xai/grok-4.6:high"',
+      '  luna = "pi:openai-codex/gpt-6-luna"',
       "",
       "[agent_tiers]",
       `  ${ROLE_ID} = "frontier"`,
       "",
       "[harness.claude]",
       '  planners = ["codexsol", "grok"]',
+      '  reviewers = ["luna"]',
       "[harness.claude.tiers]",
       '  frontier = "sonnet"',
       "",
@@ -169,13 +224,14 @@ beforeAll(async () => {
     )} "$@"\n`,
   );
   piArgvCapture = path.join(scratch, "pi-argv.json");
+  piEnvCapture = path.join(scratch, "pi-env.json");
 });
 
 afterAll(async () => {
   await fs.rm(scratch, { recursive: true, force: true });
 });
 
-function serverEnvironment(): Record<string, string> {
+function serverEnvironment(overrides: Readonly<Record<string, string>> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith("CQ_PROMPT") && key !== "CQ_HARNESS") env[key] = value;
@@ -194,6 +250,8 @@ function serverEnvironment(): Record<string, string> {
     CQ_PI_EXECUTABLE: fakePi,
     CQ_FAKE_PI_ARGV_CAPTURE: piArgvCapture,
     CQ_FAKE_PI_OUTPUT: JSON.stringify(OUTPUT),
+    CQ_FAKE_PI_ENV_CAPTURE: piEnvCapture,
+    ...overrides,
   };
 }
 
@@ -212,11 +270,14 @@ const PLAN_INPUT = {
   latestReviewId: null,
 } as const;
 
-async function withParent(fn: (parent: Client) => Promise<void>): Promise<void> {
+async function withParent(
+  fn: (parent: Client) => Promise<void>,
+  environment: Readonly<Record<string, string>> = {},
+): Promise<void> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["run", serverEntry, "--cwd", projectRoot],
-    env: serverEnvironment(),
+    env: serverEnvironment(environment),
     stderr: "inherit",
   });
   const parent = new Client({ name: "g224-parent", version: "0.0.1" }, { capabilities: {} });
@@ -234,8 +295,8 @@ const NONTERMINAL_STATES = new Set(["prepared", "result-stored", "gate-pending"]
 async function awaitTerminal(
   parent: Client,
   handle: { attestationId: string; generation: number },
-): Promise<{ state: string; output?: unknown }> {
-  let fetched: { state: string; output?: unknown } = { state: "prepared" };
+): Promise<{ state: string; output?: unknown; reason?: string }> {
+  let fetched: { state: string; output?: unknown; reason?: string } = { state: "prepared" };
   for (let attempt = 0; attempt < 10 && NONTERMINAL_STATES.has(fetched.state); attempt += 1) {
     fetched = decode(
       await parent.callTool({ name: "fetch_dispatch_result", arguments: { ...handle, waitMs: 5_000 } }),
@@ -282,6 +343,69 @@ describe("G224 CQ-driven dispatch through production processes", () => {
     });
   }, TIMEOUT_MS);
 
+  test("a Pi-configured implementation reviewer stores its own result through the CQ Pi extension (D544)", async () => {
+    await withParent(async (parent) => {
+      const started = decode<{
+        handle: { attestationId: string; generation: number };
+        route: { targetHarness: string; model: string };
+      }>(
+        await parent.callTool({
+          name: "start_dispatch",
+          arguments: {
+            roleId: REVIEWER_ROLE_ID,
+            input: { ...REVIEWER_INPUT, worktreePath: projectRoot },
+            model: "pi:openai-codex/gpt-6-luna",
+            idempotencyKey: "G224-e2e-pi-reviewer",
+            timeoutMs: 600_000,
+          },
+        }),
+      );
+      expect(started.route).toMatchObject({ targetHarness: "pi", model: "pi:openai-codex/gpt-6-luna" });
+      expect(await awaitTerminal(parent, started.handle)).toMatchObject({
+        state: "consumed",
+        output: { verdict: "disapprove", taskId: "T1696" },
+      });
+      const argv = JSON.parse(await fs.readFile(piArgvCapture, "utf8")) as string[];
+      const flag = (name: string): string => argv[argv.indexOf(name) + 1]!;
+      expect(flag("--tools").split(",")).toEqual(["read", "grep", "find", "bash", "fetch_dispatch_input", "store_result"]);
+      expect(flag("-e")).toBe(path.resolve(import.meta.dir, "..", "src", "piChildLedgerExtension.ts"));
+      expect(Object.keys(JSON.parse(argv.at(-1)!) as object).sort()).toEqual([
+        "attestationId",
+        "generation",
+        "inputCapability",
+      ]);
+      expect(argv.join(" ")).not.toContain("cq_result_");
+      const child = JSON.parse(await fs.readFile(piEnvCapture, "utf8")) as {
+        environment: Record<string, string>;
+        tools: string[];
+      };
+      expect(child.tools).toEqual(["fetch_dispatch_input", "store_result"]);
+      expect(child.environment).not.toHaveProperty("CQ_PI_CHILD_LEDGER_CONFIG");
+      expect(JSON.stringify(child.environment)).not.toContain("cq_result_");
+    }, { CQ_FAKE_PI_OUTPUT: JSON.stringify(REVIEWER_OUTPUT) });
+  }, TIMEOUT_MS);
+
+  test("a child-stored Pi reviewer whose store_result aborts keeps its authoritative abort reason (D546)", async () => {
+    await withParent(async (parent) => {
+      const started = decode<{ handle: { attestationId: string; generation: number } }>(
+        await parent.callTool({
+          name: "start_dispatch",
+          arguments: {
+            roleId: REVIEWER_ROLE_ID,
+            input: { ...REVIEWER_INPUT, worktreePath: projectRoot },
+            model: "pi:openai-codex/gpt-6-luna",
+            idempotencyKey: "G224-e2e-pi-reviewer-invalid",
+            timeoutMs: 600_000,
+          },
+        }),
+      );
+      expect(await awaitTerminal(parent, started.handle)).toMatchObject({
+        state: "aborted",
+        reason: "invalid-output",
+      });
+    }, { CQ_FAKE_PI_OUTPUT: JSON.stringify({ verdict: "not-a-verdict" }) });
+  }, TIMEOUT_MS);
+
   test("a Claude parent dispatches a Codex-configured role through cq-codex-role", async () => {
     await withParent(async (parent) => {
       const started = decode<{
@@ -324,6 +448,27 @@ describe("G224 CQ-driven dispatch through production processes", () => {
       expect(captured.correlationId).toMatch(/^[A-Za-z0-9_-]{32,}$/);
       expect(captured.promptRoot).toBe(path.join(surfacesRoot, "codex"));
     });
+  }, TIMEOUT_MS);
+
+  test("a Codex child whose store_result aborts keeps its authoritative abort reason", async () => {
+    await withParent(async (parent) => {
+      const started = decode<{ handle: { attestationId: string; generation: number } }>(
+        await parent.callTool({
+          name: "start_dispatch",
+          arguments: {
+            roleId: ROLE_ID,
+            input: PLAN_INPUT,
+            model: "codex:gpt-5.6-sol:high",
+            idempotencyKey: "G224-e2e-codex-invalid",
+            timeoutMs: 120_000,
+          },
+        }),
+      );
+      expect(await awaitTerminal(parent, started.handle)).toMatchObject({
+        state: "aborted",
+        reason: "invalid-output",
+      });
+    }, { CQ_FAKE_CODEX_OUTPUT: JSON.stringify({ mode: "not-a-plan-mode" }) });
   }, TIMEOUT_MS);
 
   test("start_dispatch launches the print bridge and one waiting fetch returns the consumed output", async () => {

@@ -373,15 +373,15 @@ export const PROMPT_CATALOG_PROJECTION = {
               "input delivered via dispatch prompt"
             ],
             "pi": [
-              "fetch_dispatch_input",
-              "inputCapability",
-              "prepare_dispatch"
+              "input delivered via dispatch prompt",
+              "prepare_dispatch",
+              "held protocol"
             ]
           },
           "fragment": "dispatch-input-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
             "surfaces": [
               "claude",
               "codex",
@@ -417,7 +417,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+          "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
           "surfaces": [
             "claude",
             "codex",
@@ -518,15 +518,15 @@ export const PROMPT_CATALOG_PROJECTION = {
               "input delivered via dispatch prompt"
             ],
             "pi": [
-              "fetch_dispatch_input",
-              "inputCapability",
-              "prepare_dispatch"
+              "input delivered via dispatch prompt",
+              "prepare_dispatch",
+              "held protocol"
             ]
           },
           "fragment": "dispatch-input-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
             "surfaces": [
               "claude",
               "codex",
@@ -562,7 +562,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+          "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
           "surfaces": [
             "claude",
             "codex",
@@ -634,15 +634,15 @@ export const PROMPT_CATALOG_PROJECTION = {
               "input delivered via dispatch prompt"
             ],
             "pi": [
-              "fetch_dispatch_input",
-              "inputCapability",
-              "prepare_dispatch"
+              "input delivered via dispatch prompt",
+              "prepare_dispatch",
+              "held protocol"
             ]
           },
           "fragment": "dispatch-input-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
             "surfaces": [
               "claude",
               "codex",
@@ -669,7 +669,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+          "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
           "surfaces": [
             "claude",
             "codex",
@@ -770,15 +770,15 @@ export const PROMPT_CATALOG_PROJECTION = {
               "input delivered via dispatch prompt"
             ],
             "pi": [
-              "fetch_dispatch_input",
-              "inputCapability",
-              "prepare_dispatch"
+              "input delivered via dispatch prompt",
+              "prepare_dispatch",
+              "held protocol"
             ]
           },
           "fragment": "dispatch-input-delivery",
           "intentionalDifference": {
             "kind": "dispatch-protocol",
-            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
             "surfaces": [
               "claude",
               "codex",
@@ -814,7 +814,7 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch-protocol",
-          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+          "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
           "surfaces": [
             "claude",
             "codex",
@@ -4324,7 +4324,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "b80597a54548a6ced72466e51c49cd0a6d67544dcb2726b9dd85007063e79ef7",
+  "catalogMetadataHash": "401a3576161461696db598d888ce232d0e51309637cea3139ace49e447470586",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -4439,15 +4439,15 @@ export const PROMPT_CATALOG_PROJECTION = {
           "input delivered via dispatch prompt"
         ],
         "pi": [
-          "fetch_dispatch_input",
-          "inputCapability",
-          "prepare_dispatch"
+          "input delivered via dispatch prompt",
+          "prepare_dispatch",
+          "held protocol"
         ]
       },
       "fragment": "dispatch-input-delivery",
       "intentionalDifference": {
         "kind": "dispatch-protocol",
-        "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+        "reason": "Every surface retrieves prepare-bound implementation input through the one-shot capability; Claude and Pi children hold their result and Git capabilities in a CQ-bound ledger connection (Pi through the CQ extension), while Codex receives them in its private launch envelope (G224, D544).",
         "surfaces": [
           "claude",
           "codex",

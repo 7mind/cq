@@ -50,9 +50,10 @@ await client.connect(
   }),
 );
 
-function check(result: unknown): void {
+function check(result: unknown): string {
   const decoded = result as { content: Array<{ text: string }>; isError?: boolean };
   if (decoded.isError === true) throw new Error(`fake cq-codex-role: ${decoded.content[0]?.text}`);
+  return decoded.content[0]?.text ?? "";
 }
 
 check(
@@ -61,7 +62,7 @@ check(
     arguments: { ...request.handle, inputCapability: request.inputCapability },
   }),
 );
-check(
+const stored = JSON.parse(check(
   await client.callTool({
     name: "store_result",
     arguments: {
@@ -69,6 +70,11 @@ check(
       output: JSON.parse(process.env["CQ_FAKE_CODEX_OUTPUT"] ?? "{}") as unknown,
     },
   }),
-);
+)) as { state: string; reason?: string };
 await client.close();
+if (stored.state === "aborted") {
+  // As the packaged launcher does: a typed store_result abort fails the boundary.
+  process.stderr.write(`fake cq-codex-role: store_result aborted with ${String(stored.reason)}\n`);
+  process.exit(1);
+}
 process.stdout.write(`${JSON.stringify(request.handle)}\n`);
