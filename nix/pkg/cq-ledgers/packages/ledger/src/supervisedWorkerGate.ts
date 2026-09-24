@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
-import { CANONICAL_PROJECT_GATE, type ProjectGateSpecification } from "./projectGate.js";
 import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  CANONICAL_PROJECT_GATE,
   CODEX_STAGED_TIMING_BASIS,
   DISPATCH_INVOCATION_ENV_NAMES,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -16,6 +16,7 @@ import {
   type DispatchJSONValue,
   type ImplementWorkerSupervisedGateRejectionDetails,
   type ImplementWorkerSupervisedGateEvidence,
+  type ProjectGateSpecification,
 } from "@cq/config";
 import {
   launchRegisteredProcessGroup,

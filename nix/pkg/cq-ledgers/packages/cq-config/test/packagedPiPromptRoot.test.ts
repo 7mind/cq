@@ -505,6 +505,7 @@ describe("packaged Pi prompt root", () => {
       [...new Bun.Glob("**/*").scanSync({ cwd: rendererSource!, onlyFiles: true })].sort(),
     ).toEqual([
       "scripts/render-prompt-surface.ts",
+      "src/projectGate.ts",
       "src/promptCatalog.gen.ts",
       "src/promptCatalog.ts",
       "src/promptRenderer.ts",

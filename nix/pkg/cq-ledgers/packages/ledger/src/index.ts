@@ -380,12 +380,6 @@ export type {
   UnresolvableDispatchBase,
   VerifiedDispatchBase,
 } from "./dispatchBase.js";
-export {
-  CANONICAL_PROJECT_GATE,
-  projectGateAuthorizationForm,
-  resolveProjectGate,
-  type ProjectGateSpecification,
-} from "./projectGate.js";
 export { decideWorktreeSweep, patchEquivalentFromGitCherry } from "./worktreeSweep.js";
 export type {
   WorktreeAssociatedTaskStatus,

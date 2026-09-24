@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CANONICAL_PROJECT_GATE,
+  PROJECT_GATE_ROOT_CWD,
   projectGateAuthorizationForm,
   resolveProjectGate,
 } from "../src/projectGate.js";
@@ -77,12 +78,14 @@ describe("D403 project gate definition", () => {
     // different runner, and the gate at the repository root.
     const consumer = resolveProjectGate({ argv: ["npm", "test"], cwd: "" });
     expect(consumer.argv).toEqual(["npm", "test"]);
-    expect(consumer.cwd).toBe("");
+    // Canonicalized: the supervised runner refuses an empty cwd, so the
+    // worktree root is spelled `"."` and a root-level gate is runnable.
+    expect(consumer.cwd).toBe(PROJECT_GATE_ROOT_CWD);
     expect(consumer.cwd).not.toBe(CANONICAL_PROJECT_GATE.cwd);
     // It flows through to the authorization form the cohort checks digest.
     expect(projectGateAuthorizationForm(consumer)).toEqual({
       argv: ["npm", "test"],
-      cwd: "",
+      cwd: ".",
       environment: [],
     });
   });

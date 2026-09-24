@@ -9,7 +9,7 @@ import {
   type MemberAcceptancePlanV1,
   type StagedCohortCandidateAttemptV1,
 } from "./workCohort.js";
-import { projectGateAuthorizationForm } from "./projectGate.js";
+import { projectGateAuthorizationForm } from "@cq/config";
 import type {
   CohortCommandEvidenceV1,
   WorkCohortLeaseV1,

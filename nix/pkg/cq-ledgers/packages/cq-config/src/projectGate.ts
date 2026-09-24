@@ -13,10 +13,16 @@
  * complete command: `environment` stays with each caller, because the runner
  * and the digest disagree about its type on purpose.
  *
- * The remaining half of H310 — making this resolvable per project rather than
- * fixed to CQ's own layout, so a consumer project does not inherit
- * `nix/pkg/cq-ledgers` and fail with ENOENT — builds on this single point.
+ * `resolveProjectGateForRoot` (projectGateConfig.ts) is the other half of
+ * H310: it turns a project's declared `[gate]` into that specification, so a
+ * consumer project does not inherit `nix/pkg/cq-ledgers` and fail with ENOENT.
+ * It lives in a SEPARATE module on purpose — this one must stay import-free so
+ * the packaged prompt-surface renderer's source closure, which vendors
+ * `schemas/implement-worker.ts`, does not have to vendor the config reader.
  */
+
+/** The worktree-relative `cwd` naming the managed worktree root itself. */
+export const PROJECT_GATE_ROOT_CWD = "." as const;
 
 /** The worktree-relative command a project's full gate runs. */
 export interface ProjectGateSpecification {
@@ -24,8 +30,9 @@ export interface ProjectGateSpecification {
   readonly argv: readonly string[];
   /**
    * Directory the command runs in, RELATIVE to the managed worktree root.
-   * The supervised runner refuses an absolute path or one escaping the
-   * worktree, so this is relative by contract rather than by convention.
+   * The supervised runner refuses an absolute path, one escaping the worktree,
+   * and an EMPTY one — so the worktree root itself is spelled `"."`, which
+   * {@link resolveProjectGate} canonicalizes an omitted or empty `cwd` to.
    */
   readonly cwd: string;
 }
@@ -68,5 +75,11 @@ export function resolveProjectGate(
   declared: { readonly argv: readonly string[]; readonly cwd: string } | null | undefined,
 ): ProjectGateSpecification {
   if (declared === null || declared === undefined) return CANONICAL_PROJECT_GATE;
-  return Object.freeze({ argv: Object.freeze([...declared.argv]), cwd: declared.cwd });
+  // A project that declares no `cwd` means the worktree root, which the
+  // supervised runner spells `"."` — it refuses an empty one outright, so
+  // canonicalizing here is what makes the natural consumer shape runnable.
+  return Object.freeze({
+    argv: Object.freeze([...declared.argv]),
+    cwd: declared.cwd === "" ? PROJECT_GATE_ROOT_CWD : declared.cwd,
+  });
 }

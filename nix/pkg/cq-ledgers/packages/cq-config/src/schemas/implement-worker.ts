@@ -33,6 +33,7 @@
  *   files may omit it.
  */
 
+import { CANONICAL_PROJECT_GATE } from "../projectGate.js";
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
 import type { CohortEvidenceSubjectV1 } from "@cq/process-control";
 import { cohortBranchSchema, cohortEvidenceSubjectSchema, cohortPreSealEnvelopeSchema, cohortReceiptArm, cohortRoleArm, singleTaskOrCohortSchema } from "./cohortContract.js";
@@ -48,9 +49,36 @@ export type ImplementWorkerValidationIntent =
 /** Full lowercase object SHA — every commit field on this contract uses it. */
 export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
 
-/** The only full-gate command the trusted Codex supervisor may attest. */
+/**
+ * D403 / H310 — render the full-gate command line for a PROJECT's gate.
+ *
+ * This is the attestation label the supervisor records, not the executed argv:
+ * the runner builds that separately from the same specification. It is a
+ * function rather than a constant because a consumer project has no
+ * `nix/pkg/cq-ledgers`, and a fixed string here is what made the evidence
+ * contract CQ-specific.
+ *
+ * The parameter is structural rather than `ProjectGateSpecification` so this
+ * schema module does not depend on the resolver that reads cq.toml.
+ */
+export function implementWorkerGateCommandLine(gate: {
+  readonly argv: readonly string[];
+  readonly cwd: string;
+}): string {
+  // `"."` is the canonical spelling of the worktree root (the supervised
+  // runner refuses an empty cwd); both render as the worktree itself.
+  const commandCwd = gate.cwd === "" || gate.cwd === "." ? '"$PWD"' : `"$PWD/${gate.cwd}"`;
+  return `cq gate run --worktree "$PWD" --command-cwd ${commandCwd} -- ${gate.argv.join(" ")}`;
+}
+
+/**
+ * CQ's own full-gate command line, kept byte-identical to the literal it
+ * replaces so no stored evidence, rejection record or generated schema for
+ * THIS repository changes. A consumer project derives its own with
+ * {@link implementWorkerGateCommandLine}.
+ */
 export const IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND =
-  'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
+  implementWorkerGateCommandLine(CANONICAL_PROJECT_GATE);
 
 interface ImplementWorkerSupervisedGateRejectionBase {
   readonly kind: "cq-supervised-gate-rejection";

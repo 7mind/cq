@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { projectGateAuthorizationForm } from "@cq/ledger";
+import { projectGateAuthorizationForm } from "@cq/config";
 import { existsSync, readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";

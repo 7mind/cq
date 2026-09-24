@@ -1343,3 +1343,11 @@ export {
   ensurePgAttestationSchema,
   openAttestationPgPool,
 } from "./dispatchAttestationPostgres.js";
+export {
+  CANONICAL_PROJECT_GATE,
+  PROJECT_GATE_ROOT_CWD,
+  projectGateAuthorizationForm,
+  resolveProjectGate,
+  type ProjectGateSpecification,
+} from "./projectGate.js";
+export { resolveProjectGateForRoot } from "./projectGateConfig.js";

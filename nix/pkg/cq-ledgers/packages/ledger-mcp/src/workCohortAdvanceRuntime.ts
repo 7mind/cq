@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { projectGateAuthorizationForm } from "@cq/ledger";
+import { projectGateAuthorizationForm } from "@cq/config";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {

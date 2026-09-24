@@ -33,6 +33,10 @@ let
       (configRoot + "/src/promptCatalog.gen.ts")
       (configRoot + "/src/promptRenderer.ts")
       (configRoot + "/src/roleToolProfiles.ts")
+      # D403/H310: implement-worker.ts derives the canonical gate command line
+      # from this leaf module. It is deliberately import-free so the closure
+      # stays minimal; the cq.toml reader lives in projectGateConfig.ts.
+      (configRoot + "/src/projectGate.ts")
       # The schema sidecars stamp the per-role contract versions into the
       # attested surface manifest (T683); keep this closure in sync with the
       # render script's sidecar imports.
@@ -74,7 +78,7 @@ pkgs.runCommand "cq-${validatedSurface}-prompt-root"
     passthru.promptCatalog = assets.catalog;
   }
   ''
-    test "$(find ${rendererSource} -type f | wc -l)" -eq 17
+    test "$(find ${rendererSource} -type f | wc -l)" -eq 18
     test "$(find ${filteredAssets} -type f | wc -l)" -eq ${toString expectedAssetFileCount}
     bun run ${rendererSource}/scripts/render-prompt-surface.ts \
       ${lib.escapeShellArg validatedSurface} \
