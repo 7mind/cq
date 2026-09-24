@@ -148,7 +148,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // Cohort operations add six contracts; compact existing wording preserves all fields.
     // 1620 -> 1619 under D400: fetch_item's archived-generation resolution adds
     // one G93-attributable token; the surface stays below the corpus median.
-    maximumRemainingG93AttributableTokens: 1619,
+    // 1619 -> 1637 under G224: start_dispatch adds one compact contract, admitted
+    // by the K334 surface-growth allowance until the MCP overhaul (ideas:I52).
+    maximumRemainingG93AttributableTokens: 1637,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
@@ -191,7 +193,8 @@ test(
     const zeroDomainDrift = structuredClone(measured);
     zeroDomainDrift.profiles["implement-worker"].domainInputSchemaTokens = 1;
     const g93Drift = structuredClone(measured);
-    g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1622;
+    // The corpus median (1622) plus the K334 allowance (128) is the first failing charge.
+    g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1750;
 
     expect({
       tokenizerMatches: tokenizerDrift.budgets.tokenizerMatches,

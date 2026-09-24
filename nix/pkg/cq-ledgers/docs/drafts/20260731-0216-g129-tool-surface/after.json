@@ -6548,6 +6548,10 @@
   "g93": {
     "historicalColdSchemaChargeTokens": 2214,
     "corpusMedianResponseSavingTokens": 1622,
+    "surfaceGrowthAllowance": {
+      "tokens": 128,
+      "decision": "decisions:K334"
+    },
     "strongestPerturbationUpperBoundTokens": 1485.5,
     "evidence": {
       "decision": "decisions:K145",
@@ -6668,10 +6672,8 @@
     "allSurfacesSmaller": true,
     "allRequiredCallsCovered": true,
     "zeroDomainProfilesHaveZeroDomainSchemaTokens": true,
-    "g93BelowCorpusMedian": false,
-    "passed": false,
-    "failures": [
-      "remaining G93-attributable charge is not below the corpus median response saving"
-    ]
+    "g93BelowCorpusMedian": true,
+    "passed": true,
+    "failures": []
   }
 }

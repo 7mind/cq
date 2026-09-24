@@ -539,6 +539,12 @@ export function serializeToolSurfaceMeasurement(result: ToolSurfaceMeasurement):
 }
 
 const G93_MEDIAN_RESPONSE_SAVING_TOKENS = 1622;
+/**
+ * decisions:K334 - temporary headroom above the corpus median, granted while the
+ * MCP surface grows for G224 and retired by the surface overhaul (ideas:I52).
+ */
+const G93_SURFACE_GROWTH_ALLOWANCE_TOKENS = 128;
+const G93_SURFACE_GROWTH_ALLOWANCE_DECISION = "decisions:K334";
 const G93_EVIDENCE_PATH = "docs/drafts/20260725-2130-t679-rs3-remeasurement.md";
 
 interface HistoricalToolSurfaceMeasurement {
@@ -766,9 +772,10 @@ export function buildNormalizedAfterArtifact(
     }),
   );
   const g93BelowCorpusMedian = failBudget(
-    "remaining G93-attributable charge is not below the corpus median response saving",
+    "remaining G93-attributable charge is not below the corpus median response saving plus the K334 allowance",
     failures,
-    maximumRemainingG93AttributableTokens < G93_MEDIAN_RESPONSE_SAVING_TOKENS,
+    maximumRemainingG93AttributableTokens <
+      G93_MEDIAN_RESPONSE_SAVING_TOKENS + G93_SURFACE_GROWTH_ALLOWANCE_TOKENS,
   );
 
   return {
@@ -804,6 +811,10 @@ export function buildNormalizedAfterArtifact(
     g93: {
       historicalColdSchemaChargeTokens: 2214,
       corpusMedianResponseSavingTokens: G93_MEDIAN_RESPONSE_SAVING_TOKENS,
+      surfaceGrowthAllowance: {
+        tokens: G93_SURFACE_GROWTH_ALLOWANCE_TOKENS,
+        decision: G93_SURFACE_GROWTH_ALLOWANCE_DECISION,
+      },
       strongestPerturbationUpperBoundTokens: 1485.5,
       evidence: {
         decision: "decisions:K145",
