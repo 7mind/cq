@@ -253,6 +253,31 @@ export const MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES = MANAGEMENT_LEDGER_TOOL_
 type AnyTool = SdkMcpToolDefinition<any>;
 
 /**
+ * G224: a child-owned server holds the one capability its dispatch granted.
+ * A child may omit it; a different one is refused; an unbound server still
+ * requires the caller to pass it.
+ */
+function boundOrExplicitCapability<Capability extends { readonly scope: string; readonly token: string }>(
+  toolName: string,
+  field: string,
+  explicit: Capability | undefined,
+  bound: Capability | undefined,
+): Capability {
+  if (
+    bound !== undefined &&
+    explicit !== undefined &&
+    (explicit.scope !== bound.scope || explicit.token !== bound.token)
+  ) {
+    throw new Error(`${toolName}: this server accepts only its bound ${field}`);
+  }
+  const capability = explicit ?? bound;
+  if (capability === undefined) {
+    throw new Error(`${toolName} requires ${field} on a server with no bound capability`);
+  }
+  return capability;
+}
+
+/**
  * One transport-independent ledger tool specification. Direct Claude tools
  * and raw MCP SDK registrations both derive from this shape.
  */
@@ -2081,18 +2106,12 @@ export function createLedgerMcpToolSpecifications(
     STORE_RESULT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
-      const bound = dispatchCapability.boundResultCapability;
-      if (
-        bound !== undefined &&
-        args.resultCapability !== undefined &&
-        (args.resultCapability.scope !== bound.scope || args.resultCapability.token !== bound.token)
-      ) {
-        throw new Error("store_result: this server accepts only its bound result capability");
-      }
-      const resultCapability = args.resultCapability ?? bound;
-      if (resultCapability === undefined) {
-        throw new Error("store_result requires resultCapability on a server with no bound capability");
-      }
+      const resultCapability = boundOrExplicitCapability(
+        "store_result",
+        "resultCapability",
+        args.resultCapability,
+        dispatchCapability.boundResultCapability,
+      );
       return jsonResult(await dispatchCapability.storeResult({ resultCapability, output: args.output }));
     },
   );
@@ -2167,7 +2186,13 @@ export function createLedgerMcpToolSpecifications(
       if (dispatchCapability?.gitResolveContinue === undefined) {
         throw new Error("git_resolve_continue is unavailable for this dispatch runtime");
       }
-      return jsonResult(await dispatchCapability.gitResolveContinue(args));
+      const gitConflictCapability = boundOrExplicitCapability(
+        "git_resolve_continue",
+        "gitConflictCapability",
+        args.gitConflictCapability,
+        dispatchCapability.boundGitConflictCapability,
+      );
+      return jsonResult(await dispatchCapability.gitResolveContinue({ ...args, gitConflictCapability }));
     },
   );
 

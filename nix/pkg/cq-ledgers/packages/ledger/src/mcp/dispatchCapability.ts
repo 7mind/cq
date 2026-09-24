@@ -274,6 +274,8 @@ export interface DispatchCapability {
    * `store_result` then stores with it, and refuses any other capability.
    */
   readonly boundResultCapability?: StoreResultToolInput["resultCapability"];
+  /** G224: the one git-conflict capability a child-owned resolver server was started with. */
+  readonly boundGitConflictCapability?: GitResolveContinueToolInput["gitConflictCapability"];
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;

@@ -203,7 +203,8 @@ export const GIT_COMMIT_INPUT = {
 
 export const GIT_RESOLVE_CONTINUE_INPUT = {
   ...handle,
-  gitConflictCapability,
+  /** Omitted by a child whose ledger server binds the capability from its environment (G224). */
+  gitConflictCapability: gitConflictCapability.optional(),
   operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   expectedState: gitRebaseConflictState,
   resolutions: z.array(gitConflictResolution).min(1),

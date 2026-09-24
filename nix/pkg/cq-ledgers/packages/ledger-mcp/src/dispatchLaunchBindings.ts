@@ -37,7 +37,10 @@ import {
   type NativeChildIdentity,
 } from "@cq/config";
 import { WorksetEffectBroker, type WorksetEffectAdmissionProvider } from "@cq/process-control";
-import { CQ_DISPATCH_RESULT_CAPABILITY_ENV } from "./boundResultCapability.js";
+import {
+  CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
+  CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+} from "./boundResultCapability.js";
 import type { DispatchLaunchPlanner, PlannedDispatchLaunch } from "./dispatchDriver.js";
 
 /** The ledger server name a child sees; role prompts address `mcp__ledger__*`. */
@@ -55,6 +58,8 @@ export interface DispatchLaunchBindingOptions {
   readonly codexRoleCommand: string;
   readonly piExecutable: string;
   readonly effectAdmission: WorksetEffectAdmissionProvider;
+  /** Admission for a cohort dispatch: its retained managed cohort authority. */
+  readonly cohortEffectAdmission: (cohort: unknown, roleId: string) => Promise<WorksetEffectAdmissionProvider>;
   readonly readEnvelope: (handle: DispatchHandle) => Promise<AttestationEnvelope | undefined>;
   readonly now: () => string;
 }
@@ -69,6 +74,8 @@ type LaunchCorrelation =
   | { readonly harness: "codex"; readonly correlation: CodexChildCorrelation }
   | { readonly harness: "pi"; readonly correlation: NativeChildIdentity };
 
+/** Roles whose contract REQUIRES a brokered Git tool, which a server-settled Pi child cannot reach. */
+const PI_UNREACHABLE_BROKER_ROLES: ReadonlySet<string> = new Set(["implement-conflict-resolver"]);
 /** Pi child ids follow the `<roleId>#<nonce>` shape staged-worker qualification checks. */
 const PI_CHILD_ID_SEPARATOR = "#";
 /** Bytes of a failed launcher's stderr kept in the abort details. */
@@ -85,6 +92,35 @@ export class DispatchLaunchUnavailableError extends Error {
 
 function handleKey(handle: DispatchHandle): string {
   return `${handle.attestationId}:${String(handle.generation)}`;
+}
+
+/** The dispatch's prepared input, which carries its worktree and any cohort envelope. */
+async function preparedInput(
+  options: DispatchLaunchBindingOptions,
+  context: DispatchAdapterLaunchContext,
+): Promise<Readonly<Record<string, unknown>> | undefined> {
+  const envelope = await options.readEnvelope({
+    attestationId: context.prepared.attestationId,
+    generation: context.prepared.generation,
+  });
+  if (envelope === undefined) {
+    throw new DispatchLaunchUnavailableError("the prepared dispatch has no live envelope to launch");
+  }
+  const input = envelope.input;
+  return input !== null && typeof input === "object" && !Array.isArray(input)
+    ? (input as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+/** Admission for this dispatch: the cohort's authority for a cohort dispatch, else the project workset. */
+async function effectAdmissionFor(
+  options: DispatchLaunchBindingOptions,
+  context: DispatchAdapterLaunchContext,
+): Promise<WorksetEffectAdmissionProvider> {
+  const cohort = (await preparedInput(options, context))?.["cohort"];
+  return cohort === undefined
+    ? options.effectAdmission
+    : await options.cohortEffectAdmission(cohort, context.prepared.promptProvenance.roleId);
 }
 
 /** The directory a child runs in: its dispatch's absolute worktree, else the project. */
@@ -151,6 +187,12 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           runId: correlation.threadId,
         });
       }
+      if (PI_UNREACHABLE_BROKER_ROLES.has(roleId)) {
+        throw new DispatchLaunchUnavailableError(
+          `a CQ-launched Pi child has no ledger connection, so ${roleId} cannot reach its brokered Git tool; ` +
+            "configure a Claude or Codex model for this role",
+        );
+      }
       const nonce = randomUUID();
       const runId = `cq-pi-run-${randomUUID()}`;
       const correlation: NativeChildIdentity = { childId: `${roleId}${PI_CHILD_ID_SEPARATOR}${nonce}`, runId };
@@ -163,7 +205,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
   };
 
   const claudeSurfaceRoot = path.join(options.promptSurfacesRoot, "claude");
-  const claude = createClaudeProcessDispatchAdapter(options.effectAdmission, async (context) => {
+  const resolveClaudeBinding: Parameters<typeof createClaudeProcessDispatchAdapter>[1] = async (context) => {
     const launch = correlations.get(
       handleKey({ attestationId: context.prepared.attestationId, generation: context.prepared.generation }),
     );
@@ -187,9 +229,22 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           cwd: options.ledgerCwd,
           env: { CQ_HARNESS: "claude", CQ_PROMPT_SURFACE: "claude", CQ_PROMPT_ROOT: claudeSurfaceRoot },
           capabilityEnv: CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+          gitConflictCapabilityEnv: CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
         },
       },
     };
+  };
+  // Admission depends on the dispatch (a cohort uses its own authority), so the
+  // print-bridge adapter is bound per launch.
+  const claude: DispatchTransportAdapter = Object.freeze({
+    id: "claude:process" as const,
+    targetHarness: "claude" as const,
+    transport: "process" as const,
+    launch: async (context: DispatchAdapterLaunchContext) =>
+      await createClaudeProcessDispatchAdapter(
+        await effectAdmissionFor(options, context),
+        resolveClaudeBinding,
+      ).launch(context),
   });
 
   const codexSurfaceRoot = path.join(options.promptSurfacesRoot, "codex");
@@ -330,7 +385,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           rolePromptFile,
           task: JSON.stringify(materialized.input),
         });
-        const broker = new WorksetEffectBroker({ provider: options.effectAdmission });
+        const broker = new WorksetEffectBroker({ provider: await effectAdmissionFor(options, context) });
         const launched = await broker.launch({
           kind: "child-dispatch",
           targetRef: context.effectTargetRef,

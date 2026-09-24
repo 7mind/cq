@@ -37,7 +37,9 @@
 
 import { readFile } from "node:fs/promises";
 import {
+  CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+  takeBoundGitConflictCapability,
   takeBoundResultCapability,
 } from "./boundResultCapability.js";
 import { createServerDispatchDriver, targetPromptArtifactStoresFrom } from "./dispatchDriverWiring.js";
@@ -1714,6 +1716,8 @@ export async function main(
   }
 
   const boundResultCapability = takeBoundResultCapability(process.env);
+  const boundGitConflictCapability = takeBoundGitConflictCapability(process.env);
+  const childOwned = boundResultCapability !== undefined || boundGitConflictCapability !== undefined;
   // Reject unsupported local configuration before opening persistent state.
   const resolved = await createEmbeddedStore(cwd);
   const store = resolved.store;
@@ -1741,22 +1745,24 @@ export async function main(
     environment: process.env,
     ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
   });
-  if (boundResultCapability !== undefined && dispatchRuntime.kind !== "available") {
+  if (childOwned && dispatchRuntime.kind !== "available") {
     throw new Error(
-      `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
+      `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV} or ${CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
     );
   }
   const boundDispatchCapability =
     dispatchRuntime.kind !== "available"
       ? undefined
-      : boundResultCapability === undefined
-        ? dispatchRuntime.capability
-        : { ...dispatchRuntime.capability, boundResultCapability };
+      : {
+          ...dispatchRuntime.capability,
+          ...(boundResultCapability === undefined ? {} : { boundResultCapability }),
+          ...(boundGitConflictCapability === undefined ? {} : { boundGitConflictCapability }),
+        };
   // G224: a child-owned server (bound capability) never launches dispatches itself.
   const dispatchCapability =
     boundDispatchCapability === undefined ||
     dispatchRuntime.kind !== "available" ||
-    boundResultCapability !== undefined ||
+    childOwned ||
     resolvedPromptSurface === undefined ||
     promptSurfacesRoot === undefined
       ? boundDispatchCapability

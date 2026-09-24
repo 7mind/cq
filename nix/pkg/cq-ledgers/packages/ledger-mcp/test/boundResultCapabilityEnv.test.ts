@@ -2,7 +2,9 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+  takeBoundGitConflictCapability,
   takeBoundResultCapability,
 } from "../src/boundResultCapability.js";
 
@@ -31,3 +33,23 @@ describe("takeBoundResultCapability", () => {
     expect(CQ_DISPATCH_RESULT_CAPABILITY_ENV in environment).toBe(false);
   });
 });
+
+describe("takeBoundGitConflictCapability", () => {
+  test("binds a well-formed conflict token and removes it from the environment", () => {
+    const token = `cq_conflict_${"c".repeat(43)}`;
+    const environment: Record<string, string | undefined> = { [CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV]: token };
+    expect(takeBoundGitConflictCapability(environment)).toEqual({ scope: "git-conflict", token });
+    expect(CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV in environment).toBe(false);
+  });
+
+  test("a result token is not a conflict capability", () => {
+    const environment: Record<string, string | undefined> = { [CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV]: TOKEN };
+    expect(() => takeBoundGitConflictCapability(environment)).toThrow(CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV);
+    expect(CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV in environment).toBe(false);
+  });
+
+  test("an absent variable binds nothing", () => {
+    expect(takeBoundGitConflictCapability({})).toBeUndefined();
+  });
+});
+

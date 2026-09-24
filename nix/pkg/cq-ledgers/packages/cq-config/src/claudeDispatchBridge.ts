@@ -96,6 +96,7 @@ import type {
   FetchDispatchInput,
   InputCapability,
   NativeCompletionProof,
+  GitConflictCapability,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
 
@@ -334,6 +335,12 @@ export interface ClaudeNativeLaunchContext {
    */
   readonly resultCapability: ResultCapability;
   /**
+   * G224: a conflict resolver's git-conflict capability, delivered the same way
+   * as the result capability - through the child server's environment - so the
+   * compact launch prompt stays exactly the input reference.
+   */
+  readonly gitConflictCapability?: GitConflictCapability;
+  /**
    * The CONSERVATIVE window, in milliseconds, from T687's launch gate — time
    * remaining until `responseStoreNow`, not until `childCancelAt`. A DURATION,
    * never an instant, so a child with an offset clock still stops on time.
@@ -385,6 +392,8 @@ export interface ClaudePrintStoreServer {
   readonly env: Readonly<Record<string, string>>;
   /** Environment key consumed by the scoped server for this dispatch. */
   readonly capabilityEnv: string;
+  /** Environment key under which the scoped server takes a resolver's git-conflict capability. */
+  readonly gitConflictCapabilityEnv?: string;
 }
 
 export interface ClaudePrintLaunchOptions {
@@ -490,6 +499,21 @@ interface ClaudePrintInvocation {
   readonly argv: readonly string[];
 }
 
+function gitConflictCapabilityEnvironment(
+  context: ClaudeNativeLaunchContext,
+  options: ClaudePrintLaunchOptions,
+): Readonly<Record<string, string>> {
+  if (context.gitConflictCapability === undefined) return {};
+  const name = options.storeServer.gitConflictCapabilityEnv;
+  if (name === undefined) {
+    throw new AttestationContractError(
+      "launch.storeServer.gitConflictCapabilityEnv",
+      "a git-conflict capability was granted but the scoped server declares no environment key for it",
+    );
+  }
+  return { [name]: context.gitConflictCapability.token };
+}
+
 function claudePrintInvocation(
   context: ClaudeNativeLaunchContext,
   options: ClaudePrintLaunchOptions,
@@ -511,6 +535,7 @@ function claudePrintInvocation(
         env: {
           ...withoutWorksetCredentials(options.storeServer.env),
           [options.storeServer.capabilityEnv]: context.resultCapability.token,
+          ...gitConflictCapabilityEnvironment(context, options),
         },
       },
     },

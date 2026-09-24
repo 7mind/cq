@@ -68,7 +68,7 @@ describe("store_result with an environment-bound result capability", () => {
   it("a bound server refuses a different capability and stores nothing", async () => {
     const { stored, call } = await storeResultTool(BOUND);
     await expect(call({ resultCapability: OTHER, output: { status: "pass" } })).rejects.toThrow(
-      /bound result capability/,
+      /bound resultCapability/,
     );
     expect(stored).toEqual([]);
   });
@@ -85,3 +85,77 @@ describe("store_result with an environment-bound result capability", () => {
     expect(stored).toEqual([{ resultCapability: OTHER, output: { status: "pass" } }]);
   });
 });
+
+const BOUND_CONFLICT = { scope: "git-conflict", token: `cq_conflict_${"b".repeat(43)}` } as const;
+const OTHER_CONFLICT = { scope: "git-conflict", token: `cq_conflict_${"c".repeat(43)}` } as const;
+const RESOLVE_ARGS = {
+  attestationId: `att_${"a".repeat(32)}`,
+  generation: 1,
+  operationId: "resolve-1",
+  expectedState: { kind: "rebase-conflict" },
+  resolutions: [{ path: "a.txt", resolution: "ours" }],
+};
+
+async function resolveTool(boundGitConflictCapability: typeof BOUND_CONFLICT | undefined) {
+  const store = new InMemoryLedgerStore();
+  await store.init();
+  const received: Array<Record<string, unknown>> = [];
+  const unused = async (): Promise<never> => {
+    throw new Error("unexpected dispatch operation");
+  };
+  const dispatchCapability: DispatchCapability = {
+    prepare: unused,
+    fetchInput: unused,
+    storeResult: unused,
+    confirmCompletion: unused,
+    abort: unused,
+    fetch: unused,
+    gitCommit: unused,
+    gitResolveContinue: async (input) => {
+      received.push(input as unknown as Record<string, unknown>);
+      return { receipt: "ok" } as never;
+    },
+    ...(boundGitConflictCapability === undefined ? {} : { boundGitConflictCapability }),
+  };
+  const tool = createLedgerMcpTools(store, undefined, undefined, undefined, "", undefined, dispatchCapability)
+    .find((candidate) => candidate.name === "git_resolve_continue");
+  if (tool === undefined) throw new Error("git_resolve_continue is not exposed");
+  return {
+    received,
+    schema: z.object(tool.inputSchema),
+    call: (args: Record<string, unknown>) => tool.handler(args as never, null),
+  };
+}
+
+describe("git_resolve_continue with an environment-bound conflict capability", () => {
+  it("the tool schema lets a call omit gitConflictCapability", async () => {
+    const { schema } = await resolveTool(BOUND_CONFLICT);
+    expect(schema.shape.gitConflictCapability.safeParse(undefined).success).toBe(true);
+    expect(schema.shape.gitConflictCapability.safeParse(OTHER_CONFLICT).success).toBe(true);
+  });
+
+  it("a bound server continues with its bound capability when the child omits one", async () => {
+    const { received, call } = await resolveTool(BOUND_CONFLICT);
+    await call(RESOLVE_ARGS);
+    expect(received).toEqual([{ ...RESOLVE_ARGS, gitConflictCapability: BOUND_CONFLICT }]);
+  });
+
+  it("a bound server refuses a different capability", async () => {
+    const { received, call } = await resolveTool(BOUND_CONFLICT);
+    await expect(call({ ...RESOLVE_ARGS, gitConflictCapability: OTHER_CONFLICT })).rejects.toThrow(/bound/);
+    expect(received).toEqual([]);
+  });
+
+  it("an unbound server refuses a call that omits gitConflictCapability", async () => {
+    const { received, call } = await resolveTool(undefined);
+    await expect(call(RESOLVE_ARGS)).rejects.toThrow(/requires gitConflictCapability/);
+    expect(received).toEqual([]);
+  });
+
+  it("an unbound server passes an explicit capability through unchanged", async () => {
+    const { received, call } = await resolveTool(undefined);
+    await call({ ...RESOLVE_ARGS, gitConflictCapability: OTHER_CONFLICT });
+    expect(received).toEqual([{ ...RESOLVE_ARGS, gitConflictCapability: OTHER_CONFLICT }]);
+  });
+});
+

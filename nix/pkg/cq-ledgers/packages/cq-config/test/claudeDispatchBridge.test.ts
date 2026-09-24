@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -628,6 +628,70 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
       expect(allowed.slice(4).every((name) => name.startsWith("mcp__t688store__"))).toBe(true);
       expect(flag("--permission-mode")).toBe("dontAsk");
       expect(argv).toContain("--strict-mcp-config");
+    } finally {
+      if (previousCapture === undefined) delete process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+      else process.env["CQ_CLAUDE_ARGV_CAPTURE"] = previousCapture;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  test("G224: a git-conflict capability reaches the child server's environment, never the prompt", async () => {
+    const dispatch = preparedReviewer();
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const scratch = mkdtempSync(path.join(tmpdir(), "cq-g224-conflict-"));
+    const capturePath = path.join(scratch, "argv.json");
+    const conflictToken = `cq_conflict_${"k".repeat(43)}`;
+    const previousCapture = process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+    process.env["CQ_CLAUDE_ARGV_CAPTURE"] = capturePath;
+    const storeServer = {
+      name: "t688store",
+      command: "cq",
+      args: ["mcp", "--dispatch-store"],
+      cwd: import.meta.dir,
+      env: { T688_SCOPE: "one-dispatch" },
+      capabilityEnv: "T688_CAPABILITY",
+    };
+    const context = {
+      envelope: buildClaudeCompactNativeLaunch({
+        roleId: REVIEWER_ROLE_ID,
+        model: MODEL,
+        handle: handleOf(dispatch),
+        inputCapability: dispatch.inputCapability,
+      }),
+      preparedProvenance: provenanceBindingOf(dispatch),
+      expectedCorrelation: { roleId: REVIEWER_ROLE_ID, launchNonce: SESSION_ID, sessionId: SESSION_ID },
+      resultCapability: dispatch.resultCapability,
+      gitConflictCapability: { scope: "git-conflict" as const, token: conflictToken },
+      childWindowMs: 30_000,
+    };
+    const launchOptions = {
+      claudeExecutable: "bun",
+      claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-argv-capture.ts")],
+      cwd: import.meta.dir,
+      rolePrompt: REVIEWER_ROLE_PROMPT,
+      worksetEffect: { provider, targetRef: "tasks:T1983" },
+    };
+    try {
+      await expect(launchClaudePrint(context, { ...launchOptions, storeServer })).rejects.toThrow(
+        /declares no environment key/,
+      );
+      expect(existsSync(capturePath)).toBe(false);
+      await launchClaudePrint(context, {
+        ...launchOptions,
+        storeServer: { ...storeServer, gitConflictCapabilityEnv: "T688_CONFLICT" },
+      });
+      const argv = JSON.parse(readFileSync(capturePath, "utf8")) as string[];
+      const flag = (name: string): string => argv[argv.indexOf(name) + 1]!;
+      const config = JSON.parse(flag("--mcp-config")) as {
+        mcpServers: { t688store: { env: Record<string, string> } };
+      };
+      expect(config.mcpServers.t688store.env["T688_CONFLICT"]).toBe(conflictToken);
+      expect(flag("-p")).not.toContain(conflictToken);
+      expect(Object.keys(JSON.parse(flag("-p")) as object).sort()).toEqual([
+        "attestationId",
+        "generation",
+        "inputCapability",
+      ]);
     } finally {
       if (previousCapture === undefined) delete process.env["CQ_CLAUDE_ARGV_CAPTURE"];
       else process.env["CQ_CLAUDE_ARGV_CAPTURE"] = previousCapture;

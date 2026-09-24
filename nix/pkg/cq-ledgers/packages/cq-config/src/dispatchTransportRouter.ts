@@ -279,6 +279,9 @@ export function createClaudeProcessDispatchAdapter(
         preparedProvenance: provenanceBindingOf(context.prepared),
         expectedCorrelation: binding.correlation,
         resultCapability: context.prepared.resultCapability,
+        ...(context.prepared.gitConflictCapability === undefined
+          ? {}
+          : { gitConflictCapability: context.prepared.gitConflictCapability }),
         childWindowMs: gate.childWindowMs,
       },
       {

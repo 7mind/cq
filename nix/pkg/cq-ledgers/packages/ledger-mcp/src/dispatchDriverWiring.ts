@@ -12,7 +12,9 @@ import {
   type Harness,
 } from "@cq/config";
 import {
+  createCohortWorksetEffectAdmissionProvider,
   requireWorksetStore,
+  resolveRetainedManagedCohortAuthority,
   worksetEffectAdmissionProviderFromStore,
   type DispatchCapability,
   type LedgerStore,
@@ -73,6 +75,20 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     codexRoleCommand: input.environment[CQ_CODEX_ROLE_COMMAND_ENV] ?? DEFAULT_CODEX_ROLE_COMMAND,
     piExecutable: input.environment[CQ_PI_EXECUTABLE_ENV] ?? DEFAULT_PI_EXECUTABLE,
     effectAdmission: worksetEffectAdmissionProviderFromStore(requireWorksetStore(input.store)),
+    cohortEffectAdmission: async (cohort, roleId) => {
+      const cohortStore = input.store.workCohortStore?.();
+      if (cohortStore === undefined) {
+        throw new Error("a cohort dispatch needs this project's durable cohort store");
+      }
+      const retained = await resolveRetainedManagedCohortAuthority(
+        input.configRoot,
+        cohortStore,
+        cohort as Parameters<typeof resolveRetainedManagedCohortAuthority>[2],
+        {},
+        roleId === "implement-conflict-resolver",
+      );
+      return createCohortWorksetEffectAdmissionProvider(retained.authority, requireWorksetStore(input.store));
+    },
     readEnvelope,
     now: () => new Date().toISOString(),
   });

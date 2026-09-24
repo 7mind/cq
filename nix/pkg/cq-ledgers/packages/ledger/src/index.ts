@@ -975,6 +975,7 @@ export type {
   QualifyImplementationCandidateOutcome,
   PrepareDispatchToolInput,
   StoreResultToolInput,
+  GitResolveContinueToolInput,
   StartDispatchToolInput,
   DispatchWaitToolInput,
   DispatchDriverCapability,
