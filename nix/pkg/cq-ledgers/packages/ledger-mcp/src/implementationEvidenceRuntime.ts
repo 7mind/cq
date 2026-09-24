@@ -5,13 +5,17 @@ import {
   implementationAuditorSidecar,
   implementWorkerSidecar,
   implementWorkerSupervisedGateEvidenceSchema,
+  isEffort,
   loadConfig,
   resolveActiveHarness,
   routeDispatchTransport,
   validateAgainstSchema,
   type DispatchHandle,
   type DispatchJSONValue,
+  type DispatchPrepared,
+  type ReviewerToken,
 } from "@cq/config";
+import type { DispatchDriver } from "./dispatchDriver.js";
 import {
   GOALS_LEDGER,
   QUESTIONS_LEDGER,
@@ -250,6 +254,59 @@ function reviewerIdentity(
     launch: route.transport === "native" ? "native" : "adapter",
     adapterId: route.adapterId,
   };
+}
+
+export interface NativeEvidenceAttempt {
+  readonly roleId: "implement-reviewer" | "implementation-auditor";
+  readonly input: DispatchJSONValue;
+  readonly idempotencyKey: string;
+  readonly identity: ImplementationReviewerIdentity;
+  /** The child identity used when the parent, not CQ, launches the attempt. */
+  readonly parentLaunchedChild: { readonly childId: string; readonly runId: string };
+}
+
+/** One native evidence attempt: CQ-launched through the driver when present, else parent-launched. */
+export async function prepareNativeEvidenceAttempt(
+  dispatchCapability: DispatchCapability,
+  dispatchDriver: DispatchDriver | undefined,
+  attempt: NativeEvidenceAttempt,
+): Promise<DispatchPrepared> {
+  const prepare = async (binding: {
+    readonly expectedChild: { readonly childId: string; readonly runId: string };
+    readonly surface?: string;
+  }) =>
+    await dispatchCapability.prepare({
+      roleId: attempt.roleId,
+      input: attempt.input,
+      ...(binding.surface === undefined ? {} : { surface: binding.surface }),
+      idempotencyKey: attempt.idempotencyKey,
+      timeoutMs: PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS,
+      expectedChild: binding.expectedChild,
+    });
+  const outcome =
+    dispatchDriver === undefined
+      ? await prepare({ expectedChild: attempt.parentLaunchedChild })
+      : await dispatchDriver.startPrepared({
+          roleId: attempt.roleId,
+          token: reviewerToken(attempt.identity),
+          seed: attempt.idempotencyKey,
+          prepare,
+        });
+  if (!outcome.accepted) {
+    throw new Error(`${attempt.roleId} dispatch was rejected: ${outcome.reason}`);
+  }
+  return outcome.prepared;
+}
+
+function reviewerToken(identity: ImplementationReviewerIdentity): ReviewerToken {
+  if (identity.harness !== "claude" && identity.harness !== "codex" && identity.harness !== "pi") {
+    throw new Error(`implementation reviewer harness ${identity.harness} is unsupported`);
+  }
+  const effort = identity.effort ?? null;
+  if (effort !== null && !isEffort(identity.harness, effort)) {
+    throw new Error(`implementation reviewer effort ${effort} is not valid for ${identity.harness}`);
+  }
+  return { harness: identity.harness, model: identity.model, provider: identity.provider, effort };
 }
 
 function nativeFallbackIdentity(
@@ -558,6 +615,12 @@ export interface CreateProductionImplementationEvidenceServiceOptions {
   readonly readAuditManifest?: (
     manifestId: string,
   ) => Promise<PackagedImplementationAuditManifest>;
+  /**
+   * G224: when present, native review/audit attempts are prepared through it
+   * and launched by CQ at the attempt identity's token instead of being handed
+   * to the parent to launch in its own session.
+   */
+  readonly dispatchDriver?: DispatchDriver;
 }
 
 /** Bind the protected journal to the same local store and durable dispatch runtime as MCP. */
@@ -571,6 +634,8 @@ export function createProductionImplementationEvidenceService(
     throw new Error("dispatch runtime cannot re-resolve protected implementation evidence");
   }
   const observe = options.dispatchCapability.observeEvidence.bind(options.dispatchCapability);
+  const prepareNativeEvidenceDispatch = (attempt: NativeEvidenceAttempt) =>
+    prepareNativeEvidenceAttempt(options.dispatchCapability, options.dispatchDriver, attempt);
   const activeHarness = resolveActiveHarness(options.environment ?? process.env);
   const config = loadConfig(options.repositoryRoot);
   const forceShellout = config?.dispatch.forceShellout ?? false;
@@ -777,20 +842,16 @@ export function createProductionImplementationEvidenceService(
       if (worker.output["supervisedGateEvidence"] !== undefined) {
         input["supervisedGateEvidence"] = worker.output["supervisedGateEvidence"]!;
       }
-      const prepared = await options.dispatchCapability.prepare({
+      return await prepareNativeEvidenceDispatch({
         roleId: "implement-reviewer",
         input,
         idempotencyKey: `implementation-review-${operationId}-${attemptRef.slice(-16)}`,
-        timeoutMs: PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS,
-        expectedChild: {
+        identity,
+        parentLaunchedChild: {
           childId: `implementation-review-${attemptRef.slice(-12)}`,
           runId: `implementation-review-${attemptRef.slice(-12)}-${identity.alias}`,
         },
       });
-      if (!prepared.accepted) {
-        throw new Error(`implementation reviewer dispatch was rejected: ${prepared.reason}`);
-      }
-      return prepared.prepared;
     },
     fetchNativeReview: async (dispatch) => {
       const observation = await observe({
@@ -812,20 +873,16 @@ export function createProductionImplementationEvidenceService(
     },
     readAuditManifest,
     prepareNativeAudit: async ({ attemptRef, panel, identity, operationId }) => {
-      const prepared = await options.dispatchCapability.prepare({
+      return await prepareNativeEvidenceDispatch({
         roleId: "implementation-auditor",
         input: panel.auditInput,
         idempotencyKey: `implementation-audit-${operationId}-${attemptRef.slice(-16)}`,
-        timeoutMs: PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS,
-        expectedChild: {
+        identity,
+        parentLaunchedChild: {
           childId: `implementation-audit-${attemptRef.slice(-12)}`,
           runId: `implementation-audit-${attemptRef.slice(-12)}-${identity.alias}`,
         },
       });
-      if (!prepared.accepted) {
-        throw new Error(`implementation auditor dispatch was rejected: ${prepared.reason}`);
-      }
-      return prepared.prepared;
     },
     fetchNativeAudit: async (dispatch) => {
       const observation = await observe({

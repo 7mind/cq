@@ -7,7 +7,7 @@
  * anything is prepared, rather than failing after a dispatch exists.
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -80,8 +80,28 @@ const PI_UNREACHABLE_BROKER_ROLES: ReadonlySet<string> = new Set(["implement-con
 const PI_CHILD_ID_SEPARATOR = "#";
 /** Bytes of a failed launcher's stderr kept in the abort details. */
 const LAUNCHER_DIAGNOSTIC_LIMIT = 1_024;
-/** 24 random bytes encode to the 32 base64url characters a Codex correlation id requires. */
+/** 24 bytes encode to the 32 base64url characters a Codex correlation id requires. */
 const CODEX_CORRELATION_ID_BYTES = 24;
+const UUID_BYTES = 16;
+
+/**
+ * Correlation material derived from the dispatch's idempotency key, so an
+ * idempotent replay binds the same expected child (prepare treats it as part
+ * of the canonical request). Correlation ids identify a launch; they are not
+ * secrets - the capabilities are.
+ */
+function correlationBytes(seed: string, roleId: string, harness: Harness, purpose: string): Buffer {
+  return createHash("sha256").update(`${seed}\0${roleId}\0${harness}\0${purpose}`).digest();
+}
+
+/** An RFC 4122 version-4-shaped UUID from derived bytes (Claude requires a UUID session id). */
+function derivedUuid(bytes: Buffer): string {
+  const octets = Buffer.from(bytes.subarray(0, UUID_BYTES));
+  octets[6] = (octets[6]! & 0x0f) | 0x40;
+  octets[8] = (octets[8]! & 0x3f) | 0x80;
+  const hex = octets.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 export class DispatchLaunchUnavailableError extends Error {
   constructor(message: string) {
@@ -164,10 +184,11 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
   }
 
   const planner: DispatchLaunchPlanner = {
-    plan(targetHarness: Harness, roleId: string): PlannedDispatchLaunch {
+    plan(targetHarness: Harness, roleId: string, seed: string): PlannedDispatchLaunch {
+      const derive = (purpose: string) => correlationBytes(seed, roleId, targetHarness, purpose);
       if (targetHarness === "claude") {
         // The print report binds the child's session id as both nonce and run.
-        const sessionId = randomUUID();
+        const sessionId = derivedUuid(derive("session"));
         const correlation: ClaudeChildCorrelation = { roleId, launchNonce: sessionId, sessionId };
         return planned(
           claudeExpectedChild(correlation),
@@ -178,8 +199,8 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
       if (targetHarness === "codex") {
         const correlation: CodexChildCorrelation = {
           agentType: roleId,
-          correlationId: randomBytes(CODEX_CORRELATION_ID_BYTES).toString("base64url"),
-          threadId: `cq-run-${randomUUID()}`,
+          correlationId: derive("correlation").subarray(0, CODEX_CORRELATION_ID_BYTES).toString("base64url"),
+          threadId: `cq-run-${derivedUuid(derive("thread"))}`,
         };
         return planned(codexExpectedChild(correlation), { harness: "codex", correlation }, {
           correlationId: correlation.correlationId,
@@ -193,8 +214,8 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
             "configure a Claude or Codex model for this role",
         );
       }
-      const nonce = randomUUID();
-      const runId = `cq-pi-run-${randomUUID()}`;
+      const nonce = derivedUuid(derive("nonce"));
+      const runId = `cq-pi-run-${derivedUuid(derive("run"))}`;
       const correlation: NativeChildIdentity = { childId: `${roleId}${PI_CHILD_ID_SEPARATOR}${nonce}`, runId };
       return planned(correlation, { harness: "pi", correlation }, {
         correlationId: nonce,

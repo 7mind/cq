@@ -1759,31 +1759,33 @@ export async function main(
           ...(boundGitConflictCapability === undefined ? {} : { boundGitConflictCapability }),
         };
   // G224: a child-owned server (bound capability) never launches dispatches itself.
-  const dispatchCapability =
+  const serverDispatchDriver =
     boundDispatchCapability === undefined ||
     dispatchRuntime.kind !== "available" ||
     childOwned ||
     resolvedPromptSurface === undefined ||
     promptSurfacesRoot === undefined
+      ? undefined
+      : createServerDispatchDriver({
+          capability: boundDispatchCapability,
+          backend: dispatchRuntime.backend,
+          store,
+          activeHarness: resolvedPromptSurface.surface,
+          configRoot: resolved.configRoot,
+          promptSurfacesRoot,
+          environment: process.env,
+        });
+  const dispatchCapability =
+    boundDispatchCapability === undefined || serverDispatchDriver === undefined
       ? boundDispatchCapability
-      : {
-          ...boundDispatchCapability,
-          driver: createServerDispatchDriver({
-            capability: boundDispatchCapability,
-            backend: dispatchRuntime.backend,
-            store,
-            activeHarness: resolvedPromptSurface.surface,
-            configRoot: resolved.configRoot,
-            promptSurfacesRoot,
-            environment: process.env,
-          }),
-        };
+      : { ...boundDispatchCapability, driver: serverDispatchDriver };
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
       ? createStandaloneImplementationEvidenceService({
           resolved,
           dispatchCapability,
           repositoryRoot: cwd,
+          ...(serverDispatchDriver === undefined ? {} : { dispatchDriver: serverDispatchDriver }),
           ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace),
         })
       : undefined;

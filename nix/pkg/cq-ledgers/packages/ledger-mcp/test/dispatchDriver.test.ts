@@ -31,6 +31,7 @@ import {
   type DispatchModelResolver,
 } from "../src/dispatchDriver.js";
 import { InMemoryPromptArtifactStore } from "../src/promptArtifactStore.js";
+import { prepareNativeEvidenceAttempt } from "../src/implementationEvidenceRuntime.js";
 
 const encoder = new TextEncoder();
 const ROLE_ID = "plan-advance";
@@ -133,14 +134,12 @@ function harnessed(options: {
   const backend = new InMemoryAttestationBackend(store);
   const launches: Harnessed["launches"] = [];
   const correlations = new Map<string, NativeChildIdentity>();
-  let minted = 0;
   const planner: DispatchLaunchPlanner = {
-    plan: (targetHarness, roleId) => {
-      minted += 1;
-      const expectedChild = { childId: `${roleId}#${targetHarness}-${minted}`, runId: `run-${minted}` };
+    plan: (targetHarness, roleId, seed) => {
+      const expectedChild = { childId: `${roleId}#${targetHarness}-${seed}`, runId: `run-${seed}` };
       return {
         expectedChild,
-        qualificationIdentity: { correlationId: `nonce-${minted}`, childThreadId: `run-${minted}`, runId: `run-${minted}` },
+        qualificationIdentity: { correlationId: `${targetHarness}-${seed}`, childThreadId: `run-${seed}`, runId: `run-${seed}` },
         bind: (handle: DispatchHandle) => correlations.set(handle.attestationId, expectedChild),
         release: (handle: DispatchHandle) => correlations.delete(handle.attestationId),
       };
@@ -282,6 +281,19 @@ describe("G224 dispatch driver", () => {
     expect(h.launches).toEqual([]);
   });
 
+  test("a replayed start returns the same dispatch and never launches a second child", async () => {
+    const h = harnessed({});
+    const capability = h.capability();
+    const driver = h.driver(capability);
+    const first = await started(driver, "G224-replay");
+    const replay = await started(driver, "G224-replay");
+    expect(replay.handle).toEqual(first.handle);
+    await driver.waitFor({ ...first.handle, waitMs: 5_000 });
+    const afterTerminal = await started(driver, "G224-replay");
+    expect(afterTerminal.handle).toEqual(first.handle);
+    expect(h.launches).toHaveLength(1);
+  });
+
   test("a pre-launch rejection is returned and nothing launches", async () => {
     const h = harnessed({});
     const outcome = await h.driver(h.capability()).start({ ...startInput("G224-reject"), timeoutMs: -1 });
@@ -394,9 +406,9 @@ describe("G224 dispatch driver", () => {
       expect(calls[0]!.input).toMatchObject({
         ...outcome.handle,
         roleId: ROLE_ID,
-        correlationId: "nonce-1",
-        childThreadId: "run-1",
-        expectedRunId: "run-1",
+        correlationId: "claude-G224-staged",
+        childThreadId: "run-G224-staged",
+        expectedRunId: "run-G224-staged",
         outcome: "completed",
         exitStatus: 0,
       });
@@ -425,6 +437,54 @@ describe("G224 dispatch driver", () => {
       const outcome = await started(driver, "G224-no-gate");
       expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({ state: "consumed" });
       expect(calls).toEqual([]);
+    });
+  });
+
+  describe("native implementation-evidence attempts", () => {
+    const REVIEWER_IDENTITY = {
+      alias: "codexsol",
+      harness: "codex",
+      model: "gpt-5.6-sol",
+      provider: null,
+      effort: "high",
+      launch: "native" as const,
+      adapterId: "codex:native",
+    };
+
+    test("with a driver, CQ launches the attempt at the attempt identity's token", async () => {
+      const h = harnessed({});
+      const capability = h.capability();
+      const driver = h.driver(capability);
+      const prepared = await prepareNativeEvidenceAttempt(capability, driver, {
+        roleId: ROLE_ID as never,
+        input: INPUT,
+        idempotencyKey: "G224-evidence-1",
+        identity: REVIEWER_IDENTITY,
+        parentLaunchedChild: { childId: "implementation-review-x", runId: "implementation-review-x-codexsol" },
+      });
+      await driver.waitFor({ attestationId: prepared.attestationId, generation: prepared.generation, waitMs: 5_000 });
+      expect(h.launches).toEqual([{ adapterId: "codex:process", surface: "codex", model: "gpt-5.6-sol" }]);
+      const row = h.store.read(prepared);
+      if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
+      expect(row.expectedChild.childId).not.toBe("implementation-review-x");
+      expect(row.state).toBe("consumed");
+    });
+
+    test("without a driver, the attempt is prepared for the parent to launch, and nothing launches", async () => {
+      const h = harnessed({});
+      const capability = h.capability();
+      const prepared = await prepareNativeEvidenceAttempt(capability, undefined, {
+        roleId: ROLE_ID as never,
+        input: INPUT,
+        idempotencyKey: "G224-evidence-2",
+        identity: REVIEWER_IDENTITY,
+        parentLaunchedChild: { childId: "implementation-review-y", runId: "implementation-review-y-codexsol" },
+      });
+      const row = h.store.read(prepared);
+      if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
+      expect(row.expectedChild).toEqual({ childId: "implementation-review-y", runId: "implementation-review-y-codexsol" });
+      expect(row.state).toBe("prepared");
+      expect(h.launches).toEqual([]);
     });
   });
 });

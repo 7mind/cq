@@ -14,11 +14,13 @@
  */
 
 import {
+  formatReviewerToken,
   runPreparedDispatch,
   type AttestationEnvelope,
   type DispatchHandle,
   type DispatchPrepared,
   type DispatchPreLaunchRejection,
+  type PrepareDispatchOutcome,
   type DispatchSettlementPort,
   type DispatchTransportAdapterRegistry,
   type Harness,
@@ -70,7 +72,8 @@ export interface PlannedDispatchLaunch {
 }
 
 export interface DispatchLaunchPlanner {
-  plan(targetHarness: Harness, roleId: string): PlannedDispatchLaunch;
+  /** `seed` is the dispatch's idempotency key: a replay must plan the same child. */
+  plan(targetHarness: Harness, roleId: string, seed: string): PlannedDispatchLaunch;
 }
 
 /** Resolves which token a role runs at; throws when a requested token is not dispatchable. */
@@ -90,8 +93,27 @@ export interface DispatchDriverDeps {
   readonly now: () => string;
 }
 
+/** A started dispatch plus its prepared record, for trusted in-server callers only. */
+export interface StartedPreparedDispatch extends StartedDispatch {
+  readonly prepared: DispatchPrepared;
+}
+
 export interface DispatchDriver {
   start(input: StartDispatchInput): Promise<StartDispatchOutcome>;
+  /**
+   * Launch a dispatch whose prepare a trusted in-server caller owns (native
+   * implementation-evidence attempts), at an explicit token. `seed` is the
+   * caller's idempotency key.
+   */
+  startPrepared(input: {
+    readonly roleId: string;
+    readonly token: ReviewerToken;
+    readonly seed: string;
+    readonly prepare: (binding: {
+      readonly expectedChild: NativeChildIdentity;
+      readonly surface: Harness;
+    }) => Promise<PrepareDispatchOutcome>;
+  }): Promise<StartedPreparedDispatch | DispatchPreLaunchRejection>;
   /** Resolve when this server's launch of the handle settles, or after `waitMs`. */
   waitFor(input: DispatchWaitInput): Promise<void>;
 }
@@ -220,44 +242,70 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
     }
   }
 
+  /**
+   * Prepare through `prepareWith` with a planned child, then launch - unless the
+   * dispatch is already in flight here or no longer `prepared` (an idempotent
+   * replay of a started, running or finished dispatch never launches twice).
+   */
+  async function launchWith(
+    roleId: string,
+    token: ReviewerToken,
+    formatted: string,
+    seed: string,
+    prepareWith: (binding: {
+      readonly expectedChild: NativeChildIdentity;
+      readonly surface: Harness;
+    }) => Promise<PrepareDispatchOutcome>,
+  ): Promise<StartedPreparedDispatch | DispatchPreLaunchRejection> {
+    const targetHarness = token.harness;
+    const planned = deps.planner.plan(targetHarness, roleId, seed);
+    const outcome = await prepareWith({ expectedChild: planned.expectedChild, surface: targetHarness });
+    if (!outcome.accepted) return outcome;
+    const handle = outcome.handle;
+    const key = handleKey(handle);
+    const started = {
+      accepted: true as const,
+      handle,
+      route: { activeHarness: deps.activeHarness, targetHarness, model: formatted },
+      prepared: outcome.prepared,
+    };
+    if (inFlight.has(key) || (await deps.readEnvelope(handle))?.state !== "prepared") return started;
+    const running = launch(handle, planned, {
+      prepared: outcome.prepared,
+      resolvedModel: token,
+      activeHarness: deps.activeHarness,
+      targetHarness,
+      // K331: a server can host only process adapters.
+      forceShellout: true,
+      materializeOutput: false,
+      ...(outcome.prepared.parentGateCapability === undefined
+        ? {}
+        : {
+            qualifyStagedCompletion: stagedWorkerQualifier(
+              handle,
+              roleId,
+              planned,
+              outcome.prepared.parentGateCapability,
+            ),
+          }),
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, running);
+    return started;
+  }
+
   return {
     async start(input) {
       const roleId = roleIdOf(input);
       const { token, formatted } = deps.resolveModel(roleId, input.model);
-      const targetHarness = token.harness;
-      const planned = deps.planner.plan(targetHarness, roleId);
-      const outcome = await deps.capability.prepare({
-        ...withTargetSurface(input, targetHarness),
-        expectedChild: planned.expectedChild,
-      });
+      const outcome = await launchWith(roleId, token, formatted, input.idempotencyKey, async ({ expectedChild }) =>
+        await deps.capability.prepare({ ...withTargetSurface(input, token.harness), expectedChild }),
+      );
       if (!outcome.accepted) return outcome;
-      const handle = outcome.handle;
-      const key = handleKey(handle);
-      const running = launch(handle, planned, {
-        prepared: outcome.prepared,
-        resolvedModel: token,
-        activeHarness: deps.activeHarness,
-        targetHarness,
-        // K331: a server can host only process adapters.
-        forceShellout: true,
-        materializeOutput: false,
-        ...(outcome.prepared.parentGateCapability === undefined
-          ? {}
-          : {
-              qualifyStagedCompletion: stagedWorkerQualifier(
-                handle,
-                roleId,
-                planned,
-                outcome.prepared.parentGateCapability,
-              ),
-            }),
-      }).finally(() => inFlight.delete(key));
-      inFlight.set(key, running);
-      return {
-        accepted: true,
-        handle,
-        route: { activeHarness: deps.activeHarness, targetHarness, model: formatted },
-      };
+      return { accepted: true, handle: outcome.handle, route: outcome.route };
+    },
+
+    async startPrepared(input) {
+      return await launchWith(input.roleId, input.token, formatReviewerToken(input.token), input.seed, input.prepare);
     },
 
     async waitFor(input) {

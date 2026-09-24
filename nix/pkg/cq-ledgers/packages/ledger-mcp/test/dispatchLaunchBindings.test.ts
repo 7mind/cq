@@ -29,7 +29,7 @@ describe("createDispatchLaunchBindings", () => {
 
   test("every harness mints a <roleId>#<nonce> child id whose qualification identity matches it", () => {
     for (const harness of ["claude", "codex", "pi"] as const) {
-      const planned = bindings().planner.plan(harness, "implement-worker");
+      const planned = bindings().planner.plan(harness, "implement-worker", "seed-1");
       expect(planned.expectedChild.childId, harness).toBe(
         `implement-worker#${planned.qualificationIdentity.correlationId}`,
       );
@@ -37,9 +37,22 @@ describe("createDispatchLaunchBindings", () => {
     }
   });
 
+  test("an idempotent replay plans the same child; a different dispatch plans a different one", () => {
+    for (const harness of ["claude", "codex", "pi"] as const) {
+      const first = bindings().planner.plan(harness, "implement-worker", "key-1");
+      const replay = bindings().planner.plan(harness, "implement-worker", "key-1");
+      const other = bindings().planner.plan(harness, "implement-worker", "key-2");
+      expect(replay.expectedChild, harness).toEqual(first.expectedChild);
+      expect(other.expectedChild.childId, harness).not.toBe(first.expectedChild.childId);
+    }
+    expect(bindings().planner.plan("claude", "implement-worker", "key-1").expectedChild.runId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
   test("a Pi-configured conflict resolver is refused before anything is prepared", () => {
-    expect(() => bindings().planner.plan("pi", "implement-conflict-resolver")).toThrow(DispatchLaunchUnavailableError);
-    expect(() => bindings().planner.plan("pi", "implement-reviewer")).not.toThrow();
+    expect(() => bindings().planner.plan("pi", "implement-conflict-resolver", "seed-1")).toThrow(DispatchLaunchUnavailableError);
+    expect(() => bindings().planner.plan("pi", "implement-reviewer", "seed-1")).not.toThrow();
   });
 });
 
@@ -71,7 +84,7 @@ describe("per-dispatch admission", () => {
       now: () => "2026-09-24T12:00:00.000Z",
     });
     const handle = { attestationId: `att_${"a".repeat(32)}`, generation: 1 };
-    bound.planner.plan("claude", "implement-worker").bind(handle);
+    bound.planner.plan("claude", "implement-worker", "seed-1").bind(handle);
     const claude = bound.adapters.find((adapter) => adapter.id === "claude:process")!;
     const result = await claude.launch({
       route: { activeHarness: "claude", targetHarness: "claude", forceShellout: true, transport: "process", adapterId: "claude:process" },
