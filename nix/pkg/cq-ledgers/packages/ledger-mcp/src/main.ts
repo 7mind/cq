@@ -35,6 +35,7 @@
  * traffic only; all logs go to stderr.
  */
 
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
@@ -706,6 +707,31 @@ export function createImplementationSuccessorLauncher(
     const effectTargetRef = managed.cohort === undefined
       ? assertCodexBoundaryEffectTargetRef(`tasks:${managed.taskId}`)
       : assertCodexBoundaryEffectTargetRef(cohortEffectTargetRefV1(managed.cohort), managed.cohort);
+    // D538: enforce the attested prompt binding BEFORE spawning. The prepared
+    // attestation records the digest of the exact role instructions it was
+    // prepared against; this launcher points the child at a prompt root and
+    // lets it resolve its own role, so without this a drifted root launches a
+    // successor carrying parentGateCapability and gitChangeCapability whose
+    // attestation asserts a provenance the running child does not have. The
+    // qualified transport adapter makes the same comparison, but defects:D535
+    // leaves it with no production consumer.
+    const roleId = prepared.promptProvenance.roleId;
+    let roleInstructions: string;
+    try {
+      roleInstructions = await readFile(path.join(promptRoot, "roles", `${roleId}.md`), "utf8");
+    } catch (cause) {
+      throw new Error(
+        `implementation successor cannot read role instructions for ${roleId} under ` +
+          `${promptRoot} to verify its attested prompt digest: ${String(cause)}`,
+      );
+    }
+    const observedPromptDigest = createHash("sha256").update(roleInstructions).digest("hex");
+    if (observedPromptDigest !== prepared.promptProvenance.promptDigest) {
+      throw new Error(
+        `implementation successor role instructions prompt digest ${observedPromptDigest} does not ` +
+          `match the attested ${prepared.promptProvenance.promptDigest}`,
+      );
+    }
     const invocation = {
       roleId: "implement-worker",
       handle: {

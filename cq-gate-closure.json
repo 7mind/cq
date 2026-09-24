@@ -45,7 +45,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-      "sha256": "67526057dfedd041680f5a33d5ccb58bcef58a55ca75a29831388dd326f1837f",
+      "sha256": "c0b797a35f53b093214860b3b87ca7071674f4c73484ec00b4d26244d92c4d60",
       "targets": []
     },
     {
@@ -692,13 +692,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "54ae5f5b90f672f723c450ecc3b391f776de9cb37e9c7c1cb8e10f61b5e4a8fd",
+      "sha256": "0e4ac9d9c1e71561f51b23cbe07d3cef95e60e8678485d4fd8fcf12f2f8931b1",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "54ae5f5b90f672f723c450ecc3b391f776de9cb37e9c7c1cb8e10f61b5e4a8fd",
+      "sha256": "0e4ac9d9c1e71561f51b23cbe07d3cef95e60e8678485d4fd8fcf12f2f8931b1",
       "targets": []
     },
     {
@@ -2482,7 +2482,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/cohort-successor-launcher.test.ts",
-      "sha256": "638151019be259ef09c9a2403c37b8680b9c3428e7b9c178d932d4158d00e020",
+      "sha256": "ef37f401a2033e97feaea9ea1b074c3f7d0e59487e3a35d5c4f41558b074a18b",
       "targets": []
     },
     {
@@ -2581,6 +2581,18 @@
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/refFirstDispatchContracts.test.ts",
       "sha256": "8bda14123268a343a77a7ba5f9d3aedda59237c7a58cc923c6394c4edfefffd0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
+      "sha256": "c0b797a35f53b093214860b3b87ca7071674f4c73484ec00b4d26244d92c4d60",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/successorLauncherPromptProvenance.test.ts",
+      "sha256": "75c54e502a693ec96a4b5b83daf9fc048dab7a8288b399d4086c7fd91f86db57",
       "targets": []
     }
   ]

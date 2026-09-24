@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { DispatchPrepared } from "@cq/config";
 import { cohortEffectTargetRefV1 } from "@cq/process-control";
@@ -15,10 +16,17 @@ describe("cohort successor private launch [Effectual-GoodCommunication]", () => 
       await writeFile(script, `const invocation = JSON.parse(await Bun.stdin.text());
 await Bun.write(${JSON.stringify(captured)}, JSON.stringify({ invocation, argv: process.argv.slice(2) }));
 console.log(JSON.stringify(invocation.handle));\n`);
+      // D538: the launcher now verifies the attested prompt digest against the
+      // role instructions under the prompt root, so the fixture supplies a real
+      // role body and the digest its bytes actually hash to.
+      const roleInstructions = "# implement-worker (cohort successor fixture)\n";
+      await mkdir(join(subject.root, "roles"), { recursive: true });
+      await writeFile(join(subject.root, "roles", "implement-worker.md"), roleInstructions);
+      const promptDigest = createHash("sha256").update(roleInstructions).digest("hex");
       const prepared: DispatchPrepared = {
         attestationId: "cohort-successor", generation: 2,
         promptProvenance: { roleId: "implement-worker", version: 13, surface: "codex",
-          promptDigest: "a".repeat(64), catalogHash: "b".repeat(64), inputDigest: "c".repeat(64) },
+          promptDigest, catalogHash: "b".repeat(64), inputDigest: "c".repeat(64) },
         inputCapability: { scope: "fetch-input", token: "cq_input_successor" },
         resultCapability: { scope: "store-result", token: "cq_result_successor" },
         parentGateCapability: { scope: "parent-gate", token: "cq_parent_successor" },

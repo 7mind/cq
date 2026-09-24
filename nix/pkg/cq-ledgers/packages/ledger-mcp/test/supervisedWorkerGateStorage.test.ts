@@ -3164,8 +3164,26 @@ process.stdout.write(JSON.stringify({
       reasoningEffort: "high",
       sandboxMode: "workspace-write" as const,
     };
+    // defects:D538: the launcher now verifies the attested prompt digest against
+    // the role instructions under its prompt root before spawning. The shared
+    // fixture's artifact store records a synthetic digest ("a" x 64 over bytes
+    // [1]) that no file can hash to, so this test — which is about argv privacy
+    // and foreign-handle rejection, not prompt provenance — supplies a real role
+    // body and binds the prepared dispatch to the digest its bytes produce.
+    const successorRoleInstructions = "# implement-worker (T2081 successor fixture)\n";
+    await fs.mkdir(path.join(controlRoot, "roles"), { recursive: true });
+    await fs.writeFile(
+      path.join(controlRoot, "roles", "implement-worker.md"),
+      successorRoleInstructions,
+    );
     const launchInput = {
-      prepared: subject.prepared,
+      prepared: {
+        ...subject.prepared,
+        promptProvenance: {
+          ...subject.prepared.promptProvenance,
+          promptDigest: createHash("sha256").update(successorRoleInstructions).digest("hex"),
+        },
+      },
       managed,
       expectedChild: subject.expectedChild,
       timeoutMs: 600_000,
