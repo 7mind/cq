@@ -483,13 +483,25 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh",
-      "sha256": "a1fd9c421d37bfc4840f012e51aa89fa1d7f624fa554f3e5f31cf775ff1bf52b",
+      "sha256": "1aae1b7a8169add48e56a2e133361c2fb35f51ade8e55f59e5cfa6853bd0edff",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh",
-      "sha256": "a1fd9c421d37bfc4840f012e51aa89fa1d7f624fa554f3e5f31cf775ff1bf52b",
+      "sha256": "1aae1b7a8169add48e56a2e133361c2fb35f51ade8e55f59e5cfa6853bd0edff",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workingTreeFlakeRef.test.ts",
+      "sha256": "47b17731d485b32fad1b63fe689c0b315993506cecb40edda4b49653614a3545",
+      "targets": ["nix/pkg/cq-ledgers/scripts/working-tree-flake-ref.sh"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workingTreeFlakeRef.test.ts",
+      "sha256": "47b17731d485b32fad1b63fe689c0b315993506cecb40edda4b49653614a3545",
       "targets": []
     },
     {
