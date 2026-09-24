@@ -65,7 +65,6 @@ import {
   type ManagedWorktreeHandleV1 as ConfigManagedWorktreeHandleV1,
   type ImplementTaskWorkerSupervisedGateEvidence,
   type WipClosureProjection,
-  CQ_MANAGED_WORKTREES_SEGMENTS,
   cqManagedWorktreesParent,
   harnessNativeWorktreesParent,
   managedWorktreeRegistryRoot,
@@ -4482,10 +4481,6 @@ export async function withManagedWorktreeEffectLock<T>(
   } finally {
     await releaseLock();
   }
-}
-
-export function managedWorktreeHandleSegment(): string {
-  return CQ_MANAGED_WORKTREES_SEGMENTS.join("/");
 }
 
 export function normalizeManagedPath(value: string): string {

@@ -138,6 +138,24 @@ describe("D402 Claude ref-first dispatch contract", () => {
     expect(prose(parent)).toContain("inherits that session's tool surface");
   });
 
+  test("CQ_SUBAGENT names a concrete host call on every surface", () => {
+    // defects:D534. `CQ_SUBAGENT` is a NEUTRAL token, defined nowhere in the
+    // assets. Pi and Codex hid that by naming their transport in the same
+    // sentence; Claude wrote `CQ_SUBAGENT(...)` in call position with nothing
+    // to resolve it, leaving the parent to infer the host call from the
+    // `isolation:`/`run_in_background:` arguments.
+    const transports: Readonly<Record<string, string>> = {
+      claude: "Agent(",
+      codex: "spawn_agent",
+      pi: "dispatch_agent(",
+    };
+    for (const [surface, call] of Object.entries(transports)) {
+      const body = fragment(surface, "subagent-dispatch");
+      expect(body).toContain("CQ_SUBAGENT");
+      expect(body).toContain(call);
+    }
+  });
+
   test("the child still produces the fenced block the parent reads", () => {
     const child = fragment("claude", "dispatch-result-delivery");
     expect(child).toContain("fenced `json` block");

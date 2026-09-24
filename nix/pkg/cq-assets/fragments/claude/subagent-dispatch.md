@@ -4,7 +4,10 @@
 > `resultCapability` is the parent that called `prepare_dispatch`.
 >
 > 1. Call `prepare_dispatch` with the role's typed input.
-> 2. Launch `CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)`.
+> 2. Launch `CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)`,
+>    which on this host is the native `Agent(subagent_type:, prompt:, isolation:,
+>    run_in_background:)` tool — `role` selects `subagent_type` and the handle is
+>    the whole prompt.
 >    The launch prompt carries only the handle and the input capability; role
 >    instructions and assembled input resolve inside the child boundary, where
 >    the child materializes them with `fetch_dispatch_input` exactly once. Use

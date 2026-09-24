@@ -424,7 +424,6 @@ export {
   generateUuidV7,
   isUuidV7,
   listManagedLiveWorktrees,
-  managedWorktreeHandleSegment,
   nodeManagedWorktreeGitRunner,
   normalizeManagedPath,
   prepareManagedWorktree,
