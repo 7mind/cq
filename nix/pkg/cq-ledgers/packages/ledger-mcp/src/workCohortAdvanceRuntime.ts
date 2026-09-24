@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { projectGateAuthorizationForm } from "@cq/config";
+import { managedWorktreeRegistryRoot, projectGateAuthorizationForm } from "@cq/config";
 import { realpath } from "node:fs/promises";
-import { join } from "node:path";
 import {
   GitCohortLocalRepositoryV1, LedgerWorksetCohortAdmissionObservationSourceV1,
   cohortValueDigestV1 as digest, constructCohortDecisionsV1, createCohortDefinitionIdentityV1,
@@ -132,7 +131,7 @@ export async function createCohortAdvanceRuntimeV1(
       const cohort = createCohortEffectEnvelopeV1({ definition, observation: current, intent,
         evidenceSubject: null, executionEpoch: (await cohorts.snapshot()).runtime.executionEpoch });
       const authority = await resolvePreparationAuthority({ store: cohorts, envelope: cohort, holderId: input.operationId,
-        registryRoot: deps.stateDir ?? join(repositoryRoot, ".claude", "worktrees", ".cq-managed-registry") });
+        registryRoot: managedWorktreeRegistryRoot(repositoryRoot, deps.stateDir) });
       const guardedDeps = { ...deps, validateCohortPublication: (envelope: typeof cohort) =>
         assertCohortPrimaryObservationV1(resolved.store, envelope, current) };
       const git = createManagedCohortWorktreeGitEffectRunner({ store: resolved.store,
@@ -200,7 +199,7 @@ export async function createCohortAdvanceRuntimeV1(
         } else await cohorts.revalidatePreparationForResume(cohort);
       }
       const authority = await resolvePreparationAuthority({ store: cohorts, envelope: cohort, holderId: input.operationId,
-        registryRoot: deps.stateDir ?? join(repositoryRoot, ".claude", "worktrees", ".cq-managed-registry") });
+        registryRoot: managedWorktreeRegistryRoot(repositoryRoot, deps.stateDir) });
       const git = createManagedCohortWorktreeGitEffectRunner({ store: resolved.store, repositoryRoot, authority, readOnlyGit: nodeManagedWorktreeGitRunner });
       const guardedDeps = { ...deps, git, validateCohortPublication: (envelope: typeof cohort) =>
         assertCohortPrimaryObservationV1(resolved.store, envelope, current) };

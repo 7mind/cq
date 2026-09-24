@@ -6,6 +6,7 @@ import {
   type DispatchJSONValue,
   type DispatchOverlayApplication,
   type DispatchPromptProvenance,
+  managedWorktreeRegistryRoot,
 } from "@cq/config";
 import { z } from "zod";
 import type { GitChangeBrokerReceipt } from "./gitChangeBroker.js";
@@ -1049,7 +1050,7 @@ export function dispatchLineageFenceFromRecoveryJournal(
 }
 
 export function currentRecoveryJournalRoot(repositoryRoot: string, stateDir?: string): string {
-  return stateDir ?? join(repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
+  return managedWorktreeRegistryRoot(repositoryRoot, stateDir);
 }
 
 export async function readCommittedCurrentRecoverySeal(

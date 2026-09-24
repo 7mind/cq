@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { managedWorktreeRegistryRoot } from "@cq/config";
 import type { CohortEffectEnvelopeV1, DispatchGitChangeReceipt, DispatchGuardedRebaseBridge } from "@cq/config";
 import { assertCohortEffectEnvelopeV1 } from "@cq/process-control";
 import {
@@ -399,7 +400,7 @@ function manifestPaths(changes: readonly GitChangeManifestEntry[]): readonly str
 }
 
 function brokerRoot(binding: GitBrokerManagedBinding, stateDir?: string): string {
-  return stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
+  return managedWorktreeRegistryRoot(binding.repositoryRoot, stateDir);
 }
 
 function operationRoot(

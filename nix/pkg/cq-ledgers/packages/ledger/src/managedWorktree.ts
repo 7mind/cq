@@ -4,7 +4,8 @@
  * Owns the durable lifecycle of an implement-flow task worktree:
  *   - fresh prepare verifies base + transitive dependency result commits
  *     BEFORE any git worktree mutation, then creates a UUIDv7-named tree
- *     under `.claude/worktrees/`, retains branch identity `implement/<taskId>`,
+ *     under the CQ-managed parent (`cqManagedWorktreesParent`, defects:D404),
+ *     retains branch identity `implement/<taskId>`,
  *     runs a locked-down Bun install, and returns an opaque handle;
  *   - resume revalidates handle/path/branch/task and never reset/rebases
  *     criticism-round commits;
@@ -64,6 +65,8 @@ import {
   type ManagedWorktreeHandleV1 as ConfigManagedWorktreeHandleV1,
   type ImplementTaskWorkerSupervisedGateEvidence,
   type WipClosureProjection,
+  cqManagedWorktreesParent,
+  managedWorktreeRegistryRoot,
 } from "@cq/config";
 import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
 import {
@@ -119,7 +122,6 @@ import type {
 const FRESH_HANDLE_VERSION = 1 as const;
 const ADOPTED_HANDLE_VERSION = 2 as const;
 const DEFAULT_BRANCH_PREFIX = "implement/";
-const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
 const HANDLES_DIRNAME = "handles";
 const TASK_REGISTRY_DIRNAME = "tasks";
@@ -701,12 +703,11 @@ function containedPath(root: string, candidate: string): boolean {
 }
 
 function worktreesParent(repositoryRoot: string): string {
-  return join(repositoryRoot, ".claude", "worktrees");
+  return cqManagedWorktreesParent(repositoryRoot);
 }
 
 function registryRoot(repositoryRoot: string, stateDir: string | undefined): string {
-  if (stateDir !== undefined) return stateDir;
-  return join(worktreesParent(repositoryRoot), REGISTRY_DIRNAME);
+  return managedWorktreeRegistryRoot(repositoryRoot, stateDir);
 }
 
 function legacyHandlePath(regRoot: string, token: string): string {

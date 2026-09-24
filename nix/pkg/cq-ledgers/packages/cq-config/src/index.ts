@@ -1351,3 +1351,10 @@ export {
   type ProjectGateSpecification,
 } from "./projectGate.js";
 export { resolveProjectGateForRoot } from "./projectGateConfig.js";
+export {
+  CQ_MANAGED_WORKTREES_SEGMENTS,
+  HARNESS_NATIVE_WORKTREES_SEGMENTS,
+  MANAGED_REGISTRY_DIRNAME,
+  cqManagedWorktreesParent,
+  managedWorktreeRegistryRoot,
+} from "./managedWorktreePlacement.js";
