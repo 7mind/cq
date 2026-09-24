@@ -306,7 +306,8 @@ in
       description = ''
         Environment variables to set inside the sandbox session, as a NAME ->
         value map. Applied to every `yolo` subcommand and overridable by
-        `--env NAME=VALUE`. Values may contain `=` but not newlines.
+        `--env NAME=VALUE`. Unlisted host variables are not inherited. Values
+        may contain `=` but not newlines.
       '';
     };
 

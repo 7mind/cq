@@ -110,6 +110,8 @@ Subcommands:
 The current working directory ($PWD) is always bound read-write. Extra binds
 and devices are also configured declaratively via the home-manager module
 (smind.hm.dev.llm.yolo.*).
+The sandbox clears other inherited host environment variables; use --env or
+declarative session/secret variables to pass them explicitly.
 EOF
 }
 
@@ -624,8 +626,8 @@ fi
 
 # cq's XDG state store (ledger `xdg` backend primary lives under <base>/cq).
 # Resolve <base> exactly as cq does (packages/ledger/src/stateDir.ts):
-# $XDG_STATE_HOME when set to an absolute path, else ~/.local/state. bwrap
-# inherits the env (no --clearenv), so XDG_STATE_HOME reaches the sandbox and
+# $XDG_STATE_HOME when set to an absolute path, else ~/.local/state. The
+# sandbox baseline explicitly forwards XDG_STATE_HOME, so it reaches the agent and
 # in-sandbox cq resolves to this same path — bind it read-write so sandboxed
 # agents share the host ledger. Skipped by llm-sandbox if the dir is absent.
 if [[ -n "${XDG_STATE_HOME:-}" && "${XDG_STATE_HOME}" == /* ]]; then
@@ -944,16 +946,10 @@ case "$SUBCMD" in
     ;;
 esac
 
-# Don't leak the YOLO_* orchestration env into the sandbox. bwrap inherits the
-# parent environment (no --clearenv), so without this the agent would see all
-# the internal YOLO_* vars — including YOLO_SECRET_VARS, which maps secret names
-# to their host paths. The sandbox has no use for any of them: everything it
-# needs is passed explicitly via bwrap --env (SMIND_SANDBOXED, PATH, the session
-# vars, and the entrypoint's YOLO_SECRETS_FILE / YOLO_SANDBOX_HOOKS_FILE). Stash
-# the two paths the exec still needs, then clear YOLO_* from this env.
+# The sandbox clears inherited variables, including YOLO_* orchestration
+# settings. Stash the two paths needed for the final exec.
 _yolo_sandbox="$YOLO_LLM_SANDBOX"
 _yolo_entrypoint="$YOLO_SANDBOX_ENTRYPOINT"
-unset ${!YOLO_@}
 
 # When secret session vars and/or sandbox pre-start hooks are in play, run the
 # real command behind the in-sandbox entrypoint (resolved from the ro-bound

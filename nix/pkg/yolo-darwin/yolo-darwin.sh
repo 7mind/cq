@@ -86,6 +86,8 @@ Subcommands:
 The current working directory ($PWD) is always granted read-write. Additional
 paths, packages, environment variables, secrets, and hooks can be configured
 declaratively through smind.hm.dev.llm.yolo.*.
+Other inherited host environment variables are cleared; use --env or
+declarative session/secret variables to pass them explicitly.
 EOF
 }
 
@@ -624,9 +626,22 @@ yolo_exec_agent() {
   if [[ ${#entrypoint_env[@]} -gt 0 ]]; then
     child_argv=("$bash_executable" "$sandbox_entrypoint" "${child_argv[@]}")
   fi
-  local yolo_vars=("${!YOLO_@}")
-  unset "${yolo_vars[@]}"
-  env \
+  local -a base_env_pairs=()
+  local name
+  for name in HOME USER LOGNAME SHELL PATH TERM COLORTERM TERMINFO_DIRS \
+    TERM_PROGRAM TERM_PROGRAM_VERSION LANG LANGUAGE LOCALE_ARCHIVE XDG_SESSION_TYPE \
+    LC_ALL LC_CTYPE LC_MESSAGES LC_COLLATE LC_NUMERIC LC_TIME LC_MONETARY \
+    LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION \
+    XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR \
+    XDG_CONFIG_DIRS XDG_DATA_DIRS TMPDIR TZ TZDIR EDITOR VISUAL PAGER GIT_PAGER GH_PAGER NO_COLOR \
+    NIX_LD NIX_LD_LIBRARY_PATH NIX_PATH NIX_PROFILES NIX_USER_PROFILE_DIR \
+    NIX_DEBUG_INFO_DIRS NIXPKGS_CONFIG NIX_SSL_CERT_FILE SSL_CERT_FILE; do
+    if [[ -v "$name" ]]; then
+      base_env_pairs+=("$name=${!name}")
+    fi
+  done
+  env -i \
+    "${base_env_pairs[@]}" \
     "${PROFILE_ENV_PAIRS[@]}" \
     "${SOCKET_ENV_PAIRS[@]}" \
     "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" \

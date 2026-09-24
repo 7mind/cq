@@ -238,6 +238,7 @@ Complete the authentication flow. The credentials are stored in `~/.config/yolo/
 
 When an agent runs under `yolo-darwin`:
 
+- **Host variables are cleared** before the sandbox starts. Only process identity, `PATH`, terminal and locale settings, XDG paths, `TMPDIR`, selected Nix runtime variables, and editor/pager preferences are retained as a baseline; other values require explicit configuration or `--env`.
 - **Profile environment variables** (e.g., `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) are set only for named profiles and applied **before** explicit `--env KEY=VAL` pairs, so an explicit flag overrides a profile default.
 - **Declarative session variables** and the extra-package `PATH` come from the home-manager module and apply to every subcommand.
 - **Container runtime variables** set `DOCKER_HOST` and `CONTAINER_HOST` when
@@ -331,7 +332,7 @@ Repeat the live inside/outside-path probe after policy or macOS upgrades; determ
 
 When launching `yolo-darwin`, environment variable precedence is:
 
-1. **Inherited launcher environment**.
+1. **Allowlisted launcher environment** (process identity, `PATH`, terminal, locale, XDG, `TMPDIR`, selected Nix runtime variables, and editor/pager preferences).
 2. **Profile environment variables** (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`).
 3. **Configured Podman/Docker socket variables**.
 4. **Extra-package `PATH`**, when packages are configured.

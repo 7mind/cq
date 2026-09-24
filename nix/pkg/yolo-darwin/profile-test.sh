@@ -329,6 +329,11 @@ printf '%s\n' \
   'printf "DECLARED=%s\n" "${DECLARED:-<unset>}"' \
   'printf "ORDER=%s\n" "${ORDER:-<unset>}"' \
   'printf "SECRET_VALUE=%s\n" "${SECRET_VALUE:-<unset>}"' \
+  'printf "GH_TOKEN=%s\n" "${GH_TOKEN:-<unset>}"' \
+  'printf "HOST_ONLY=%s\n" "${HOST_ONLY:-<unset>}"' \
+  'printf "TERMINFO_DIRS=%s\n" "${TERMINFO_DIRS:-<unset>}"' \
+  'printf "NIX_LD=%s\n" "${NIX_LD:-<unset>}"' \
+  'printf "NIX_CONFIG=%s\n" "${NIX_CONFIG:-<unset>}"' \
   'printf "SANDBOX_HOOK=%s\n" "${SANDBOX_HOOK:-<unset>}"' \
   'printf "SHELL_HOOK=%s\n" "${SHELL_HOOK:-<unset>}"' \
   'printf "CMD_HOOK=%s\n" "${CMD_HOOK:-<unset>}"' \
@@ -439,20 +444,28 @@ OUT="$(
     YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
     YOLO_SANDBOX_BIN="$EXTRA_BIN" \
     YOLO_SESSION_VARS=$'DECLARED=session\nORDER=session\nSECRET_VALUE=session' \
-    YOLO_SECRET_VARS="SECRET_VALUE=$SECRET_SOURCE" \
+    YOLO_SECRET_VARS="SECRET_VALUE=$SECRET_SOURCE"$'\n'"GH_TOKEN=$SECRET_SOURCE" \
+    GH_TOKEN=host-personal-token \
+    HOST_ONLY=host-value \
     YOLO_PODMAN_SOCKET_PATH="$PODMAN_SOCKET_LINK" \
     YOLO_PODMAN_SOCKET_URI="$PODMAN_SOCKET_URI" \
     YOLO_PREHOOKS_JSON="$HOST_HOOKS" \
     YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
     YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" \
     YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" \
-    bash "$SCRIPT" --disable=skip --env ORDER=cli --env SECRET_VALUE=cli pi 2>&1
+    bash "$SCRIPT" --disable=skip \
+      --env "CAPTURE_ARGS_FILE=$CAPTURE_ARGS_FILE" \
+      --env "CAPTURE_POINTERS_FILE=$CAPTURE_POINTERS_FILE" \
+      --env "CAPTURE_PROFILE_FILE=$CAPTURE_PROFILE_FILE" \
+      --env ORDER=cli --env SECRET_VALUE=cli pi 2>&1
 )"
 STATUS=$?
 assert_zero "configured environment launch succeeds" "$STATUS"
 assert_contains "declarative session variable reaches agent" "$OUT" "DECLARED=session"
 assert_contains "explicit --env overrides declarative session variable" "$OUT" "ORDER=cli"
 assert_contains "secret file value overrides non-secret values" "$OUT" "SECRET_VALUE=from-secret-file"
+assert_contains "sandbox secret overrides inherited token" "$OUT" "GH_TOKEN=from-secret-file"
+assert_contains "unlisted host variable is absent" "$OUT" "HOST_ONLY=<unset>"
 assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
 assert_contains "agent subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
 assert_contains "agent subcommand excludes cmd hooks" "$OUT" "CMD_HOOK=<unset>"
@@ -474,6 +487,26 @@ assert_contains "secret tempfile is supplied to sandbox entrypoint" "$SECRET_TMP
 assert_contains "hook tempfile is supplied to sandbox entrypoint" "$HOOK_TMP_PATH" "yolo-darwin-hooks."
 assert_eq "secret temp file is removed after launch" "absent" "$(if [[ -n "$SECRET_TMP_PATH" && -e "$SECRET_TMP_PATH" ]]; then echo present; else echo absent; fi)"
 assert_eq "sandbox-hook temp file is removed after launch" "absent" "$(if [[ -n "$HOOK_TMP_PATH" && -e "$HOOK_TMP_PATH" ]]; then echo present; else echo absent; fi)"
+
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    GH_TOKEN=host-personal-token \
+    HOST_ONLY=host-value \
+    TERMINFO_DIRS=/test/terminfo \
+    NIX_LD=/test/ld \
+    NIX_CONFIG=host-only \
+    bash "$SCRIPT" cmd "$FAKE_BIN/pi" 2>&1
+)"
+STATUS=$?
+assert_zero "default-deny launch succeeds" "$STATUS"
+assert_contains "inherited GH_TOKEN is absent" "$OUT" "GH_TOKEN=<unset>"
+assert_contains "inherited unrelated variable is absent" "$OUT" "HOST_ONLY=<unset>"
+assert_contains "terminal database is retained" "$OUT" "TERMINFO_DIRS=/test/terminfo"
+assert_contains "Nix loader is retained" "$OUT" "NIX_LD=/test/ld"
+assert_contains "Nix configuration is not inherited" "$OUT" "NIX_CONFIG=<unset>"
 
 OUT="$(
   cd "$PROJECT_DIR" &&
