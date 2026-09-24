@@ -28,12 +28,17 @@
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
+import {
+  SOURCE_MUTANT_FIND_ENV,
+  SOURCE_MUTANT_REPLACE_ENV,
+  SOURCE_MUTANT_TARGET_ENV,
+} from "./fixtures/sourceMutantEnv.js";
 import { EXIT_ALLOW, EXIT_BLOCK, type AdvanceGateVerdict } from "../src/advanceGate.js";
 import {
   createLedgerStore,
@@ -453,6 +458,39 @@ const PREDICATES_SRC = fileURLToPath(
   new URL("../../ledger/src/store/predicates.ts", import.meta.url),
 );
 const ADVANCE_GATE_SRC = fileURLToPath(new URL("../src/advanceGate.ts", import.meta.url));
+const WORKSPACE_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+const STATE_ISOLATION_PRELOAD = path.join(WORKSPACE_ROOT, "test-setup", "isolate-state-dir.ts");
+const SOURCE_MUTANT_PRELOAD = fileURLToPath(
+  new URL("./fixtures/sourceMutantPreload.ts", import.meta.url),
+);
+
+/** D543: run one test against an in-memory mutant of predicates.ts. */
+function runAgainstPredicatesMutant(testName: string, replacement: string): number | null {
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "test",
+      "--preload",
+      STATE_ISOLATION_PRELOAD,
+      "--preload",
+      SOURCE_MUTANT_PRELOAD,
+      "packages/cq-cli/test/advance-gate.test.ts",
+      "-t",
+      testName,
+    ],
+    {
+      cwd: WORKSPACE_ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        [SOURCE_MUTANT_TARGET_ENV]: PREDICATES_SRC,
+        [SOURCE_MUTANT_FIND_ENV]: TASK_WAIT_EXCLUSION,
+        [SOURCE_MUTANT_REPLACE_ENV]: replacement,
+      },
+    },
+  );
+  return probe.status;
+}
 
 async function seedTaskWaitLedger(): Promise<{
   root: string;
@@ -573,56 +611,19 @@ describe("T1270: advance-gate preserves shared pPlan without local task-wait sem
   });
 
   it("T1270 deleting shared exclusion fails the active-wait leg", () => {
-    const original = readFileSync(PREDICATES_SRC, "utf8");
-    expect(original).toContain(TASK_WAIT_EXCLUSION);
-    try {
-      writeFileSync(PREDICATES_SRC, original.replace(TASK_WAIT_EXCLUSION, ""), "utf8");
-      const probe = spawnSync(
-        process.execPath,
-        [
-          "test",
-          "packages/cq-cli/test/advance-gate.test.ts",
-          "-t",
-          "T1270 active wait allows and matches shared pPlan",
-        ],
-        {
-          cwd: fileURLToPath(new URL("../../..", import.meta.url)),
-          encoding: "utf8",
-          env: process.env,
-        },
-      );
-      expect(probe.status).not.toBe(0);
-    } finally {
-      writeFileSync(PREDICATES_SRC, original, "utf8");
-    }
+    expect(readFileSync(PREDICATES_SRC, "utf8")).toContain(TASK_WAIT_EXCLUSION);
+    expect(
+      runAgainstPredicatesMutant("T1270 active wait allows and matches shared pPlan", ""),
+    ).not.toBe(0);
   });
 
   it("T1270 unconditional exclusion fails the terminal leg", () => {
-    const original = readFileSync(PREDICATES_SRC, "utf8");
-    expect(original).toContain(TASK_WAIT_EXCLUSION);
-    try {
-      writeFileSync(
-        PREDICATES_SRC,
-        original.replace(TASK_WAIT_EXCLUSION, "    if (true) continue;"),
-        "utf8",
-      );
-      const probe = spawnSync(
-        process.execPath,
-        [
-          "test",
-          "packages/cq-cli/test/advance-gate.test.ts",
-          "-t",
-          "T1270 terminal wait blocks with P-plan=TRUE and matches shared pPlan",
-        ],
-        {
-          cwd: fileURLToPath(new URL("../../..", import.meta.url)),
-          encoding: "utf8",
-          env: process.env,
-        },
-      );
-      expect(probe.status).not.toBe(0);
-    } finally {
-      writeFileSync(PREDICATES_SRC, original, "utf8");
-    }
+    expect(readFileSync(PREDICATES_SRC, "utf8")).toContain(TASK_WAIT_EXCLUSION);
+    expect(
+      runAgainstPredicatesMutant(
+        "T1270 terminal wait blocks with P-plan=TRUE and matches shared pPlan",
+        "    if (true) continue;",
+      ),
+    ).not.toBe(0);
   });
 });

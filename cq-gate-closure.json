@@ -267,7 +267,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/advance-gate.test.ts",
-      "sha256": "6ff2dec627e14ef7308ae614b93fb59dac13aafb59bdd46ccb05f68a8710fe78",
+      "sha256": "1df9f8abc50646014493478cd533e85deb9eec148ded59c2c223cce62f971c29",
+      "targets": ["nix/pkg/cq-ledgers/packages/cq-cli/test/fixtures/sourceMutantPreload.ts"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/fixtures/sourceMutantPreload.ts",
+      "sha256": "cac8d2111752cdac6b4fd083ef9672bb931832e466c2f79a7fa2264e8b4af79c",
       "targets": []
     },
     {
@@ -303,7 +309,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/gen-prompt-catalog.ts",
-      "sha256": "0ff4d5bbc5eb9d1d2a429014946aedd12d8c8d6a4a660f074c93ddd948389864",
+      "sha256": "26a1cabc3d1dbc144e32450df4e0c68adccaa25d201761b129f075ef7e507065",
       "targets": []
     },
     {
@@ -525,13 +531,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogAuthority.test.ts",
-      "sha256": "9e62b59a393118927f2436dc8e138e113ec1748206cd4655c28827176d457cb8",
+      "sha256": "eba64b2b00d6351f69feca11445387a4bfc45f08cd55fb8a0349f7cfe0fa4870",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogAuthority.test.ts",
-      "sha256": "9e62b59a393118927f2436dc8e138e113ec1748206cd4655c28827176d457cb8",
+      "sha256": "eba64b2b00d6351f69feca11445387a4bfc45f08cd55fb8a0349f7cfe0fa4870",
       "targets": []
     },
     {
@@ -956,7 +962,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/advance-gate.test.ts",
-      "sha256": "6ff2dec627e14ef7308ae614b93fb59dac13aafb59bdd46ccb05f68a8710fe78",
+      "sha256": "1df9f8abc50646014493478cd533e85deb9eec148ded59c2c223cce62f971c29",
       "targets": []
     },
     {
@@ -1232,7 +1238,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/g121HarnessBatch.test.ts",
-      "sha256": "e937407e1ed4578180c4dd0ee988447263db65ff8368a78d6e58734670bddaa3",
+      "sha256": "fdc80241f47b931927ce501973bb3d6a0016a317bf512452d3c09c6cb981ea98",
       "targets": []
     },
     {

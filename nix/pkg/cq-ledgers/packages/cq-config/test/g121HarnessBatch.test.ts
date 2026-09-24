@@ -4,9 +4,10 @@
  * Behavioral-Active Blackbox-Atomic against the public sidecars plus
  * Blackbox-GoodCommunication prompt guards against the asset sources.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS,
@@ -402,43 +403,42 @@ describe("T1309 orchestrator managed prepare/release [BG]", () => {
 });
 
 describe("T1307/T1308/T1309 real-body mutation control [BG]", () => {
-  test("stale worker body fails the Step-0 evidence guard; restoration recovers", () => {
+  // D543: mutate a copy of the real body, never the tracked file itself.
+  const scratch = mkdtempSync(path.join(os.tmpdir(), "g121-real-body-"));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+  function digest(file: string): string {
+    return createHash("sha256").update(readFileSync(file, "utf8")).digest("hex");
+  }
+
+  test("stale worker body fails the Step-0 evidence guard; the live body is untouched", () => {
     const original = readFileSync(WORKER_AGENT, "utf8");
-    const before = createHash("sha256").update(original).digest("hex");
+    const before = digest(WORKER_AGENT);
     const mutated = original.replace(
       "Step 0 — verify prepared evidence only",
       "Step 0 — INSTALL DEPS FIRST",
     );
     expect(mutated).not.toBe(original);
-    writeFileSync(WORKER_AGENT, mutated);
-    try {
-      const body = readFileSync(WORKER_AGENT, "utf8");
-      expect(body).not.toContain("Step 0 — verify prepared evidence only");
-      expect(body).toContain("INSTALL DEPS FIRST");
-    } finally {
-      writeFileSync(WORKER_AGENT, original);
-    }
-    const restored = readFileSync(WORKER_AGENT, "utf8");
-    const after = createHash("sha256").update(restored).digest("hex");
-    expect(after).toBe(before);
-    expect(restored).toContain("Step 0 — verify prepared evidence only");
+    const copy = path.join(scratch, "implement-worker.md");
+    writeFileSync(copy, mutated);
+    const body = readFileSync(copy, "utf8");
+    expect(body).not.toContain("Step 0 — verify prepared evidence only");
+    expect(body).toContain("INSTALL DEPS FIRST");
+    expect(digest(WORKER_AGENT)).toBe(before);
+    expect(readFileSync(WORKER_AGENT, "utf8")).toContain("Step 0 — verify prepared evidence only");
   });
 
-  test("stale advance body fails the no-raw-worktree guard; restoration recovers", () => {
+  test("stale advance body fails the no-raw-worktree guard; the live body is untouched", () => {
     const original = readFileSync(ADVANCE_CMD, "utf8");
-    const before = createHash("sha256").update(original).digest("hex");
+    const before = digest(ADVANCE_CMD);
     const forced = `${original}\n\ngit worktree add .claude/worktrees/<taskId> -b implement/<taskId> <baseCommit>\n`;
-    writeFileSync(ADVANCE_CMD, forced);
-    try {
-      const body = readFileSync(ADVANCE_CMD, "utf8");
-      expect(body).toContain("git worktree add .claude/worktrees/<taskId>");
-    } finally {
-      writeFileSync(ADVANCE_CMD, original);
-    }
-    const restored = readFileSync(ADVANCE_CMD, "utf8");
-    const after = createHash("sha256").update(restored).digest("hex");
-    expect(after).toBe(before);
-    expect(restored).not.toContain("git worktree add .claude/worktrees/<taskId>");
-    expect(restored).toContain("Never raw git worktree lifecycle");
+    const copy = path.join(scratch, "advance.md");
+    writeFileSync(copy, forced);
+    const body = readFileSync(copy, "utf8");
+    expect(body).toContain("git worktree add .claude/worktrees/<taskId>");
+    expect(digest(ADVANCE_CMD)).toBe(before);
+    const live = readFileSync(ADVANCE_CMD, "utf8");
+    expect(live).not.toContain("git worktree add .claude/worktrees/<taskId>");
+    expect(live).toContain("Never raw git worktree lifecycle");
   });
 });

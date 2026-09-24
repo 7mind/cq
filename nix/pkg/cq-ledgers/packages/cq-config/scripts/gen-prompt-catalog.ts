@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..", "..", "..", "..", "..");
 const OUT_FILE = path.resolve(SCRIPT_DIR, "..", "src", "promptCatalog.gen.ts");
+/** Print the module instead of writing OUT_FILE, so a parity check never rewrites the checkout. */
+const STDOUT_FLAG = "--stdout";
 
 interface PromptCatalogProjection {
   readonly schemaVersion: number;
@@ -54,6 +56,10 @@ export const PROMPT_CATALOG_PROJECTION = ${JSON.stringify(projection, null, 2)} 
 
 function main(): void {
   const projection = evaluateProjection();
+  if (process.argv.includes(STDOUT_FLAG)) {
+    process.stdout.write(emitModule(projection));
+    return;
+  }
   writeFileSync(OUT_FILE, emitModule(projection), "utf8");
   console.log(
     `gen-prompt-catalog: wrote ${path.relative(REPO_ROOT, OUT_FILE)} — ${projection.catalog.length} roles`,

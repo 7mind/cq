@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   DISPATCHED_ROLE_SIDECARS,
@@ -382,16 +382,14 @@ describe("assets.nix prompt-catalog authority", () => {
 
   test("the checked-in TypeScript projection is byte-identical to Nix generation", () => {
     const committed = readFileSync(GENERATED_CATALOG, "utf8");
-    const result = Bun.spawnSync(["bun", "run", "gen-prompt-catalog"], {
+    const result = Bun.spawnSync(["bun", "run", "gen-prompt-catalog", "--stdout"], {
       cwd: WORKSPACE_ROOT,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const fresh = readFileSync(GENERATED_CATALOG, "utf8");
-    writeFileSync(GENERATED_CATALOG, committed, "utf8");
 
     expect(result.exitCode).toBe(0);
-    expect(fresh).toBe(committed);
+    expect(new TextDecoder().decode(result.stdout)).toBe(committed);
   });
 
   test("binds the shared workset effect discipline only to effectful parent commands", () => {
