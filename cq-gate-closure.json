@@ -2579,8 +2579,8 @@
     },
     {
       "kind": "path",
-      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piSubagentRefFirstDispatch.test.ts",
-      "sha256": "e0be4f5c487cb86318d7a66838d1d7d28584507d4eb33cc6899b4aa5e1309ff4",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/refFirstDispatchContracts.test.ts",
+      "sha256": "2be674843327a8c33afa2d25d53cab4a297afa0c7ac650c2b0dabda63f78524a",
       "targets": []
     }
   ]

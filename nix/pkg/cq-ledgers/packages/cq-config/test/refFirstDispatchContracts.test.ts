@@ -1,4 +1,7 @@
 /**
+ * defects:D399 and defects:D402 — a dispatch contract must describe a lifecycle
+ * that SETTLES. Same defect shape on both surfaces, so the guards live together.
+ *
  * defects:D399 — the Pi parent contract must describe a lifecycle that settles.
  *
  * The packaged Pi contract used to be internally inconsistent. The PARENT
@@ -91,5 +94,53 @@ describe("D399 Pi ref-first dispatch contract", () => {
     const roleInput = roleFragment("pi", "implement-worker", "dispatch-input-delivery");
     expect(roleInput).not.toContain("inputCapability");
     expect(roleInput).not.toContain("fetch_dispatch_input");
+  });
+});
+
+/**
+ * defects:D402 — the same defect on the Claude surface, and the same fix.
+ *
+ * The Claude child fragment returns a fenced structured result and assets.nix
+ * forbids `store_result` in it, exactly as on Pi; the `claudeDispatchBridge`
+ * that WOULD store it is only on the `claude:process` print path, which
+ * production does not route to. So a Claude dispatch left the attestation
+ * prepared until trusted completion aborted it missing-result.
+ *
+ * researches:RS14 established the boundary half from production code: the print
+ * bridge already scopes a child properly — `--tools ""`, `--allowedTools` with
+ * full `mcp__<server>__<tool>` names from `exposedLedgerToolsForRole`,
+ * `--strict-mcp-config` and a child-owned server started `--tool-profile
+ * <roleId>` — while the same-session Agent path cannot, because the child IS
+ * the parent's session. The contract must therefore settle in the parent and
+ * must stop promising a scoping this transport does not provide.
+ */
+describe("D402 Claude ref-first dispatch contract", () => {
+  const parent = fragment("claude", "subagent-dispatch");
+
+  test("the parent is told to store the child's result", () => {
+    expect(parent).toContain("store_result");
+    expect(parent).toContain("verbatim");
+  });
+
+  test("the parent settles in order: prepare, dispatch, store, fetch", () => {
+    const step = (needle: string): number => parent.indexOf(needle);
+    expect(step("prepare_dispatch")).toBeGreaterThanOrEqual(0);
+    expect(step("CQ_SUBAGENT(")).toBeGreaterThan(step("prepare_dispatch"));
+    expect(step("store_result")).toBeGreaterThan(step("CQ_SUBAGENT("));
+    expect(step("fetch_dispatch_result")).toBeGreaterThan(step("store_result"));
+  });
+
+  test("it no longer claims a scoping this transport cannot provide", () => {
+    // The retired sentence promised the bridge "gives only that child a
+    // capability-scoped store_result". RS13 measured the opposite: the child
+    // holds the parent's full ledger surface, because it shares the session.
+    expect(prose(parent)).not.toContain("gives only that child a capability-scoped");
+    expect(prose(parent)).toContain("inherits that session's tool surface");
+  });
+
+  test("the child still produces the fenced block the parent reads", () => {
+    const child = fragment("claude", "dispatch-result-delivery");
+    expect(child).toContain("fenced `json` block");
+    expect(child).not.toContain("store_result");
   });
 });
