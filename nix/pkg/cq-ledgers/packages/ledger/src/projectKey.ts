@@ -190,13 +190,10 @@ export async function resolveProjectKey(opts: ResolveProjectKeyOpts): Promise<st
   const firstRoot = roots[0];
   if (firstRoot === undefined) {
     throw new ProjectKeyResolutionError(
-      `Cannot resolve a project key for ${opts.repoRoot}: no [ledger].projectId is set in ` +
-        `cq.toml, and \`git rev-list --max-parents=0 HEAD\` found no root commit (the directory ` +
-        `is not a git repository, or it is a repo with no commits yet). The out-of-tree ledger ` +
-        `store needs a repo identity that is stable across worktrees, clones, and moves — a ` +
-        `path-hash fallback would silently split the ledger across clones (Q246), so this fails ` +
-        `fast instead. Fix: set [ledger].projectId = "<a stable identifier>" in cq.toml, or make ` +
-        `an initial commit so the repo has a root commit to key off.`,
+      `Cannot identify the project at ${opts.repoRoot}: cq.toml sets no [ledger].projectId and ` +
+        `there is no git root commit to key the ledger by. Set [ledger].projectId in cq.toml, ` +
+        `make an initial commit, or run \`cq init --force\` to rewrite cq.toml with a generated ` +
+        `projectId.`,
     );
   }
   return firstRoot;

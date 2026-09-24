@@ -158,47 +158,44 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     const pi = parseConfig(CQ_TOML_TEMPLATE, "pi");
     expect(resolveReviewers(pi).map(formatReviewerToken)).toEqual([
       "pi:grok-build/grok-build:high",
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "pi:openai-codex/gpt-6-astra:xhigh",
     ]);
     expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "pi:openai-codex/gpt-6-astra:xhigh",
     ]);
-    // Per-role dispatch under pi is a direct [harness.pi.tiers] lookup (which
-    // replaces the shared claude tiers): frontier -> codex (sol), standard ->
-    // terra, fast -> luna (the GPT-5.6 capability ladder).
+    // The GPT-6 capability ladder: frontier -> astra, standard -> sol, fast -> luna.
     expect(formatReviewerToken(resolveAgentModel(pi, "implement-reviewer"))).toBe(
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "pi:openai-codex/gpt-6-astra:xhigh",
     );
     expect(formatReviewerToken(resolveAgentModel(pi, "implement-worker"))).toBe(
-      "pi:openai-codex/gpt-5.6-terra:high",
+      "pi:openai-codex/gpt-6-sol:high",
     );
   });
 
-  it("codex selector: [harness.codex] panels + [harness.codex.tiers] resolve exclusively to the openai-codex GPT-5.6 ladder, no active opus (T864)", () => {
+  it("codex selector: [harness.codex] panels + [harness.codex.tiers] resolve exclusively to native Codex GPT-6 tokens, no active opus (T864)", () => {
     const codex = parseConfig(CQ_TOML_TEMPLATE, "codex");
     expect(codex.dispatchViolation).toBeNull();
     expect(resolveReviewers(codex).map(formatReviewerToken)).toEqual([
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "codex:gpt-6-astra:xhigh",
     ]);
     expect(resolvePlanners(codex).map(formatReviewerToken)).toEqual([
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "codex:gpt-6-astra:xhigh",
     ]);
-    // The SAME GPT-5.6 ladder as [harness.pi.tiers]: frontier -> sol, standard
-    // -> terra, fast -> luna.
+    // The same GPT-6 ladder as [harness.pi.tiers], dispatched natively by Codex.
     expect(formatReviewerToken(tierModel(codex, "frontier")!)).toBe(
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "codex:gpt-6-astra:xhigh",
     );
     expect(formatReviewerToken(tierModel(codex, "standard")!)).toBe(
-      "pi:openai-codex/gpt-5.6-terra:high",
+      "codex:gpt-6-sol:high",
     );
     expect(formatReviewerToken(tierModel(codex, "fast")!)).toBe(
-      "pi:openai-codex/gpt-5.6-luna:low",
+      "codex:gpt-6-luna:low",
     );
     expect(formatReviewerToken(resolveAgentModel(codex, "implement-reviewer"))).toBe(
-      "pi:openai-codex/gpt-5.6-sol:xhigh",
+      "codex:gpt-6-astra:xhigh",
     );
     expect(formatReviewerToken(resolveAgentModel(codex, "implement-worker"))).toBe(
-      "pi:openai-codex/gpt-5.6-terra:high",
+      "codex:gpt-6-sol:high",
     );
     // No active alias resolves to a claude token — the shared opus/sonnet/haiku
     // aliases stay legal INACTIVE definitions under the codex selector.
@@ -233,12 +230,11 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
       filing: "enabled",
       recheck: "enabled",
     });
-    expect(CQ_TOML_TEMPLATE).toContain("[upstream]");
+    expect(CQ_TOML_TEMPLATE).toContain("# [upstream]");
     expect(CQ_TOML_TEMPLATE).toContain('filing  = "enabled"');
-    expect(CQ_TOML_TEMPLATE).toContain("Inner loops only record/defer.");
     const upstreamBlock = CQ_TOML_TEMPLATE.slice(
-      CQ_TOML_TEMPLATE.indexOf("# [upstream] —"),
-      CQ_TOML_TEMPLATE.indexOf("# Panels + tier->model"),
+      CQ_TOML_TEMPLATE.indexOf("# [upstream]"),
+      CQ_TOML_TEMPLATE.indexOf("# Panels and tiers per harness"),
     );
     expect(upstreamBlock).not.toMatch(/token|secret|password|bearer/i);
     const example = readFileSync(EXAMPLE_PATH, "utf8");

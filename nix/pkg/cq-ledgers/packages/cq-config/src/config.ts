@@ -126,13 +126,13 @@ export const DEFAULT_PANELS: Readonly<Record<ActiveHarness, DefaultPanel>> = Obj
   pi: Object.freeze({
     reviewers: Object.freeze([
       panelEntry("grok", "pi:grok-build/grok-build:high"),
-      panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh"),
+      panelEntry("pi-astra", "pi:openai-codex/gpt-6-astra:xhigh"),
     ]),
-    planners: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
+    planners: Object.freeze([panelEntry("pi-astra", "pi:openai-codex/gpt-6-astra:xhigh")]),
   }),
   codex: Object.freeze({
-    reviewers: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
-    planners: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
+    reviewers: Object.freeze([panelEntry("codex-astra", "codex:gpt-6-astra:xhigh")]),
+    planners: Object.freeze([panelEntry("codex-astra", "codex:gpt-6-astra:xhigh")]),
   }),
 });
 

@@ -64,7 +64,17 @@ async function makeTmpDir(prefix: string): Promise<string> {
 
 // --- extract the wrapper body from claude.nix (single source of truth) ------
 
-const CLAUDE_NIX = path.resolve(import.meta.dir, "../../../../../hm/claude.nix");
+const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../..");
+const CLAUDE_NIX_IN_PONYGIRLS = path.join("nix", "hm", "claude.nix");
+
+/** The Claude Home Manager module ships from the ponygirls flake input. */
+async function claudeNixPath(): Promise<string> {
+  const { stdout } = await execFileAsync("nix", ["flake", "archive", "--json", "--dry-run", "."], { cwd: REPO_ROOT });
+  const archive = JSON.parse(stdout) as { readonly inputs: Readonly<Record<string, { readonly path: string }>> };
+  const ponygirls = archive.inputs["ponygirls"];
+  if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
+  return path.join(ponygirls.path, CLAUDE_NIX_IN_PONYGIRLS);
+}
 const WRAPPER_MARKER = 'pkgs.writeShellScript "claude-stop-advance-gate" ';
 
 /**
@@ -78,7 +88,7 @@ const WRAPPER_MARKER = 'pkgs.writeShellScript "claude-stop-advance-gate" ';
  * testing nothing.
  */
 async function extractWrapperBody(): Promise<string> {
-  const src = await readFile(CLAUDE_NIX, "utf8");
+  const src = await readFile(await claudeNixPath(), "utf8");
   const markerIdx = src.indexOf(WRAPPER_MARKER);
   if (markerIdx === -1) {
     throw new Error(`claude.nix: could not find ${WRAPPER_MARKER} (wrapper renamed?)`);

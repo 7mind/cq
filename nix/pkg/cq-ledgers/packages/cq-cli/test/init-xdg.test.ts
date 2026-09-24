@@ -226,13 +226,21 @@ describe("cq init / erase — xdg out-of-tree backend, the fresh-init default (T
     await store.dispose();
   });
 
-  it("(c) cq init fails fast, actionably, outside a git work tree (xdg default has no stable project identity)", async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), "cq-init-xdg-nogit-"));
-    dirs.push(root);
-    // dispatch surfaces the thrown ProjectKeyResolutionError; assert it rejects
-    // with a message actionable enough to point the user at the fix.
-    await expect(dispatch(["init", "--cwd", root], recordingIo())).rejects.toThrow(
-      /projectId/i,
-    );
+  it("(c) cq init outside a git work tree writes a generated projectId and creates that project's store", async () => {
+    const parent = await fs.mkdtemp(path.join(tmpdir(), "cq-init-xdg-nogit-"));
+    dirs.push(parent);
+    const root = path.join(parent, "my project");
+    await fs.mkdir(root);
+    expect((await dispatch(["init", "--cwd", root], recordingIo())).exitCode).toBe(0);
+
+    const tomlContent = await fs.readFile(path.join(root, CQ_CONFIG_FILENAME), "utf8");
+    const match = /^\s*projectId = "([^"]+)"$/m.exec(tomlContent);
+    expect(match?.[1]).toMatch(/^my-project-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(tomlContent.replace(match![0], '  # projectId = "my-project"')).toBe(CQ_TOML_TEMPLATE);
+    expect((await fs.stat(path.join(resolveStateDir(match![1]!), "ledger.db"))).isFile()).toBe(true);
+
+    // A second init keeps the generated identity.
+    expect((await dispatch(["init", "--cwd", root], recordingIo())).exitCode).toBe(0);
+    expect(await fs.readFile(path.join(root, CQ_CONFIG_FILENAME), "utf8")).toBe(tomlContent);
   });
 });

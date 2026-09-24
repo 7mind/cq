@@ -70,7 +70,7 @@ describe("cq init --global", () => {
     expect(() => parseConfig(source)).not.toThrow();
     expect(source).toContain("[aliases]");
     expect(source).toContain("[harness.claude]");
-    expect(source).toContain("[ledger] and [project] are LOCAL-ONLY");
+    expect(source).toContain("[ledger] and [project] belong in each");
     expect(source).not.toMatch(/^\[ledger\]$/m);
     expect(source).not.toMatch(/^\[project\]$/m);
     const loaded = loadConfig(projectRoot, "claude");

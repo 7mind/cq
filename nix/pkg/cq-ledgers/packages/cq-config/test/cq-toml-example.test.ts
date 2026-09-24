@@ -12,8 +12,8 @@
  *  - The file contains no bare slash-free `pi:<word>` tokens.
  *  - parseConfig resolves the minimax alias to {harness:'pi', model:'minimax-m3', provider:'ollama-cloud'}.
  *  - parseConfig resolves the grok alias to {harness:'pi', model:'grok-build', provider:'grok-build'}.
- *  - parseConfig resolves codex/terra/luna aliases to the openai-codex GPT-5.6
- *    sol/terra/luna ladder (T864).
+ *  - parseConfig resolves codex/sol/luna aliases to the openai-codex GPT-6
+ *    astra/sol/luna ladder (T864).
  *  - parseConfig does NOT throw (T274 regression guard).
  *  - tierModel(config, "frontier") returns the opus token (semantic guard).
  *  - resolveAgentModel for 'plan-reviewer' returns the opus token
@@ -159,32 +159,23 @@ describe("cq.toml.example — T234 provider-qualification checks", () => {
     });
   });
 
-  it("resolves codex alias to {harness:'pi', model:'gpt-5.6-sol', provider:'openai-codex', effort:'xhigh'} (T864)", () => {
-    const contents = readFileSync(EXAMPLE_PATH, "utf8");
-    const config: CqConfig = parseConfig(contents);
-    expect(config.aliases["codex"]).toEqual({
-      harness: "pi",
-      model: "gpt-5.6-sol",
-      provider: "openai-codex",
-      effort: "xhigh",
-    });
-  });
-
-  it("resolves terra/luna aliases to the GPT-5.6 standard/fast ladder (T864)", () => {
-    const contents = readFileSync(EXAMPLE_PATH, "utf8");
-    const config: CqConfig = parseConfig(contents);
-    expect(config.aliases["terra"]).toEqual({
-      harness: "pi",
-      model: "gpt-5.6-terra",
-      provider: "openai-codex",
-      effort: "high",
-    });
-    expect(config.aliases["luna"]).toEqual({
-      harness: "pi",
-      model: "gpt-5.6-luna",
-      provider: "openai-codex",
-      effort: "low",
-    });
+  it("resolves the pi-* and codex-* aliases to the GPT-6 ladder over each transport (T864)", () => {
+    const config: CqConfig = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
+    const ladder = [["astra", "xhigh"], ["sol", "high"], ["luna", "low"]] as const;
+    for (const [model, effort] of ladder) {
+      expect(config.aliases[`pi-${model}`]).toEqual({
+        harness: "pi",
+        model: `gpt-6-${model}`,
+        provider: "openai-codex",
+        effort,
+      });
+      expect(config.aliases[`codex-${model}`]).toEqual({
+        harness: "codex",
+        model: `gpt-6-${model}`,
+        provider: null,
+        effort,
+      });
+    }
   });
 
   it("resolves grok alias to {harness:'pi', model:'grok-build', provider:'grok-build'}", () => {
@@ -202,7 +193,7 @@ describe("cq.toml.example — T234 provider-qualification checks", () => {
 /**
  * T864: the documented `[harness.pi]` / `[harness.codex]` examples (COMMENTED
  * OUT per T479 — cq.toml.example must carry no uncommented [harness.*] line)
- * are themselves schema-valid TOML that yields the documented GPT-5.6 ladder
+ * are themselves schema-valid TOML that yields the documented GPT-6 ladder
  * once uncommented. Extracts the contiguous commented block starting at
  * "# [harness.pi]" (through the following blank line, i.e. past
  * "# [harness.codex.tiers]"'s three tier lines), strips the leading "# " on
@@ -240,7 +231,7 @@ describe("cq.toml.example — T864: the codex CONFIGURATION SELECTOR is document
     expect(harnessLine).toBeUndefined();
   });
 
-  it("uncommenting the documented [harness.pi]/[harness.codex] examples parses and resolves the GPT-5.6 ladder, with no active opus under codex", () => {
+  it("uncommenting the documented [harness.pi]/[harness.codex] examples parses and resolves the GPT-6 ladder, with no active opus under codex", () => {
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const override = uncommentedHarnessExampleOverride(contents);
     // Sanity: the extracted, uncommented override actually declares both blocks.
@@ -255,29 +246,32 @@ describe("cq.toml.example — T864: the codex CONFIGURATION SELECTOR is document
 
     expect(codex.dispatchViolation).toBeNull();
 
-    const CODEX_TOKEN = "pi:openai-codex/gpt-5.6-sol:xhigh";
-    const TERRA_TOKEN = "pi:openai-codex/gpt-5.6-terra:high";
-    const LUNA_TOKEN = "pi:openai-codex/gpt-5.6-luna:low";
+    const PI_ASTRA = "pi:openai-codex/gpt-6-astra:xhigh";
+    const PI_SOL = "pi:openai-codex/gpt-6-sol:high";
+    const PI_LUNA = "pi:openai-codex/gpt-6-luna:low";
+    const CODEX_ASTRA = "codex:gpt-6-astra:xhigh";
+    const CODEX_SOL = "codex:gpt-6-sol:high";
+    const CODEX_LUNA = "codex:gpt-6-luna:low";
 
     // The pi selector's panel mirrors CQ_TOML_TEMPLATE: grok + codex reviewers,
     // codex-only planners.
     expect(resolveReviewers(pi).map(formatReviewerToken)).toEqual([
       "pi:grok-build/grok-build",
-      CODEX_TOKEN,
+      PI_ASTRA,
     ]);
-    expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
-    expect(formatReviewerToken(tierModel(pi, "frontier")!)).toBe(CODEX_TOKEN);
-    expect(formatReviewerToken(tierModel(pi, "standard")!)).toBe(TERRA_TOKEN);
-    expect(formatReviewerToken(tierModel(pi, "fast")!)).toBe(LUNA_TOKEN);
+    expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([PI_ASTRA]);
+    expect(formatReviewerToken(tierModel(pi, "frontier")!)).toBe(PI_ASTRA);
+    expect(formatReviewerToken(tierModel(pi, "standard")!)).toBe(PI_SOL);
+    expect(formatReviewerToken(tierModel(pi, "fast")!)).toBe(PI_LUNA);
 
     // The codex selector's panel/tiers resolve EXCLUSIVELY to the same
-    // OpenAI-Codex-backed GPT-5.6 ladder — no active opus, no active claude
+    // GPT-6 ladder, as native codex tokens — no active opus, no active claude
     // token of any kind.
-    expect(resolveReviewers(codex).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
-    expect(resolvePlanners(codex).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
-    expect(formatReviewerToken(tierModel(codex, "frontier")!)).toBe(CODEX_TOKEN);
-    expect(formatReviewerToken(tierModel(codex, "standard")!)).toBe(TERRA_TOKEN);
-    expect(formatReviewerToken(tierModel(codex, "fast")!)).toBe(LUNA_TOKEN);
+    expect(resolveReviewers(codex).map(formatReviewerToken)).toEqual([CODEX_ASTRA]);
+    expect(resolvePlanners(codex).map(formatReviewerToken)).toEqual([CODEX_ASTRA]);
+    expect(formatReviewerToken(tierModel(codex, "frontier")!)).toBe(CODEX_ASTRA);
+    expect(formatReviewerToken(tierModel(codex, "standard")!)).toBe(CODEX_SOL);
+    expect(formatReviewerToken(tierModel(codex, "fast")!)).toBe(CODEX_LUNA);
     for (const token of [
       ...resolveReviewers(codex),
       ...resolvePlanners(codex),

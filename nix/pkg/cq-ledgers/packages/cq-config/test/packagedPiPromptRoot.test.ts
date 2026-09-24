@@ -43,7 +43,7 @@ const EXPECTED_BUILT_IN_EXCLUSIONS: Readonly<Record<string, readonly string[]>> 
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
-const PI_CONTEXT = path.join(REPO_ROOT, "nix", "pkg", "llm-contexts", "pi-context.md");
+const PI_CONTEXT_IN_PONYGIRLS = path.join("nix", "pkg", "llm-contexts", "pi-context.md");
 const tempDirectories: string[] = [];
 const originalScript = process.argv[1] ?? "";
 const originalAgentsDir = process.env.CQ_AGENTS_DIR;
@@ -130,6 +130,16 @@ function run(command: readonly string[]): string {
 
 function evaluateRaw(attribute: string): string {
   return run(["nix", "eval", "--raw", `.#llmAssets.${attribute}`]);
+}
+
+/** The Pi operating manual ships from the ponygirls flake input. */
+function piContextPath(): string {
+  const archive = JSON.parse(run(["nix", "flake", "archive", "--json", "--dry-run", "."])) as {
+    readonly inputs: Readonly<Record<string, { readonly path: string }>>;
+  };
+  const ponygirls = archive.inputs["ponygirls"];
+  if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
+  return path.join(ponygirls.path, PI_CONTEXT_IN_PONYGIRLS);
 }
 
 function buildPiPromptRoot(): string {
@@ -527,7 +537,7 @@ describe("packaged Pi prompt root", () => {
       "src/schemas/research-experimenter.ts",
       "src/schemas/research-explorer.ts",
     ]);
-    const context = readFileSync(PI_CONTEXT, "utf8");
+    const context = readFileSync(piContextPath(), "utf8");
     expect(context).toContain('fetch_prompt("investigate/advance")');
     expect(context).toContain("Substitute any text following the invocation for `$ARGUMENTS`");
     expect(context).not.toContain("You are the **top-level flow sequencer**.");

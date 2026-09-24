@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import {
   createLedgerStore,
   createManagementLedgerStore,
+  GitPlumbing,
   CANONICAL_LEDGERS,
   removeLedgerArtifacts,
   LEDGER_STORAGE_DIRNAME,
@@ -53,7 +54,7 @@ import {
   defaultConfirmIo,
   confirmDestructive,
 } from "./confirm.js";
-import { CQ_TOML_GLOBAL_TEMPLATE, CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
+import { CQ_TOML_GLOBAL_TEMPLATE, CQ_TOML_TEMPLATE, cqTomlTemplateWithProjectId } from "./cqTomlTemplate.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
@@ -367,6 +368,19 @@ function defaultDispatchIo(): DispatchIo {
 
 // --- Subcommand handlers -----------------------------------------------------
 
+const PROJECT_ID_FALLBACK_NAME = "project";
+
+/**
+ * A fresh cq.toml for `cwd`. A directory with no git root commit has no stable
+ * identity to key the ledger by, so it gets a generated `[ledger].projectId`:
+ * the directory name plus a random UUID.
+ */
+async function freshProjectConfig(cwd: string): Promise<string> {
+  if ((await GitPlumbing.withCwd(cwd).firstCommitShas()).length > 0) return CQ_TOML_TEMPLATE;
+  const name = path.basename(path.resolve(cwd)).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "");
+  return cqTomlTemplateWithProjectId(`${name === "" ? PROJECT_ID_FALLBACK_NAME : name}-${randomUUID()}`);
+}
+
 export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   if (args.global) {
     const globalConfigPath = resolveGlobalConfigPath(process.env, homedir());
@@ -397,7 +411,7 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
   const configPath = path.join(args.cwd, CQ_CONFIG_FILENAME);
   const configExists = await pathExists(configPath);
   if (!configExists || args.force) {
-    await fs.writeFile(configPath, CQ_TOML_TEMPLATE, "utf8");
+    await fs.writeFile(configPath, await freshProjectConfig(args.cwd), "utf8");
   }
 
   const { backend } = resolveLedgerBackend(args.cwd);

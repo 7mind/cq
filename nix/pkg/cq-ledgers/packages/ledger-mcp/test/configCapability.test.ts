@@ -1462,11 +1462,11 @@ describe("G117: active-harness default panels + source", () => {
     const reviewers = computeReviewers(dir);
     expect(reviewers.configured).toBe(false);
     expect(reviewers.source).toBe("default");
-    expect(reviewers.reviewers.map((row) => row.alias)).toEqual(["grok", "codex"]);
+    expect(reviewers.reviewers.map((row) => row.alias)).toEqual(["grok", "pi-astra"]);
     expect(reviewers.reviewers.every((row) => row.harness === "pi")).toBe(true);
     const planners = computePlanners(dir);
     expect(planners.source).toBe("default");
-    expect(planners.planners.map((row) => row.alias)).toEqual(["codex"]);
+    expect(planners.planners.map((row) => row.alias)).toEqual(["pi-astra"]);
   });
 
   it("no cq.toml + CQ_HARNESS=codex serves the fail-closed non-claude default", () => {
@@ -1474,8 +1474,8 @@ describe("G117: active-harness default panels + source", () => {
     const reviewers = computeReviewers(dir);
     expect(reviewers.source).toBe("default");
     expect(reviewers.reviewers).toHaveLength(1);
-    expect(reviewers.reviewers[0]?.harness).toBe("pi");
-    expect(reviewers.reviewers[0]?.alias).toBe("codex");
-    expect(reviewers.reviewers[0]?.provider).toBe("openai-codex");
+    expect(reviewers.reviewers[0]?.harness).toBe("codex");
+    expect(reviewers.reviewers[0]?.alias).toBe("codex-astra");
+    expect(reviewers.reviewers[0]?.provider).toBeNull();
   });
 });

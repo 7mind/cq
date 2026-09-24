@@ -141,7 +141,7 @@ interface AgentEntry {
   readonly id: string;
   readonly status: string;
   readonly modelClass: string | null;
-  readonly modelMappings: { claude?: readonly string[]; pi?: readonly string[] };
+  readonly modelMappings: { claude?: readonly string[]; codex?: readonly string[]; pi?: readonly string[] };
 }
 interface ConfigPayload {
   readonly configured: boolean;
@@ -179,14 +179,21 @@ function agent(agents: readonly AgentEntry[], id: string): AgentEntry {
   return found;
 }
 
-// The [harness.codex] ladder the fixture ships: the pi-EXECUTABLE openai-codex
-// GPT-5.6 family. `codex` selects the block; the tokens it names are pi tokens,
-// because Codex-hosted dispatches must not select Claude tokens (T861).
-const SOL: PanelEntry = {
+// The frontier GPT-6 model over each transport: natively through Codex for the
+// codex selector, through Pi's openai-codex provider for the pi selector.
+// Codex-hosted dispatches must not select Claude tokens (T861).
+const CODEX_ASTRA: PanelEntry = {
+  harness: "codex",
+  model: "gpt-6-astra",
+  provider: null,
+  alias: "codex-astra",
+  effort: "xhigh",
+};
+const PI_ASTRA: PanelEntry = {
   harness: "pi",
-  model: "gpt-5.6-sol",
+  model: "gpt-6-astra",
   provider: "openai-codex",
-  alias: "codex",
+  alias: "pi-astra",
   effort: "xhigh",
 };
 
@@ -194,31 +201,21 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
   it("resolves the codex reviewers/planners/tiers/per-role mappings, with no ACTIVE claude token", async () => {
     await withHarness("codex", async (client) => {
       const { reviewers, planners } = await panels(client);
-      expect(reviewers).toEqual([SOL]);
-      expect(planners).toEqual([SOL]);
+      expect(reviewers).toEqual([CODEX_ASTRA]);
+      expect(planners).toEqual([CODEX_ASTRA]);
 
       const config = decode<ConfigPayload>(
         await client.callTool({ name: "get_config", arguments: { section: "all" } }),
       );
       expect(config.configured).toBe(true);
       // The ACTIVE panels are [harness.codex]'s, not the claude/pi ones.
-      expect(config.reviewers).toEqual(["codex"]);
-      expect(config.planners).toEqual(["codex"]);
+      expect(config.reviewers).toEqual(["codex-astra"]);
+      expect(config.planners).toEqual(["codex-astra"]);
       // [harness.codex.tiers] wholly replaces [harness.claude.tiers].
       expect(config.tiers).toEqual({
-        frontier: {
-          harness: "pi",
-          model: "gpt-5.6-sol",
-          provider: "openai-codex",
-          effort: "xhigh",
-        },
-        standard: {
-          harness: "pi",
-          model: "gpt-5.6-terra",
-          provider: "openai-codex",
-          effort: "high",
-        },
-        fast: { harness: "pi", model: "gpt-5.6-luna", provider: "openai-codex", effort: "low" },
+        frontier: { harness: "codex", model: "gpt-6-astra", provider: null, effort: "xhigh" },
+        standard: { harness: "codex", model: "gpt-6-sol", provider: null, effort: "high" },
+        fast: { harness: "codex", model: "gpt-6-luna", provider: null, effort: "low" },
       });
       // Acceptance: get_config.aliases MAY retain the shared Claude definitions
       // — under this selector they are INACTIVE, not a fallback.
@@ -234,11 +231,11 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
       expect(agents).toHaveLength(26);
       expect(agent(agents, "plan-advance").modelClass).toBe("frontier");
       expect(agent(agents, "plan-advance").modelMappings).toEqual({
-        pi: ["openai-codex/gpt-5.6-sol:xhigh"],
+        codex: ["gpt-6-astra:xhigh"],
       });
       expect(agent(agents, "implement-worker").modelClass).toBe("standard");
       expect(agent(agents, "implement-worker").modelMappings).toEqual({
-        pi: ["openai-codex/gpt-5.6-terra:high"],
+        codex: ["gpt-6-sol:high"],
       });
 
       // No active opus/Claude fallback ANYWHERE on the dispatch surface: not on
@@ -282,13 +279,13 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
           alias: "grok",
           effort: "high",
         },
-        SOL,
+        PI_ASTRA,
       ]);
-      expect(planners).toEqual([SOL]);
+      expect(planners).toEqual([PI_ASTRA]);
 
       const agents = await agentModels(client);
       expect(agent(agents, "plan-advance").modelMappings).toEqual({
-        pi: ["openai-codex/gpt-5.6-sol:xhigh"],
+        pi: ["openai-codex/gpt-6-astra:xhigh"],
       });
     });
   }, 60_000);

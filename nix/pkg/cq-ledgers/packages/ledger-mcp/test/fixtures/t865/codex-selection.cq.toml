@@ -12,16 +12,20 @@
 # test reading it would not reproduce for anyone else, or in CI.
 
 [aliases]
-  opus      = "claude:opus"
-  sonnet    = "claude:sonnet"
-  haiku     = "claude:haiku"
-  opus-max  = "claude:opus:max"
-  fable     = "claude:fable"
-  grok      = "pi:grok-build/grok-build:high"
-  codex     = "pi:openai-codex/gpt-5.6-sol:xhigh"
-  terra     = "pi:openai-codex/gpt-5.6-terra:high"
-  luna      = "pi:openai-codex/gpt-5.6-luna:low"
-  codex-max = "pi:openai-codex/gpt-5.6-sol:max"
+  opus            = "claude:opus"
+  opus-max        = "claude:opus:max"
+  fable           = "claude:fable"
+  sonnet          = "claude:sonnet"
+  haiku           = "claude:haiku"
+  grok            = "pi:grok-build/grok-build:high"
+  pi-astra        = "pi:openai-codex/gpt-6-astra:xhigh"
+  pi-astra-max    = "pi:openai-codex/gpt-6-astra:max"
+  pi-sol          = "pi:openai-codex/gpt-6-sol:high"
+  pi-luna         = "pi:openai-codex/gpt-6-luna:low"
+  codex-astra     = "codex:gpt-6-astra:xhigh"
+  codex-astra-max = "codex:gpt-6-astra:max"
+  codex-sol       = "codex:gpt-6-sol:high"
+  codex-luna      = "codex:gpt-6-luna:low"
 
 [agent_tiers]
   investigate-explorer        = "frontier"
@@ -43,17 +47,17 @@
   fast     = "haiku"
 
 [harness.pi]
-  reviewers = ["grok", "codex"]
-  planners  = ["codex"]
+  reviewers = ["grok", "pi-astra"]
+  planners  = ["pi-astra"]
 [harness.pi.tiers]
-  frontier = "codex"
-  standard = "terra"
-  fast     = "luna"
+  frontier = "pi-astra"
+  standard = "pi-sol"
+  fast     = "pi-luna"
 
 [harness.codex]
-  reviewers = ["codex"]
-  planners  = ["codex"]
+  reviewers = ["codex-astra"]
+  planners  = ["codex-astra"]
 [harness.codex.tiers]
-  frontier = "codex"
-  standard = "terra"
-  fast     = "luna"
+  frontier = "codex-astra"
+  standard = "codex-sol"
+  fast     = "codex-luna"

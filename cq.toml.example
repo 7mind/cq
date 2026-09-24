@@ -78,7 +78,7 @@ planners = ["opus"]
 #     MIGRATION: if you were using pi:minimax, update to pi:ollama-cloud/minimax-m3
 #     EFFORT SUFFIX (optional): append `:<effort>` to override the default thinking level.
 #       Legal pi efforts: off | none | minimal | low | medium | high | xhigh | max
-#       (GPT-5.6 accepts none | low | medium | high | xhigh | max.)
+#       (GPT-6 accepts none | low | medium | high | xhigh | max.)
 #       Omitted effort uses the provider/model default (current behavior unchanged).
 #       The pi `--model provider/model:effort` shorthand uses this suffix.
 #       `:` is RESERVED in the model name; a model cannot contain `:` (T286, R342).
@@ -123,14 +123,16 @@ planners = ["opus"]
   minimax    = "pi:ollama-cloud/minimax-m3"
   fable      = "claude:fable"       # opt-in frontier alias — add a [tiers] entry to activate
 
-  # The openai-codex provider serves the GPT-5.6 family, a capability tier
-  # ladder: sol (flagship, most capable) > terra (balanced everyday) > luna
-  # (fast, cheap). These three back the [harness.pi]/[harness.codex] examples
-  # further down. The Codex selector may use this Pi-backed ladder or native
-  # Pi-provider tokens for OpenAI Codex models:
-  codex      = "pi:openai-codex/gpt-5.6-sol:xhigh"    # frontier — GPT-5.6 sol (flagship)
-  terra      = "pi:openai-codex/gpt-5.6-terra:high"   # standard — balanced everyday
-  luna       = "pi:openai-codex/gpt-5.6-luna:low"     # fast — high-volume lightweight
+  # The GPT-6 family, a capability tier ladder: astra (flagship) > sol
+  # (balanced) > luna (fast, cheap), reachable through Pi's openai-codex
+  # provider (pi-*) or natively through the Codex executable (codex-*). They
+  # back the [harness.pi]/[harness.codex] examples further down.
+  pi-astra    = "pi:openai-codex/gpt-6-astra:xhigh"   # frontier
+  pi-sol      = "pi:openai-codex/gpt-6-sol:high"      # standard
+  pi-luna     = "pi:openai-codex/gpt-6-luna:low"      # fast
+  codex-astra = "codex:gpt-6-astra:xhigh"             # frontier
+  codex-sol   = "codex:gpt-6-sol:high"                # standard
+  codex-luna  = "codex:gpt-6-luna:low"                # fast
 
 # [tiers] — DISPATCH MAP: each tier (fast|standard|frontier) names the ONE model
 # an agent of that tier runs.  Per-role resolution ([agent_tiers] -> tier ->
@@ -317,33 +319,34 @@ planners = ["opus"]
 #
 # EXAMPLE — activate the pi harness (COMMENTED OUT; see note about T479: no
 # uncommented [harness.*] lines may appear in this file). This mirrors the
-# [harness.pi] block CQ_TOML_TEMPLATE ships by default — the GPT-5.6 family
+# [harness.pi] block CQ_TOML_TEMPLATE ships by default — the GPT-6 family
 # mapped by capability:
 #
 # [harness.pi]
-# reviewers = ["grok", "codex"]
-# planners  = ["codex"]
+# reviewers = ["grok", "pi-astra"]
+# planners  = ["pi-astra"]
 #
 # [harness.pi.tiers]
-# frontier = "codex"   # sol (flagship) at xhigh  -> pi:openai-codex/gpt-5.6-sol:xhigh
-# standard = "terra"   # balanced everyday         -> pi:openai-codex/gpt-5.6-terra:high
-# fast     = "luna"    # fast, high-volume         -> pi:openai-codex/gpt-5.6-luna:low
+# frontier = "pi-astra"
+# standard = "pi-sol"
+# fast     = "pi-luna"
 #
 # EXAMPLE — activate the codex CONFIGURATION SELECTOR (COMMENTED OUT; same
 # T479 note applies). This mirrors the [harness.codex] block CQ_TOML_TEMPLATE
-# ships by default, reusing the SAME pi-executable GPT-5.6 ladder as
-# [harness.pi.tiers] above — no active alias resolves to a claude token, and
+# ships by default: the same GPT-6 ladder as [harness.pi.tiers] above, but
+# dispatched natively by the Codex executable — no active alias resolves to a
+# claude token, and
 # no active `opus` appears (the shared [aliases] table above may still define
 # `opus` — it just stays INACTIVE under this selector):
 #
 # [harness.codex]
-# reviewers = ["codex"]
-# planners  = ["codex"]
+# reviewers = ["codex-astra"]
+# planners  = ["codex-astra"]
 #
 # [harness.codex.tiers]
-# frontier = "codex"
-# standard = "terra"
-# fast     = "luna"
+# frontier = "codex-astra"
+# standard = "codex-sol"
+# fast     = "codex-luna"
 
 # ---------------------------------------------------------------------------
 # [project] — OPTIONAL PROJECT-LEVEL METADATA (Q270, T570)
