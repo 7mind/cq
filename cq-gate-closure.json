@@ -2558,6 +2558,12 @@
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/projectGateWiring.test.ts",
       "sha256": "c6c821ce76ba2fc122488df4554873930cb8c2dd59ef86bdc9a715a63885ad41",
       "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piSubagentRefFirstDispatch.test.ts",
+      "sha256": "7ac355cd51889ba5152ed5f8ebdeae3ac0d69870ed2300bb431139c8c7af23ca",
+      "targets": []
     }
   ]
 }
