@@ -931,7 +931,7 @@ const taskStagedOutputSchema = {
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 13,
+  version: 14,
   inputSchema: singleTaskOrCohortSchema(inputSchema, cohortRoleArm(inputSchema, cohortPreSealEnvelopeSchema, "input")),
   outputSchema: singleTaskOrCohortSchema(outputSchema, {
     ...cohortRoleArm(outputSchema, cohortPreSealEnvelopeSchema, "output"),

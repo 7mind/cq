@@ -525,7 +525,7 @@ const outputSchema = {
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 8,
+  version: 9,
   inputSchema: singleTaskOrCohortSchema(inputSchema, {
     ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input"),
     properties: { ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input").properties,

@@ -64,12 +64,12 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "99be6cac6e847fbe1e66dd62ded37beab7890f5963930fa4053da3efb7325b22"
   },
   "implement-worker": {
-    "version": 13,
-    "digest": "c35f445e4127c58febf2e12b1f7146e87420c1d582f3b8eb7d867845552fb1d9"
+    "version": 14,
+    "digest": "a0795bc1ec3bb1167397bd630015856b15bc6f4ca38a1d5f6b613cb2eaf8d3cc"
   },
   "implement-reviewer": {
-    "version": 8,
-    "digest": "e71e12aef3f49d300156d251683b8f632bb45544be67ac6313ffdddcd39c857d"
+    "version": 9,
+    "digest": "bb8198586a33f25161eac2e02519ef846c6a9f7f3c6f816138f1f3590470729a"
   },
   "implementation-auditor": {
     "version": 1,

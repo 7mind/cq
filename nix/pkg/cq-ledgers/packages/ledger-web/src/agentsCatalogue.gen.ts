@@ -1998,7 +1998,11 @@ export const AGENT_ROLES: AgentRole[] = [
                     },
                     "surface": {
                       "type": "string",
-                      "const": "codex"
+                      "enum": [
+                        "claude",
+                        "codex",
+                        "pi"
+                      ]
                     },
                     "promptDigest": {
                       "type": "string",
@@ -2135,7 +2139,11 @@ export const AGENT_ROLES: AgentRole[] = [
                     },
                     "surface": {
                       "type": "string",
-                      "const": "codex"
+                      "enum": [
+                        "claude",
+                        "codex",
+                        "pi"
+                      ]
                     },
                     "promptDigest": {
                       "type": "string",
@@ -3338,7 +3346,11 @@ export const AGENT_ROLES: AgentRole[] = [
                 },
                 "surface": {
                   "type": "string",
-                  "const": "codex"
+                  "enum": [
+                    "claude",
+                    "codex",
+                    "pi"
+                  ]
                 },
                 "promptDigest": {
                   "type": "string",
@@ -4179,7 +4191,11 @@ export const AGENT_ROLES: AgentRole[] = [
                     },
                     "surface": {
                       "type": "string",
-                      "const": "codex"
+                      "enum": [
+                        "claude",
+                        "codex",
+                        "pi"
+                      ]
                     },
                     "promptDigest": {
                       "type": "string",
@@ -4316,7 +4332,11 @@ export const AGENT_ROLES: AgentRole[] = [
                     },
                     "surface": {
                       "type": "string",
-                      "const": "codex"
+                      "enum": [
+                        "claude",
+                        "codex",
+                        "pi"
+                      ]
                     },
                     "promptDigest": {
                       "type": "string",
@@ -4614,7 +4634,11 @@ export const AGENT_ROLES: AgentRole[] = [
                 },
                 "surface": {
                   "type": "string",
-                  "const": "codex"
+                  "enum": [
+                    "claude",
+                    "codex",
+                    "pi"
+                  ]
                 },
                 "promptDigest": {
                   "type": "string",
