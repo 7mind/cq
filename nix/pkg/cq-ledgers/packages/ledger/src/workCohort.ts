@@ -114,6 +114,20 @@ function intersection(left: ReadonlySet<string>, right: ReadonlySet<string>): Se
   return new Set([...left].filter((value) => right.has(value)));
 }
 
+/**
+ * Drop a trailing `:<line>` or `:<line>:<column>` citation suffix.
+ *
+ * Citing an exact line is the natural way to write a `sourceRefs` entry, and
+ * both the flows and the people driving them do it. Treating that suffix as
+ * part of the path made the owning item permanently inadmissible for cohort
+ * work, because the suffixed path is never a node in the repository graph
+ * (D555). The citation is normalized to the file it names; the line number
+ * carries no admission meaning.
+ */
+function repositoryPathFromCitation(value: string): string {
+  return value.replace(/:\d+(?::\d+)?$/u, "");
+}
+
 function normalizedRepositoryPath(value: string, label: string): string {
   assertNonEmpty(value, label);
   if (value.startsWith("/") || value.split("/").some((part) => part === "" || part === "..")) {
@@ -868,7 +882,10 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
             references.set(canonical(reference), reference);
             continue;
           }
-          const path = normalizedRepositoryPath(rawRef, `${memberRef} repository source path`);
+          const path = normalizedRepositoryPath(
+            repositoryPathFromCitation(rawRef),
+            `${memberRef} repository source path`,
+          );
           repositoryPaths.add(path);
           const reference = Object.freeze({ kind: "repository-path" as const, ref: path });
           references.set(canonical(reference), reference);

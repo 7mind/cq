@@ -187,7 +187,9 @@ function localInvestigationFixture(
       headline: `Defect ${id}`,
       severity: "high",
       rootCause: "shared primary cause",
-      sourceRefs: [`src/defects:${id}.ts`],
+      // The `path:line` citation form is what both flows reach for when citing an
+      // exact line; it must resolve to the file, not to a nonexistent path (D555).
+      sourceRefs: [id === "D1" ? `src/defects:${id}.ts:42` : `src/defects:${id}.ts`],
       ...(ownerFault === "ambient"
         ? {}
         : {
