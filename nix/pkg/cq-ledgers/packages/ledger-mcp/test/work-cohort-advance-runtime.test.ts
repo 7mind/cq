@@ -129,6 +129,25 @@ for (const adapter of ["memory", "sqlite"] as const) {
     } finally { continueOld(); await f.close(); }
   });
 
+  test(`${adapter} an unrestricted workset publishes its cohort instead of refusing at the fence [Behavioral-Active Blackbox-Atomic]`, async () => {
+    // D556: admission and publication must decide the effective workset the same
+    // way. D547 taught observation to treat empty persisted roots as the
+    // historical unrestricted mode; the publication fence kept reconstructing
+    // the workset from the raw roots and requiring a restrictive graph, so every
+    // cohort admitted and then refused its worktree with registry-conflict.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      await f.store.worksetStore().setRoots([]);
+      const observed = await f.runtime.observe({ plan: f.plan, operationId: "observe-unrestricted" });
+      const prepared = await f.runtime.prepare({
+        plan: f.plan,
+        operationId: "prepare-unrestricted",
+        definitionDigest: observed.definitions[0]!.definitionDigest,
+      });
+      expect(prepared.worktree.status).toBe("prepared");
+    } finally { await f.close(); }
+  });
+
   test(`${adapter} a workset replacement cannot publish the prior cohort authority [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
     const f = await advanceRuntimeFixture(adapter);
     try {

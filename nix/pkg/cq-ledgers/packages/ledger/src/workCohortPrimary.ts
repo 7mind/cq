@@ -3,15 +3,23 @@ import { derivePredicates } from "./store/predicates.js";
 import { readCanonicalOwnership } from "./worksetOwnerEdges.js";
 import { closeWorkset, parseGoalFinalizedManifest } from "./worksetGraph.js";
 import { buildActiveStateFromLedgerStore, requireWorksetStore } from "./worksetAccess.js";
-import { cohortValueDigestV1 as digest, type CohortAdmissionObservationV1,
-  type CohortEffectEnvelopeV1 } from "./workCohort.js";
+import { cohortAdmissionRootsV1, cohortValueDigestV1 as digest,
+  type CohortAdmissionObservationV1, type CohortEffectEnvelopeV1 } from "./workCohort.js";
 
 /** Run inside the primary publication transaction; no asynchronous gap precedes publication. */
 export function assertCohortPrimaryObservationV1(store: LedgerStore, envelope: CohortEffectEnvelopeV1,
   observation: CohortAdmissionObservationV1): undefined {
   const workset = requireWorksetStore(store).snapshot();
   if (workset instanceof Promise) throw new Error("cohort publication requires synchronous local primary workset fencing");
-  const graph = closeWorkset(workset.roots, buildActiveStateFromLedgerStore(store), { validateLiveRoots: true });
+  const activeState = buildActiveStateFromLedgerStore(store);
+  // Same effective-roots rule as admission observation (D556): an empty
+  // persisted workset closes over the whole active primary ledger, so an
+  // unrestricted cohort publishes instead of failing this fence.
+  const graph = closeWorkset(
+    cohortAdmissionRootsV1(workset.roots, activeState.byRef),
+    activeState,
+    { validateLiveRoots: true },
+  );
   const worksetRevision = digest({ roots: workset.roots, epoch: workset.epoch,
     nodes: graph.nodes.map(({ ref, item }) => ({ ref, revision: digest({ ref, item }) })), edges: graph.edges });
   if (!graph.restrictive || worksetRevision !== observation.workset.worksetRevision) {

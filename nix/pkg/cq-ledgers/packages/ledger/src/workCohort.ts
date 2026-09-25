@@ -735,6 +735,26 @@ function opaqueAuthorityReference(value: string): boolean {
   return /^cq-[a-z0-9-]+:v[0-9]+:[0-9a-f]{64}$/u.test(value);
 }
 
+/**
+ * The effective roots one cohort admission closes over.
+ *
+ * An empty persisted workset is the historical UNRESTRICTED mode, and it is the
+ * mode `deriveWorksetPredicates` already reports readiness in; refusing it made
+ * every predicate-actionable member unadmittable (D547). The unrestricted
+ * boundary is the whole active primary ledger.
+ *
+ * EVERY site that reconstructs the admission workset must use this rule.
+ * Observation and the primary publication fence each rebuild it independently,
+ * and applying the rule to only one of them let a cohort admit and then refuse
+ * its worktree with `registry-conflict` (D556).
+ */
+export function cohortAdmissionRootsV1(
+  roots: readonly string[],
+  activeItems: ReadonlyMap<string, Item>,
+): readonly string[] {
+  return roots.length > 0 ? roots : [...activeItems.keys()];
+}
+
 function readActivePrimaryItems(reader: CohortPrimaryLedgerReaderV1): ReadonlyMap<string, Item> {
   const ledgers = reader.enumerate().map((ledger) => {
     const fetched = reader.fetch(ledger);
@@ -802,15 +822,8 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
     const repository = await this.#repository.resolveIdentity();
     const worksetEpoch = await this.#workset.snapshot();
     const activeItems = readActivePrimaryItems(this.#ledger);
-    // An empty persisted workset is the historical UNRESTRICTED mode, and it is
-    // the mode `deriveWorksetPredicates` already reports readiness in. Refusing
-    // it here made every predicate-actionable member unadmittable, so the whole
-    // investigate/implement half of the flow had no legal operation (D547). The
-    // unrestricted boundary is the whole active primary ledger.
-    const admissionRoots =
-      worksetEpoch.roots.length > 0 ? worksetEpoch.roots : [...activeItems.keys()];
     const graph = closeWorkset(
-      admissionRoots,
+      cohortAdmissionRootsV1(worksetEpoch.roots, activeItems),
       { byRef: activeItems },
       { validateLiveRoots: true },
     );
