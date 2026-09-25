@@ -142,6 +142,13 @@ export async function createCohortAdvanceRuntimeV1(
       if (worktree.status === "resume-required") worktree = await prepareManagedCohortWorktree({ repositoryRoot,
         baseCommit: definition.repository.headCommit, integrationHead: definition.repository.headCommit,
         priorResultCommit: null, handle: worktree.handle, dependencyReader: dependencyTaskSnapshotReaderFromStore(resolved.store) }, { ...guardedDeps, git }, authority);
+      // A refusal holds no publishable authority, so it must not keep holding the
+      // members: recovery needs a fresh observation, whose definition mints a new
+      // reservation id that an orphan reservation would reject as an overlap.
+      if (worktree.status === "refused") await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, authority.lease, {
+        reservationId: intent.intentDigest, cohortId: definition.cohortId,
+        definitionDigest: definition.definitionDigest, memberRefs: definition.members.map(({ memberRef }) => memberRef),
+      });
       return { cohort, worktree };
     }),
     resume: async (input) => {

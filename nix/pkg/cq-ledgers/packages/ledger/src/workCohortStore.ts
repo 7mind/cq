@@ -919,6 +919,8 @@ export interface WorkCohortStore {
   recordCandidateAttempt(operationId: string, attempt: CohortCandidateAttemptV1): Promise<CohortCandidateAttemptV1>;
   sealCandidate(operationId: string, request: CohortCandidateSealRequestV1): Promise<CohortSealResultV1>;
   transitionReservation(operationId: string, transition: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest">): Promise<CohortReservationTransitionV1>;
+  releaseRefusedPreparation(operationId: string, lease: WorkCohortLeaseV1,
+    reservation: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest" | "transition">): Promise<CohortReservationTransitionV1>;
   transitionMember(operationId: string, transition: Omit<CohortMemberTransitionV1, "kind" | "version" | "transitionDigest">): Promise<CohortMemberTransitionV1>;
   recordSplit(operationId: string, split: Omit<CohortSplitLineageV1, "kind" | "version" | "splitDigest">): Promise<CohortSplitLineageV1>;
   recordProbe(operationId: string, probe: Omit<CohortProbeIdentityV1, "kind" | "version" | "probeDigest">): Promise<CohortProbeIdentityV1>;
@@ -1207,49 +1209,72 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
     input: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest">,
   ) {
     return this.#persistence.transact((current) =>
-      operationMutation(current, operationId, input, (state) => {
-        exactReservationDefinition(state, input);
-        const active = activeReservations(state);
-        const held = active.get(input.reservationId);
-        if (input.transition === "reserved") {
-          const requestedMembers = new Set(input.memberRefs);
-          for (const reservation of active.values()) {
-            if (reservation.reservationId === input.reservationId) {
-              if (
-                reservation.cohortId !== input.cohortId ||
-                reservation.definitionDigest !== input.definitionDigest ||
-                canonical(reservation.memberRefs) !== canonical(input.memberRefs)
-              ) {
-                throw new WorkCohortReservationConflictError(
-                  "reservation id is already bound to another definition",
-                );
-              }
-              continue;
-            }
-            if (reservation.memberRefs.some((memberRef) => requestedMembers.has(memberRef))) {
-              throw new WorkCohortReservationConflictError(
-                `cohort ${input.cohortId} overlaps reservation ${reservation.reservationId}`,
-              );
-            }
+      operationMutation(current, operationId, input, (state) => this.#applyReservationTransition(state, input)));
+  }
+
+  /**
+   * A refused preparation holds no publishable authority, so it must surrender
+   * the members and the runtime lease together: releasing only one of them wedges
+   * the next generation on the survivor.
+   */
+  releaseRefusedPreparation(
+    operationId: string,
+    lease: WorkCohortLeaseV1,
+    input: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest" | "transition">,
+  ) {
+    const request = { ...input, transition: "released" as const };
+    return this.#persistence.transact((current) => {
+      this.assertLease(current, lease);
+      const mutation = operationMutation(current, operationId, request,
+        (state) => this.#applyReservationTransition(state, request));
+      return { ...mutation, next: { ...mutation.next, runtime: { ...mutation.next.runtime, lease: null } } };
+    });
+  }
+
+  #applyReservationTransition(
+    state: MutablePortable,
+    input: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest">,
+  ) {
+    exactReservationDefinition(state, input);
+    const active = activeReservations(state);
+    const held = active.get(input.reservationId);
+    if (input.transition === "reserved") {
+      const requestedMembers = new Set(input.memberRefs);
+      for (const reservation of active.values()) {
+        if (reservation.reservationId === input.reservationId) {
+          if (
+            reservation.cohortId !== input.cohortId ||
+            reservation.definitionDigest !== input.definitionDigest ||
+            canonical(reservation.memberRefs) !== canonical(input.memberRefs)
+          ) {
+            throw new WorkCohortReservationConflictError(
+              "reservation id is already bound to another definition",
+            );
           }
+          continue;
         }
-        if (
-          input.transition === "released" &&
-          (held === undefined ||
-            held.cohortId !== input.cohortId ||
-            held.definitionDigest !== input.definitionDigest ||
-            canonical(held.memberRefs) !== canonical(input.memberRefs))
-        ) {
-          throw new WorkCohortReservationConflictError("reservation release does not own the active reservation");
+        if (reservation.memberRefs.some((memberRef) => requestedMembers.has(memberRef))) {
+          throw new WorkCohortReservationConflictError(
+            `cohort ${input.cohortId} overlaps reservation ${reservation.reservationId}`,
+          );
         }
-        const payload = { kind: "cq-cohort-reservation-transition" as const, version: 1 as const, ...input };
-        return appendExact(
-          state.reservationTransitions,
-          (value) => value.transitionDigest,
-          { ...payload, transitionDigest: digest(payload) },
-          "reservation transition",
-        );
-      }),
+      }
+    }
+    if (
+      input.transition === "released" &&
+      (held === undefined ||
+        held.cohortId !== input.cohortId ||
+        held.definitionDigest !== input.definitionDigest ||
+        canonical(held.memberRefs) !== canonical(input.memberRefs))
+    ) {
+      throw new WorkCohortReservationConflictError("reservation release does not own the active reservation");
+    }
+    const payload = { kind: "cq-cohort-reservation-transition" as const, version: 1 as const, ...input };
+    return appendExact(
+      state.reservationTransitions,
+      (value) => value.transitionDigest,
+      { ...payload, transitionDigest: digest(payload) },
+      "reservation transition",
     );
   }
 

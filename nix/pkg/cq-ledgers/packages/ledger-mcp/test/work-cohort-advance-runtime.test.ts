@@ -148,6 +148,28 @@ for (const adapter of ["memory", "sqlite"] as const) {
     } finally { await f.close(); }
   });
 
+  test(`${adapter} a refused preparation releases its members for the next generation [Behavioral-Active Blackbox-Atomic]`, async () => {
+    // D557: `prepare` reserves the members before it allocates the worktree and
+    // never releases that reservation when publication refuses. Recovery from a
+    // refusal needs a fresh observation, whose new definition mints a new
+    // reservation id, so the orphan reservation rejects it as an overlap and the
+    // members can never be prepared again.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const first = await f.runtime.observe({ plan: f.plan, operationId: "observe-before-refusal" });
+      f.controls.mutateBeforeAllocation = true;
+      const refused = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-refused",
+        definitionDigest: first.definitions[0]!.definitionDigest });
+      expect(refused.worktree.status).toBe("refused");
+      f.controls.mutateBeforeAllocation = false;
+      const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-after-refusal" });
+      expect(second.definitions[0]!.definitionDigest).not.toBe(first.definitions[0]!.definitionDigest);
+      const prepared = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-after-refusal",
+        definitionDigest: second.definitions[0]!.definitionDigest });
+      expect(prepared.worktree.status).toBe("prepared");
+    } finally { await f.close(); }
+  });
+
   test(`${adapter} a workset replacement cannot publish the prior cohort authority [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
     const f = await advanceRuntimeFixture(adapter);
     try {
