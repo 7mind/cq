@@ -97,14 +97,19 @@
             pkgs
           mkCodexCommandSkills
             ;
-          codexModule = import (inputs.ponygirls.outPath + "/nix/hm/codex.nix") {
-            cqSource = ./.;
+          codexModule = {
+            imports = [
+              (import (inputs.ponygirls.outPath + "/nix/hm/codex.nix"))
+              (import ./nix/hm/codex.nix { inherit inputs self; })
+            ];
           };
           catalog = llmAssets.catalog;
-          commands = llmAssets.commands;
+          # CQ commands are projected by the CQ-owned Codex integration rather
+          # than entering Ponygirls' generic prompt-template materializer.
+          commands = { };
           promptRoot = codexPromptRoot;
           ledgerMcpRegistration = {
-            command = "${cqCli}/bin/cq";
+            command = "${pkgs.writeShellScriptBin "cq-test" "exit 0"}/bin/cq-test";
             args = [ "mcp" ];
           };
         };
@@ -142,10 +147,13 @@
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
           inherit pkgs claudePromptRoot;
-          claudeModule = import (inputs.ponygirls.outPath + "/nix/hm/claude.nix") {
-            inputs = inputs.ponygirls.inputs;
-            cq = self;
-            cqSource = ./.;
+          claudeModule = {
+            imports = [
+              (import (inputs.ponygirls.outPath + "/nix/hm/claude.nix") {
+                inputs = inputs.ponygirls.inputs;
+              })
+              (import ./nix/hm/claude.nix { inherit inputs self; })
+            ];
           };
         };
         globalCqConfigHomeTest = import ./nix/lib/global-cq-config-home-test.nix {
@@ -164,8 +172,11 @@
         piPromptRootTest = import ./nix/lib/pi-prompt-root-test.nix {
           lib = pkgs.lib;
           inherit pkgs piPromptRoot;
-          piModule = import (inputs.ponygirls.outPath + "/nix/hm/pi.nix") {
-            cqSource = ./.;
+          piModule = {
+            imports = [
+              (import (inputs.ponygirls.outPath + "/nix/hm/pi.nix"))
+              (import ./nix/hm/pi.nix { inherit inputs self; })
+            ];
           };
         };
         piCodingAgent = inputs.ponygirls.packages.${system}.pi-coding-agent;
@@ -2224,16 +2235,9 @@ PY
       # System-agnostic LLM assets (prompts/skills) — see ./nix/pkg/cq-assets/assets.nix.
       inherit llmAssets;
 
-      # Portable home-manager module: the Claude Code / Codex / Pi coding-agent
-      # harness, shared asset-bundle + MCP infrastructure, and the bubblewrap
-      # `yolo` sandbox. Curried over this flake's inputs + self. The consumer
-      # wires host/hardware values via `smind.hm.dev.llm.*` options and keeps
-      # its own local-model provider config.
-      homeManagerModules.dev-llm = {
-        imports = [
-          (inputs.ponygirls.lib.mkDevLlm { cq = self; cqSource = ./.; })
-        ];
-      };
+      # Compose Ponygirls' generic coding-agent harness with CQ-owned packages,
+      # rendered prompts, MCP registration, hooks, and sandbox path grants.
+      homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs self; };
 
       # NixOS module: the `cq serve` multi-tenant hub over a native, tuned
       # PostgreSQL (no containers). Curried over `self` so `package` defaults to

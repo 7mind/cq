@@ -34,7 +34,32 @@ let
               default = { };
             };
             programs.claude-code = lib.mkOption {
-              type = lib.types.attrs;
+              type = lib.types.submodule {
+                options = {
+                  enable = lib.mkOption { type = lib.types.bool; };
+                  enableMcpIntegration = lib.mkOption { type = lib.types.bool; };
+                  skills = lib.mkOption { type = lib.types.anything; };
+                  context = lib.mkOption { type = lib.types.anything; };
+                  package = lib.mkOption { type = lib.types.package; };
+                  plugins = lib.mkOption {
+                    type = lib.types.attrsOf lib.types.str;
+                    default = { };
+                  };
+                  configDir = lib.mkOption { type = lib.types.str; };
+                  settings = lib.mkOption {
+                    type = (pkgs.formats.json { }).type;
+                    default = { };
+                  };
+                  commands = lib.mkOption {
+                    type = lib.types.attrs;
+                    default = { };
+                  };
+                  agents = lib.mkOption {
+                    type = lib.types.attrs;
+                    default = { };
+                  };
+                };
+              };
               default = { };
             };
             smind.hm.dev.llm.enable = lib.mkOption {
@@ -48,6 +73,9 @@ let
             };
             smind.hm.dev.llm.fullscreenTui.enable = lib.mkOption {
               type = lib.types.bool;
+            };
+            smind.hm.dev.llm.models = lib.mkOption {
+              type = lib.types.attrs;
             };
           };
           config = {
@@ -70,6 +98,10 @@ let
               };
               coAuthored.enable = true;
               fullscreenTui.enable = true;
+              models.claude = {
+                model = "opus";
+                effort = "high";
+              };
             };
           };
         }
@@ -136,6 +168,8 @@ pkgs.runCommand "claude-prompt-home-check"
     test ${toString agentCount} -eq 10
     test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
     test ${lib.escapeShellArg (toString claudeConfig.package.promptRoot)} = ${lib.escapeShellArg (toString claudePromptRoot)}
+    test ${lib.escapeShellArg claudeConfig.settings.model} = opus
+    test ${lib.escapeShellArg claudeConfig.settings.effortLevel} = high
     test ${toString (builtins.length (builtins.attrNames claudeConfig.plugins))} -eq 1
     test ${toString (builtins.length (builtins.attrNames disabledClaudeConfig.plugins))} -eq 0
     rg -q 'CQ_PROMPT_SURFACE.*claude' ${claudeConfig.package}/bin/claude

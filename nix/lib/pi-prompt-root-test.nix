@@ -54,6 +54,12 @@ let
               type = lib.types.lines;
               default = "";
             };
+            smind.hm.dev.llm.models.pi = lib.mkOption {
+              type = lib.types.attrs;
+            };
+            smind.hm.dev.llm.fullscreenTui.enable = lib.mkOption {
+              type = lib.types.bool;
+            };
           };
           config = {
             home.homeDirectory = "/home/test";
@@ -72,16 +78,20 @@ let
               enable = true;
               merged = {
                 commands = {
-                  "cq/begin" = "unrendered canonical command";
                   "other/example" = "external command";
                 };
                 agents = {
-                  "plan-reviewer" = "unrendered canonical agent";
                   "external-agent" = "external agent";
                 };
                 skills = { };
                 memoryText = "";
               };
+              models.pi = {
+                provider = "xiaomi-token-plan-ams";
+                model = "mimo-v2.6-pro";
+                thinkingLevel = "xhigh";
+              };
+              fullscreenTui.enable = true;
             };
           };
         }
@@ -125,6 +135,9 @@ in
     assert roleToolProfiles.source == "${piPromptRoot}/role-tool-profiles.json";
     assert piPackage.promptSurface == "pi";
     assert piPackage.promptRoot == piPromptRoot;
+    assert piSettings.defaultProvider == "xiaomi-token-plan-ams";
+    assert piSettings.defaultModel == "mimo-v2.6-pro";
+    assert piSettings.tuiMode == "fullscreen";
     assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
     assert dispatchExtension != null;
     assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;

@@ -224,6 +224,10 @@ let
                 skills = { };
                 memoryText = "";
               };
+              models.codex = {
+                model = "gpt-6-sol";
+                reasoningEffort = "medium";
+              };
             };
           };
         }
@@ -309,6 +313,8 @@ in
     assert codexHomeFiles.${sentinelPromptPath}.text == sentinelPromptBody;
     assert codexPackage.promptSurface == "codex";
     assert codexPackage.promptRoot == promptRoot;
+    assert evaluatedCodexModule.config.programs.codex.settings.model == "gpt-6-sol";
+    assert evaluatedCodexModule.config.programs.codex.settings.model_reasoning_effort == "medium";
     # Regression: exercise the production programs.mcp registry boundary rather
     # than injecting a complete transport directly into Codex's destination.
     assert codexMcpRegistration.command == ledgerMcpRegistration.command;
