@@ -1274,7 +1274,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/g121HarnessBatch.test.ts",
-      "sha256": "fdc80241f47b931927ce501973bb3d6a0016a317bf512452d3c09c6cb981ea98",
+      "sha256": "dc2978c77a0e22d29796d101525e94900241b5fd6e8a5eb6dbbe4496b0eac6e0",
       "targets": []
     },
     {
@@ -2416,13 +2416,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "16a67b4db7004a4c98ffdaf2e9e9e515ebfb411b5bfffcdd991d02608c648da3",
+      "sha256": "8a11cf239973f6fee8a3bb16b7e29b6e4b21592e063f2a866c9426c1990bee91",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "16a67b4db7004a4c98ffdaf2e9e9e515ebfb411b5bfffcdd991d02608c648da3",
+      "sha256": "8a11cf239973f6fee8a3bb16b7e29b6e4b21592e063f2a866c9426c1990bee91",
       "targets": []
     },
     {
