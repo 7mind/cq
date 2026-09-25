@@ -635,6 +635,70 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     }
   });
 
+  test("D561: a git-change capability reaches the child server's environment, never the prompt", async () => {
+    const dispatch = preparedReviewer();
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const scratch = mkdtempSync(path.join(tmpdir(), "cq-d561-change-"));
+    const capturePath = path.join(scratch, "argv.json");
+    const changeToken = `cq_git_${"k".repeat(43)}`;
+    const previousCapture = process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+    process.env["CQ_CLAUDE_ARGV_CAPTURE"] = capturePath;
+    const storeServer = {
+      name: "t688store",
+      command: "cq",
+      args: ["mcp", "--dispatch-store"],
+      cwd: import.meta.dir,
+      env: { T688_SCOPE: "one-dispatch" },
+      capabilityEnv: "T688_CAPABILITY",
+    };
+    const context = {
+      envelope: buildClaudeCompactNativeLaunch({
+        roleId: REVIEWER_ROLE_ID,
+        model: MODEL,
+        handle: handleOf(dispatch),
+        inputCapability: dispatch.inputCapability,
+      }),
+      preparedProvenance: provenanceBindingOf(dispatch),
+      expectedCorrelation: { roleId: REVIEWER_ROLE_ID, launchNonce: SESSION_ID, sessionId: SESSION_ID },
+      resultCapability: dispatch.resultCapability,
+      gitChangeCapability: { scope: "git-change" as const, token: changeToken },
+      childWindowMs: 30_000,
+    };
+    const launchOptions = {
+      claudeExecutable: "bun",
+      claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-argv-capture.ts")],
+      cwd: import.meta.dir,
+      rolePrompt: REVIEWER_ROLE_PROMPT,
+      worksetEffect: { provider, targetRef: "tasks:T1983" },
+    };
+    try {
+      await expect(launchClaudePrint(context, { ...launchOptions, storeServer })).rejects.toThrow(
+        /declares no environment key/,
+      );
+      expect(existsSync(capturePath)).toBe(false);
+      await launchClaudePrint(context, {
+        ...launchOptions,
+        storeServer: { ...storeServer, gitChangeCapabilityEnv: "D561_CHANGE" },
+      });
+      const argv = JSON.parse(readFileSync(capturePath, "utf8")) as string[];
+      const flag = (name: string): string => argv[argv.indexOf(name) + 1]!;
+      const config = JSON.parse(flag("--mcp-config")) as {
+        mcpServers: { t688store: { env: Record<string, string> } };
+      };
+      expect(config.mcpServers.t688store.env["D561_CHANGE"]).toBe(changeToken);
+      expect(flag("-p")).not.toContain(changeToken);
+      expect(Object.keys(JSON.parse(flag("-p")) as object).sort()).toEqual([
+        "attestationId",
+        "generation",
+        "inputCapability",
+      ]);
+    } finally {
+      if (previousCapture === undefined) delete process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+      else process.env["CQ_CLAUDE_ARGV_CAPTURE"] = previousCapture;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   test("G224: a git-conflict capability reaches the child server's environment, never the prompt", async () => {
     const dispatch = preparedReviewer();
     const provider = createStrictInMemoryWorksetEffectAdmissionProvider();

@@ -191,7 +191,8 @@ export const START_DISPATCH_INPUT = (() => {
 
 export const GIT_COMMIT_INPUT = {
   ...handle,
-  gitChangeCapability,
+  /** Omitted by a child whose ledger server binds the capability from its environment (D561). */
+  gitChangeCapability: gitChangeCapability.optional(),
   operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   expectedHead: z.string().regex(/^[0-9a-f]{40,64}$/),
   message: z

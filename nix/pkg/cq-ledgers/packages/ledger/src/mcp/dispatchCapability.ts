@@ -276,6 +276,8 @@ export interface DispatchCapability {
   readonly boundResultCapability?: StoreResultToolInput["resultCapability"];
   /** G224: the one git-conflict capability a child-owned resolver server was started with. */
   readonly boundGitConflictCapability?: GitResolveContinueToolInput["gitConflictCapability"];
+  /** D561: the same env-bound delivery for a cohort worker's Git change capability. */
+  readonly boundGitChangeCapability?: GitCommitToolInput["gitChangeCapability"];
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;

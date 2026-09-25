@@ -2180,7 +2180,13 @@ export function createLedgerMcpToolSpecifications(
       if (dispatchCapability?.gitCommit === undefined) {
         throw new Error("git_commit is unavailable for this dispatch runtime");
       }
-      return jsonResult(await dispatchCapability.gitCommit(args));
+      const gitChangeCapability = boundOrExplicitCapability(
+        "git_commit",
+        "gitChangeCapability",
+        args.gitChangeCapability,
+        dispatchCapability.boundGitChangeCapability,
+      );
+      return jsonResult(await dispatchCapability.gitCommit({ ...args, gitChangeCapability }));
     },
   );
   const gitResolveContinueTool = tool(

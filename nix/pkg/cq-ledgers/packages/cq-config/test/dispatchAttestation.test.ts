@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { cohortRoleEnvelope } from "./workCohortRoleFixture.js";
 import {
   ABORT_DISPATCH_SCHEMA,
   ATTESTATION_ENVELOPE_STATES,
@@ -1129,6 +1130,48 @@ describe("prepare validates role, input and timeout, then allocates", () => {
         legacyDigest,
       ),
     ).toBe(false);
+  });
+
+  test("every surface's implement-worker COHORT dispatch is granted the parent gate that runs its supervised gate [BA]", () => {
+    // D561: a cohort worker's only admissible pass evidence is the supervised gate,
+    // which the driver wires purely on `parentGateCapability !== undefined`. Minting
+    // it only for Codex left a Claude or Pi cohort worker unable to produce gate
+    // evidence at all, although its Git effect binding and Git change capability were
+    // already minted identically on every surface.
+    const cohort = cohortRoleEnvelope();
+    const { taskId: _taskId, ...cohortBase } = GIT_EFFECT_BINDING as unknown as Readonly<Record<string, unknown>>;
+    const cohortBinding = {
+      ...cohortBase,
+      cohort,
+      repositoryId: cohort.definition.repository.repositoryId,
+      branch: `implement/cohort-${cohort.intent.intentDigest}`,
+      ref: `refs/heads/implement/cohort-${cohort.intent.intentDigest}`,
+    } as unknown as DispatchGitEffectBinding;
+    const cohortInput = {
+      branch: `implement/cohort-${cohort.intent.intentDigest}`,
+      baseCommit: "c".repeat(40),
+      round: 0,
+      startingCommit: "c".repeat(40),
+      validationIntent: "final",
+      cohort,
+      members: cohort.definition.members.map((member) => ({
+        memberRef: member.memberRef,
+        headline: "cohort member",
+        description: "cohort member description",
+        acceptance: "cohort member acceptance",
+      })),
+    } as unknown as DispatchJSONValue;
+    for (const surface of ["claude", "codex", "pi"] as const) {
+      const h = harness();
+      const p = prepared(h, { surface, gitEffectBinding: cohortBinding, input: cohortInput });
+      expect(p.gitChangeCapability?.scope).toBe("git-change");
+      expect({ surface, scope: p.parentGateCapability?.scope }).toEqual({ surface, scope: "parent-gate" });
+    }
+    // An ordinary TASK worker keeps the surface rule: it passes on its own focused or
+    // in-child gate evidence and must not be staged behind a parent gate it cannot drive.
+    const task = harness();
+    expect(prepared(task, { surface: "claude", gitEffectBinding: GIT_EFFECT_BINDING }).parentGateCapability).toBeUndefined();
+    expect(prepared(harness(), { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING }).parentGateCapability?.scope).toBe("parent-gate");
   });
 
   test("binds the worker-only Git capability to a materialized live generation and revokes it on result store", () => {

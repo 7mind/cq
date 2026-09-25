@@ -96,6 +96,7 @@ import type {
   FetchDispatchInput,
   InputCapability,
   NativeCompletionProof,
+  GitChangeCapability,
   GitConflictCapability,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
@@ -341,6 +342,13 @@ export interface ClaudeNativeLaunchContext {
    */
   readonly gitConflictCapability?: GitConflictCapability;
   /**
+   * D561: a cohort worker's git-change capability, delivered exactly like the
+   * conflict capability above — through the child server's environment — so the
+   * compact launch prompt stays exactly the input reference and every surface
+   * commits through the same trusted broker.
+   */
+  readonly gitChangeCapability?: GitChangeCapability;
+  /**
    * The CONSERVATIVE window, in milliseconds, from T687's launch gate — time
    * remaining until `responseStoreNow`, not until `childCancelAt`. A DURATION,
    * never an instant, so a child with an offset clock still stops on time.
@@ -394,6 +402,8 @@ export interface ClaudePrintStoreServer {
   readonly capabilityEnv: string;
   /** Environment key under which the scoped server takes a resolver's git-conflict capability. */
   readonly gitConflictCapabilityEnv?: string;
+  /** D561: the env key carrying a worker's git-change capability. */
+  readonly gitChangeCapabilityEnv?: string;
 }
 
 export interface ClaudePrintLaunchOptions {
@@ -514,6 +524,21 @@ function gitConflictCapabilityEnvironment(
   return { [name]: context.gitConflictCapability.token };
 }
 
+function gitChangeCapabilityEnvironment(
+  context: ClaudeNativeLaunchContext,
+  options: ClaudePrintLaunchOptions,
+): Readonly<Record<string, string>> {
+  if (context.gitChangeCapability === undefined) return {};
+  const name = options.storeServer.gitChangeCapabilityEnv;
+  if (name === undefined) {
+    throw new AttestationContractError(
+      "launch.storeServer.gitChangeCapabilityEnv",
+      "a git-change capability was granted but the scoped server declares no environment key for it",
+    );
+  }
+  return { [name]: context.gitChangeCapability.token };
+}
+
 function claudePrintInvocation(
   context: ClaudeNativeLaunchContext,
   options: ClaudePrintLaunchOptions,
@@ -536,6 +561,7 @@ function claudePrintInvocation(
           ...withoutWorksetCredentials(options.storeServer.env),
           [options.storeServer.capabilityEnv]: context.resultCapability.token,
           ...gitConflictCapabilityEnvironment(context, options),
+          ...gitChangeCapabilityEnvironment(context, options),
         },
       },
     },
@@ -938,6 +964,9 @@ export function runClaudeNativeDispatch(
       preparedProvenance: provenanceBindingOf(prepared),
       expectedCorrelation: correlation,
       resultCapability: prepared.resultCapability,
+      ...(prepared.gitChangeCapability === undefined
+        ? {}
+        : { gitChangeCapability: prepared.gitChangeCapability }),
       childWindowMs: gate.childWindowMs,
     }),
   );

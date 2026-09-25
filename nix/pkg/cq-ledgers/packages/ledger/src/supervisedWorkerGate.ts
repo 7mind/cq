@@ -1084,7 +1084,10 @@ export async function superviseImplementWorkerGate(
     generation: context.generation,
     roleId: "implement-worker",
     roleVersion: context.promptProvenance.version,
-    surface: "codex",
+    // D561: the surface the runner actually supervised, not a constant. The
+    // evidence is runner-minted on every surface, so stamping "codex" here made
+    // a Claude or Pi cohort gate unrepresentable.
+    surface: context.surface,
     promptDigest: context.promptProvenance.promptDigest,
     catalogHash: context.promptProvenance.catalogHash,
     inputDigest: context.promptProvenance.inputDigest,

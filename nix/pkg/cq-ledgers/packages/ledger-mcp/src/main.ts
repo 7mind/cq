@@ -37,8 +37,10 @@
 
 import { readFile } from "node:fs/promises";
 import {
+  CQ_DISPATCH_GIT_CHANGE_CAPABILITY_ENV,
   CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
+  takeBoundGitChangeCapability,
   takeBoundGitConflictCapability,
   takeBoundResultCapability,
 } from "./boundResultCapability.js";
@@ -1717,7 +1719,11 @@ export async function main(
 
   const boundResultCapability = takeBoundResultCapability(process.env);
   const boundGitConflictCapability = takeBoundGitConflictCapability(process.env);
-  const childOwned = boundResultCapability !== undefined || boundGitConflictCapability !== undefined;
+  const boundGitChangeCapability = takeBoundGitChangeCapability(process.env);
+  const childOwned =
+    boundResultCapability !== undefined ||
+    boundGitConflictCapability !== undefined ||
+    boundGitChangeCapability !== undefined;
   // Reject unsupported local configuration before opening persistent state.
   const resolved = await createEmbeddedStore(cwd);
   const store = resolved.store;
@@ -1747,7 +1753,8 @@ export async function main(
   });
   if (childOwned && dispatchRuntime.kind !== "available") {
     throw new Error(
-      `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV} or ${CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
+      `ledger-mcp: ${CQ_DISPATCH_RESULT_CAPABILITY_ENV}, ${CQ_DISPATCH_GIT_CHANGE_CAPABILITY_ENV} or ` +
+        `${CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV} is set but no durable dispatch runtime is available`,
     );
   }
   const boundDispatchCapability =
@@ -1757,6 +1764,7 @@ export async function main(
           ...dispatchRuntime.capability,
           ...(boundResultCapability === undefined ? {} : { boundResultCapability }),
           ...(boundGitConflictCapability === undefined ? {} : { boundGitConflictCapability }),
+          ...(boundGitChangeCapability === undefined ? {} : { boundGitChangeCapability }),
         };
   // G224: a child-owned server (bound capability) never launches dispatches itself.
   const serverDispatchDriver =

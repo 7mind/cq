@@ -67,6 +67,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import type { PromptSurface } from "./promptCatalog.js";
 import { assertCohortDispatchOutput, dispatchRecord } from "./cohortDispatchContract.js";
 import { assertCohortEffectEnvelopeV1, cohortValueDigestV1, type CohortEffectEnvelopeV1 } from "@cq/process-control";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
@@ -1224,10 +1225,29 @@ export type AuthorizedDispatchGitEffect = DispatchGitEffectBinding & {
   readonly childCancelAt: string;
 }
 
-/** Trusted server-side context for one Codex implement-worker gate supervision. */
+/** Trusted server-side context for one supervised implement-worker gate. */
+/**
+ * D561: which implement-worker dispatches the runner supervises.
+ *
+ * A COHORT worker is supervised on every surface, because the supervised gate is
+ * its only admissible pass evidence and the runner — not the child — must
+ * produce it. An ordinary TASK worker keeps the Codex-only rule, because on the
+ * other surfaces it still passes on its own focused or in-child gate evidence.
+ *
+ * Every site that grants the parent gate, resolves the gate context, or stamps
+ * gate evidence uses this one predicate, so the three cannot drift apart.
+ */
+export function supervisedImplementWorkerGateApplies(input: {
+  readonly roleId: string;
+  readonly surface: string;
+  readonly cohort: unknown;
+}): boolean {
+  return input.roleId === "implement-worker" && (input.surface === "codex" || input.cohort !== undefined);
+}
+
 export type AuthorizedSupervisedWorkerGateContext = AuthorizedDispatchGitEffect & {
   readonly roleId: "implement-worker";
-  readonly surface: "codex";
+  readonly surface: PromptSurface;
   readonly promptProvenance: DispatchPromptProvenance;
   readonly dispatchBaseCommit: string;
   readonly startingCommit: string;
@@ -2694,10 +2714,21 @@ export function prepareDispatch(
 
   executed.push("mint-result-capability");
   const resultCapability = mintResultCapability(deps.randomBytes);
+  // D561: a COHORT worker's only admissible pass evidence is the supervised gate,
+  // which the dispatch driver drives server-side and wires purely on this
+  // capability's presence. Granting it only on Codex therefore left a Claude or Pi
+  // cohort worker unable to produce gate evidence at all, while its Git effect
+  // binding and Git change capability were already minted on every surface. A
+  // cohort binding now grants it on every surface; a task binding keeps the
+  // surface rule, because an ordinary task worker still passes on its own
+  // focused or in-child gate evidence and must not be staged behind a parent gate.
   const parentGateCapability =
-    validation.roleId === "implement-worker" &&
-    validation.surface === "codex" &&
-    gitEffectBinding !== undefined
+    gitEffectBinding !== undefined &&
+    supervisedImplementWorkerGateApplies({
+      roleId: validation.roleId,
+      surface: validation.surface,
+      cohort: gitEffectBinding.cohort,
+    })
       ? mintParentGateCapability(deps.randomBytes)
       : undefined;
   const gitChangeCapability =
@@ -4002,8 +4033,11 @@ export function supervisedWorkerGateContextForResultCapability(
   const authorization = gitEffectBindingForResultCapability(submission, deps);
   if (
     authorization === undefined ||
-    authorization.roleId !== "implement-worker" ||
-    authorization.surface !== "codex"
+    !supervisedImplementWorkerGateApplies({
+      roleId: authorization.roleId,
+      surface: authorization.surface,
+      cohort: authorization.cohort,
+    })
   ) {
     return undefined;
   }
@@ -4037,8 +4071,11 @@ function supervisedWorkerGateContextOf(
 ): AuthorizedSupervisedWorkerGateContext | undefined {
   if (
     row.gitEffectBinding === undefined ||
-    row.promptProvenance.roleId !== "implement-worker" ||
-    row.promptProvenance.surface !== "codex"
+    !supervisedImplementWorkerGateApplies({
+      roleId: row.promptProvenance.roleId,
+      surface: row.promptProvenance.surface,
+      cohort: row.gitEffectBinding.cohort,
+    })
   ) {
     return undefined;
   }
@@ -4077,7 +4114,7 @@ function supervisedWorkerGateContextOf(
     attestationId: row.attestationId,
     generation: row.generation,
     roleId: "implement-worker" as const,
-    surface: "codex" as const,
+    surface: row.promptProvenance.surface,
     childCancelAt: row.deadlines.childCancelAt,
     promptProvenance: row.promptProvenance,
     dispatchBaseCommit,

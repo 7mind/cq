@@ -46,6 +46,7 @@ import {
   type WorksetEffectAdmissionProvider,
 } from "@cq/process-control";
 import {
+  CQ_DISPATCH_GIT_CHANGE_CAPABILITY_ENV,
   CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
   CQ_DISPATCH_RESULT_CAPABILITY_ENV,
 } from "./boundResultCapability.js";
@@ -266,6 +267,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
           env: { CQ_HARNESS: "claude", CQ_PROMPT_SURFACE: "claude", CQ_PROMPT_ROOT: claudeSurfaceRoot },
           capabilityEnv: CQ_DISPATCH_RESULT_CAPABILITY_ENV,
           gitConflictCapabilityEnv: CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV,
+          gitChangeCapabilityEnv: CQ_DISPATCH_GIT_CHANGE_CAPABILITY_ENV,
         },
       },
     };
@@ -433,6 +435,9 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
               ...(context.prepared.gitConflictCapability === undefined
                 ? {}
                 : { [CQ_DISPATCH_GIT_CONFLICT_CAPABILITY_ENV]: context.prepared.gitConflictCapability.token }),
+              ...(context.prepared.gitChangeCapability === undefined
+                ? {}
+                : { [CQ_DISPATCH_GIT_CHANGE_CAPABILITY_ENV]: context.prepared.gitChangeCapability.token }),
             },
             tools: ledgerTools,
           };

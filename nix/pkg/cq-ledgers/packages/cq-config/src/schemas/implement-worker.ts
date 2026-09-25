@@ -34,6 +34,7 @@
  */
 
 import { CANONICAL_PROJECT_GATE } from "../projectGate.js";
+import { PROMPT_SURFACES, type PromptSurface } from "../promptCatalog.js";
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
 import type { CohortEvidenceSubjectV1 } from "@cq/process-control";
 import { cohortBranchSchema, cohortEvidenceSubjectSchema, cohortPreSealEnvelopeSchema, cohortReceiptArm, cohortRoleArm, singleTaskOrCohortSchema } from "./cohortContract.js";
@@ -392,7 +393,9 @@ const taskSupervisedGateEvidenceSchema = {
     generation: { type: "integer", minimum: 1 },
     roleId: { type: "string", const: "implement-worker" },
     roleVersion: { type: "integer", minimum: 1 },
-    surface: { type: "string", const: "codex" },
+    // D561: the runner supervises a cohort gate on every surface, so the
+    // evidence names the surface it ran on instead of a single constant.
+    surface: { type: "string", enum: [...PROMPT_SURFACES] },
     promptDigest: sha256String,
     catalogHash: sha256String,
     inputDigest: sha256String,
@@ -461,7 +464,7 @@ interface ImplementWorkerSupervisedGateEvidenceBase {
   readonly generation: number;
   readonly roleId: "implement-worker";
   readonly roleVersion: number;
-  readonly surface: "codex";
+  readonly surface: PromptSurface;
   readonly promptDigest: string;
   readonly catalogHash: string;
   readonly inputDigest: string;
