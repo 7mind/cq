@@ -203,7 +203,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
-      "sha256": "d01e3096f2feb7687d063f1dc22ced107c1da50656e754e05591613fe7d0955b",
+      "sha256": "6cee00610cfaf7f96b1fb34aab6d9aa857f19eb98bf356995006b6c65fc7c9e1",
       "targets": ["nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts"]
     },
     {
@@ -513,7 +513,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
-      "sha256": "d01e3096f2feb7687d063f1dc22ced107c1da50656e754e05591613fe7d0955b",
+      "sha256": "6cee00610cfaf7f96b1fb34aab6d9aa857f19eb98bf356995006b6c65fc7c9e1",
       "targets": []
     },
     {
@@ -1316,7 +1316,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
-      "sha256": "d01e3096f2feb7687d063f1dc22ced107c1da50656e754e05591613fe7d0955b",
+      "sha256": "6cee00610cfaf7f96b1fb34aab6d9aa857f19eb98bf356995006b6c65fc7c9e1",
       "targets": []
     },
     {
@@ -2378,13 +2378,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "0bea30ed48df549f36d0a6b897dc8b34712d05c46a5fce3d107650c5b89cb368",
+      "sha256": "16a67b4db7004a4c98ffdaf2e9e9e515ebfb411b5bfffcdd991d02608c648da3",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "0bea30ed48df549f36d0a6b897dc8b34712d05c46a5fce3d107650c5b89cb368",
+      "sha256": "16a67b4db7004a4c98ffdaf2e9e9e515ebfb411b5bfffcdd991d02608c648da3",
       "targets": []
     },
     {

@@ -278,6 +278,13 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   // createAgentSession({cwd}) instead; force the process seam here so the
   // deny-list capture remains the measured surface.
   process.env.CQ_DISPATCH_FORCE_SHELLOUT = "true";
+  // D554: the child pi loads extensions (the MCP adapter and the capture
+  // extension below), and print mode then never exits once the provider fails
+  // to authenticate — upstream closes that class as no-action, so the host must
+  // bound it. The deny-list evidence this test measures is captured during
+  // `resources_discover`, long before that stall, so a short settlement
+  // deadline is enough and keeps the case deterministic.
+  process.env.CQ_DISPATCH_CHILD_SETTLE_MS = "8000";
   let parentActiveLedgerTools: readonly string[] = LEDGER_CAPABILITY_TOOL_NAMES.map(
     (tool) => `ledger_${tool}`,
   );
@@ -335,7 +342,10 @@ async function assertRoleDispatch(runtime: DispatchRuntime, agent: string): Prom
     readonly registeredTools: readonly string[];
   };
 
-  expect(result.details.exitCode).toBe(1);
+  // The child cannot exit on its own (D554), so the measured contract is that
+  // CQ settled it at the deadline rather than waiting forever — and that the
+  // capture still completed before that happened.
+  expect(result.details.childSettlement).toBe("deadline");
   expect(result.details.stderr).toContain("CQ_CAPTURE_COMPLETE");
   expect(result.details.isolation).toBe("worktree");
   expect(result.details.isolationNote).toContain("does not allocate a tree");

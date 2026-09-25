@@ -125,6 +125,28 @@ export function resolveForceShellout(
   return raw === "1" || raw.toLowerCase() === "true";
 }
 
+/**
+ * D554: optional settlement deadline for a process-seam child, in milliseconds,
+ * from CQ_DISPATCH_CHILD_SETTLE_MS. UNSET BY DEFAULT — a legitimate subagent
+ * turn can run for many minutes and must never be truncated by a blanket
+ * timer, so the ordinary path still waits for the child's own exit.
+ *
+ * It exists because a child that CANNOT exit otherwise hangs this dispatch
+ * forever: pi-coding-agent print mode keeps running after a provider-auth
+ * failure whenever an extension is loaded, and upstream has repeatedly closed
+ * that class as no-action (upstream:U7), leaving the bound to the host. Setting
+ * this turns an unbounded hang into a typed, observable failure.
+ */
+export function resolveChildSettleDeadlineMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
+  const raw = env.CQ_DISPATCH_CHILD_SETTLE_MS;
+  if (raw === undefined || raw.trim() === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
+
 /** T1699 delivery matrix (pure). */
 export function selectPiChildDeliverySeam(input: {
   readonly activeHarness: string;
@@ -291,6 +313,13 @@ export interface DispatchDetails {
   deliverySeam: typeof PI_NATIVE_SESSION_SEAM | typeof PI_PROCESS_SESSION_SEAM | null;
   /** T1699: manager-bound cwd for native session (null on process seam). */
   nativeSessionCwd: string | null;
+  /**
+   * D554: how the process-seam child settled. "exit" is the ordinary case;
+   * "deadline" means the child outlived the configured settlement deadline and
+   * its process group was terminated, so the reported exit is CQ's, not the
+   * child's own. null on the native seam.
+   */
+  childSettlement: "exit" | "deadline" | null;
 }
 
 const DispatchParams = Type.Object({
@@ -1299,6 +1328,7 @@ export function registerCqSubagentDispatch(
         stderr: "",
         deliverySeam: null,
         nativeSessionCwd: null,
+        childSettlement: null,
       };
 
       const agent = loadAgent(agentsDir, args.agent);
@@ -1399,6 +1429,22 @@ export function registerCqSubagentDispatch(
         const forceShellout = resolveForceShellout();
         const activeHarness = resolveActiveHarness();
 
+        // D554: a child that CANNOT exit must not hang this dispatch forever.
+        // pi print mode keeps running after a provider-auth failure whenever an
+        // extension is loaded, and upstream closes that class as no-action
+        // (upstream:U7), so the bound belongs to the host. Cancellation is
+        // delegated to process-control exactly like caller cancellation is —
+        // the broker settles the whole registered group on abort — so this file
+        // still owns no timers and no direct kills. Unset by default: a
+        // legitimate subagent turn runs for many minutes and must never be
+        // truncated by a blanket deadline.
+        const childSettleDeadlineMs = resolveChildSettleDeadlineMs();
+        const childSettleSignal =
+          signal ??
+          (childSettleDeadlineMs === null
+            ? undefined
+            : AbortSignal.timeout(childSettleDeadlineMs));
+
         const delivery = await executePiChildDeliveryBranch({
           activeHarness,
           forceShellout,
@@ -1449,7 +1495,7 @@ export function registerCqSubagentDispatch(
               [invocation.command, ...invocation.args],
               ctx.cwd,
               childEnv,
-              signal,
+              childSettleSignal,
               {
                 provider: effectAdmissionProvider,
                 targetRef,
@@ -1490,6 +1536,7 @@ export function registerCqSubagentDispatch(
         const exitCode = await launched.exited;
         if (buffer.trim()) processLine(buffer);
 
+        details.childSettlement = childSettleSignal?.aborted === true ? "deadline" : "exit";
         details.exitCode = exitCode;
         details.stderr = stderr;
 
