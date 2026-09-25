@@ -1,7 +1,8 @@
 /**
  * G224 / K332 — the token a CQ-driven dispatch runs at. The parent may name a
  * specific token (a review or planning panel member), but only one the
- * configuration makes dispatchable; otherwise the role's tier token applies.
+ * configuration makes dispatchable; otherwise the work's declared tier applies,
+ * and failing that the role's tier token.
  * The token's harness is the dispatch's TARGET harness.
  */
 
@@ -30,13 +31,16 @@ function dispatchableTokens(config: CqConfig): ReadonlySet<string> {
 export function createConfiguredDispatchModelResolver(
   loadCurrentConfig: () => CqConfig | null,
 ): DispatchModelResolver {
-  return (roleId, requestedModel) => {
+  return (roleId, requestedModel, declaredTier) => {
     const config = loadCurrentConfig();
     if (config === null) {
       throw new Error("start_dispatch: this project has no cq.toml, so no role model can be resolved");
     }
     if (requestedModel === undefined) {
-      const token = resolveAgentModel(config, roleId);
+      // D558 precedence: an explicit caller token (a panel selection) outranks
+      // the work's own declared tier, which outranks the per-role `[agent_tiers]`
+      // default, which outranks `DEFAULT_TIER`.
+      const token = resolveAgentModel(config, roleId, declaredTier);
       return { token, formatted: formatReviewerToken(token) };
     }
     const token = parseReviewerToken(requestedModel);

@@ -27,6 +27,7 @@ import {
   type NativeChildIdentity,
   type ReviewerToken,
   type RoutedStagedCompletionQualifier,
+  type Tier,
 } from "@cq/config";
 import type { DispatchCapability, PrepareDispatchToolInput } from "@cq/ledger";
 
@@ -77,7 +78,12 @@ export interface DispatchLaunchPlanner {
 }
 
 /** Resolves which token a role runs at; throws when a requested token is not dispatchable. */
-export type DispatchModelResolver = (roleId: string, requestedModel: string | undefined) => {
+export type DispatchModelResolver = (
+  roleId: string,
+  requestedModel: string | undefined,
+  /** D558: the tier the unit of work itself declares, which outranks `[agent_tiers]`. */
+  declaredTier?: Tier,
+) => {
   readonly token: ReviewerToken;
   readonly formatted: string;
 };
@@ -88,6 +94,11 @@ export interface DispatchDriverDeps {
   /** The parent's harness: the prompt surface this server serves. */
   readonly activeHarness: Harness;
   readonly resolveModel: DispatchModelResolver;
+  /**
+   * D558: the tier the dispatched unit of work declares, read from the ledger.
+   * Absent when the project cannot be read or nothing declares one.
+   */
+  readonly declaredTierFor?: (input: StartDispatchInput) => Promise<Tier | undefined>;
   readonly registry: DispatchTransportAdapterRegistry;
   readonly planner: DispatchLaunchPlanner;
   readonly now: () => string;
@@ -296,7 +307,8 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
   return {
     async start(input) {
       const roleId = roleIdOf(input);
-      const { token, formatted } = deps.resolveModel(roleId, input.model);
+      const declaredTier = deps.declaredTierFor === undefined ? undefined : await deps.declaredTierFor(input);
+      const { token, formatted } = deps.resolveModel(roleId, input.model, declaredTier);
       const outcome = await launchWith(roleId, token, formatted, input.idempotencyKey, async ({ expectedChild }) =>
         await deps.capability.prepare({ ...withTargetSurface(input, token.harness), expectedChild }),
       );

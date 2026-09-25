@@ -23,6 +23,7 @@ import {
 import { createDispatchDriver, type DispatchDriver } from "./dispatchDriver.js";
 import { createDispatchLaunchBindings } from "./dispatchLaunchBindings.js";
 import { createConfiguredDispatchModelResolver } from "./dispatchModelResolver.js";
+import { declaredDispatchTier } from "./declaredDispatchTier.js";
 import { FileSystemPromptArtifactStore, type PromptArtifactStore } from "./promptArtifactStore.js";
 import { PROMPT_SURFACES } from "./promptSurfaceSelection.js";
 
@@ -103,6 +104,9 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     resolveModel: createConfiguredDispatchModelResolver(() =>
       loadConfig(input.configRoot, input.activeHarness),
     ),
+    // D558: the dispatched work's own declared tier, which outranks `[agent_tiers]`.
+    declaredTierFor: async (start) =>
+      declaredDispatchTier(input.store, "input" in start ? start.input : undefined),
     registry: new DispatchTransportAdapterRegistry(bindings.adapters),
     planner: bindings.planner,
     now: () => new Date().toISOString(),

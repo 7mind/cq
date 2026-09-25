@@ -1131,8 +1131,9 @@ export function applyAgentEffort(
 /**
  * Resolve a named agent end-to-end to the token it should run at.
  *
- * Pipeline: agent-name -> {@link resolveAgentTier} (via `[agent_tiers]`,
- * falling back to `DEFAULT_TIER`) -> {@link tierModel} (the one model the
+ * Pipeline: agent-name -> an explicitly declared tier, else
+ * {@link resolveAgentTier} (via `[agent_tiers]`, falling back to
+ * `DEFAULT_TIER`) -> {@link tierModel} (the one model the
  * `[tiers]` map assigns to that tier) -> {@link applyAgentEffort} (the
  * `[agent_efforts]` per-agent effort override, Q254). No candidate pool, no
  * tie-break — `[tiers]` names the model directly, so `[aliases]` order is
@@ -1145,8 +1146,12 @@ export function applyAgentEffort(
 export function resolveAgentModel(
   config: CqConfig,
   agentName: string,
+  declaredTier?: Tier,
 ): ReviewerToken {
-  const tier = resolveAgentTier(config, agentName);
+  // D558: `[agent_tiers]` is the per-role DEFAULT, so a tier declared for the
+  // specific unit of work outranks it. The declaration also selects the harness,
+  // because the active harness's `[tiers]` table names the token.
+  const tier = declaredTier ?? resolveAgentTier(config, agentName);
   const token = tierModel(config, tier);
   if (token === undefined) {
     throw new CqConfigError(
