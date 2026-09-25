@@ -1461,7 +1461,23 @@ for (const mode of MODES) {
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const CODEX_SKILL_PROJECTION = path.join(REPO_ROOT, "nix", "lib", "codex-command-skills.nix");
-const CODEX_HOME_MODULE = path.join(REPO_ROOT, "nix", "hm", "codex.nix");
+/**
+ * The Codex Home Manager module ships from the ponygirls flake input, like
+ * pi-context.md (defects:D553) and hm/claude.nix before it, so it is resolved
+ * through that input rather than from a path in this repository.
+ */
+function codexHomeModulePath(): string {
+  const archive = JSON.parse(
+    Bun.spawnSync(["nix", "flake", "archive", "--json", "--dry-run", "."], {
+      cwd: REPO_ROOT,
+    }).stdout.toString(),
+  ) as { readonly inputs: Readonly<Record<string, { readonly path: string }>> };
+  const ponygirls = archive.inputs["ponygirls"];
+  if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
+  return path.join(ponygirls.path, "nix", "hm", "codex.nix");
+}
+
+const CODEX_HOME_MODULE = codexHomeModulePath();
 
 /** The `else` branch of `mkReferenceLine` — the line researches:RS11 measured. */
 const DISPATCHED_ROLE_REFERENCE_LINE = "- Codex collaboration role `";

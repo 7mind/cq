@@ -39,8 +39,49 @@ async function git(root: string, args: readonly string[]): Promise<string> {
   return stdout.trim();
 }
 
+/**
+ * A reviewer whose harness differs from the active harness routes through the
+ * external adapter transport; one that matches routes natively. These cases
+ * assert the external path, so they configure it themselves rather than
+ * depending on whatever DEFAULT_PANELS currently holds (RS17, RS18).
+ */
+export const FIXTURE_EXTERNAL_REVIEWER_CONFIG = [
+  "[aliases]",
+  '  fixture-external-reviewer = "pi:openai-codex/gpt-6-astra:xhigh"',
+  "",
+  "[harness.codex]",
+  '  reviewers = ["fixture-external-reviewer"]',
+  '  planners  = ["fixture-external-reviewer"]',
+  // The codex selector is fail-closed: a harness section must carry its own
+  // tiers rather than inheriting the shared ones.
+  "[harness.codex.tiers]",
+  '  frontier = "fixture-external-reviewer"',
+  '  standard = "fixture-external-reviewer"',
+  '  fast     = "fixture-external-reviewer"',
+  "",
+].join("\n");
+
+const fixtureRoots: string[] = [];
+
+afterEach(async () => {
+  while (fixtureRoots.length > 0) {
+    const root = fixtureRoots.pop();
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
+  }
+});
+
 describe("production implementation evidence runtime [Behavioral-Active Blackbox-Atomic]", () => {
-  test("wires the default external reviewer to a trusted process seam", async () => {
+  test("wires the configured external reviewer to a trusted process seam", async () => {
+    // RS17: this case exists to prove the EXTERNAL adapter seam, so it owns the
+    // configuration that selects one. It used to rely on DEFAULT_PANELS, and
+    // 68d190e3c changed the codex panel's default reviewer from a pi-harness
+    // token (external transport) to a codex-harness one (self, therefore
+    // native), which silently turned this into a native-path test. A reviewer
+    // whose harness differs from the active harness is what routes through the
+    // adapter, so the fixture states that explicitly and cannot drift again.
+    const repositoryRoot = await mkdtemp(path.join(tmpdir(), "cq-evidence-reviewer-seam-"));
+    fixtureRoots.push(repositoryRoot);
+    await writeFile(path.join(repositoryRoot, "cq.toml"), FIXTURE_EXTERNAL_REVIEWER_CONFIG);
     const ledger = new InMemoryLedgerStore();
     await ledger.init();
     const resolved = {
@@ -66,7 +107,7 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     const service = createProductionImplementationEvidenceService({
       resolved,
       dispatchCapability,
-      repositoryRoot: process.cwd(),
+      repositoryRoot,
       trustedSourceWorkspaceBuildCommit: RESULT,
       environment: { CQ_HARNESS: "codex" },
       externalReviewRunner: async ({ identity, prompt }) => {

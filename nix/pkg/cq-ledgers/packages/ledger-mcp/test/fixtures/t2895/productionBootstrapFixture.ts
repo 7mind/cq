@@ -534,6 +534,29 @@ export async function runProductionBootstrapFixture(): Promise<ProductionBootstr
       (await git(repositoryRoot, ["rev-parse", "HEAD"])) === manifest.baselineCommit,
       "temporary production repository did not start at the exact baseline",
     );
+    // RS18: this fixture asserts the PROTECTED ADAPTER path, so it owns the
+    // configuration that selects one. cq.toml is gitignored, so the baseline
+    // clone carries none and resolution fell through to DEFAULT_PANELS, whose
+    // codex reviewer became a codex-harness (self, therefore native) token in
+    // 68d190e3c - turning this into a native-path run and failing the
+    // `configured protected adapter path` invariant. A reviewer whose harness
+    // differs from the active harness is what routes through the adapter.
+    await writeFile(
+      path.join(repositoryRoot, "cq.toml"),
+      [
+        "[aliases]",
+        '  fixture-external-reviewer = "pi:openai-codex/gpt-6-astra:xhigh"',
+        "",
+        "[harness.codex]",
+        '  reviewers = ["fixture-external-reviewer"]',
+        '  planners  = ["fixture-external-reviewer"]',
+        "[harness.codex.tiers]",
+        '  frontier = "fixture-external-reviewer"',
+        '  standard = "fixture-external-reviewer"',
+        '  fast     = "fixture-external-reviewer"',
+        "",
+      ].join("\n"),
+    );
 
     const artifactBytes = await Promise.all(
       manifest.baselineArtifacts.map(async (artifact) => ({

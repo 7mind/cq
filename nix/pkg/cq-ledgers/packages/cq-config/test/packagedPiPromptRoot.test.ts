@@ -52,7 +52,19 @@ const originalMcpDirectTools = process.env.MCP_DIRECT_TOOLS;
 const originalPiOffline = process.env.PI_OFFLINE;
 const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalWorksetProviderCommand = process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND;
+// Both of these are set by prepareDispatchRuntime and were previously left
+// behind, leaking into every later test in the same bun process.
+const originalForceShellout = process.env.CQ_DISPATCH_FORCE_SHELLOUT;
+const originalChildSettleMs = process.env.CQ_DISPATCH_CHILD_SETTLE_MS;
 const PI_ROLE_DISPATCH_TIMEOUT_MS = 30_000;
+/**
+ * The multi-role case performs FOUR sequential bounded dispatches, and each one
+ * now costs its settlement deadline because the child cannot exit on its own
+ * (D554). Four of those plus setup does not fit the single-dispatch budget, so
+ * the case gets one derived from the work it actually does rather than a budget
+ * that silently depended on children exiting early.
+ */
+const PI_MULTI_ROLE_DISPATCH_TIMEOUT_MS = 120_000;
 
 interface CatalogRole {
   readonly roleId: string;
@@ -173,6 +185,96 @@ function directPiTree(catalogJson: string): ReturnType<typeof renderPromptSurfac
   });
 }
 
+/**
+ * RS16: pi-mcp-adapter decides which direct tools to register ONCE, at
+ * extension module-load time, from <PI_CODING_AGENT_DIR>/mcp-cache.json — read
+ * before the MCP connection that would populate it. Because this fixture gives
+ * every run a fresh agent directory, that read always found nothing and no
+ * `ledger_*` tool could ever be registered, however healthy the server was.
+ *
+ * Seeding the cache is not enough on its own: an entry is only honoured when
+ * its `configHash` equals the adapter's own `computeServerHash(definition)`,
+ * which covers command, args, env and cwd — all of which embed this run's
+ * temporary directory. So the entry is built from the adapter's own hash
+ * function over the exact definition written to mcp.json, and its tool list
+ * comes from one real connection to that same server.
+ */
+async function seedDirectToolCache(
+  piAgentDir: string,
+  adapterModuleDir: string,
+  serverName: string,
+  definition: Record<string, unknown>,
+): Promise<void> {
+  const { computeServerHash } = (await import(
+    path.join(adapterModuleDir, "metadata-cache.ts")
+  )) as { computeServerHash: (entry: unknown) => string };
+  const child = Bun.spawn({
+    cmd: [definition["command"] as string, ...(definition["args"] as string[])],
+    env: { ...process.env, ...(definition["env"] as Record<string, string>) },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const pending = new Map<number, (value: Record<string, unknown>) => void>();
+  const drain = (async () => {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const chunk of child.stdout as ReadableStream<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim() === "") continue;
+        const message = JSON.parse(line) as { id?: number; result?: Record<string, unknown> };
+        if (typeof message.id === "number" && message.result !== undefined) {
+          pending.get(message.id)?.(message.result);
+          pending.delete(message.id);
+        }
+      }
+    }
+  })();
+  const send = async (id: number, method: string, params: unknown): Promise<Record<string, unknown>> => {
+    const settled = new Promise<Record<string, unknown>>((resolve) => pending.set(id, resolve));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    await child.stdin.flush();
+    return await settled;
+  };
+  try {
+    await send(1, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "cq-fixture-cache-warmer", version: "1" },
+    });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    await child.stdin.flush();
+    const listed = (await send(2, "tools/list", {})) as {
+      tools: Array<{ name: string; description?: string; inputSchema: unknown }>;
+    };
+    writeFileSync(
+      path.join(piAgentDir, "mcp-cache.json"),
+      JSON.stringify({
+        version: 1,
+        servers: {
+          [serverName]: {
+            configHash: computeServerHash(definition),
+            tools: listed.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description ?? "",
+              inputSchema: tool.inputSchema,
+            })),
+            resources: [],
+            cachedAt: Date.now(),
+          },
+        },
+      }),
+    );
+  } finally {
+    child.stdin.end();
+    await drain.catch(() => undefined);
+    await child.exited;
+  }
+}
+
 async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   const output = buildPiPromptRoot();
   const directory = path.join(tmpdir(), `cq-pi-runtime-${process.pid}-${crypto.randomUUID()}`);
@@ -241,29 +343,32 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   ].join("\n");
   const sourceWorkspaceMain = path.join(directory, "sourceWorkspaceLedgerMcp.ts");
   writeFileSync(sourceWorkspaceMain, sourceWorkspaceEntrypoint);
+  const ledgerServerDefinition = {
+    type: "stdio",
+    command: "bun",
+    args: [
+      sourceWorkspaceMain,
+      "--cwd",
+      directory,
+    ],
+    env: {
+      XDG_STATE_HOME: path.join(directory, "state"),
+      // Isolate from the ambient host CQ_PROMPT_ROOT (D190 surface shape).
+      CQ_PROMPT_ROOT: output,
+      CQ_PROMPT_SURFACE: "pi",
+    },
+    lifecycle: "keep-alive",
+    directTools: true,
+  };
   writeFileSync(
     path.join(projectPiDir, "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        ledger: {
-          type: "stdio",
-          command: "bun",
-          args: [
-            sourceWorkspaceMain,
-            "--cwd",
-            directory,
-          ],
-          env: {
-            XDG_STATE_HOME: path.join(directory, "state"),
-            // Isolate from the ambient host CQ_PROMPT_ROOT (D190 surface shape).
-            CQ_PROMPT_ROOT: output,
-            CQ_PROMPT_SURFACE: "pi",
-          },
-          lifecycle: "keep-alive",
-          directTools: true,
-        },
-      },
-    }),
+    JSON.stringify({ mcpServers: { ledger: ledgerServerDefinition } }),
+  );
+  await seedDirectToolCache(
+    piAgentDir,
+    path.dirname(mcpAdapter),
+    "ledger",
+    ledgerServerDefinition,
   );
 
   process.argv[1] = "";
@@ -400,6 +505,16 @@ afterEach(() => {
     delete process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND;
   } else {
     process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND = originalWorksetProviderCommand;
+  }
+  if (originalForceShellout === undefined) {
+    delete process.env.CQ_DISPATCH_FORCE_SHELLOUT;
+  } else {
+    process.env.CQ_DISPATCH_FORCE_SHELLOUT = originalForceShellout;
+  }
+  if (originalChildSettleMs === undefined) {
+    delete process.env.CQ_DISPATCH_CHILD_SETTLE_MS;
+  } else {
+    process.env.CQ_DISPATCH_CHILD_SETTLE_MS = originalChildSettleMs;
   }
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -649,7 +764,7 @@ describe("packaged Pi prompt root", () => {
         },
       ),
     ).rejects.toThrow('tool "enumerate_ledgers" lacks a profile decision');
-  }, 30_000);
+  }, PI_MULTI_ROLE_DISPATCH_TIMEOUT_MS);
 
   test.each([
     "implement-worker",
