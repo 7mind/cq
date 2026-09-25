@@ -102,6 +102,17 @@ export interface DispatchDriverDeps {
   readonly registry: DispatchTransportAdapterRegistry;
   /** D559: stop the live child of a dispatch an abort just made terminal. */
   readonly cancelLaunch?: (handle: DispatchHandle) => void;
+  /**
+   * D565: a background launch failed AND its settling abort could not land —
+   * typically because the dispatch was already terminal. The launch runs
+   * unawaited, so this report is the only place either cause is ever seen; it
+   * must never throw.
+   */
+  readonly reportLaunchFailure: (report: {
+    readonly handle: DispatchHandle;
+    readonly cause: string;
+    readonly abortFailure: string;
+  }) => void;
   readonly planner: DispatchLaunchPlanner;
   readonly now: () => string;
 }
@@ -230,6 +241,10 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
         promptDigest: observation.expectedProvenance.promptDigest,
       });
       if (qualified.state === "aborted") return { state: "aborted", result: qualified.result };
+      // D565: a worker reporting `fail` needs no gate, so qualification consumed
+      // it without queueing it. Coordinating it anyway made the coordinator throw
+      // "requires a queued dispatch", and that throw took the server down.
+      if (qualified.state === "consumed") return { state: "consumed" };
       await coordinate({
         ...handle,
         holderId: `${handle.attestationId}:${String(handle.generation)}:cq-dispatch-driver`,
@@ -251,11 +266,23 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
       // A launch that throws after prepare would otherwise leave the dispatch
       // prepared until its deadline; settle it now with the cause.
       const message = error instanceof Error ? error.message : String(error);
-      await deps.capability.abort({
-        ...handle,
-        reason: "native-failure",
-        details: { source: "dispatch-driver", message },
-      });
+      try {
+        await deps.capability.abort({
+          ...handle,
+          reason: "native-failure",
+          details: { source: "dispatch-driver", message },
+        });
+      } catch (abortError) {
+        // D565: this launch runs unawaited, so a rejection escaping here is
+        // unhandled and Bun terminates the whole management server — every
+        // other dispatch with it. The dispatch is already terminal or will
+        // expire at its deadline; report both causes instead of propagating.
+        deps.reportLaunchFailure({
+          handle,
+          cause: message,
+          abortFailure: abortError instanceof Error ? abortError.message : String(abortError),
+        });
+      }
     } finally {
       planned.release(handle);
     }

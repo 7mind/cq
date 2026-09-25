@@ -490,6 +490,11 @@ export interface RoutedStagedCompletionObservation {
 export type RoutedStagedCompletionOutcome =
   | QualifyDispatchStagedCompletionOutcome
   | { readonly state: "queued" }
+  /**
+   * D565: qualification settled the worker itself — a `fail` result needs no
+   * parent gate, so it is consumed directly and never queued.
+   */
+  | { readonly state: "consumed" }
   | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
 
 export type RoutedStagedCompletionQualifier = (
@@ -949,6 +954,9 @@ export async function runPreparedDispatch(
         handle,
         abort: qualification.result,
       });
+    }
+    if (qualification.state === "consumed") {
+      return Object.freeze({ outcome: "consumed" as const, route, adapterId: adapter.id, handle });
     }
     return Object.freeze({
       outcome: "queued" as const,

@@ -123,6 +123,8 @@ interface Harnessed {
   driver(capability: Capability): ReturnType<typeof createDispatchDriver>;
   /** D559: handles the driver forwarded a launch cancellation for. */
   readonly cancelled: readonly string[];
+  /** D565: launch failures whose settling abort could not land. */
+  readonly launchFailures: ReadonlyArray<{ readonly cause: string; readonly abortFailure: string }>;
 }
 
 function harnessed(options: {
@@ -169,6 +171,7 @@ function harnessed(options: {
   );
   const registry = new DispatchTransportAdapterRegistry(adapters);
   const cancelled: string[] = [];
+  const launchFailures: Array<{ cause: string; abortFailure: string }> = [];
   const resolveModel: DispatchModelResolver =
     options.model ?? (() => ({ token: TOKENS.claude, formatted: "claude:sonnet" }));
   const capability = (): Capability =>
@@ -207,9 +210,11 @@ function harnessed(options: {
           : { cancelLaunch: (handle: { readonly attestationId: string; readonly generation: number }) => {
               cancelled.push(`${handle.attestationId}:${String(handle.generation)}`);
             } }),
+        reportLaunchFailure: ({ cause, abortFailure }) => { launchFailures.push({ cause, abortFailure }); },
         now: () => NOW,
       }),
     cancelled,
+    launchFailures,
   };
 }
 
@@ -434,6 +439,75 @@ describe("G224 dispatch driver", () => {
       const outcome = await started(driver, "G224-staged-abort");
       await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
       expect(calls.map((call) => call.op)).toEqual(["qualify"]);
+    });
+
+    // D565: qualify has THREE outcomes. A worker that reports `fail` needs no
+    // gate, so qualification settles it directly as `consumed` without queueing
+    // it. The qualifier coordinated regardless; the real coordinator then threw
+    // "requires a queued dispatch", the driver's catch tried to abort a dispatch
+    // that was already consumed, and that rejection — unawaited — terminated the
+    // management server. Reproduced live at 21:42 and again at 21:55.
+    function withSettlingQualifier(capability: Capability, calls: string[], abortThrows: boolean) {
+      let queued = false;
+      return {
+        ...capability,
+        prepare: async (input: Parameters<Capability["prepare"]>[0]) => {
+          const outcome = await capability.prepare(input);
+          return outcome.accepted
+            ? { ...outcome, prepared: { ...outcome.prepared, parentGateCapability: PARENT_GATE } }
+            : outcome;
+        },
+        qualifyImplementationCandidate: async () => {
+          calls.push("qualify");
+          return { state: "consumed" } as never;
+        },
+        coordinateImplementationCandidate: async () => {
+          calls.push("coordinate");
+          // Exactly the production coordinator's guard (dispatchCapability.ts).
+          if (!queued) throw new Error("implementation candidate coordination requires a queued dispatch");
+          return {} as never;
+        },
+        abort: async (input: Parameters<Capability["abort"]>[0]) => {
+          calls.push("abort");
+          if (abortThrows) {
+            throw new Error(`abort_dispatch: attestation "${input.attestationId}" is already consumed and cannot be aborted`);
+          }
+          return await capability.abort(input);
+        },
+        markQueued: () => { queued = true; },
+      } as unknown as Capability;
+    }
+
+    test("a qualification that settled the worker as consumed is never coordinated [BA]", async () => {
+      const h = harnessed({ envelope: stagedEnvelope });
+      const calls: string[] = [];
+      const driver = h.driver(withSettlingQualifier(h.capability(), calls, false));
+      const outcome = await started(driver, "D565-consumed");
+      await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+      expect(calls).toEqual(["qualify"]);
+    });
+
+    test("a launch that fails after its dispatch is already terminal cannot take the server down [BA]", async () => {
+      // The amplifier, independently of the trigger: whatever makes the routed
+      // dispatch throw, the background launch must settle rather than reject,
+      // because nothing awaits it when no fetch is in flight.
+      const h = harnessed({ envelope: stagedEnvelope });
+      const calls: string[] = [];
+      const capability = withSettlingQualifier(h.capability(), calls, true);
+      const settling = { ...capability, qualifyImplementationCandidate: async () => {
+        calls.push("qualify");
+        return { state: "queued" } as never;
+      } } as Capability;
+      const driver = h.driver(settling);
+      const outcome = await started(driver, "D565-amplifier");
+      await expect(driver.waitFor({ ...outcome.handle, waitMs: 5_000 })).resolves.toBeUndefined();
+      expect(calls).toEqual(["qualify", "coordinate", "abort"]);
+      // Settling is not silence: both causes reach the report, which in
+      // production is the server's stderr.
+      expect(h.launchFailures).toEqual([{
+        cause: "implementation candidate coordination requires a queued dispatch",
+        abortFailure: expect.stringContaining("is already consumed and cannot be aborted"),
+      }]);
     });
 
     test("a dispatch without a parent gate is never qualified", async () => {

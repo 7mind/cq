@@ -109,6 +109,12 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
       declaredDispatchTier(input.store, "input" in start ? start.input : undefined),
     registry: new DispatchTransportAdapterRegistry(bindings.adapters),
     cancelLaunch: bindings.cancelLaunch,
+    reportLaunchFailure: ({ handle, cause, abortFailure }) => {
+      process.stderr.write(
+        `ledger-mcp: dispatch ${handle.attestationId}/${String(handle.generation)} failed after launch: ` +
+          `${cause}; its settling abort did not land: ${abortFailure}\n`,
+      );
+    },
     planner: bindings.planner,
     now: () => new Date().toISOString(),
   });
