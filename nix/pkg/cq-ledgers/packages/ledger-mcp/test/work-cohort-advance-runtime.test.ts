@@ -170,6 +170,56 @@ for (const adapter of ["memory", "sqlite"] as const) {
     } finally { await f.close(); }
   });
 
+  test(`${adapter} an abandoned preparation stops owning its members so a later generation can prepare [Behavioral-Active Blackbox-Atomic]`, async () => {
+    // D560: completion was the only release, so a preparation that was refused,
+    // aborted or otherwise abandoned kept its managed-registry record `live` and
+    // `cohortRegistryOverlap` then refused every later generation over the same
+    // members with `member-reserved` — even after its reservation and lease were
+    // released. Releasing all four holdings together is what unwedges it.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const first = await f.runtime.observe({ plan: f.plan, operationId: "observe-abandoned" });
+      const prepared = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-abandoned",
+        definitionDigest: first.definitions[0]!.definitionDigest });
+      expect(prepared.worktree.status).toBe("prepared");
+      const released = await f.runtime.releaseAbandonedPreparation({
+        definitionDigest: prepared.cohort.definition.definitionDigest,
+        intentDigest: prepared.cohort.intent.intentDigest,
+        operationId: "release-abandoned",
+      });
+      expect(released.status).toBe("released");
+      const deps = { stateDir: join(f.root, ".state", "registry") };
+      expect(await readRetainedManagedCohortHandle(f.root, prepared.cohort.intent.intentDigest, deps)).toBeNull();
+
+      // The members are free, so the next generation prepares its own worktree.
+      await f.store.updateItem("tasks", f.taskIds[0]!, { fields: { headline: "changed after abandonment" } });
+      const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-successor" });
+      expect(second.definitions[0]!.definitionDigest).not.toBe(first.definitions[0]!.definitionDigest);
+      const successor = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-successor",
+        definitionDigest: second.definitions[0]!.definitionDigest });
+      expect(successor.worktree.status).toBe("prepared");
+    } finally { await f.close(); }
+  });
+
+  test(`${adapter} abandonment refuses a definition it did not observe [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
+    // The release exists only for preparations with nothing to protect: it also
+    // refuses when the definition owns a seal, evidence subject or receipt bridge,
+    // because that is a worker's protected output which must be completed or
+    // rebased rather than discarded. That arm needs a sealed candidate, which this
+    // fixture cannot build; it is covered by the acceptance-contract suites, and
+    // the guard itself is a single precondition in releaseAbandonedPreparation.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const observed = await f.runtime.observe({ plan: f.plan, operationId: "observe-evidence" });
+      await f.runtime.prepare({ plan: f.plan, operationId: "prepare-evidence", definitionDigest: observed.definitions[0]!.definitionDigest });
+      await expect(f.runtime.releaseAbandonedPreparation({
+        definitionDigest: "f".repeat(64),
+        intentDigest: "e".repeat(64),
+        operationId: "release-unknown",
+      })).rejects.toThrow("observed definition");
+    } finally { await f.close(); }
+  });
+
   test(`${adapter} a workset replacement cannot publish the prior cohort authority [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
     const f = await advanceRuntimeFixture(adapter);
     try {
@@ -180,10 +230,14 @@ for (const adapter of ["memory", "sqlite"] as const) {
       const state = await f.store.workCohortStore().snapshot();
       const intent = state.portable.candidateIntents[0]!;
       const deps = { stateDir: join(f.root, ".state", "registry") };
-      expect(await readRetainedManagedCohortHandle(f.root, intent.intentDigest, deps)).not.toBeNull();
+      // D560 strengthened this: the refusal now RELEASES the retained handle
+      // instead of leaving it live-but-unresolvable, because a live record kept
+      // owning the members and blocked every later generation over them. The
+      // authority is still unresolvable — now because nothing is retained at all.
+      expect(await readRetainedManagedCohortHandle(f.root, intent.intentDigest, deps)).toBeNull();
       const envelope = createCohortEffectEnvelopeV1({ definition: observed.definitions[0]!, observation: state.portable.observations[0]!,
         intent, evidenceSubject: null, executionEpoch: state.runtime.executionEpoch });
-      await expect(resolveRetainedManagedCohortAuthority(f.root, f.store.workCohortStore(), envelope, deps, false)).rejects.toThrow("retention is unavailable");
+      await expect(resolveRetainedManagedCohortAuthority(f.root, f.store.workCohortStore(), envelope, deps, false)).rejects.toThrow();
     } finally { await f.close(); }
   });
 

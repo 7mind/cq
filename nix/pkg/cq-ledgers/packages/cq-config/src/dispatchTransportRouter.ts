@@ -265,6 +265,15 @@ export function createClaudeProcessDispatchAdapter(
         ...(context.prepared.gitConflictCapability === undefined
           ? {}
           : { gitConflictCapability: context.prepared.gitConflictCapability }),
+        // D561: the production Claude launch path builds its own context, so the
+        // worker's Git change capability must be threaded here too — the bridge's
+        // other entry point carrying it is not the one this adapter uses.
+        // D561: the production Claude launch path builds its own context, so the
+        // worker's Git change capability must be threaded here too — the bridge's
+        // other entry point carrying it is not the one this adapter uses.
+        ...(context.prepared.gitChangeCapability === undefined
+          ? {}
+          : { gitChangeCapability: context.prepared.gitChangeCapability }),
         childWindowMs: gate.childWindowMs,
       },
       {

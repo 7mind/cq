@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createStrictInMemoryWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
@@ -450,6 +453,62 @@ describe("T1631 shared three-harness transport router", () => {
     );
     for (const requiredBinding of ["launchClaudePrint"]) {
       expect(source, requiredBinding).toContain(requiredBinding);
+    }
+  });
+
+  test("D561: the production Claude adapter carries a worker's Git change capability into the child server's environment", async () => {
+    // The bridge has two entry points and only one of them is this adapter, so a
+    // capability threaded on the other reaches no real child. Pinned behaviourally
+    // on the captured argv, because that mistake is invisible to a type check.
+    const promptDigest = createHash("sha256").update(CLAUDE_ROLE_PROMPT).digest("hex");
+    const fixture = preparedFixture("claude", 9101, { promptDigest });
+    const changeToken = `cq_git_${"m".repeat(43)}`;
+    const prepared = { ...fixture.prepared, gitChangeCapability: { scope: "git-change" as const, token: changeToken } };
+    const scratch = mkdtempSync(path.join(tmpdir(), "cq-d561-adapter-"));
+    const capturePath = path.join(scratch, "argv.json");
+    const previousCapture = process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+    process.env["CQ_CLAUDE_ARGV_CAPTURE"] = capturePath;
+    try {
+      const adapter = createClaudeProcessDispatchAdapter(
+        createStrictInMemoryWorksetEffectAdmissionProvider(),
+        (context) => ({
+          correlation: CLAUDE_CORRELATION,
+          model: context.resolvedModel.model,
+          now: () => T0,
+          launchOptions: {
+            claudeExecutable: "bun",
+            claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-argv-capture.ts")],
+            cwd: import.meta.dir,
+            rolePrompt: CLAUDE_ROLE_PROMPT,
+            storeServer: {
+              name: "d561store",
+              command: "cq",
+              args: ["mcp", "--dispatch-store"],
+              cwd: import.meta.dir,
+              env: {},
+              capabilityEnv: "D561_RESULT",
+              gitChangeCapabilityEnv: "D561_CHANGE",
+            },
+          },
+        }),
+      );
+      await adapter.launch({
+        route: routeDispatchTransport({ activeHarness: "claude", targetHarness: "claude", forceShellout: true }),
+        prepared,
+        resolvedModel: { harness: "claude", model: "opus", provider: null, effort: null },
+        effectTargetRef: "tasks:T1631",
+        child: { settle: async () => undefined },
+      } as unknown as DispatchAdapterLaunchContext);
+      const argv = JSON.parse(readFileSync(capturePath, "utf8")) as string[];
+      const config = JSON.parse(argv[argv.indexOf("--mcp-config") + 1]!) as {
+        mcpServers: { d561store: { env: Record<string, string> } };
+      };
+      expect(config.mcpServers.d561store.env["D561_CHANGE"]).toBe(changeToken);
+      expect(argv[argv.indexOf("-p") + 1]).not.toContain(changeToken);
+    } finally {
+      if (previousCapture === undefined) delete process.env["CQ_CLAUDE_ARGV_CAPTURE"];
+      else process.env["CQ_CLAUDE_ARGV_CAPTURE"] = previousCapture;
+      rmSync(scratch, { recursive: true, force: true });
     }
   });
 

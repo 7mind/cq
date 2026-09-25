@@ -1973,8 +1973,8 @@ export function createLedgerMcpToolSpecifications(
       return jsonResult(await cohortCompletion.complete({ batch }));
     });
   const cohortAdvanceTool = tool("cohort_advance",
-    "Observe every proposed member against the primary workset and exact Git source, derive mandatory safe fusion, or prepare one complete implementation cohort. No task anchor or caller-minted authority.", {
-      operation: z.enum(["observe", "prepare", "resume", "rebase-successor"]), operation_id: z.string().min(1),
+    "Observe every proposed member against the primary workset and exact Git source, derive mandatory safe fusion, prepare one complete implementation cohort, or release a preparation that will never complete. No task anchor or caller-minted authority.", {
+      operation: z.enum(["observe", "prepare", "resume", "rebase-successor", "release-abandoned"]), operation_id: z.string().min(1),
       plan: COHORT_ADMISSION_PLAN_SCHEMA.optional(), definition_digest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
       intent_digest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
       worker_dispatch: z.object({ attestationId: z.string().min(1), generation: z.number().int().positive() }).strict().optional(),
@@ -1993,6 +1993,19 @@ export function createLedgerMcpToolSpecifications(
         return jsonResult(await dispatchCapability.resumeCohortRebaseSuccessor({ source: args.rebase.source_dispatch,
           guardedRebase: args.rebase.guarded_rebase, ontoCommit: args.rebase.onto_commit,
           priorResultCommit: args.rebase.prior_result_commit, holderId: args.operation_id }));
+      }
+      // D560: a preparation that will never complete surrenders every holding.
+      // It needs no plan, because nothing is being admitted.
+      if (args.operation === "release-abandoned") {
+        if (args.plan !== undefined || args.rebase !== undefined || args.worker_dispatch !== undefined) {
+          throw new Error("abandoned cohort release requires only its exact definition and candidate intent");
+        }
+        if (args.definition_digest === undefined || args.intent_digest === undefined) {
+          throw new Error("abandoned cohort release requires its exact definition and candidate intent");
+        }
+        return jsonResult(await cohortAdvance.releaseAbandonedPreparation({
+          definitionDigest: args.definition_digest, intentDigest: args.intent_digest, operationId: args.operation_id,
+        }));
       }
       if (args.plan === undefined || args.rebase !== undefined) throw new Error("cohort admission requires a plan without rebase checkpoint coordinates");
       const plan = parseCohortAdmissionPlanV1(args.plan);

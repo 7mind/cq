@@ -3,7 +3,8 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { assertCohortEffectEnvelopeV1, cohortValueDigestV1 as digest,
-  type CohortEffectEnvelopeV1, type ManagedCohortWorktreeAuthority, type WorkCohortStore } from "@cq/ledger";
+  type CohortEffectEnvelopeV1, type ManagedCohortWorktreeAuthority, type WorkCohortLeaseV1,
+  type WorkCohortStore } from "@cq/ledger";
 
 const leaseSchema = z.object({ holderId: z.string().min(1), semanticSubject: z.string().min(1),
   executionEpoch: z.string().min(1), capability: z.string().min(1) }).strict();
@@ -18,6 +19,25 @@ export function publishPrivateCohortJournalV1(path: string, value: unknown): voi
   renameSync(staged, path);
   const directory = openSync(dirname(path), "r");
   try { fsyncSync(directory); } finally { closeSync(directory); }
+}
+
+/**
+ * D560: recover the exact lease a preparation published, so a preparation that
+ * will never complete can surrender it. The store keeps only the capability's
+ * digest, so the raw capability exists solely in this private journal.
+ */
+export function readRetainedPreparationLease(
+  registryRoot: string,
+  intentDigest: string,
+): WorkCohortLeaseV1 | null {
+  const path = join(registryRoot, "cohort-preparations", `${intentDigest}.json`);
+  let raw: string;
+  try { raw = readFileSync(path, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  return journalSchema.parse(JSON.parse(raw)).lease;
 }
 
 /** Private preparation lease publication precedes the primary transaction commit. */

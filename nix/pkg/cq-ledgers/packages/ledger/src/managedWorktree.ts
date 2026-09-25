@@ -3145,6 +3145,65 @@ export type ReleaseManagedCohortWorktreeResult =
   | { readonly status: "released"; readonly handle: ManagedWorktreeHandleV3; readonly idempotent: boolean; readonly absolutePath: string }
   | Extract<ReleaseManagedWorktreeResult, { readonly status: "refused" }>;
 
+/**
+ * D560: release a cohort preparation that will never complete.
+ *
+ * Completion was the only way a cohort could ever let go of its members, so a
+ * preparation that was refused, aborted or otherwise abandoned kept its registry
+ * record `live` forever and `cohortRegistryOverlap` then refused every later
+ * generation over those members. There is nothing to protect: the caller proves
+ * the preparation owns no seal, evidence subject or receipt bridge before asking.
+ *
+ * Unlike the completed release this verifies no result commit and parks the
+ * branch tip under the recovery prefix whenever the worker left anything behind,
+ * so abandoning a cohort never silently discards partial work.
+ */
+export async function releaseAbandonedManagedCohortWorktree(input: {
+  readonly repositoryRoot: string;
+  readonly candidateIntentDigest: string;
+}, deps: ManagedWorktreeDeps): Promise<ReleaseManagedCohortWorktreeResult> {
+  const regRoot = registryRoot(input.repositoryRoot, deps.stateDir);
+  const subjectKey = `cohort-${input.candidateIntentDigest}`;
+  const fault = deps.faultInjector ?? (async () => undefined);
+  const records = await loadOrReconcileSubjectRecords(regRoot, subjectKey, fault);
+  const stored = records.find((record) => record.handle.version === 3);
+  if (stored === undefined || stored.handle.version !== 3) {
+    return refusedRelease("handle-mismatch", "abandoned cohort release found no managed cohort record");
+  }
+  const handle = stored.handle;
+  const absolutePath = handle.absolutePath;
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  return withManagedWorktreeEffectLock({ repositoryRoot: input.repositoryRoot, handleToken: handle.token }, deps, () =>
+    withManagedMemberPrepareLocks(regRoot, handle.cohort.memberAuthorities.map(({ taskRef }) => taskRef.slice("tasks:".length)), deps, async () => {
+      const branchTip = await revParse(git, input.repositoryRoot, handle.branch);
+      // Park whatever the abandoned worker reached before removing its branch, so
+      // nothing it committed is unreachable afterwards.
+      if (branchTip !== null && branchTip !== handle.baseCommit) {
+        const parked = await git(input.repositoryRoot, ["update-ref", `${RECOVERY_REF_PREFIX}/${handle.branch}`, branchTip]);
+        if (parked.code !== 0) return refusedRelease("ambiguous", `abandoned cohort recovery ref publication failed: ${parked.stderr}`, { absolutePath });
+      }
+      let pathExists: boolean;
+      try { pathExists = (await fs.stat(absolutePath)).isDirectory(); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; pathExists = false; }
+      if (pathExists) {
+        await fault("before-worktree-remove", { absolutePath, token: handle.token });
+        const removed = await git(input.repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
+        if (removed.code !== 0) return refusedRelease("ambiguous", `abandoned cohort worktree removal failed: ${removed.stderr}`, { absolutePath });
+      }
+      if (stored.status !== "released") {
+        await fault("before-registry-release", { absolutePath, token: handle.token });
+        const { retainedCohortAuthority: _authority, ...historical } = stored;
+        await publishTaskGeneration(regRoot, subjectKey, records.map((record) => record.handle.token === handle.token
+          ? { ...historical, status: "released", releasedAt: (deps.now ?? (() => new Date()))().toISOString() } : record), fault);
+      }
+      if (branchTip !== null) {
+        const deleted = await git(input.repositoryRoot, ["branch", "-D", handle.branch]);
+        if (deleted.code !== 0) return refusedRelease("ambiguous", `abandoned cohort branch removal failed: ${deleted.stderr}`, { absolutePath });
+      }
+      return { status: "released" as const, handle, idempotent: stored.status === "released", absolutePath };
+    }));
+}
+
 export async function releaseCompletedManagedCohortWorktree(input: {
   readonly repositoryRoot: string; readonly ledger: LedgerStore; readonly authority: AuthorizedCohortTerminalReleaseV1;
 }, deps: ManagedWorktreeDeps): Promise<ReleaseManagedCohortWorktreeResult> {

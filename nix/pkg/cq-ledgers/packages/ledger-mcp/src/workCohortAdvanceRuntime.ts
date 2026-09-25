@@ -10,13 +10,13 @@ import {
   requireWorksetStore, resolveCohortCommandBoundaryV1, resolveCohortDefinitionObservationV1,
   withManagedCohortAuthorityWriterLock,
   assertCohortPrimaryObservationV1,
-  readRetainedManagedCohortHandle, retainManagedCohortAuthority,
+  readRetainedManagedCohortHandle, releaseAbandonedManagedCohortWorktree, retainManagedCohortAuthority,
   withManagedWorktreeEffectLock,
   type CohortAdmissionPlanV1, type CohortAdmissionObservationV1, type CohortAdvanceCapabilityV1, type CohortAdvanceObservationV1,
   type ManagedWorktreeDeps, type ResolvedLedgerStore, type DispatchCapability,
 } from "@cq/ledger";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
-import { resolvePreparationAuthority } from "./cohortPreparationJournal.js";
+import { readRetainedPreparationLease, resolvePreparationAuthority } from "./cohortPreparationJournal.js";
 
 export interface CohortAdvanceRuntimeOptionsV1 {
   readonly resolved: ResolvedLedgerStore;
@@ -108,8 +108,59 @@ export async function createCohortAdvanceRuntimeV1(
     }
     return { observationDigest: observation.observationDigest, decisions, definitions };
   });
+  /**
+   * D557/D559/D560: the ONE way a cohort preparation that will never complete
+   * lets go of its members.
+   *
+   * A preparation holds member state in four independent places — the managed
+   * worktree registry's live record, the member reservation, the runtime lease,
+   * and (for a dispatched worker) its candidate intent binding. Completion
+   * released them; every other outcome released a different subset, so a refused
+   * or aborted cohort stranded whichever survived and blocked every later
+   * generation over those members. They are surrendered together here.
+   *
+   * It refuses unless the preparation demonstrably owns no evidence: a seal, an
+   * evidence subject or a receipt bridge means a worker's output is being
+   * protected and abandonment is not the caller's decision to make.
+   */
+  const releaseAbandonedPreparation = async (input: {
+    readonly definitionDigest: string;
+    readonly intentDigest: string;
+    readonly lease?: Parameters<typeof cohorts.releaseRefusedPreparation>[1];
+    readonly operationId: string;
+  }) => {
+    const state = (await cohorts.snapshot()).portable;
+    const definition = state.definitions.find((entry) => entry.definitionDigest === input.definitionDigest);
+    if (definition === undefined) throw new Error("abandoned cohort release requires its observed definition");
+    const seals = state.candidateSeals.filter((entry) => entry.definitionDigest === input.definitionDigest);
+    const subjects = state.evidenceSubjects.filter((entry) => seals.some((seal) => seal.sealDigest === entry.sealDigest));
+    const bridges = state.receiptBridges.filter((entry) => seals.some((seal) => seal.sealDigest === entry.sealDigest));
+    if (seals.length > 0 || subjects.length > 0 || bridges.length > 0) {
+      throw new Error("a cohort preparation that owns evidence cannot be abandoned; complete or rebase it instead");
+    }
+    const worktree = await releaseAbandonedManagedCohortWorktree(
+      { repositoryRoot, candidateIntentDigest: input.intentDigest },
+      deps,
+    );
+    const reservation = {
+      reservationId: input.intentDigest,
+      cohortId: definition.cohortId,
+      definitionDigest: input.definitionDigest,
+      memberRefs: definition.members.map(({ memberRef }) => memberRef),
+    };
+    // The store keeps only the lease capability's digest, so a caller that did
+    // not just prepare recovers the exact capability from the private journal.
+    const lease = input.lease ?? readRetainedPreparationLease(
+      managedWorktreeRegistryRoot(repositoryRoot, deps.stateDir), input.intentDigest);
+    const live = (await cohorts.snapshot()).runtime.lease;
+    if (live !== null && lease !== null) await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, lease, reservation);
+    else await cohorts.transitionReservation(`${input.operationId}:release`, { ...reservation, transition: "released" });
+    return worktree;
+  };
+
   return {
     observe,
+    releaseAbandonedPreparation,
     prepare: async (input) => withManagedCohortAuthorityWriterLock(repositoryRoot, deps, async () => {
       await assertReady(input.plan);
       const state = (await cohorts.snapshot()).portable;
@@ -144,11 +195,15 @@ export async function createCohortAdvanceRuntimeV1(
         priorResultCommit: null, handle: worktree.handle, dependencyReader: dependencyTaskSnapshotReaderFromStore(resolved.store) }, { ...guardedDeps, git }, authority);
       // A refusal holds no publishable authority, so it must not keep holding the
       // members: recovery needs a fresh observation, whose definition mints a new
-      // reservation id that an orphan reservation would reject as an overlap.
-      if (worktree.status === "refused") await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, authority.lease, {
-        reservationId: intent.intentDigest, cohortId: definition.cohortId,
-        definitionDigest: definition.definitionDigest, memberRefs: definition.members.map(({ memberRef }) => memberRef),
-      });
+      // reservation id and registry subject that the orphans would reject.
+      if (worktree.status === "refused") {
+        await releaseAbandonedPreparation({
+          definitionDigest: definition.definitionDigest,
+          intentDigest: intent.intentDigest,
+          lease: authority.lease,
+          operationId: input.operationId,
+        });
+      }
       return { cohort, worktree };
     }),
     resume: async (input) => {

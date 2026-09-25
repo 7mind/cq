@@ -1,6 +1,6 @@
 import type { CohortAdmissionPlanV1, CohortDecisionV1, CohortDefinitionIdentityV1,
   CohortEffectEnvelopeV1 } from "./workCohort.js";
-import type { PrepareManagedCohortWorktreeResult } from "./managedWorktree.js";
+import type { PrepareManagedCohortWorktreeResult, ReleaseManagedCohortWorktreeResult } from "./managedWorktree.js";
 import { z } from "zod";
 import type { WorkCohortStore } from "./workCohortStore.js";
 import { cohortActivityCountersV1 } from "./workCohortActivity.js";
@@ -106,6 +106,13 @@ export interface CohortAdvanceCapabilityV1 {
       readonly cohort: CohortEffectEnvelopeV1;
       readonly worktree: PrepareManagedCohortWorktreeResult;
     }>;
+  /**
+   * D560: surrender every holding of a cohort preparation that will never
+   * complete. Refuses when the preparation owns a seal, evidence subject or
+   * receipt bridge, because that is a worker's protected output.
+   */
+  releaseAbandonedPreparation(input: { readonly definitionDigest: string; readonly intentDigest: string;
+    readonly operationId: string }): Promise<ReleaseManagedCohortWorktreeResult>;
   resume(input: { readonly plan: CohortAdmissionPlanV1; readonly definitionDigest: string;
     readonly intentDigest: string; readonly operationId: string; readonly workerDispatch?: DispatchHandle }): Promise<{
       readonly cohort: CohortEffectEnvelopeV1;
