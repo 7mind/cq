@@ -54,7 +54,8 @@ It returns:
   "belowFloor": { "value": false, "items": [] },
   "planBusy": { "value": false, "items": [] },
   "goalDrift": { "value": false, "items": [] },
-  "upstreamBlocked": { "value": false, "items": [] }
+  "upstreamBlocked": { "value": false, "items": [] },
+  "unreachable": { "value": false, "items": ["<task-id>"] }
 }
 ```
 
@@ -173,9 +174,13 @@ scope size are not requirements questions. Running this command authorizes
 continued in-scope repair. Ask only when the answer changes required behavior or
 provides otherwise-unavailable external information or authority.
 
-`belowFloor`, `planBusy`, research parking, and `goalDrift` are diagnostic
-companions, not reasons by themselves to claim the run drained. Report them when
-they explain inactive work.
+`belowFloor`, `planBusy`, research parking, `goalDrift`, and `unreachable` are
+diagnostic companions, not reasons by themselves to claim the run drained.
+Report them when they explain inactive work. `unreachable` names planned tasks
+that can NEVER become ready because a dependency is terminal in a non-satisfying
+status (`abandoned`, `wontfix`) — report those ids and their blocking
+dependencies instead of reporting the run drained; repointing or abandoning such
+a dependency is the user's decision, not this run's.
 
 ## End-of-run maintenance
 

@@ -81,8 +81,13 @@ export type FetchedLedgerDto = Omit<FetchedLedger, "milestones"> & {
   >;
 };
 
+/** A paginated page never carries the unbounded archive pointer list (D551). */
+export type PaginatedLedgerMetaDto = Omit<FetchedLedger, "milestones" | "archivePointers"> & {
+  archivePointerCount: number;
+};
+
 export interface PaginatedLedgerDto {
-  ledger: Omit<FetchedLedger, "milestones">;
+  ledger: PaginatedLedgerMetaDto;
   items: ItemDto[];
   total: number;
   offset: number;
@@ -211,7 +216,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }`",
   ),
   fetch_ledger: mandatoryItemProjection(
-    "Grouped `{ ledger }` or paginated `{ ledger, items, total, offset, limit, nextOffset }`; items use requested projection.",
+    "Grouped `{ ledger }` or paginated `{ ledger, items, total, offset, limit, nextOffset }`; a paginated `ledger` replaces `archivePointers` with `archivePointerCount`; items use requested projection.",
   ),
   fetch_ledger_archive: requestedFullContent(
     "`{ archive }` with the requested archived item or milestone group in full.",
@@ -487,7 +492,7 @@ export function projectFetchedLedgerDto(
 
 export function projectPaginatedLedgerDto(
   response: {
-    ledger: Omit<FetchedLedger, "milestones">;
+    ledger: PaginatedLedgerMetaDto;
     items: Item[];
     total: number;
     offset: number;

@@ -240,6 +240,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       planBusy: empty,
       goalDrift: empty,
       upstreamBlocked: empty,
+      unreachable: empty,
     },
   };
 }

@@ -2204,10 +2204,24 @@ describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-si
 });
 
 describe("D122: Pi executes nested cq commands through the prompt catalog", () => {
-  const piContext = path.resolve(import.meta.dir, "../../../../llm-contexts/pi-context.md");
+  /**
+   * The Pi operating manual ships from the ponygirls flake input, so it is
+   * resolved through that input exactly like `packagedPiPromptRoot.test.ts`
+   * does; the in-tree `nix/pkg/llm-contexts/` copy no longer exists.
+   */
+  const piContext = (): string => {
+    const archive = JSON.parse(
+      Bun.spawnSync(["nix", "flake", "archive", "--json", "--dry-run", "."], {
+        cwd: path.resolve(import.meta.dir, "../../../../../.."),
+      }).stdout.toString(),
+    ) as { readonly inputs: Readonly<Record<string, { readonly path: string }>> };
+    const ponygirls = archive.inputs["ponygirls"];
+    if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
+    return path.join(ponygirls.path, "nix", "pkg", "llm-contexts", "pi-context.md");
+  };
 
   it("maps every /cq:advance sub-flow to fetch_prompt and forbids parent-session simulation", async () => {
-    const text = await readFile(piContext, "utf8");
+    const text = await readFile(piContext(), "utf8");
     const mappings = [
       '`/cq:investigate:advance` → `fetch_prompt("investigate/advance")`',
       '`/cq:plan:advance` → `fetch_prompt("plan/advance")`',

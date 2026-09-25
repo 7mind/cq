@@ -653,6 +653,15 @@ function investigationOwnershipRef(
     }
     const ownership = readCanonicalOwnership(item);
     if (ownership === null) {
+      // A defect filed directly — by a user, an observer session, or automated
+      // ingestion — is ambient: the owner-edge policy only creates a defect
+      // under a goal review, a task, or a review, so such a defect never has an
+      // owner to walk to. Requiring one made it permanently uninvestigable,
+      // while its own investigation is what would produce the owning fix goal
+      // (D548). The defect is then its own ownership boundary; investigation
+      // authority still comes from the workset, and every deeper broken chain
+      // remains a fault.
+      if (current === memberRef && current.startsWith(`${DEFECTS_LEDGER}:`)) return current;
       throw new Error(`${memberRef} has no primary ownership boundary from ${current}`);
     }
     if (visited.has(ownership.ownerRef)) {
@@ -779,13 +788,20 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
     const repository = await this.#repository.resolveIdentity();
     const worksetEpoch = await this.#workset.snapshot();
     const activeItems = readActivePrimaryItems(this.#ledger);
+    // An empty persisted workset is the historical UNRESTRICTED mode, and it is
+    // the mode `deriveWorksetPredicates` already reports readiness in. Refusing
+    // it here made every predicate-actionable member unadmittable, so the whole
+    // investigate/implement half of the flow had no legal operation (D547). The
+    // unrestricted boundary is the whole active primary ledger.
+    const admissionRoots =
+      worksetEpoch.roots.length > 0 ? worksetEpoch.roots : [...activeItems.keys()];
     const graph = closeWorkset(
-      worksetEpoch.roots,
+      admissionRoots,
       { byRef: activeItems },
       { validateLiveRoots: true },
     );
     if (!graph.restrictive) {
-      throw new Error("cohort admission requires one restrictive primary CQ workset");
+      throw new Error("cohort admission requires one active primary CQ member");
     }
     const orderedMemberRefs = Object.freeze(graph.nodes.map(({ ref }) => ref));
     for (const memberRef of request.memberRefs) {

@@ -128,7 +128,7 @@ describe("T1268 structural guard — activePlanTaskWaits is the sole production 
     ]);
   });
 
-  test("DerivedPredicates exposes the ten canonical keys", async () => {
+  test("DerivedPredicates exposes the eleven canonical keys", async () => {
     const text = await readFile(
       fileURLToPath(new URL("../src/store/predicates.ts", import.meta.url)),
       "utf8",
@@ -149,6 +149,7 @@ describe("T1268 structural guard — activePlanTaskWaits is the sole production 
       "planBusy",
       "goalDrift",
       "upstreamBlocked",
+      "unreachable",
     ]);
   });
 });

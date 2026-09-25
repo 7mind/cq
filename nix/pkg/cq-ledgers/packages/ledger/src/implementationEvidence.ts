@@ -3555,7 +3555,34 @@ export class ImplementationEvidenceService {
       const fulfilledContinuationRoot =
         blocking === undefined ? undefined : fulfilledContinuationRoots.get(blocking.requirementRef);
       let supersededRequirementRef: string | null = null;
-      let allowCompletedActivationTask = false;
+      // The activation task is a one-shot bootstrap task: once the first
+      // activation completes it is `done` forever, so gating every later arm on
+      // its status only asks "has this goal ever been activated?". When no
+      // blocking tip qualified, that check refused the arm outright and left a
+      // stale activation unrecoverable (D549) — and the packaged manifest is
+      // derived live from the ledger and Git, so ordinary movement (a new
+      // protected completion, an archive sweep) changes its semantic content or
+      // its cohort and disqualifies every tip.
+      //
+      // That exact movement is what this bypass covers, and nothing else: an
+      // authenticated prior activation whose SEMANTIC manifest no longer
+      // matches the current derivation. A prior activation whose semantics are
+      // unchanged — so the only reason no tip qualified is an inconsistent
+      // lineage or continuation record, including a legitimately cross-goal
+      // cohort — stops closed as before. The replacement requirement still has
+      // to pass the whole audit and application sequence at the new head
+      // before it activates.
+      const latestFulfilledActivation = latestActivationRequirement(
+        scopedRequirements.filter(
+          (candidate) =>
+            candidate.state === "fulfilled" &&
+            candidate.activationRef !== null &&
+            state.activations[candidate.activationRef] !== undefined,
+        ),
+      );
+      let allowCompletedActivationTask =
+        latestFulfilledActivation !== undefined &&
+        latestFulfilledActivation.semanticManifestDigest !== semanticManifestDigest;
       if (blocking !== undefined) {
         const matchingPanels = Object.values(state.auditPanels).filter(
           (panel) =>
@@ -3693,7 +3720,9 @@ export class ImplementationEvidenceService {
           throw new Error("a different implementation evidence activation requirement is pending");
         supersededRequirementRef = blocking.requirementRef;
         allowCompletedActivationTask =
-          blocking.state === "fulfilled" || terminalInconclusiveAuditCohort;
+          allowCompletedActivationTask ||
+          blocking.state === "fulfilled" ||
+          terminalInconclusiveAuditCohort;
         state.activationRequirements[blocking.requirementRef] = {
           ...blocking,
           state: "superseded",

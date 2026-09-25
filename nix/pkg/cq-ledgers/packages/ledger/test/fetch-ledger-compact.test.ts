@@ -362,13 +362,20 @@ describe("fetch_ledger — offset/limit pagination", () => {
     });
   });
 
-  it("ledger meta in paginated response retains schema/counters/archivePointers", async () => {
+  // A paginated page must cost what its page costs: archive pointers are
+  // unbounded, grow monotonically, and have their own tool, so the page carries
+  // only their count.
+  it("ledger meta in paginated response retains schema/counters and counts archives", async () => {
     const result = decode<{ ledger: Record<string, unknown> }>(
       await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full", offset: 0, limit: 1 }),
     );
     expect(result.ledger["schema"]).toBeDefined();
     expect(result.ledger["counters"]).toBeDefined();
-    expect(Array.isArray(result.ledger["archivePointers"])).toBe(true);
+    expect(result.ledger).not.toHaveProperty("archivePointers");
+    const grouped = decode<{ ledger: { archivePointers: unknown[] } }>(
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full" }),
+    );
+    expect(result.ledger["archivePointerCount"]).toBe(grouped.ledger.archivePointers.length);
   });
 });
 

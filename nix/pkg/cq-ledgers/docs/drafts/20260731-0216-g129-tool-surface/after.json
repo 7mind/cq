@@ -99,13 +99,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -147,8 +147,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -233,13 +233,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 71021,
-        "tokens": 17193,
-        "sha256": "ccc4fb93959ddedebd874422ba3690957cc5e783ebfbb104944463b08263fb42"
+        "utf8Bytes": 71082,
+        "tokens": 17204,
+        "sha256": "6102bc585f01d4428c158cc6b7fa1a61dd634b0fc1e653f215354befbf642020"
       },
-      "surfaceTokens": 17370,
+      "surfaceTokens": 17381,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": 6984,
+      "deltaTokens": 6995,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -278,8 +278,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 6630,
-      "baselineComparableDeltaTokens": -3756,
+      "baselineComparableSurfaceTokens": 6641,
+      "baselineComparableDeltaTokens": -3745,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -373,13 +373,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -421,8 +421,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -516,13 +516,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -564,8 +564,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -821,13 +821,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -869,8 +869,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -964,13 +964,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1012,8 +1012,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1147,13 +1147,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1195,8 +1195,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1370,13 +1370,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1418,8 +1418,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1513,13 +1513,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1561,8 +1561,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1779,13 +1779,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1827,8 +1827,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1922,13 +1922,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1970,8 +1970,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2103,13 +2103,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2151,8 +2151,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2326,13 +2326,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2374,8 +2374,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2507,13 +2507,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 85908,
-        "tokens": 20845,
-        "sha256": "b827d0c435e90a2b5583485cd559e4d3804f3277d10222bf4e988e2ea93ee7c7"
+        "utf8Bytes": 85969,
+        "tokens": 20856,
+        "sha256": "971cf8d4498f706499a9d533ae80e13952512af21e4630cd41a253d9a1f1c0bf"
       },
-      "surfaceTokens": 21022,
+      "surfaceTokens": 21033,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9240,
+      "deltaTokens": 9251,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2555,8 +2555,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8082,
-      "baselineComparableDeltaTokens": -3700,
+      "baselineComparableSurfaceTokens": 8093,
+      "baselineComparableDeltaTokens": -3689,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -3876,8 +3876,8 @@
       "name": "fetch_ledger",
       "whole": {
         "baselineTokens": 520,
-        "afterTokens": 137,
-        "deltaTokens": -383
+        "afterTokens": 148,
+        "deltaTokens": -372
       },
       "fields": {
         "name": {
@@ -3900,12 +3900,12 @@
             "marginalTokens": 334
           },
           "after": {
-            "serializedTokens": 43,
-            "marginalTokens": 44
+            "serializedTokens": 54,
+            "marginalTokens": 55
           },
           "delta": {
-            "serializedTokens": -290,
-            "marginalTokens": -290
+            "serializedTokens": -279,
+            "marginalTokens": -279
           }
         },
         "inputSchema": {

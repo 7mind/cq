@@ -214,7 +214,7 @@ measured savings without another batching schema.
 | Tool | Category | Authoritative response |
 | --- | --- | --- |
 | `enumerate_ledgers` | `purpose-built-small` | `{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }` |
-| `fetch_ledger` | `mandatory-item-projection` | Grouped `{ ledger }` or paginated `{ ledger, items, total, offset, limit, nextOffset }`; items use requested projection. |
+| `fetch_ledger` | `mandatory-item-projection` | Grouped `{ ledger }` or paginated `{ ledger, items, total, offset, limit, nextOffset }`; a paginated `ledger` replaces `archivePointers` with `archivePointerCount`; items use requested projection. |
 | `fetch_ledger_archive` | `requested-full-content` | `{ archive }` with the requested archived item or milestone group in full. |
 | `fetch_item` | `mandatory-item-projection` | `{ item }`; `milestones`: `{ item, resolved, references }`. Items use requested projection. |
 | `update_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |

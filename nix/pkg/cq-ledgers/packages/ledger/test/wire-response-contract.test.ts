@@ -439,7 +439,8 @@ describe("item wire projections", () => {
         },
       ],
     };
-    const { milestones, ...ledgerMetadata } = ledger;
+    const { milestones, archivePointers, ...ledgerRest } = ledger;
+    const ledgerMetadata = { ...ledgerRest, archivePointerCount: archivePointers.length };
 
     expect(reloadWire(projectFetchedLedgerDto(ledger, "compact"))).toEqual({
       ...ledger,

@@ -366,8 +366,10 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
   it("preserves pagination metadata and exposes the next offset", async () => {
     const { store, tools, first, second } = await buildFixture();
-    const { milestones, ...ledger } = store.fetch("xenos");
+    const { milestones, archivePointers, ...ledgerRest } = store.fetch("xenos");
     void milestones;
+    // A paginated page reports the archive pointer count, never the pointers.
+    const ledger = { ...ledgerRest, archivePointerCount: archivePointers.length };
 
     const firstPage = decode(
       await callTool(tools, "fetch_ledger", {

@@ -187,6 +187,17 @@ export interface DerivedPredicates {
    * open-question gate.
    */
   upstreamBlocked: PredicateVerdict;
+  /**
+   * REPORT-ONLY signal (D550): TRUE with the ids of non-terminal tasks that can
+   * NEVER become ready, because a `dependsOn` target is terminal in a status
+   * its ledger does not accept as satisfying (`abandoned`, `wontfix`), or
+   * because they depend transitively on such a task. P-implement merely omits
+   * these, so without this signal nothing distinguishes "not ready yet" from
+   * "never ready" and a run reports drained while a whole planned subgraph is
+   * unreachable. Never participates in any stop condition and never feeds the
+   * open-question gate.
+   */
+  unreachable: PredicateVerdict;
 }
 
 // --- lifecycle constants (mirror the schemas in constants.ts) --------------
@@ -484,11 +495,19 @@ function activeFixGoalOwnsDefect(
   return false;
 }
 
+interface TaskDependencyReadiness {
+  (task: Item): boolean;
+  /** Direct `dependsOn` on an item terminal in a non-satisfying status. */
+  dependsOnTerminalUnsatisfying: (task: Item) => boolean;
+  /** This task's resolvable `dependsOn` task ids, for closure walks. */
+  resolveTaskDependencyIds: (task: Item) => readonly string[];
+}
+
 function buildTaskDependencyReadiness(
   store: PredicateStoreReader,
   tasks: readonly Item[],
   milestones: readonly Item[],
-): (task: Item) => boolean {
+): TaskDependencyReadiness {
   const ledgerNames = store.enumerate();
   const registry = buildPrefixRegistry(
     ledgerNames.map((name) => ({ name, schema: store.fetch(name).schema })),
@@ -546,7 +565,22 @@ function buildTaskDependencyReadiness(
     return satisfyingByLedger.get(target.ledger)?.has(item.status) ?? false;
   }
 
-  return (task: Item): boolean => {
+  /**
+   * A dependency that is TERMINAL in a status its ledger does not accept as
+   * satisfying — `abandoned`, `wontfix` — can never become satisfied, so the
+   * dependent task can never become ready (D550).
+   */
+  function dependencyPermanentlyUnsatisfiable(raw: string): boolean {
+    const target = resolveRef(raw);
+    if (target === undefined || target.ledger === MILESTONES_LEDGER) return false;
+    const item = activeItemsByLedger.get(target.ledger)?.get(target.id);
+    if (item === undefined) return false;
+    const schema = canonicalSchemaByName.get(target.ledger) ?? store.fetch(target.ledger).schema;
+    if (!schema.terminalStatuses.includes(item.status)) return false;
+    return !(satisfyingByLedger.get(target.ledger)?.has(item.status) ?? false);
+  }
+
+  const satisfied = (task: Item): boolean => {
     if (!refList(task, "dependsOn").every((raw) => dependencySatisfied(raw))) {
       return false;
     }
@@ -555,6 +589,14 @@ function buildTaskDependencyReadiness(
       return target === undefined || milestoneSatisfied(target.id);
     });
   };
+  satisfied.dependsOnTerminalUnsatisfying = (task: Item): boolean =>
+    refList(task, "dependsOn").some((raw) => dependencyPermanentlyUnsatisfiable(raw));
+  satisfied.resolveTaskDependencyIds = (task: Item): readonly string[] =>
+    refList(task, "dependsOn").flatMap((raw) => {
+      const target = resolveRef(raw);
+      return target !== undefined && target.ledger === TASKS_LEDGER ? [target.id] : [];
+    });
+  return satisfied;
 }
 
 export function taskDependenciesSatisfied(store: PredicateStoreReader, task: Item): boolean {
@@ -835,6 +877,34 @@ function deriveEligiblePredicates(
     if (blocked) upstreamBlockedItems.push(task.id);
   }
 
+  // --- unreachable (REPORT-ONLY, D550) --------------------------------------
+  // Seed: every non-terminal task with a direct dependency that is terminal in
+  // a non-satisfying status. Closure: every non-terminal task depending on a
+  // seeded task, to a fixed point — a stalled DAG root strands its whole chain.
+  const nonTerminalTasks = tasks.filter((t) => !TASK_TERMINAL_STATUSES.has(t.status));
+  const unreachableIds = new Set(
+    nonTerminalTasks
+      .filter((t) => dependenciesSatisfied.dependsOnTerminalUnsatisfying(t))
+      .map((t) => t.id),
+  );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const task of nonTerminalTasks) {
+      if (unreachableIds.has(task.id)) continue;
+      if (
+        dependenciesSatisfied
+          .resolveTaskDependencyIds(task)
+          .some((dependencyId) => unreachableIds.has(dependencyId))
+      ) {
+        unreachableIds.add(task.id);
+        changed = true;
+      }
+    }
+  }
+  const unreachableItems = tasks
+    .filter((t) => unreachableIds.has(t.id))
+    .map((t) => t.id);
+
   return {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
     pSeed: { value: seedItems.length > 0, items: seedItems },
@@ -856,6 +926,7 @@ function deriveEligiblePredicates(
       value: upstreamBlockedItems.length > 0,
       items: upstreamBlockedItems,
     },
+    unreachable: { value: unreachableItems.length > 0, items: unreachableItems },
   };
 }
 

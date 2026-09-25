@@ -699,7 +699,7 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchLedger = tool(
     "fetch_ledger",
-    `Fetch schema, active groups/resolved milestones, archive pointers. ${ITEM_PROJECTION_DESCRIPTION}. offset/limit pages; follow nextOffset until null.`,
+    `Fetch schema, active groups/resolved milestones, archive pointers. ${ITEM_PROJECTION_DESCRIPTION}. offset/limit pages (a page reports archivePointerCount instead of the pointers); follow nextOffset until null.`,
     {
       ledger_id: z.string(),
       projection: projectionSchema,
@@ -716,8 +716,13 @@ export function createLedgerMcpToolSpecifications(
         const { items, total } = paginate(allItems, offset, args.limit);
         const nextOffset =
           args.limit !== undefined && offset + items.length < total ? offset + items.length : null;
-        const { milestones: _omit, ...ledgerMeta } = fetched;
+        // Archive pointers are unbounded and grow monotonically, so shipping
+        // them with every page made a one-item page cost hundreds of kilobytes
+        // on the largest ledgers and defeated compact pagination (D551). The
+        // page carries their count; `fetch_ledger_archive` serves the content.
+        const { milestones: _omit, archivePointers, ...ledgerRest } = fetched;
         void _omit;
+        const ledgerMeta = { ...ledgerRest, archivePointerCount: archivePointers.length };
         return wireResult(
           projectPaginatedLedgerDto(
             {

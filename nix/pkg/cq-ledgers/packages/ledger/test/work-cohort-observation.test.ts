@@ -166,7 +166,7 @@ function localInvestigationFixture(
   causeConfirmed: boolean,
   splitOwner = false,
   rootKind: "goal" | "members" = "goal",
-  ownerFault: "none" | "missing" | "cycle" | "revoked" | "wrong-kind" = "none",
+  ownerFault: "none" | "missing" | "cycle" | "revoked" | "wrong-kind" | "ambient" = "none",
 ): LocalPrimaryFixture {
   const memberSpecs = ["D1", "D2"].map((id) => ({
     ref: `defects:${id}`,
@@ -188,6 +188,9 @@ function localInvestigationFixture(
       severity: "high",
       rootCause: "shared primary cause",
       sourceRefs: [`src/defects:${id}.ts`],
+      ...(ownerFault === "ambient"
+        ? {}
+        : {
       worksetOwnerRef:
         ownerFault === "cycle"
           ? id === "D1"
@@ -202,6 +205,7 @@ function localInvestigationFixture(
         ownerFault === "wrong-kind" && id === "D1"
           ? "finalized-manifest"
           : "review-filed-defect",
+          }),
     }),
   );
   const hypotheses = ["D1", "D2"].map((id, index) =>
@@ -901,5 +905,53 @@ describe("cohort admission observation", () => {
     } finally {
       await harness.close();
     }
+  });
+
+  test("admits an unrestricted workset over the whole active primary ledger", async () => {
+    const local = localInvestigationFixture(true);
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: { snapshot: () => ({ roots: [], epoch: 12 }) },
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["defects:D1", "defects:D2"] },
+      source,
+    );
+
+    expect(observation.members.map(({ memberRef }) => memberRef)).toEqual([
+      "defects:D1",
+      "defects:D2",
+    ]);
+    expect(observation.workset.orderedMemberRefs).toContain("defects:D1");
+  });
+
+  test("admits an independently filed defect as its own investigation ownership boundary", async () => {
+    const local = localInvestigationFixture(true, false, "members", "ambient");
+    const source = new LedgerWorksetCohortAdmissionObservationSourceV1({
+      repository: new InMemoryCohortLocalRepository(localRepositoryFiles()),
+      ledger: local.ledger,
+      workset: local.workset,
+      plan: local.plan,
+      environment: { environmentDigest: local.environmentDigest },
+    });
+
+    const observation = await produceCohortAdmissionObservationV1(
+      { memberRefs: ["defects:D1", "defects:D2"] },
+      source,
+    );
+
+    expect(observation.members.map(({ memberRef }) => memberRef)).toEqual([
+      "defects:D1",
+      "defects:D2",
+    ]);
+    // Each ambient defect is its own boundary, so the two members never fuse.
+    expect(
+      new Set(observation.members.map(({ ownershipBoundaryDigest }) => ownershipBoundaryDigest))
+        .size,
+    ).toBe(2);
   });
 });

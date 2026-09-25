@@ -50,6 +50,7 @@ function emptyPredicates(): DerivedPredicates {
     planBusy: emptyVerdict(),
     goalDrift: emptyVerdict(),
     upstreamBlocked: emptyVerdict(),
+    unreachable: emptyVerdict(),
   };
 }
 

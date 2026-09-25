@@ -554,6 +554,66 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("re-arms a fulfilled activation when the packaged manifest changed semantically", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-semantic-change",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: first.manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-before-semantic-change",
+      author: "parent",
+    });
+    f.setTaskStatus("tasks:T12", "done");
+    f.setHead(NEXT_HEAD);
+    // The manifest is derived live from the ledger and Git, so ordinary ledger
+    // movement (a new protected completion, an archive sweep) changes a
+    // record's semantic content, not just its bound repository head.
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+        acceptance: { clauses: ["exact historical evidence", "restated after ledger movement"] },
+      })),
+    });
+
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-semantic-change",
+      author: "parent",
+    });
+
+    expect(replacement).toMatchObject({ status: "armed", boundaryCommit: NEXT_HEAD });
+    expect(
+      await f.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: NEXT_HEAD,
+      }),
+    ).toMatchObject({ status: "pending", requirementRef: replacement.requirementRef });
+  });
+
   test("treats historical-review archival as a semantic no-op when re-arming", async () => {
     const base = manifest();
     const reviewed = {
