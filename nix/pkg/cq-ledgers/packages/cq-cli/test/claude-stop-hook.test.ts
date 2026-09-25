@@ -65,15 +65,20 @@ async function makeTmpDir(prefix: string): Promise<string> {
 // --- extract the wrapper body from claude.nix (single source of truth) ------
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../..");
-const CLAUDE_NIX_IN_PONYGIRLS = path.join("nix", "hm", "claude.nix");
-
-/** The Claude Home Manager module ships from the ponygirls flake input. */
+/**
+ * The Stop-gate hook is CQ's own, in CQ's own Claude Home Manager module.
+ *
+ * defects:D563 — it used to ship from the ponygirls flake input, and this test
+ * read it there. Ponygirls retired both this hook and the Codex agent
+ * declarations in `a9e3f56` ("Decouple CQ integration and configure agent
+ * defaults"), handing the behaviour to the consumer; CQ already owned the
+ * replacement in `nix/hm/claude.nix`, which its flake composes ON TOP of the
+ * ponygirls module. Only this lookup was left pointing at the old home, so it
+ * failed LOUDLY rather than silently testing nothing — which is what the
+ * marker check is for.
+ */
 async function claudeNixPath(): Promise<string> {
-  const { stdout } = await execFileAsync("nix", ["flake", "archive", "--json", "--dry-run", "."], { cwd: REPO_ROOT });
-  const archive = JSON.parse(stdout) as { readonly inputs: Readonly<Record<string, { readonly path: string }>> };
-  const ponygirls = archive.inputs["ponygirls"];
-  if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
-  return path.join(ponygirls.path, CLAUDE_NIX_IN_PONYGIRLS);
+  return path.join(REPO_ROOT, "nix", "hm", "claude.nix");
 }
 const WRAPPER_MARKER = 'pkgs.writeShellScript "claude-stop-advance-gate" ';
 

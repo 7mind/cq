@@ -1004,7 +1004,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/claude-stop-hook.test.ts",
-      "sha256": "ae4abfa1d2c705da9b2cee12bfca244c30e3e62274e03c098a076b7775c0ae98",
+      "sha256": "0e902c60bbc515a182c965198dab64fec322c441268d929a2909dfe46a951134",
       "targets": []
     },
     {
@@ -1166,13 +1166,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexDispatchProtocol.test.ts",
-      "sha256": "60a3bc3250a9e70306d61ac61f527b0e758fcaf0a607daf44b7e596866a39df7",
+      "sha256": "735bdb76dfefd19126acf445797b50fad86e0d59095f5ecb46bbc49515c1c9c7",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexDispatchProtocol.test.ts",
-      "sha256": "60a3bc3250a9e70306d61ac61f527b0e758fcaf0a607daf44b7e596866a39df7",
+      "sha256": "735bdb76dfefd19126acf445797b50fad86e0d59095f5ecb46bbc49515c1c9c7",
       "targets": []
     },
     {

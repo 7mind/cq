@@ -1466,15 +1466,21 @@ const CODEX_SKILL_PROJECTION = path.join(REPO_ROOT, "nix", "lib", "codex-command
  * pi-context.md (defects:D553) and hm/claude.nix before it, so it is resolved
  * through that input rather than from a path in this repository.
  */
+/**
+ * The global agent declarations are written by CQ's OWN Codex Home Manager
+ * module, in this repository.
+ *
+ * defects:D562 — they used to ship from the ponygirls flake input, and this
+ * test read the module there. Ponygirls retired its CQ projection and those
+ * `.codex/agents/*.toml` home files in `a9e3f56` ("Decouple CQ integration and
+ * configure agent defaults"), leaving `merged.agents` exposed for a consumer to
+ * materialise; CQ already did so in `nix/hm/codex.nix`, which its flake
+ * composes ON TOP of the ponygirls module. Only this lookup was left pointing
+ * at the old home, so the cross-language pair read a file that could no longer
+ * satisfy it.
+ */
 function codexHomeModulePath(): string {
-  const archive = JSON.parse(
-    Bun.spawnSync(["nix", "flake", "archive", "--json", "--dry-run", "."], {
-      cwd: REPO_ROOT,
-    }).stdout.toString(),
-  ) as { readonly inputs: Readonly<Record<string, { readonly path: string }>> };
-  const ponygirls = archive.inputs["ponygirls"];
-  if (ponygirls === undefined) throw new Error("the flake has no ponygirls input");
-  return path.join(ponygirls.path, "nix", "hm", "codex.nix");
+  return path.join(REPO_ROOT, "nix", "hm", "codex.nix");
 }
 
 const CODEX_HOME_MODULE = codexHomeModulePath();
