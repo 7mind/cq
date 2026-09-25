@@ -108,6 +108,7 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     declaredTierFor: async (start) =>
       declaredDispatchTier(input.store, "input" in start ? start.input : undefined),
     registry: new DispatchTransportAdapterRegistry(bindings.adapters),
+    cancelLaunch: bindings.cancelLaunch,
     planner: bindings.planner,
     now: () => new Date().toISOString(),
   });

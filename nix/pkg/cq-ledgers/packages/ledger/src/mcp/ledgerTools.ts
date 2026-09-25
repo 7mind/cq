@@ -2148,14 +2148,18 @@ export function createLedgerMcpToolSpecifications(
     ABORT_DISPATCH_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
-      return jsonResult(
-        await dispatchCapability.abort({
-          attestationId: args.attestationId,
-          generation: args.generation,
-          reason: args.reason,
-          ...(args.details === undefined ? {} : { details: args.details }),
-        }),
-      );
+      const aborted = await dispatchCapability.abort({
+        attestationId: args.attestationId,
+        generation: args.generation,
+        reason: args.reason,
+        ...(args.details === undefined ? {} : { details: args.details }),
+      });
+      // D559: the abort was journal-only. The terminal row is written first so a
+      // failed cancellation can never leave a live child on a live dispatch, then
+      // the launch is settled — otherwise the child ran on to its `childCancelAt`
+      // and, for a cohort, kept committing into a worktree a successor reuses.
+      dispatchCapability.driver?.cancelLaunch?.({ attestationId: args.attestationId, generation: args.generation });
+      return jsonResult(aborted);
     },
   );
   const fetchDispatchResultTool = tool(

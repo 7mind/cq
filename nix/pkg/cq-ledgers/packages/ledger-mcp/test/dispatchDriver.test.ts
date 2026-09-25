@@ -121,6 +121,8 @@ interface Harnessed {
   /** A fresh capability over the same durable backend, as after a server restart. */
   capability(): Capability;
   driver(capability: Capability): ReturnType<typeof createDispatchDriver>;
+  /** D559: handles the driver forwarded a launch cancellation for. */
+  readonly cancelled: readonly string[];
 }
 
 function harnessed(options: {
@@ -129,6 +131,8 @@ function harnessed(options: {
   readonly launch?: ScriptedLaunch;
   /** Wrap the durable envelope read, e.g. to present a staged worker result. */
   readonly envelope?: (row: AttestationEnvelope | undefined) => AttestationEnvelope | undefined;
+  /** D559: omit the launch-cancellation hook, as an in-process driver does. */
+  readonly withoutCancellation?: boolean;
 }): Harnessed {
   const store = new InMemoryAttestationStore(NAMESPACE);
   const backend = new InMemoryAttestationBackend(store);
@@ -164,6 +168,7 @@ function harnessed(options: {
     }),
   );
   const registry = new DispatchTransportAdapterRegistry(adapters);
+  const cancelled: string[] = [];
   const resolveModel: DispatchModelResolver =
     options.model ?? (() => ({ token: TOKENS.claude, formatted: "claude:sonnet" }));
   const capability = (): Capability =>
@@ -197,8 +202,14 @@ function harnessed(options: {
         resolveModel,
         registry,
         planner,
+        ...(options.withoutCancellation === true
+          ? {}
+          : { cancelLaunch: (handle: { readonly attestationId: string; readonly generation: number }) => {
+              cancelled.push(`${handle.attestationId}:${String(handle.generation)}`);
+            } }),
         now: () => NOW,
       }),
+    cancelled,
   };
 }
 
@@ -485,6 +496,28 @@ describe("G224 dispatch driver", () => {
       expect(row.expectedChild).toEqual({ childId: "implementation-review-y", runId: "implementation-review-y-codexsol" });
       expect(row.state).toBe("prepared");
       expect(h.launches).toEqual([]);
+    });
+  });
+
+  describe("D559 terminal abort settles the live child", () => {
+    test("the driver forwards a cancellation for the exact aborted handle [BA]", async () => {
+      // `abort_dispatch` was journal-only: it wrote the terminal row and left the
+      // OS child running to its `childCancelAt`. For a cohort that meant a dead
+      // dispatch's worker kept committing into the worktree a successor reuses —
+      // observed live, three minutes after the abort returned.
+      const h = harnessed({});
+      const driver = h.driver(h.capability());
+      driver.cancelLaunch({ attestationId: "att_D559", generation: 2 });
+      expect(h.cancelled).toEqual(["att_D559:2"]);
+    });
+
+    test("a driver with no cancellation wiring stays silent instead of throwing [BA]", () => {
+      // The hook is optional so an in-process or test driver without live
+      // launches is unaffected; an abort must never fail because of it.
+      const h = harnessed({ withoutCancellation: true });
+      const driver = h.driver(h.capability());
+      expect(() => driver.cancelLaunch({ attestationId: "att_D559", generation: 1 })).not.toThrow();
+      expect(h.cancelled).toEqual([]);
     });
   });
 });

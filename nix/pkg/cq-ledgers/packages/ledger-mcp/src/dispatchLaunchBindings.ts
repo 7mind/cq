@@ -79,6 +79,8 @@ export interface DispatchLaunchBindingOptions {
 export interface DispatchLaunchBindings {
   readonly planner: DispatchLaunchPlanner;
   readonly adapters: readonly DispatchTransportAdapter[];
+  /** D559: stop the live child of a dispatch an abort just made terminal. */
+  readonly cancelLaunch: (handle: DispatchHandle) => void;
 }
 
 type LaunchCorrelation =
@@ -187,6 +189,23 @@ async function childCwd(
 
 export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptions): DispatchLaunchBindings {
   const correlations = new Map<string, LaunchCorrelation>();
+  /**
+   * D559: one cancellation per live launch, so a terminal abort can stop the
+   * child it made terminal. `abort_dispatch` was journal-only: it wrote the
+   * terminal row and left the OS child running to its `childCancelAt`, which for
+   * a cohort meant a dead dispatch's worker kept committing into the worktree a
+   * successor would reuse. Settlement stays delegated to the process-control
+   * broker (or the adapter's own spawn), never a kill in the dispatch layer.
+   */
+  const cancellations = new Map<string, AbortController>();
+  const cancellationFor = (handle: DispatchHandle): AbortController => {
+    const key = handleKey(handle);
+    const existing = cancellations.get(key);
+    if (existing !== undefined) return existing;
+    const controller = new AbortController();
+    cancellations.set(key, controller);
+    return controller;
+  };
 
   function planned(
     expectedChild: NativeChildIdentity,
@@ -201,6 +220,7 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
       },
       release: (handle) => {
         correlations.delete(handleKey(handle));
+        cancellations.delete(handleKey(handle));
       },
     };
   }
@@ -282,6 +302,9 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
       await createClaudeProcessDispatchAdapter(
         await effectAdmissionFor(options, context),
         resolveClaudeBinding,
+        // D559: the bridge already threads this to the broker, which settles the
+        // registered process group; nothing ever supplied it.
+        cancellationFor({ attestationId: context.prepared.attestationId, generation: context.prepared.generation }).signal,
       ).launch(context),
   });
 
@@ -335,6 +358,8 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
         sandboxMode: codexDispatchedRoleSandboxMode(roleId),
         timeoutMs: gate.childWindowMs,
       };
+      // D559: a raw spawn has no broker session, so the abort settles it here.
+      const cancellation = cancellationFor(handle).signal;
       const child = Bun.spawn([options.codexRoleCommand], {
         cwd: options.ledgerCwd,
         env: {
@@ -351,11 +376,15 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
       });
       child.stdin.write(`${JSON.stringify(request)}\n`);
       await child.stdin.end();
+      const settleOnAbort = () => { child.kill("SIGTERM"); };
+      if (cancellation.aborted) settleOnAbort();
+      else cancellation.addEventListener("abort", settleOnAbort, { once: true });
       const [exitStatus, stdout, stderr] = await Promise.all([
         child.exited,
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
       ]);
+      cancellation.removeEventListener("abort", settleOnAbort);
       if (exitStatus !== 0) {
         return {
           outcome: "aborted",
@@ -464,6 +493,8 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
         const launched = await broker.launch({
           kind: "child-dispatch",
           targetRef: context.effectTargetRef,
+          // D559: an abort settles this launch's registered process group.
+          signal: cancellationFor(handle).signal,
           argv,
           cwd: await childCwd(options, context),
           env: { ...withoutWorksetCredentials(process.env), ...childEnvironment },
@@ -537,5 +568,11 @@ export function createDispatchLaunchBindings(options: DispatchLaunchBindingOptio
     },
   });
 
-  return { planner, adapters: [claude, codex, pi] };
+  return {
+    planner,
+    adapters: [claude, codex, pi],
+    cancelLaunch: (handle) => {
+      cancellations.get(handleKey(handle))?.abort(new Error("cq dispatch aborted"));
+    },
+  };
 }

@@ -248,6 +248,8 @@ export interface DispatchWaitToolInput extends DispatchHandle {
 export interface DispatchDriverCapability {
   start(input: StartDispatchToolInput): Promise<unknown>;
   waitFor(input: DispatchWaitToolInput): Promise<void>;
+  /** D559: settle the live child of a dispatch that has just become terminal. */
+  cancelLaunch?(handle: DispatchHandle): void;
 }
 
 export interface DispatchCapability {

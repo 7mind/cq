@@ -234,6 +234,8 @@ export type ClaudeProcessAdapterBindingResolver = (
 export function createClaudeProcessDispatchAdapter(
   effectAdmissionProvider: WorksetEffectAdmissionProvider,
   resolve: ClaudeProcessAdapterBindingResolver,
+  /** D559: settles the launched child's process group when the dispatch is aborted. */
+  cancellation?: AbortSignal,
 ): DispatchTransportAdapter {
   return createAdapter("claude", "process", async (context) => {
     const binding = await resolve(context);
@@ -281,6 +283,7 @@ export function createClaudeProcessDispatchAdapter(
         worksetEffect: {
           provider: effectAdmissionProvider,
           targetRef: context.effectTargetRef,
+          ...(cancellation === undefined ? {} : { signal: cancellation }),
         },
       },
     );

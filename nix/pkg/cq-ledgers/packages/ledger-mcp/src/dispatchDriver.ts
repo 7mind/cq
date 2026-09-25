@@ -100,6 +100,8 @@ export interface DispatchDriverDeps {
    */
   readonly declaredTierFor?: (input: StartDispatchInput) => Promise<Tier | undefined>;
   readonly registry: DispatchTransportAdapterRegistry;
+  /** D559: stop the live child of a dispatch an abort just made terminal. */
+  readonly cancelLaunch?: (handle: DispatchHandle) => void;
   readonly planner: DispatchLaunchPlanner;
   readonly now: () => string;
 }
@@ -111,6 +113,12 @@ export interface StartedPreparedDispatch extends StartedDispatch {
 
 export interface DispatchDriver {
   start(input: StartDispatchInput): Promise<StartDispatchOutcome>;
+  /**
+   * D559: settle the live child of a dispatch that has just become terminal. A
+   * journal-only abort left the child running to its `childCancelAt` — for a
+   * cohort, still committing into a worktree a successor would reuse.
+   */
+  cancelLaunch(handle: DispatchHandle): void;
   /**
    * Launch a dispatch whose prepare a trusted in-server caller owns (native
    * implementation-evidence attempts), at an explicit token. `seed` is the
@@ -305,6 +313,9 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
   }
 
   return {
+    cancelLaunch(handle) {
+      deps.cancelLaunch?.(handle);
+    },
     async start(input) {
       const roleId = roleIdOf(input);
       const declaredTier = deps.declaredTierFor === undefined ? undefined : await deps.declaredTierFor(input);
