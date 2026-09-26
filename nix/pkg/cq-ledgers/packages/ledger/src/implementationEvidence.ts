@@ -2207,6 +2207,30 @@ function panelMatchesGateRemediationRepair(
   });
 }
 
+/** True when a panel audited exactly `record`'s content, whatever head it was bound to. */
+function panelAuditedSameRecordContent(
+  panel: ImplementationAuditPanelRecord,
+  record: PackagedImplementationAuditRecord,
+): boolean {
+  if (!object(panel.auditInput)) return false;
+  const prior = panel.auditInput;
+  const observed = {
+    recordKey: prior["recordKey"],
+    taskRef: prior["taskRef"],
+    ownerGoalRef: prior["ownerGoalRef"],
+    finalizedManifest: prior["finalizedManifest"],
+    historicalReview: prior["historicalReview"],
+    baseCommit: prior["baseCommit"],
+    resultCommit: prior["resultCommit"],
+    diff: prior["diff"],
+    acceptance: prior["acceptance"],
+    gateObservations: prior["gateObservations"],
+    requiredObservations: prior["requiredObservations"],
+  };
+  const { repositoryHead: _head, ...current } = record;
+  return canonical(observed) === canonical(current);
+}
+
 function panelMatchesProtectedReviewRepair(
   panel: ImplementationAuditPanelRecord,
   record: PackagedImplementationAuditRecord,
@@ -3768,6 +3792,31 @@ export class ImplementationEvidenceService {
               panelMatchesGateRemediationRepair(panels[0]!, currentRecord, blocking.boundaryCommit)
             );
           });
+        // D582/Q420: an ordinary commit moved the head while this requirement's
+        // audits were finished but unapplied. Re-binding to the descendant head
+        // re-audits from scratch; earlier disapprovals of the same record content
+        // still bind the application (see applyAuditManifest), so this cannot be
+        // used to re-roll a verdict.
+        const descendantHeadRebindCohort =
+          blocking.manifestId === IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 &&
+          blocking.state === "armed" &&
+          blocking.boundaryCommit !== repositoryHead &&
+          blocking.semanticManifestDigest === semanticManifestDigest &&
+          matchingPanels.length > 0 &&
+          matchingAudits.length === 0 &&
+          matchingApplications.length === 0 &&
+          matchingPanels.every((panel) => {
+            const attempts = attemptsFor(panel);
+            return (
+              attempts.length > 0 &&
+              attempts.every(
+                (attempt) =>
+                  attempt !== undefined &&
+                  attempt.panelRef === panel.panelRef &&
+                  attempt.terminalState !== null,
+              )
+            );
+          });
         const hasPreparedEvidence =
           matchingPanels.length > 0 ||
           matchingAudits.length > 0 ||
@@ -3808,7 +3857,8 @@ export class ImplementationEvidenceService {
               (hasPreparedEvidence &&
                 !terminalInconclusiveAuditCohort &&
                 !protectedReviewRepairCohort &&
-                !gateRemediationRepairCohort))) ||
+                !gateRemediationRepairCohort &&
+                !descendantHeadRebindCohort))) ||
           (blocking.state === "fulfilled" &&
             (blocking.activationRef === null ||
               blocking.fulfilledAt === null ||
@@ -3978,8 +4028,20 @@ export class ImplementationEvidenceService {
       if (attempts.some((attempt) => attempt === undefined || attempt.terminalState === null))
         throw new Error(`audit panel for ${record.taskRef} is nonterminal`);
       const terminals = attempts.map((attempt) => attempt!.terminalState!);
+      const earlierDisapproval = Object.values(snapshot.auditPanels).some(
+        (candidate) =>
+          candidate.panelRef !== panel.panelRef &&
+          candidate.manifestId === manifest.manifestId &&
+          candidate.recordKey === record.recordKey &&
+          candidate.taskRef === record.taskRef &&
+          panelAuditedSameRecordContent(candidate, record) &&
+          [
+            ...candidate.attemptRefs,
+            ...(candidate.fallbackAttemptRef === null ? [] : [candidate.fallbackAttemptRef]),
+          ].some((ref) => snapshot.auditAttempts[ref]?.terminalState === "disapproved"),
+      );
       if (adjudication?.recordKeys.includes(record.recordKey) === true) {
-        if (terminals.includes("approved") && !terminals.includes("disapproved"))
+        if (terminals.includes("approved") && !terminals.includes("disapproved") && !earlierDisapproval)
           throw new Error(`audit panel for ${record.taskRef} was approved and needs no adjudication`);
         adjudicatedKeys.add(record.recordKey);
         expectedAttemptRefs.push(...refs);
@@ -3988,6 +4050,10 @@ export class ImplementationEvidenceService {
       }
       if (terminals.includes("disapproved"))
         throw new Error(`audit panel for ${record.taskRef} was disapproved`);
+      if (earlierDisapproval)
+        throw new Error(
+          `${record.taskRef} was disapproved by an earlier panel over identical content and requires operator adjudication`,
+        );
       if (!terminals.includes("approved"))
         throw new Error(`audit panel for ${record.taskRef} has no authenticated approval`);
       for (const attempt of attempts) {

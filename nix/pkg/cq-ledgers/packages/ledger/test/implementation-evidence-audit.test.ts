@@ -1415,6 +1415,107 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("Q420: a head move re-binds finished audits, but an earlier disapproval still needs adjudication", async () => {
+    const f = fixture({
+      ...manifest(),
+      manifestId: "d347-implementation-evidence-activation-v2",
+    });
+    const boundTo = (head: string) => ({
+      ...f.packaged,
+      records: f.packaged.records.map((record) => ({ ...record, repositoryHead: head })),
+    });
+    const auditAll = async (head: string, label: string) => {
+      const digestAtHead = implementationAuditManifestDigest(boundTo(head));
+      const refs: string[] = [];
+      for (const record of f.packaged.records) {
+        const panel = await f.service.prepareAuditPanel({
+          manifestId: f.packaged.manifestId,
+          manifestDigest: digestAtHead,
+          recordKey: record.recordKey,
+          expectedRepositoryHead: head,
+          operationId: `${label}-panel-${record.recordKey}`,
+          author: "parent",
+        });
+        for (const attemptRef of panel.attemptRefs) {
+          await f.service.prepareAuditAttempt({
+            panelRef: panel.panelRef,
+            attemptRef,
+            operationId: `${label}-prepare-${attemptRef.slice(-8)}`,
+            author: "parent",
+          });
+          await f.service.finalizeAuditAttempt({
+            attemptRef,
+            operationId: `${label}-finalize-${attemptRef.slice(-8)}`,
+            author: "parent",
+          });
+          refs.push(attemptRef);
+        }
+      }
+      return { digestAtHead, refs };
+    };
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-head-move",
+      author: "parent",
+    });
+    f.setNativeAuditOutputMode("disapprove");
+    await auditAll(HEAD, "old-head");
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-same-head",
+      author: "parent",
+    })).rejects.toThrow("a different implementation evidence activation requirement is pending");
+
+    const moved = "9".repeat(40);
+    f.setHead(moved);
+    f.replacePackaged(boundTo(moved));
+    const rebound = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: moved,
+      operationId: "rearm-after-head-move",
+      author: "parent",
+    });
+    expect(rebound).toMatchObject({ supersededRequirementRef: first.requirementRef });
+
+    // A luckier fresh panel does not erase the earlier disapproval.
+    f.setNativeAuditOutputMode("approve");
+    const { digestAtHead, refs } = await auditAll(moved, "new-head");
+    const apply = (operationId: string, withAdjudication: boolean) => f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: digestAtHead,
+      expectedRepositoryHead: moved,
+      auditAttemptRefs: refs,
+      ...(withAdjudication
+        ? {
+          operatorAdjudication: {
+            questionRef: "questions:Q420",
+            answer: "as recommended",
+            recordKeys: f.packaged.records.map(({ recordKey }) => recordKey),
+          },
+        }
+        : {}),
+      operationId,
+      author: "parent",
+    });
+    await expect(apply("apply-rerolled-approval", false)).rejects.toThrow(
+      "disapproved by an earlier panel over identical content",
+    );
+    f.setAdjudicationQuestion({
+      questionRef: "questions:Q420",
+      answer: "as recommended",
+      ledgerRefs: f.packaged.records.map(({ taskRef }) => taskRef),
+    });
+    expect(await apply("apply-adjudicated-after-head-move", true)).toMatchObject({
+      status: "applied",
+      activation: "activated",
+    });
+  });
+
   test("rejects authority changes at protected activation and audit write boundaries", async () => {
     const activationRace = fixture();
     activationRace.setFaultInjector(async (boundary) => {
