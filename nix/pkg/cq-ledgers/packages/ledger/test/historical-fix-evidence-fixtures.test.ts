@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2,
   D347_REJECTED_PREDECESSOR_PROVENANCE,
+  D347_V2_GATE_REMEDIATION_PATHS,
   HISTORICAL_IMPLEMENTATION_FIXTURES,
   deriveHistoricalImplementationAuditTaskRefs,
   nodeGitRunner,
@@ -433,6 +435,43 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       ],
       operatorActions: [],
     };
+    const remediationFor = (taskId: string, resultCommit: string) => JSON.stringify({
+      source: "operator-remediation",
+      taskRef: `tasks:${taskId}`,
+      baseCommit: head,
+      resultCommit,
+      runs: [{ command: ["bun", "run", "check"], exitCode: 0 }],
+    });
+    const remediationTask: Record<string, string> = {
+      [D347_V2_GATE_REMEDIATION_PATHS["t-evidence"]]: "T3000",
+      [D347_V2_GATE_REMEDIATION_PATHS["t-historical-evidence"]]: "T3001",
+    };
+    const repositoryWith = (remediation: (taskId: string, resultCommit: string) => string) => ({
+      repositoryHead: async () => head,
+      readCommitFile: async (commit: string, path: string) => {
+        const remediated = remediationTask[path];
+        if (remediated !== undefined) {
+          expect(commit).toBe(head);
+          return remediation(remediated, head);
+        }
+        const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
+        if (taskId === undefined) throw new Error(`unexpected path ${path}`);
+        return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: head })}\n\`\`\`\n`;
+      },
+      diff: async () => "",
+      isAncestor: async (ancestor: string, descendant: string) =>
+        (await git(["merge-base", "--is-ancestor", ancestor, descendant])).code === 0,
+    });
+    const store = {
+      fetch: (ledgerId: string) => ({
+        id: ledgerId,
+        schema: {},
+        counters: { milestone: 1, item: 1 },
+        milestones: [{ id: "active", milestone: {}, items: ledgers[ledgerId] ?? [] }],
+        archivePointers: [],
+      }),
+      fetchArchive: async () => { throw new Error("unexpected archive read"); },
+    } as never;
     const packaged = await readPackagedImplementationAuditManifest({
       store: {
         fetch: (ledgerId: string) => ({
@@ -445,17 +484,7 @@ describe("trusted historical implementation fixture rules [BA]", () => {
         fetchArchive: async () => { throw new Error("unexpected archive read"); },
       } as never,
       manifestId: D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId,
-      repository: {
-        repositoryHead: async () => head,
-        readCommitFile: async (_commit, path) => {
-          const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
-          if (taskId === undefined) throw new Error("unexpected WIP path");
-          return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: head })}\n\`\`\`\n`;
-        },
-        diff: async () => "",
-        isAncestor: async (ancestor, descendant) =>
-          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).code === 0,
-      },
+      repository: repositoryWith(remediationFor),
     });
 
     expect(packaged.records.map(({ taskRef }) => taskRef)).toEqual([
@@ -472,5 +501,25 @@ describe("trusted historical implementation fixture rules [BA]", () => {
     }]);
     expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T2346");
     expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T3003");
+
+    // D582/Q419: every fresh record carries its committed operator remediation.
+    for (const [index, taskId] of ["T3000", "T3001"].entries()) {
+      const bytes = remediationFor(taskId, head);
+      expect(packaged.records[index]!.gateObservations).toMatchObject({
+        source: "git-wip",
+        remediation: {
+          source: "operator-remediation",
+          digest: createHash("sha256").update(bytes).digest("hex"),
+          observation: { taskRef: `tasks:${taskId}`, resultCommit: head },
+        },
+      });
+    }
+
+    // A remediation bound to any other result commit fails closed.
+    await expect(readPackagedImplementationAuditManifest({
+      store,
+      manifestId: D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId,
+      repository: repositoryWith((taskId) => remediationFor(taskId, "0".repeat(40))),
+    })).rejects.toThrow(/does not bind tasks:T3000/u);
   });
 });

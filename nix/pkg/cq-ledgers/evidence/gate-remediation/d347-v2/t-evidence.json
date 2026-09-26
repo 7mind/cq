@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "source": "operator-remediation",
+  "question": "questions:Q419",
+  "defect": "defects:D582",
+  "taskRef": "tasks:T2895",
+  "baseCommit": "676a44dd9bb05dd1e98fbf46a2102cc5ef69c275",
+  "resultCommit": "f17c6efbd83d1d03c69db4235f70edbc9b3fc8c4",
+  "recordedAt": "2026-09-26",
+  "operator": "opus-5.5[1m] agent session b8da3044-0797-45cf-82c6-a97741eb6558, on the user's Q419 instruction",
+  "environment": {
+    "harness": "operator re-run in a detached git worktree at the exact result commit (no runner-minted receipt exists for historical records)",
+    "removedAmbientVariables": [
+      "CQ_LEDGER_REMOTE_TOKEN",
+      "CQ_SERVE_MANAGEMENT_TOKEN",
+      "CQ_PROMPT_ROOT",
+      "CQ_PROMPT_SURFACE",
+      "AI_AGENT",
+      "CLAUDECODE",
+      "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_CODE_MESSAGING_SOCKET",
+      "CLAUDE_CODE_MESSAGING_TOKEN",
+      "CLAUDE_CODE_EXECPATH",
+      "CLAUDE_CODE_SESSION_ID",
+      "CLAUDE_CODE_CHILD_SESSION",
+      "CLAUDE_CODE_SESSION_ATTENDED",
+      "CLAUDE_PID",
+      "CLAUDE_EFFORT"
+    ],
+    "pins": {
+      "CQ_TEST_PINNED_NODE": "/nix/store/bfqsxlviikq7vlp36kasy5hhamlxlkd2-nodejs-slim-24.19.0/bin/node",
+      "pi": "/nix/store/9w9l478gcq29hrjbz4d6kd6hrp450n1p-pi-coding-agent-0.84.2 (built from the commit's own flake)",
+      "bun": "1.3.13",
+      "XDG_STATE_HOME": "scratch directory (the live ledger store was not touched; its mtime was unchanged across all runs)"
+    },
+    "installation": "bun install --frozen-lockfile in nix/pkg/cq-ledgers"
+  },
+  "runs": [
+    {
+      "name": "acceptance",
+      "cwd": "nix/pkg/cq-ledgers",
+      "command": [
+        "bun",
+        "test",
+        "packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
+        "packages/ledger/test/implementation-evidence-bootstrap.test.ts",
+        "packages/ledger/test/implementation-evidence-activation.test.ts",
+        "packages/ledger/test/operator-actions.test.ts",
+        "packages/ledger/test/implementation-review-attempts.test.ts",
+        "packages/ledger/test/implementation-review-recording-transport.test.ts",
+        "packages/ledger-mcp/test/implementation-review-recording-http.test.ts",
+        "packages/ledger/test/remote-ledger-client-contract.test.ts",
+        "packages/ledger/test/implementation-evidence-service-status-transport.test.ts",
+        "packages/ledger-mcp/test/implementation-evidence-service-status-http.test.ts",
+        "packages/cq-cli/test/implementation-evidence-status.test.ts",
+        "packages/cq-config/test/implementationEvidencePromptContract.test.ts",
+        "packages/cq-config/test/workset-implementation-command-guards.test.ts"
+      ],
+      "exitCode": 0,
+      "summary": {
+        "pass": 116,
+        "skip": 20,
+        "fail": 0,
+        "files": 13
+      },
+      "skips": "all 20 are the PostgreSQL arm of runRemoteLedgerClientContract, env-gated on CQ_TEST_PG_URL; exercised separately in run remote-client-postgres",
+      "log": {
+        "logicalPath": "logs/20260926-q419-remediation-t2895-acceptance-clean.md",
+        "sha256": "92fa1d5966fee4ed7e7d6930c5658f2e3005eaf8ca16f9388b23f4e51d3d1aa9",
+        "bytes": 23346,
+        "store": "xdg primary logs (cq log put)"
+      }
+    },
+    {
+      "name": "remote-client-postgres",
+      "cwd": "nix/pkg/cq-ledgers",
+      "command": [
+        "bash",
+        "<scripts/test-attestation-postgres-required.sh lines 1-87: ephemeral cluster, CQ_TEST_PG_URL, CQ_TEST_REQUIRE_PG=1>",
+        "&&",
+        "bun",
+        "test",
+        "packages/ledger/test/remote-ledger-client-contract.test.ts"
+      ],
+      "exitCode": 0,
+      "summary": {
+        "pass": 41,
+        "skip": 2,
+        "fail": 0,
+        "files": 1
+      },
+      "skips": "2 declared capability gates of the real cq-serve leg (remoteLedgerClientContract.ts it.skipIf), not environment",
+      "log": {
+        "logicalPath": "logs/20260926-q419-remediation-t2895-remote-client-pg.md",
+        "sha256": "4968137a9f044d18911b8176f12bb55530582afbb03ed9300179875bffbd907f",
+        "bytes": 8479,
+        "store": "xdg primary logs (cq log put)"
+      }
+    },
+    {
+      "name": "check",
+      "cwd": "nix/pkg/cq-ledgers",
+      "command": [
+        "bun",
+        "run",
+        "check"
+      ],
+      "script": "tsc -b && bun run lint && bun test --only-failures && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+      "exitCode": 1,
+      "stages": {
+        "tsc -b": "passed",
+        "lint": "passed",
+        "bun test": {
+          "pass": 7044,
+          "skip": 288,
+          "fail": 2,
+          "files": 610
+        }
+      },
+      "failures": [
+        "packaged Pi prompt root > dispatches rendered roles with exact Pi deny lists and no child re-dispatch (30000ms test timeout)",
+        "packaged Pi prompt root > dispatches mutation-capable roles with exact Pi deny lists (30000ms test timeout)"
+      ],
+      "log": {
+        "logicalPath": "logs/20260926-q419-remediation-t2895-check.md",
+        "sha256": "54c2e79b8101a1e55d9984b089dacd513a85207234aa7168f5a916761d9991ed",
+        "bytes": 1002360,
+        "store": "xdg primary logs (cq log put)"
+      }
+    },
+    {
+      "name": "check:codex-installed-gate",
+      "command": [
+        "bun",
+        "run",
+        "check:codex-installed-gate"
+      ],
+      "exitCode": 0,
+      "note": "run standalone because the red bun test stage short-circuits the && chain",
+      "log": {
+        "logicalPath": "logs/20260926-q419-remediation-t2895-codex-installed-gate.md",
+        "sha256": "85a3a3f5ff5c888a33906c6565aeaf917ad98875e0e7b19b43b37fffc3e65283",
+        "bytes": 277,
+        "store": "xdg primary logs (cq log put)"
+      }
+    },
+    {
+      "name": "check:flake-enumeration",
+      "command": [
+        "bun",
+        "run",
+        "check:flake-enumeration"
+      ],
+      "exitCode": 0,
+      "note": "run standalone because the red bun test stage short-circuits the && chain",
+      "log": {
+        "logicalPath": "logs/20260926-q419-remediation-t2895-flake-enumeration.md",
+        "sha256": "556f630fb17f939aafa8a451a511c918e7f16ea2409843deadf449bff416d444",
+        "bytes": 10892,
+        "store": "xdg primary logs (cq log put)"
+      }
+    }
+  ],
+  "failureAttribution": [
+    {
+      "failures": [
+        "packaged Pi prompt root > dispatches rendered roles with exact Pi deny lists and no child re-dispatch (30000ms test timeout)",
+        "packaged Pi prompt root > dispatches mutation-capable roles with exact Pi deny lists (30000ms test timeout)"
+      ],
+      "attribution": "environment (not the task diff)",
+      "control": {
+        "commit": "676a44dd9bb05dd1e98fbf46a2102cc5ef69c275",
+        "role": "this task's base commit",
+        "command": [
+          "bun",
+          "test",
+          "packages/cq-config/test/packagedPiPromptRoot.test.ts"
+        ],
+        "environment": "identical",
+        "result": "the same two tests fail identically (2 pass, 2 fail)",
+        "log": {
+          "logicalPath": "logs/20260926-q419-remediation-t2895-base-control-pi-root.md",
+          "sha256": "7bfe2b23c6281a2dbfde3a01922167bf671c6bc7266dfb9052d033e8e4a9f496",
+          "bytes": 746,
+          "store": "xdg primary logs (cq log put)"
+        }
+      }
+    }
+  ],
+  "environmentCorrections": [
+    "Ambient agent-session credentials made codex-role-dispatch refuse ('inherited ledger credentials') and a remote-log test see a token; removed.",
+    "Bun's AI-agent mode (CLAUDECODE/AI_AGENT) suppresses per-test output that nested-bun fixtures assert on; removed.",
+    "The pinned-node guard expects Node v24.19.0 (host now v24.20.0); pinned to the retained v24.19.0 build."
+  ],
+  "residual": "bun run check does not exit 0 today: 2 packaged-Pi-prompt-root tests time out in this environment at both the result and the base commit. Everything else, including the acceptance command, passes."
+}

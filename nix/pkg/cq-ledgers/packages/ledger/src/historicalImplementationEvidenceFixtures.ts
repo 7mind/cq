@@ -200,6 +200,45 @@ function baseCommitFromWip(taskId: string, wip: string): string {
   return header["baseCommit"];
 }
 
+type GateRemediationObservation = {
+  readonly source: "operator-remediation";
+  readonly path: string;
+  readonly digest: string;
+  readonly observation: DispatchJSONValue;
+};
+
+/** Fail closed unless the committed remediation binds this exact task, base, and result. */
+async function gateRemediationObservation(input: {
+  readonly path: string;
+  readonly bytes: string;
+  readonly taskRef: string;
+  readonly baseCommit: string;
+  readonly resultCommit: string;
+}): Promise<GateRemediationObservation> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input.bytes);
+  } catch {
+    throw new Error(`gate remediation ${input.path} is not JSON`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(`gate remediation ${input.path} is not one object`);
+  const observation = parsed as Record<string, unknown>;
+  if (
+    observation["source"] !== "operator-remediation" ||
+    observation["taskRef"] !== input.taskRef ||
+    observation["baseCommit"] !== input.baseCommit ||
+    observation["resultCommit"] !== input.resultCommit
+  )
+    throw new Error(`gate remediation ${input.path} does not bind ${input.taskRef} at ${input.resultCommit}`);
+  return {
+    source: "operator-remediation",
+    path: input.path,
+    digest: sha256(input.bytes),
+    observation: parsed as DispatchJSONValue,
+  };
+}
+
 async function packagedRecord(input: {
   readonly manifestId: string;
   readonly task: SourcedItem;
@@ -208,6 +247,7 @@ async function packagedRecord(input: {
   readonly historicalReview: SourcedItem | undefined;
   readonly repositoryHead: string;
   readonly repository: HistoricalImplementationRepositoryReader;
+  readonly gateRemediationPath: string | null;
 }): Promise<{ readonly record: PackagedImplementationAuditRecord; readonly source: unknown }> {
   const taskId = input.task.item.id;
   const resultCommit = input.task.item.fields["resultCommit"];
@@ -224,6 +264,15 @@ async function packagedRecord(input: {
   const diff = await input.repository.diff(baseCommit, resultCommit);
   const wipDigest = sha256(wip);
   const historicalReview = historicalReviewObservation(input.historicalReview);
+  const remediation = input.gateRemediationPath === null
+    ? null
+    : await gateRemediationObservation({
+      path: input.gateRemediationPath,
+      bytes: await input.repository.readCommitFile(input.repositoryHead, input.gateRemediationPath),
+      taskRef: `${TASKS_LEDGER}:${taskId}`,
+      baseCommit,
+      resultCommit,
+    });
   return {
     record: {
       recordKey: `${input.manifestId}:${taskId}`,
@@ -241,6 +290,7 @@ async function packagedRecord(input: {
         path: wipPath,
         digest: wipDigest,
         completion: input.task.item.fields["completion"] ?? "",
+        ...(remediation === null ? {} : { remediation }),
       },
       requiredObservations: [
         "task-authority",
@@ -350,6 +400,20 @@ export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE = {
   activationTaskKey: "t-activate-evidence",
 } as const;
 
+/**
+ * D582/Q419: the v2 records' only packaged gate source was the worker's WIP
+ * checkpoint, whose full gate was "Unmeasured". Each fresh-cohort record now
+ * also carries an operator remediation observation committed at the audited
+ * head: the acceptance command and `bun run check` re-run at the exact result
+ * commit, with log digests and a base-commit control for every failure. The
+ * file is operator-produced, not runner-minted, and is labelled as such.
+ */
+export const D347_V2_GATE_REMEDIATION_PATHS = {
+  "t-evidence": "nix/pkg/cq-ledgers/evidence/gate-remediation/d347-v2/t-evidence.json",
+  "t-historical-evidence":
+    "nix/pkg/cq-ledgers/evidence/gate-remediation/d347-v2/t-historical-evidence.json",
+} as const;
+
 export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2 = {
   ...D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
   manifestId: IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2,
@@ -423,6 +487,7 @@ export async function readPackagedImplementationAuditManifest(
   let finalized: ReturnType<typeof parseFinalizedManifest>;
   let selected: readonly SourcedItem[];
   let reviewRefs: Readonly<Record<string, string>> = {};
+  let gateRemediationPaths: ReadonlyMap<string, string> = new Map();
   const authoritySources: unknown[] = [];
 
   if (historical !== undefined) {
@@ -502,6 +567,10 @@ export async function readPackagedImplementationAuditManifest(
       .sort(taskOrder);
     if (activation.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId) {
       const freshRefs = [mappings.evidenceTaskRef, mappings.auditTaskRef];
+      gateRemediationPaths = new Map([
+        [mappings.evidenceTaskRef, D347_V2_GATE_REMEDIATION_PATHS["t-evidence"]],
+        [mappings.auditTaskRef, D347_V2_GATE_REMEDIATION_PATHS["t-historical-evidence"]],
+      ]);
       selected = freshRefs.map((taskRef) => {
         const matches = candidates.filter(
           ({ item }) => `${TASKS_LEDGER}:${item.id}` === taskRef,
@@ -557,6 +626,7 @@ export async function readPackagedImplementationAuditManifest(
         historicalReview: review,
         repositoryHead,
         repository: input.repository,
+        gateRemediationPath: gateRemediationPaths.get(taskRef) ?? null,
       });
     }),
   );
