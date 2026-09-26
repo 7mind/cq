@@ -109,8 +109,12 @@ async function main(): Promise<void> {
 }
 
 await main().catch((error: unknown) => {
+  // D545: Bun intermittently renders `error.stack` without its `Error: <message>`
+  // header under full-suite load, so the message is written explicitly.
   process.stderr.write(
-    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    error instanceof Error
+      ? `${error.message}\n${error.stack ?? ""}\n`
+      : `${String(error)}\n`,
   );
   process.exit(1);
 });
