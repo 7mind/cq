@@ -44,7 +44,12 @@ import {
   takeBoundGitConflictCapability,
   takeBoundResultCapability,
 } from "./boundResultCapability.js";
-import { createServerDispatchDriver, targetPromptArtifactStoresFrom } from "./dispatchDriverWiring.js";
+import {
+  createServerDispatchDriver,
+  drainStrandedImplementationPartitions,
+  targetPromptArtifactStoresFrom,
+} from "./dispatchDriverWiring.js";
+import type { DispatchDriver } from "./dispatchDriver.js";
 import * as path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
@@ -1741,6 +1746,17 @@ export async function main(
         );
   const promptSurfacesRoot = process.env[CQ_PROMPT_SURFACES_ROOT_ENV] || undefined;
   const targetPromptArtifactStores = targetPromptArtifactStoresFrom(promptSurfacesRoot);
+  // D589: the driver is built after the runtime whose capability prepares
+  // guarded-rebase successors, so that capability reaches it through here.
+  const successorDriver: { current: DispatchDriver | undefined } = { current: undefined };
+  const implementationSuccessorStarter: NonNullable<
+    SingleProjectDispatchRuntimeOptions["implementationSuccessorStarter"]
+  > = async (successor) => {
+    if (successorDriver.current === undefined) {
+      throw new Error("ledger-mcp: this server has no dispatch driver to launch a guarded-rebase successor");
+    }
+    return await successorDriver.current.startSuccessor(successor);
+  };
   const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
     construction: http === null ? "stdio" : "http-single-project",
     resolved,
@@ -1749,7 +1765,9 @@ export async function main(
       : { promptArtifactStore: resolvedPromptSurface.store }),
     ...(targetPromptArtifactStores === undefined ? {} : { targetPromptArtifactStores }),
     environment: process.env,
-    ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
+    ...(implementationSuccessorLauncher === undefined
+      ? { implementationSuccessorStarter }
+      : { implementationSuccessorLauncher }),
   });
   if (childOwned && dispatchRuntime.kind !== "available") {
     throw new Error(
@@ -1787,6 +1805,18 @@ export async function main(
     boundDispatchCapability === undefined || serverDispatchDriver === undefined
       ? boundDispatchCapability
       : { ...boundDispatchCapability, driver: serverDispatchDriver };
+  successorDriver.current = serverDispatchDriver;
+  // One-shot invocations below close the runtime at once; only a serving
+  // process drains.
+  const serving = !implementationCandidateQualify && !implementationCandidateCoordinate && !parentGateFinalize;
+  if (serving && serverDispatchDriver !== undefined && boundDispatchCapability !== undefined && dispatchRuntime.kind === "available") {
+    void drainStrandedImplementationPartitions({
+      backend: dispatchRuntime.backend,
+      capability: boundDispatchCapability,
+      holderId: `cq-server-startup-drain:${String(process.pid)}`,
+      report: (line) => process.stderr.write(`${line}\n`),
+    });
+  }
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
       ? createStandaloneImplementationEvidenceService({

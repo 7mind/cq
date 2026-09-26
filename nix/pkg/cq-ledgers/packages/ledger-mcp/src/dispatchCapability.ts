@@ -399,6 +399,26 @@ export interface DispatchCapabilityOptions {
   readonly implementationEvidenceStore?: ImplementationEvidenceStore;
   /** Construction-owned execution boundary; PostgreSQL hubs are metadata-only. */
   readonly implementationExecutorMode?: "local-xdg" | "metadata-only";
+  /**
+   * D589: the server's dispatch driver, which prepares and launches a
+   * guarded-rebase successor under a freshly planned child. A successor that
+   * reused its source's child identity could never launch on Claude, whose
+   * `--session-id` refuses a session that already exists. Absent, the
+   * successor keeps the source identity for `implementationSuccessorLauncher`.
+   */
+  readonly implementationSuccessorStarter?: (input: {
+    readonly roleId: string;
+    readonly surface: DispatchPrepared["promptProvenance"]["surface"];
+    readonly input: DispatchJSONValue;
+    readonly seed: string;
+    readonly timeoutMs: number;
+    readonly prepare: (binding: {
+      readonly expectedChild: { readonly childId: string; readonly runId: string };
+    }) => Promise<PrepareDispatchOutcome>;
+  }) => Promise<
+    | { readonly accepted: true; readonly handle: { readonly attestationId: string; readonly generation: number } }
+    | { readonly accepted: false; readonly detail: string }
+  >;
   /** Trusted local owner for the exact guarded-rebase successor prepared by this runtime. */
   readonly implementationSuccessorLauncher?: (input: {
     readonly prepared: DispatchPrepared;
@@ -3650,25 +3670,43 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const timeoutMs =
       attestationInstantMs(context.sourceRow.deadlines.childCancelAt, "deadlines.childCancelAt") -
       attestationInstantMs(context.sourceRow.createdAt, "createdAt");
-    const prepared = await capability.prepare({
-      roleId: "implement-worker",
-      input: {
-        ...retainedInput,
-        ...(managed.cohort === undefined ? {} : { cohort: managed.cohort as unknown as DispatchJSONValue, branch: managed.branch, worktreePath: managed.worktreePath }),
-        baseCommit: context.source.ontoCommit,
-        startingCommit: rebasedStartCommit,
-        priorResultCommit: context.control.attempt.resultCommit,
-        round: (round as number) + 1,
-      },
-      idempotencyKey: `implementation-successor-${dispatchPayloadDigest({
-        sourceReference: context.source.sourceReference,
-        guardedRebase,
-      })}`,
-      timeoutMs,
-      expectedChild: context.sourceRow.expectedChild,
-      reprepareOf: context.source.source,
+    const successorInput: DispatchJSONValue = {
+      ...retainedInput,
+      ...(managed.cohort === undefined ? {} : { cohort: managed.cohort as unknown as DispatchJSONValue, branch: managed.branch, worktreePath: managed.worktreePath }),
+      baseCommit: context.source.ontoCommit,
+      startingCommit: rebasedStartCommit,
+      priorResultCommit: context.control.attempt.resultCommit,
+      round: (round as number) + 1,
+    };
+    const idempotencyKey = `implementation-successor-${dispatchPayloadDigest({
+      sourceReference: context.source.sourceReference,
       guardedRebase,
-    });
+    })}`;
+    const prepareSuccessor = async (expectedChild: { readonly childId: string; readonly runId: string }) =>
+      await capability.prepare({
+        roleId: "implement-worker",
+        input: successorInput,
+        idempotencyKey,
+        timeoutMs,
+        expectedChild,
+        reprepareOf: context.source.source,
+        guardedRebase,
+      });
+    if (options.implementationSuccessorStarter !== undefined) {
+      const started = await options.implementationSuccessorStarter({
+        roleId: "implement-worker",
+        surface: context.sourceRow.promptProvenance.surface,
+        input: successorInput,
+        seed: idempotencyKey,
+        timeoutMs,
+        prepare: async ({ expectedChild }) => await prepareSuccessor(expectedChild),
+      });
+      if (!started.accepted) {
+        throw new Error(`stale implementation candidate successor was refused: ${started.detail}`);
+      }
+      return Object.freeze({ ...started.handle });
+    }
+    const prepared = await prepareSuccessor(context.sourceRow.expectedChild);
     if (!prepared.accepted) {
       throw new Error(`stale implementation candidate successor was refused: ${prepared.detail}`);
     }
@@ -6635,6 +6673,7 @@ function available(
   ledgerStore?: LedgerStore,
   implementationEvidenceStore?: ImplementationEvidenceStore,
   implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"],
+  implementationSuccessorStarter?: DispatchCapabilityOptions["implementationSuccessorStarter"],
   supervisedWorkerGateRunner?: SupervisedWorkerGateRunner,
   projectGate?: ProjectGateSpecification,
   targetPromptArtifactStores?: DispatchCapabilityOptions["targetPromptArtifactStores"],
@@ -6653,6 +6692,7 @@ function available(
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
       ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
       ...(implementationSuccessorLauncher === undefined ? {} : { implementationSuccessorLauncher }),
+      ...(implementationSuccessorStarter === undefined ? {} : { implementationSuccessorStarter }),
       ...(supervisedWorkerGateRunner === undefined ? {} : { supervisedWorkerGateRunner }),
       ...(projectGate === undefined ? {} : { projectGate }),
       ...(targetPromptArtifactStores === undefined ? {} : { targetPromptArtifactStores }),
@@ -6806,6 +6846,7 @@ export interface SingleProjectDispatchRuntimeOptions {
   readonly promptArtifactStore?: PromptArtifactStore;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly implementationSuccessorLauncher?: DispatchCapabilityOptions["implementationSuccessorLauncher"];
+  readonly implementationSuccessorStarter?: DispatchCapabilityOptions["implementationSuccessorStarter"];
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
   readonly targetPromptArtifactStores?: DispatchCapabilityOptions["targetPromptArtifactStores"];
 }
@@ -6968,6 +7009,7 @@ export async function createSingleProjectDispatchRuntime(
     options.resolved.store,
     options.resolved.implementationEvidenceStore,
     options.implementationSuccessorLauncher,
+    options.implementationSuccessorStarter,
     options.supervisedWorkerGateRunner,
     resolveProjectGateForRoot(options.resolved.configRoot),
     options.targetPromptArtifactStores,

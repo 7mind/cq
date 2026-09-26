@@ -17,6 +17,7 @@ import {
   formatReviewerToken,
   runPreparedDispatch,
   type AttestationEnvelope,
+  type DispatchJSONValue,
   type DispatchHandle,
   type DispatchPrepared,
   type DispatchPreLaunchRejection,
@@ -148,6 +149,22 @@ export interface DispatchDriver {
       readonly surface: Harness;
     }) => Promise<PrepareDispatchOutcome>;
   }): Promise<StartedPreparedDispatch | DispatchPreLaunchRejection>;
+  /**
+   * D589: prepare and launch a guarded-rebase successor whose prepare the
+   * capability owns, under a child planned from `seed` and at the token the
+   * role's configuration resolves for `input`. The successor keeps its
+   * source's prompt `surface`.
+   */
+  startSuccessor(input: {
+    readonly roleId: string;
+    readonly surface: Harness;
+    readonly input: DispatchJSONValue;
+    readonly seed: string;
+    readonly timeoutMs: number;
+    readonly prepare: (binding: {
+      readonly expectedChild: NativeChildIdentity;
+    }) => Promise<PrepareDispatchOutcome>;
+  }): Promise<StartedPreparedDispatch | DispatchPreLaunchRejection>;
   /** Resolve when this server's launch of the handle settles, or after `waitMs`. */
   waitFor(input: DispatchWaitInput): Promise<void>;
 }
@@ -273,7 +290,14 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
           );
         }
         await deps.sleep(IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS);
-        coordinated = await coordinate(request);
+        // D589: the front may have lost the process that coordinated it, so
+        // drain the partition from here rather than waiting on that process.
+        const drained = await coordinate({
+          partitionKey: coordinated.partitionKey,
+          holderId: request.holderId,
+        });
+        if ((await deps.readEnvelope(handle))?.state !== "gate-pending") return { state: "queued" };
+        coordinated = drained.state === "blocked" ? drained : await coordinate(request);
       }
       return { state: "queued" };
     };
@@ -382,6 +406,25 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
 
     async startPrepared(input) {
       return await launchWith(input.roleId, input.token, formatReviewerToken(input.token), input.seed, input.prepare);
+    },
+
+    async startSuccessor(input) {
+      const start: StartDispatchInput = {
+        roleId: input.roleId,
+        input: input.input,
+        idempotencyKey: input.seed,
+        timeoutMs: input.timeoutMs,
+      };
+      const declaredTier = deps.declaredTierFor === undefined ? undefined : await deps.declaredTierFor(start);
+      const { token, formatted } = deps.resolveModel(input.roleId, undefined, declaredTier);
+      if (token.harness !== input.surface) {
+        throw new DispatchDriverError(
+          `a ${input.surface} successor resolves to ${formatted}; a successor keeps its source's prompt surface`,
+        );
+      }
+      return await launchWith(input.roleId, token, formatted, input.seed, async ({ expectedChild }) =>
+        await input.prepare({ expectedChild }),
+      );
     },
 
     async waitFor(input) {

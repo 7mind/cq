@@ -25,12 +25,17 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "stale", "conflict", "crash", "epoch-recovery"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "stale", "stale-started", "conflict", "crash", "epoch-recovery"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
   const crash = mode === "crash" || epochRecovery;
-  const stale = mode === "stale" || conflict || crash;
+  // D589: the server's driver prepares the successor under a fresh child, as a Claude launch requires.
+  const started = mode === "stale-started";
+  const stale = mode === "stale" || started || conflict || crash;
+  const successorChild = started
+    ? { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}successor-child`, runId: "successor-run" }
+    : { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}cohort-child`, runId: "cohort-run" };
   test(`cohort production dispatch runs the exact ladder (${kind}, ${mode}) [Behavioral-Active Effectual-GoodCommunication]`, async () => {
     const fixture = await cohortGitBrokerFixture(kind, {
       sharedRegression: createCohortCommandBoundaryV1({ argv: ["bun", "test", "shared.test.ts"], cwd: "nix/pkg/cq-ledgers", environment: [] }),
@@ -50,7 +55,14 @@ for (const kind of ["memory", "sqlite"] as const) {
         worktreeStateDir: fixture.deps.stateDir, ledgerStore: fixture.ledger,
         implementationEvidenceStore,
         cohortStore: fixture.store,
-        implementationSuccessorLauncher: async ({ prepared }) => { successorLaunches.push(prepared); },
+        ...(started
+          ? { implementationSuccessorStarter: async ({ prepare }) => {
+              const successor = await prepare({ expectedChild: successorChild });
+              if (!successor.accepted) return successor;
+              successorLaunches.push(successor.prepared);
+              return successor;
+            } }
+          : { implementationSuccessorLauncher: async ({ prepared }) => { successorLaunches.push(prepared); } }),
         cohortCommandRunner: { run: async (request) => {
           commands.push(request.command.argv.join(" "));
           return { executionId: `focused:${commands.length}`, outputDigest: cohortValueDigestV1(request.command),
@@ -263,6 +275,7 @@ for (const kind of ["memory", "sqlite"] as const) {
         expect(successor.gitEffectBinding.cohort.intent.intentDigest).not.toBe(cohort.intent.intentDigest);
         expect(successor.gitEffectBinding.worktreePath).toBe(fixture.prepared.handle.absolutePath);
         expect(successor.gitEffectBinding.guardedRebaseBridge?.version).toBe(2);
+        expect(successor.expectedChild).toEqual(successorChild);
         expect(commands).toHaveLength(0);
         expect((await fixture.store.snapshot()).portable.candidateSeals).toHaveLength(1);
         expect((await fixture.store.snapshot()).portable.candidateAttempts.filter((attempt) => attempt.state === "pending")).toHaveLength(2);
@@ -289,7 +302,8 @@ for (const kind of ["memory", "sqlite"] as const) {
           baseVerification: { status: "verified", relation: "descendant", baseCommit: bridge.ontoCommit, headCommit: correction?.newHead ?? bridge.rebasedStartCommit },
         } as unknown as DispatchJSONValue });
         await capability.qualifyImplementationCandidate!({ ...successorPrepared,
-          roleId: "implement-worker", correlationId: "cohort-child", childThreadId: "cohort-thread-successor", expectedRunId: "cohort-run",
+          roleId: "implement-worker", correlationId: started ? "successor-child" : "cohort-child", childThreadId: "cohort-thread-successor",
+          expectedRunId: successorChild.runId,
           outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
         const final = await capability.coordinateImplementationCandidate({ ...successorPrepared,
           holderId: "cohort-successor-front", parentGateCapability: successorPrepared.parentGateCapability! });

@@ -120,3 +120,42 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     sleep: async (ms) => await Bun.sleep(ms),
   });
 }
+
+/**
+ * D589: coordinate every implementation-queue partition whose front is
+ * qualified but unleased. Such a front's worker finished while the process
+ * that launched it — the only one that would coordinate it — was replaced,
+ * so without this drain it strands its whole partition. Each outcome is
+ * reported; a failed drain never stops the server.
+ */
+export async function drainStrandedImplementationPartitions(input: {
+  readonly backend: AttestationBackend;
+  readonly capability: DispatchCapability;
+  readonly holderId: string;
+  readonly report: (line: string) => void;
+}): Promise<void> {
+  const coordinate = input.capability.coordinateImplementationCandidate;
+  if (coordinate === undefined) return;
+  const partitionKeys = await input.backend.transact({ kind: "namespace" }, (store) => [
+    ...new Set(
+      store
+        .rows()
+        .flatMap((row) =>
+          isAttestationTombstone(row) || row.implementationQueue?.state !== "qualified"
+            ? []
+            : [row.implementationQueue.partition.partitionKey],
+        ),
+    ),
+  ]);
+  for (const partitionKey of partitionKeys) {
+    try {
+      const outcome = await coordinate({ partitionKey, holderId: input.holderId });
+      input.report(`ledger-mcp: drained implementation queue partition ${partitionKey}: ${JSON.stringify(outcome)}`);
+    } catch (error) {
+      input.report(
+        `ledger-mcp: draining implementation queue partition ${partitionKey} failed: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}

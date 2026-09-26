@@ -386,6 +386,47 @@ describe("G224 dispatch driver", () => {
     expect(h.launches).toEqual([]);
   });
 
+  // D589: a guarded-rebase successor the capability prepares inherited its
+  // source's child identity, which a Claude relaunch refuses ("Session ID …
+  // is already in use"). The driver now plans the successor's own child.
+  describe("guarded-rebase successor launch", () => {
+    function successorStart(driver: ReturnType<typeof createDispatchDriver>, capability: Capability, seed: string, surface: Harness) {
+      return driver.startSuccessor({
+        roleId: ROLE_ID,
+        surface,
+        input: INPUT,
+        seed,
+        timeoutMs: 120_000,
+        prepare: async ({ expectedChild }) =>
+          await capability.prepare({ roleId: ROLE_ID, input: INPUT, idempotencyKey: seed, timeoutMs: 120_000, expectedChild }),
+      });
+    }
+
+    test("prepares under a child planned from the successor's own seed and launches it [BA]", async () => {
+      const h = harnessed({});
+      const capability = h.capability();
+      const driver = h.driver(capability);
+      const outcome = await successorStart(driver, capability, "D589-successor", "claude");
+      if (!outcome.accepted) throw new Error(`unexpected rejection: ${outcome.detail}`);
+      const row = await h.backend.transact({ kind: "handle", handle: outcome.handle }, (store) => store.read(outcome.handle));
+      expect(row?.kind === "envelope" ? row.expectedChild : undefined).toEqual({
+        childId: `${ROLE_ID}#claude-D589-successor`,
+        runId: "run-D589-successor",
+      });
+      expect(await waitingFetch(driver, capability, outcome.handle, 5_000)).toMatchObject({ state: "consumed" });
+      expect(h.launches).toEqual([{ adapterId: "claude:process", surface: "claude", model: "sonnet" }]);
+    });
+
+    test("refuses a successor whose configured token would change its source's prompt surface [BA]", async () => {
+      const h = harnessed({});
+      const capability = h.capability();
+      await expect(successorStart(h.driver(capability), capability, "D589-surface", "codex")).rejects.toThrow(
+        "a successor keeps its source's prompt surface",
+      );
+      expect(h.launches).toEqual([]);
+    });
+  });
+
   describe("staged worker parent gate", () => {
     const PARENT_GATE = { scope: "parent-gate", token: `cq_parent_${"p".repeat(43)}` } as const;
     const stagedEnvelope = (row: AttestationEnvelope | undefined) =>
@@ -467,7 +508,7 @@ describe("G224 dispatch driver", () => {
       } as Capability;
     }
 
-    test("a candidate blocked behind another front is re-coordinated until it runs [BA]", async () => {
+    test("a candidate blocked behind another front drains the partition until its own gate runs [BA]", async () => {
       const slept: number[] = [];
       const h = harnessed({
         envelope: stagedEnvelope,
@@ -477,7 +518,15 @@ describe("G224 dispatch driver", () => {
       const driver = h.driver(withBlockingCoordinator(h.capability(), calls, 2));
       const outcome = await started(driver, "D588-blocked-then-front");
       await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
-      expect(calls.map((call) => call.op)).toEqual(["qualify", "coordinate", "coordinate", "coordinate"]);
+      const coordinations = calls.filter((call) => call.op === "coordinate").map((call) => call.input);
+      // D589: every retry drains the partition, whose front may have lost its
+      // coordinating process; a drain that unblocks it re-coordinates this one.
+      expect(coordinations).toEqual([
+        expect.objectContaining({ ...outcome.handle }),
+        { partitionKey: "p", holderId: expect.any(String) },
+        { partitionKey: "p", holderId: expect.any(String) },
+        expect.objectContaining({ ...outcome.handle }),
+      ]);
       expect(slept).toEqual([IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS, IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS]);
       expect(h.launchFailures).toEqual([]);
     });
