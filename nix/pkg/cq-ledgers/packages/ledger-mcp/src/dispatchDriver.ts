@@ -33,6 +33,8 @@ import type { DispatchCapability, PrepareDispatchToolInput } from "@cq/ledger";
 
 /** Upper bound on one waiting fetch, below every host's MCP tool timeout. */
 export const DISPATCH_WAIT_MAX_MS = 45_000;
+/** D588: how long a staged worker waits before re-coordinating a partition another front holds. */
+export const IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS = 30_000;
 
 export type StartDispatchInput = Omit<PrepareDispatchToolInput, "expectedChild" | "surface"> & {
   /** A panel or tier token the configuration makes dispatchable; defaults to the role's tier token. */
@@ -115,6 +117,8 @@ export interface DispatchDriverDeps {
   }) => void;
   readonly planner: DispatchLaunchPlanner;
   readonly now: () => string;
+  /** D588: the pause between coordination attempts while another front holds the partition. */
+  readonly sleep: (ms: number) => Promise<void>;
 }
 
 /** A started dispatch plus its prepared record, for trusted in-server callers only. */
@@ -222,6 +226,7 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
     roleId: string,
     planned: PlannedDispatchLaunch,
     parentGateCapability: NonNullable<DispatchPrepared["parentGateCapability"]>,
+    deadline: string,
   ): RoutedStagedCompletionQualifier {
     return async (observation) => {
       const qualify = deps.capability.qualifyImplementationCandidate;
@@ -245,11 +250,31 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
       // it without queueing it. Coordinating it anyway made the coordinator throw
       // "requires a queued dispatch", and that throw took the server down.
       if (qualified.state === "consumed") return { state: "consumed" };
-      await coordinate({
+      const request = {
         ...handle,
         holderId: `${handle.attestationId}:${String(handle.generation)}:cq-dispatch-driver`,
         parentGateCapability,
-      });
+      };
+      // D588: coordination runs this candidate's gate only once it is the
+      // partition's front. Nothing else re-coordinates a candidate queued
+      // behind another front, so wait here until the dispatch's own deadline
+      // and then fail loudly instead of leaving it gate-pending forever.
+      let coordinated = await coordinate(request);
+      while (
+        coordinated.state === "blocked" &&
+        coordinated.frontState !== "staged-rebase-retired" &&
+        (coordinated.front.attestationId !== handle.attestationId ||
+          coordinated.front.generation !== handle.generation)
+      ) {
+        if (Date.parse(deps.now()) >= Date.parse(deadline)) {
+          throw new DispatchDriverError(
+            `implementation queue partition stayed held by ${coordinated.front.attestationId}/` +
+              `${String(coordinated.front.generation)} (${coordinated.frontState}) until the dispatch deadline ${deadline}`,
+          );
+        }
+        await deps.sleep(IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS);
+        coordinated = await coordinate(request);
+      }
       return { state: "queued" };
     };
   }
@@ -332,6 +357,7 @@ export function createDispatchDriver(deps: DispatchDriverDeps): DispatchDriver {
               roleId,
               planned,
               outcome.prepared.parentGateCapability,
+              outcome.prepared.childCancelAt,
             ),
           }),
     }).finally(() => inFlight.delete(key));

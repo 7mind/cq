@@ -81,6 +81,7 @@ import {
   projectGateAuthorizationForm,
   resolveProjectGateForRoot,
   type ProjectGateSpecification,
+  type ImplementationQueueControl,
 } from "@cq/config";
 import type { SQL } from "bun";
 import { resolve } from "node:path";
@@ -152,6 +153,9 @@ import {
   FsCurrentRecoverySealJournalStore,
   journalRecoveryRequiredForFence,
   TASKS_LEDGER,
+  DEFECTS_LEDGER,
+  resolveUniqueDefectState,
+  resolveUniqueTaskState,
   type CurrentRecoverySealJournalStore,
   type DispatchLineageCutoverFence,
   type DispatchCapability,
@@ -3822,9 +3826,53 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     });
   }
 
+  /**
+   * D588: a consumed, unreserved lease is orphaned once every work item its
+   * attempt binds is terminal in the ledger — protected completion requires a
+   * nonterminal task, so nothing can release the lease any more.
+   */
+  async function isLeasedImplementationFrontOrphaned(input: {
+    readonly lease: Parameters<ImplementationCandidateQueueAdapter["inspectLease"]>[0];
+    readonly control: ImplementationQueueControl;
+  }): Promise<boolean> {
+    const ledgerStore = options.ledgerStore;
+    if (ledgerStore === undefined) return false;
+    const consumed = await options.backend.transact({ kind: "handle", handle: input.lease }, (store) => {
+      const row = store.read(input.lease);
+      return row !== undefined && !isAttestationTombstone(row) && row.state === "consumed";
+    });
+    if (!consumed || input.control.completionReservation !== undefined) return false;
+    const attempt = input.control.attempt;
+    const memberRefs =
+      attempt.cohort === undefined
+        ? attempt.taskId === undefined ? [] : [`${TASKS_LEDGER}:${attempt.taskId}`]
+        : attempt.cohort.definition.members.map((member) => member.memberRef);
+    if (memberRefs.length === 0) {
+      throw new Error("leased implementation candidate binds no work item");
+    }
+    for (const memberRef of memberRefs) {
+      const [ledgerId, itemId] = memberRef.split(":");
+      if (itemId === undefined || (ledgerId !== TASKS_LEDGER && ledgerId !== DEFECTS_LEDGER)) {
+        throw new Error(`leased implementation candidate binds an unsupported member ${memberRef}`);
+      }
+      const ledger = ledgerStore.fetch(ledgerId);
+      const terminal = ledger.schema.terminalStatuses;
+      // An open active item settles the question without reading every archive.
+      const active = ledger.milestones.flatMap((group) => group.items.filter((item) => item.id === itemId));
+      if (active.length === 1 && !terminal.includes(active[0]!.status)) return false;
+      const item =
+        ledgerId === TASKS_LEDGER
+          ? await resolveUniqueTaskState(ledgerStore, itemId)
+          : await resolveUniqueDefectState(ledgerStore, itemId);
+      if (!terminal.includes(item.status)) return false;
+    }
+    return true;
+  }
+
   const implementationCandidateCoordinatorOperations: ImplementationCandidateCoordinatorOperations =
     {
       isQualifiedFrontSettled: isQualifiedImplementationFrontSettled,
+      isLeasedFrontOrphaned: isLeasedImplementationFrontOrphaned,
       reconcileRetiredSource: reconcileRetiredImplementationSource,
       observeProtectedHead: async (control) => {
         if (options.repositoryRoot === undefined) {

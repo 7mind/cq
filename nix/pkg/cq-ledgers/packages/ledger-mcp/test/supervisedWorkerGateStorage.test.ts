@@ -210,6 +210,13 @@ function finalizedTaskStore(): LedgerStore {
               }),
             },
           },
+    // D588: the queue coordinator resolves a leased front's task archive-aware.
+    fetch: (ledgerId: string) => ({
+      id: ledgerId,
+      schema: { terminalStatuses: ["done", "abandoned"] },
+      milestones: [{ id: task.milestoneId, items: ledgerId === "tasks" ? [task] : [] }],
+      archivePointers: [],
+    }),
   } as unknown as LedgerStore;
 }
 

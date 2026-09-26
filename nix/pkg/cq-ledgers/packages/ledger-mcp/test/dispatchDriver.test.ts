@@ -26,6 +26,7 @@ import {
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import {
   DISPATCH_WAIT_MAX_MS,
+  IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS,
   createDispatchDriver,
   type DispatchLaunchPlanner,
   type DispatchModelResolver,
@@ -135,6 +136,8 @@ function harnessed(options: {
   readonly envelope?: (row: AttestationEnvelope | undefined) => AttestationEnvelope | undefined;
   /** D559: omit the launch-cancellation hook, as an in-process driver does. */
   readonly withoutCancellation?: boolean;
+  /** D588: the driver's clock and pause, for queue re-coordination. */
+  readonly driverClock?: { readonly now: () => string; readonly sleep: (ms: number) => Promise<void> };
 }): Harnessed {
   const store = new InMemoryAttestationStore(NAMESPACE);
   const backend = new InMemoryAttestationBackend(store);
@@ -211,7 +214,8 @@ function harnessed(options: {
               cancelled.push(`${handle.attestationId}:${String(handle.generation)}`);
             } }),
         reportLaunchFailure: ({ cause, abortFailure }) => { launchFailures.push({ cause, abortFailure }); },
-        now: () => NOW,
+        now: options.driverClock?.now ?? (() => NOW),
+        sleep: options.driverClock?.sleep ?? (async () => {}),
       }),
     cancelled,
     launchFailures,
@@ -439,6 +443,67 @@ describe("G224 dispatch driver", () => {
       const outcome = await started(driver, "G224-staged-abort");
       await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
       expect(calls.map((call) => call.op)).toEqual(["qualify"]);
+    });
+
+    // D588: the coordinator runs a candidate's gate only while it is the
+    // partition's front. Blocked behind another front, the driver used to
+    // return after one attempt, and nothing ever coordinated the candidate
+    // again: it stayed gate-pending with no gate process and no diagnostic.
+    function withBlockingCoordinator(
+      capability: Capability,
+      calls: Array<{ op: string; input: unknown }>,
+      blockedAttempts: number,
+    ) {
+      const front = { attestationId: `att_${"f".repeat(32)}`, generation: 10 };
+      return {
+        ...withParentGate(capability, calls, false),
+        coordinateImplementationCandidate: async (input: unknown) => {
+          calls.push({ op: "coordinate", input });
+          const attempt = calls.filter((call) => call.op === "coordinate").length;
+          return (attempt <= blockedAttempts
+            ? { state: "blocked", partitionKey: "p", partitionRevision: attempt, front, frontState: "leased" }
+            : { state: "completed", handle: input }) as never;
+        },
+      } as Capability;
+    }
+
+    test("a candidate blocked behind another front is re-coordinated until it runs [BA]", async () => {
+      const slept: number[] = [];
+      const h = harnessed({
+        envelope: stagedEnvelope,
+        driverClock: { now: () => NOW, sleep: async (ms) => { slept.push(ms); } },
+      });
+      const calls: Array<{ op: string; input: unknown }> = [];
+      const driver = h.driver(withBlockingCoordinator(h.capability(), calls, 2));
+      const outcome = await started(driver, "D588-blocked-then-front");
+      await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+      expect(calls.map((call) => call.op)).toEqual(["qualify", "coordinate", "coordinate", "coordinate"]);
+      expect(slept).toEqual([IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS, IMPLEMENTATION_QUEUE_BLOCKED_RETRY_MS]);
+      expect(h.launchFailures).toEqual([]);
+    });
+
+    test("a candidate still blocked at its dispatch deadline fails with the holding front named [BA]", async () => {
+      let clock = Date.parse(NOW);
+      const h = harnessed({
+        envelope: stagedEnvelope,
+        driverClock: {
+          now: () => new Date(clock).toISOString(),
+          sleep: async (ms) => { clock += ms * 1_000; },
+        },
+      });
+      const calls: Array<{ op: string; input: unknown }> = [];
+      const capability = withBlockingCoordinator(h.capability(), calls, Number.POSITIVE_INFINITY);
+      const driver = h.driver(capability);
+      const outcome = await started(driver, "D588-blocked-forever");
+      await driver.waitFor({ ...outcome.handle, waitMs: 5_000 });
+      expect(await capability.fetch(outcome.handle)).toMatchObject({
+        state: "aborted",
+        reason: "native-failure",
+        details: {
+          source: "dispatch-driver",
+          message: expect.stringContaining(`held by att_${"f".repeat(32)}/10 (leased) until the dispatch deadline`),
+        },
+      });
     });
 
     // D565: qualify has THREE outcomes. A worker that reports `fail` needs no

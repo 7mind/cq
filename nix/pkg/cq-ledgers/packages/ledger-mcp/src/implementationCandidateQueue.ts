@@ -9,6 +9,7 @@ import {
   recoverImplementationCandidateOn,
   releaseImplementationCandidateOn,
   releaseImplementationCompletionLeaseOn,
+  releaseOrphanedImplementationLeaseOn,
   reserveImplementationCompletionLeaseOn,
   resumeImplementationCandidateOn,
   retireDispatchStagedRebaseSourceOn,
@@ -189,6 +190,43 @@ export class ImplementationCandidateQueueAdapter {
     });
   }
 
+  /** The exact live lease holding a blocked partition, as the coordinator observed it. */
+  inspectLeasedFront(front: {
+    readonly attestationId: string;
+    readonly generation: number;
+  }): Promise<{
+    readonly lease: ImplementationQueueLeaseBinding;
+    readonly control: ImplementationQueueControl;
+  }> {
+    return this.backend.transact({ kind: "handle", handle: front }, (store) => {
+      const row = store.read(front);
+      const control = row === undefined || isAttestationTombstone(row) ? undefined : row.implementationQueue;
+      if (control?.state !== "leased" || control.lease === undefined) {
+        throw new Error("blocked implementation queue front no longer holds a live lease");
+      }
+      return {
+        lease: Object.freeze({
+          attestationId: front.attestationId,
+          generation: front.generation,
+          partitionKey: control.partition.partitionKey,
+          enrollmentId: control.enrollment.enrollmentId,
+          attemptId: control.attempt.attemptId,
+          holderId: control.lease.holderId,
+          leaseGeneration: control.lease.generation,
+        }),
+        control,
+      };
+    });
+  }
+
+  releaseOrphanedLease(request: LeaseTransitionRequest): Promise<ImplementationQueueControl> {
+    return releaseOrphanedImplementationLeaseOn(
+      this.backend,
+      { namespace: this.backend.namespace, actor: this.actor, ...request },
+      { now: this.now },
+    );
+  }
+
   inspectPendingStagedRebase(
     partitionKey: string,
     disposition: "undisposed" | "conflict-pending" = "undisposed",
@@ -356,6 +394,14 @@ export class ImplementationCandidateQueueAdapter {
 }
 
 export interface ImplementationCandidateCoordinatorOperations {
+  /**
+   * D588: true only when the consumed candidate holding this lease can never
+   * reach protected completion because its work was settled elsewhere.
+   */
+  isLeasedFrontOrphaned?(input: {
+    readonly lease: ImplementationQueueLeaseBinding;
+    readonly control: ImplementationQueueControl;
+  }): Promise<boolean>;
   isQualifiedFrontSettled?(input: {
     readonly lease: ImplementationQueueLeaseBinding;
     readonly control: ImplementationQueueControl;
@@ -452,7 +498,22 @@ export class ImplementationCandidateCoordinator {
         successor: Object.freeze({ ...reconciled.successor }),
       });
     }
-    const acquired = await this.queue.acquire(request);
+    let acquired = await this.queue.acquire(request);
+    if (
+      acquired.state === "blocked" &&
+      acquired.frontState === "leased" &&
+      this.operations.isLeasedFrontOrphaned !== undefined
+    ) {
+      const leased = await this.queue.inspectLeasedFront(acquired.front);
+      if (await this.operations.isLeasedFrontOrphaned(leased)) {
+        await this.queue.releaseOrphanedLease({
+          ...leased.lease,
+          expectedPartitionRevision: acquired.partitionRevision,
+          detail: { operation: "orphaned-lease-release", holderId: leased.lease.holderId },
+        });
+        acquired = await this.queue.acquire(request);
+      }
+    }
     if (acquired.state === "empty") {
       const deferredConflict = await this.queue.inspectPendingStagedRebase(
         request.partitionKey,

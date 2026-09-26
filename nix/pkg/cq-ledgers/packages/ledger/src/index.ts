@@ -26,7 +26,11 @@ export type {
   TaskAdoptionIneligibility,
   TaskAdoptionPublicationResult,
 } from "./taskAdoptionEligibility.js";
-export { resolveUniqueGoalState, resolveUniqueTaskState } from "./taskStateResolver.js";
+export {
+  resolveUniqueDefectState,
+  resolveUniqueGoalState,
+  resolveUniqueTaskState,
+} from "./taskStateResolver.js";
 export type { TaskStateReader } from "./taskStateResolver.js";
 export {
   MILESTONES_LEDGER,

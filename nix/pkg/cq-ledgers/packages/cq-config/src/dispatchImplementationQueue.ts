@@ -3286,6 +3286,44 @@ export function releaseImplementationCompletionLease(
   return next;
 }
 
+/**
+ * D588: a consumed candidate keeps its lease only while protected completion can
+ * still release it. Once the candidate's work was settled outside that path (for
+ * example by operator adoption), the lease has no remaining releaser and would
+ * block its partition forever. The caller proves the settlement; this transition
+ * only admits a consumed, unreserved, exactly identified lease.
+ */
+export function releaseOrphanedImplementationLease(
+  request: ImplementationQueueLeaseTransitionRequest,
+  deps: DispatchServiceDeps,
+): ImplementationQueueControl {
+  const { row, control } = leasedControl(request, deps);
+  if (row.state !== "consumed") {
+    throw new ImplementationQueueConflictError(
+      "binding-mismatch",
+      "only a consumed candidate's lease can be released as orphaned",
+    );
+  }
+  if (control.completionReservation !== undefined) {
+    throw new ImplementationQueueConflictError(
+      "completion-reserved",
+      "an orphaned lease release cannot retire a completion-reserved lease",
+    );
+  }
+  const next: ImplementationQueueControl = Object.freeze({
+    ...withoutLease(control),
+    state: "released" as const,
+    partitionRevision: nextPartitionRevision(deps.store, request.partitionKey),
+    terminal: Object.freeze({
+      reason: "superseded" as const,
+      terminalAt: deps.now(),
+      detailsDigest: digest(request.detail ?? null),
+    }),
+  });
+  deps.store.replace(row, Object.freeze({ ...row, implementationQueue: next }));
+  return next;
+}
+
 function moveLeased(
   request: ImplementationQueueLeaseTransitionRequest,
   deps: DispatchServiceDeps,
@@ -3807,6 +3845,16 @@ export async function recoverImplementationCandidateOn(
 ): Promise<ImplementationQueueControl> {
   return backend.transact({ kind: "namespace" }, (store) =>
     recoverImplementationCandidate(request, { store, now: deps.now }),
+  );
+}
+
+export async function releaseOrphanedImplementationLeaseOn(
+  backend: AttestationBackend,
+  request: ImplementationQueueLeaseTransitionRequest,
+  deps: { readonly now: () => string },
+): Promise<ImplementationQueueControl> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    releaseOrphanedImplementationLease(request, { store, now: deps.now }),
   );
 }
 

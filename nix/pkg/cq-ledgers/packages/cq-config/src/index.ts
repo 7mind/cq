@@ -957,6 +957,8 @@ export {
   reserveImplementationCompletionLeaseOn,
   releaseImplementationCompletionLease,
   releaseImplementationCompletionLeaseOn,
+  releaseOrphanedImplementationLease,
+  releaseOrphanedImplementationLeaseOn,
   recoverImplementationCandidate,
   recoverImplementationCandidateOn,
   terminalizeImplementationCandidate,

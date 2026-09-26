@@ -1,4 +1,4 @@
-import { GOALS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import { DEFECTS_LEDGER, GOALS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { LedgerStore } from "./store/LedgerStore.js";
 import { LedgerError, type Item } from "./types.js";
 
@@ -67,6 +67,14 @@ export async function resolveUniqueTaskState(
   taskId: string,
 ): Promise<Item> {
   return await resolveUniqueItemState(reader, TASKS_LEDGER, taskId, "task");
+}
+
+/** Resolve one defect identity across every active group and advertised archive. */
+export async function resolveUniqueDefectState(
+  reader: TaskStateReader,
+  defectId: string,
+): Promise<Item> {
+  return await resolveUniqueItemState(reader, DEFECTS_LEDGER, defectId, "defect");
 }
 
 /** Resolve one goal identity across every active group and advertised archive. */

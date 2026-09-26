@@ -117,5 +117,6 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
     },
     planner: bindings.planner,
     now: () => new Date().toISOString(),
+    sleep: async (ms) => await Bun.sleep(ms),
   });
 }
