@@ -178,8 +178,23 @@ function fixture(
     async () => true;
   const store = createInMemoryImplementationEvidenceStore();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
+  let adjudicationQuestion:
+    | { readonly questionRef: string; readonly answer: string; readonly ledgerRefs: readonly string[] }
+    | undefined;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
+    auditAdjudication: {
+      verify: async ({ questionRef, answer, taskRefs }) => {
+        if (
+          adjudicationQuestion === undefined ||
+          adjudicationQuestion.questionRef !== questionRef ||
+          adjudicationQuestion.answer !== answer
+        )
+          throw new Error("operator audit adjudication does not match the answered question");
+        if (!taskRefs.every((taskRef) => adjudicationQuestion!.ledgerRefs.includes(taskRef)))
+          throw new Error("operator audit adjudication question does not reference every adjudicated task");
+      },
+    },
     resolveReviewerRoster: () => [auditor],
     resolveAuditRoster: () => [auditor],
     nativeFallback: auditor,
@@ -286,6 +301,9 @@ function fixture(
     },
     setNativeAuditOutputMode(next: "approve" | "disapprove" | "invalid") {
       nativeAuditOutputMode = next;
+    },
+    setAdjudicationQuestion(next: typeof adjudicationQuestion) {
+      adjudicationQuestion = next;
     },
     setHead(next: string) {
       currentHead = next;
@@ -1302,6 +1320,99 @@ describe("protected historical implementation evidence [BA]", () => {
       operationId: "apply-gate-remediation-without-audit",
       author: "parent",
     })).rejects.toThrow();
+  });
+
+  test("Q420: an answered operator adjudication applies disapproved v2 records and nothing else", async () => {
+    const f = fixture({
+      ...manifest(),
+      manifestId: "d347-implementation-evidence-activation-v2",
+    });
+    const manifestDigest = implementationAuditManifestDigest(f.packaged);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-adjudication",
+      author: "parent",
+    });
+    f.setNativeAuditOutputMode("disapprove");
+    const attemptRefs: string[] = [];
+    for (const record of f.packaged.records) {
+      const panel = await f.service.prepareAuditPanel({
+        manifestId: f.packaged.manifestId,
+        manifestDigest,
+        recordKey: record.recordKey,
+        expectedRepositoryHead: HEAD,
+        operationId: `adjudication-panel-${record.recordKey}`,
+        author: "parent",
+      });
+      for (const attemptRef of panel.attemptRefs) {
+        await f.service.prepareAuditAttempt({
+          panelRef: panel.panelRef,
+          attemptRef,
+          operationId: `adjudication-prepare-${attemptRef.slice(-8)}`,
+          author: "parent",
+        });
+        await f.service.finalizeAuditAttempt({
+          attemptRef,
+          operationId: `adjudication-finalize-${attemptRef.slice(-8)}`,
+          author: "parent",
+        });
+        attemptRefs.push(attemptRef);
+      }
+    }
+    const recordKeys = f.packaged.records.map(({ recordKey }) => recordKey);
+    const taskRefs = f.packaged.records.map(({ taskRef }) => taskRef);
+    const apply = (operationId: string, operatorAdjudication?: {
+      readonly questionRef: string;
+      readonly answer: string;
+      readonly recordKeys: readonly string[];
+    }) => f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: attemptRefs,
+      ...(operatorAdjudication === undefined ? {} : { operatorAdjudication }),
+      operationId,
+      author: "parent",
+    });
+    const adjudication = { questionRef: "questions:Q420", answer: "as recommended", recordKeys };
+
+    // Without an adjudication, a disapproval still stops closed.
+    await expect(apply("apply-without-adjudication")).rejects.toThrow("was disapproved");
+    // An unanswered, mismatched, or non-referencing question authorizes nothing.
+    await expect(apply("apply-unanswered", adjudication)).rejects.toThrow(
+      "does not match the answered question",
+    );
+    f.setAdjudicationQuestion({ questionRef: "questions:Q420", answer: "different", ledgerRefs: taskRefs });
+    await expect(apply("apply-wrong-answer", adjudication)).rejects.toThrow(
+      "does not match the answered question",
+    );
+    f.setAdjudicationQuestion({ questionRef: "questions:Q420", answer: "as recommended", ledgerRefs: [taskRefs[0]!] });
+    await expect(apply("apply-missing-ref", adjudication)).rejects.toThrow(
+      "does not reference every adjudicated task",
+    );
+    // Adjudicating only some disapproved records still leaves the rest closed.
+    f.setAdjudicationQuestion({ questionRef: "questions:Q420", answer: "as recommended", ledgerRefs: taskRefs });
+    await expect(apply("apply-partial", { ...adjudication, recordKeys: [recordKeys[0]!] })).rejects.toThrow(
+      "was disapproved",
+    );
+    await expect(apply("apply-unknown-record", { ...adjudication, recordKeys: ["no-such-record"] })).rejects.toThrow(
+      "unknown record",
+    );
+
+    expect(await apply("apply-adjudicated", adjudication)).toMatchObject({
+      status: "applied",
+      activation: "activated",
+    });
+    const audits = Object.values((await f.store.snapshot()).implementationAudits);
+    expect(audits.map(({ terminalState }) => terminalState)).toEqual(
+      recordKeys.map(() => "operator-adjudicated"),
+    );
+    expect(audits[0]!.adjudication).toEqual({
+      questionRef: "questions:Q420",
+      answerDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
   });
 
   test("rejects authority changes at protected activation and audit write boundaries", async () => {

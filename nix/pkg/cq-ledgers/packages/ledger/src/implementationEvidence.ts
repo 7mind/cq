@@ -416,7 +416,8 @@ export interface ImplementationAuditRecord {
   readonly sourceDigest: string;
   readonly evidenceFingerprint: string;
   readonly attemptRefs: readonly string[];
-  readonly terminalState: ImplementationReviewTerminalState;
+  readonly terminalState: ImplementationAuditTerminalState;
+  readonly adjudication?: { readonly questionRef: string; readonly answerDigest: string };
   readonly author: string;
   readonly session: string | null;
   readonly appliedAt: string;
@@ -1799,12 +1800,36 @@ export interface ArmImplementationEvidenceActivationInput extends OperationProve
   readonly expectedRepositoryHead: string;
 }
 
+/**
+ * D582/Q420: an operator's explicit, question-recorded acceptance of the
+ * residual in named v2 records whose finalized audit panel did not approve.
+ * The question is the authority (as for operator adoption); the audit panel
+ * and its verdicts are retained unchanged beside it.
+ */
+export interface ImplementationAuditOperatorAdjudication {
+  readonly questionRef: string;
+  readonly answer: string;
+  readonly recordKeys: readonly string[];
+}
+
 export interface ApplyImplementationAuditManifestInput extends OperationProvenance {
   readonly manifestId: string;
   readonly manifestDigest: string;
   readonly expectedRepositoryHead: string;
   readonly auditAttemptRefs: readonly string[];
+  readonly operatorAdjudication?: ImplementationAuditOperatorAdjudication;
 }
+
+export interface ImplementationAuditAdjudicationCapability {
+  /** Fail unless the question is answered with exactly `answer` and references every task. */
+  readonly verify: (input: {
+    readonly questionRef: string;
+    readonly answer: string;
+    readonly taskRefs: readonly string[];
+  }) => Promise<void>;
+}
+
+export type ImplementationAuditTerminalState = "approved" | "operator-adjudicated";
 
 export interface ImplementationEvidenceActivationStatusInput {
   readonly goalRef: string;
@@ -1941,6 +1966,7 @@ export interface ImplementationOperatorAdoptionCapability {
 export interface ImplementationEvidenceServiceDependencies {
   readonly store: ImplementationEvidenceStore;
   readonly operatorAdoption?: ImplementationOperatorAdoptionCapability;
+  readonly auditAdjudication?: ImplementationAuditAdjudicationCapability;
   readonly resolveReviewerRoster: () => readonly ImplementationReviewerIdentity[];
   readonly nativeFallback: ImplementationReviewerIdentity;
   readonly now?: () => string;
@@ -3892,11 +3918,34 @@ export class ImplementationEvidenceService {
         taskRefs: replay.taskRefs,
       };
     }
+    const adjudication = input.operatorAdjudication;
+    const adjudicatedKeys = new Set<string>();
+    if (adjudication !== undefined) {
+      if (manifest.manifestId !== IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2)
+        throw new Error("operator adjudication applies only to the v2 activation manifest");
+      if (this.deps.auditAdjudication === undefined)
+        throw new Error("operator audit adjudication is unavailable");
+      if (!/^questions:Q[0-9]+$/u.test(adjudication.questionRef) || adjudication.answer.trim() === "")
+        throw new Error("operator adjudication requires one answered question and its answer");
+      const keys = new Set(adjudication.recordKeys);
+      if (keys.size === 0 || keys.size !== adjudication.recordKeys.length)
+        throw new Error("operator adjudication record keys must be distinct and non-empty");
+      const taskRefs = [...keys].map((key) => {
+        const record = manifest.records.find((candidate) => candidate.recordKey === key);
+        if (record === undefined) throw new Error(`operator adjudication names unknown record ${key}`);
+        return record.taskRef;
+      });
+      await this.deps.auditAdjudication.verify({
+        questionRef: adjudication.questionRef,
+        answer: adjudication.answer,
+        taskRefs,
+      });
+    }
     const expectedAttemptRefs: string[] = [];
     const auditCandidates: Array<{
       readonly record: PackagedImplementationAuditRecord;
       readonly attemptRefs: readonly string[];
-      readonly terminalState: ImplementationReviewTerminalState;
+      readonly terminalState: ImplementationAuditTerminalState;
     }> = [];
     for (const record of manifest.records) {
       if (
@@ -3929,6 +3978,14 @@ export class ImplementationEvidenceService {
       if (attempts.some((attempt) => attempt === undefined || attempt.terminalState === null))
         throw new Error(`audit panel for ${record.taskRef} is nonterminal`);
       const terminals = attempts.map((attempt) => attempt!.terminalState!);
+      if (adjudication?.recordKeys.includes(record.recordKey) === true) {
+        if (terminals.includes("approved") && !terminals.includes("disapproved"))
+          throw new Error(`audit panel for ${record.taskRef} was approved and needs no adjudication`);
+        adjudicatedKeys.add(record.recordKey);
+        expectedAttemptRefs.push(...refs);
+        auditCandidates.push({ record, attemptRefs: refs, terminalState: "operator-adjudicated" });
+        continue;
+      }
       if (terminals.includes("disapproved"))
         throw new Error(`audit panel for ${record.taskRef} was disapproved`);
       if (!terminals.includes("approved"))
@@ -3940,6 +3997,8 @@ export class ImplementationEvidenceService {
       expectedAttemptRefs.push(...refs);
       auditCandidates.push({ record, attemptRefs: refs, terminalState: "approved" });
     }
+    if (adjudication !== undefined && adjudicatedKeys.size !== adjudication.recordKeys.length)
+      throw new Error("operator adjudication names a record without a finalized unapproved panel");
     if (JSON.stringify(input.auditAttemptRefs) !== JSON.stringify(expectedAttemptRefs))
       throw new Error("audit_attempt_refs must be the complete ordered manifest attempt set");
     const auditRefs = auditCandidates.map(({ record, attemptRefs }) =>
@@ -4041,6 +4100,14 @@ export class ImplementationEvidenceService {
           evidenceFingerprint: digest({ record, attemptRefs, manifestDigest }),
           attemptRefs,
           terminalState,
+          ...(terminalState === "operator-adjudicated" && adjudication !== undefined
+            ? {
+              adjudication: {
+                questionRef: adjudication.questionRef,
+                answerDigest: digest(adjudication.answer),
+              },
+            }
+            : {}),
           author: input.author,
           session: input.session ?? null,
           appliedAt: this.now(),

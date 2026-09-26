@@ -99,13 +99,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -153,7 +153,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -233,13 +233,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 71150,
-        "tokens": 17216,
-        "sha256": "551c14c742d589113e9aa6b440048b7f28858707d5e08ac5ca03238828ae0a93"
+        "utf8Bytes": 71477,
+        "tokens": 17299,
+        "sha256": "fe10c410c99ab7b10c675676cd6662b7b4aa4295b167cd393ac1d2c9dafa1be1"
       },
-      "surfaceTokens": 17393,
+      "surfaceTokens": 17476,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": 7007,
+      "deltaTokens": 7090,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -284,7 +284,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -373,13 +373,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -427,7 +427,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -516,13 +516,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -570,7 +570,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -821,13 +821,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -875,7 +875,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -964,13 +964,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1018,7 +1018,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -1147,13 +1147,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1201,7 +1201,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -1370,13 +1370,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1424,7 +1424,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -1513,13 +1513,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1567,7 +1567,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -1779,13 +1779,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1833,7 +1833,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -1922,13 +1922,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1976,7 +1976,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -2103,13 +2103,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2157,7 +2157,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -2326,13 +2326,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2380,7 +2380,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -2507,13 +2507,13 @@
         "sha256": "5a8b7c4bfb09c91832cd253c0a71eff916ce6210d34bb693c937707d39434863"
       },
       "toolsList": {
-        "utf8Bytes": 86015,
-        "tokens": 20864,
-        "sha256": "5ef0721d538536587a29c7e3c5d82567c2c64dce198aebb55de49664134e7b16"
+        "utf8Bytes": 86342,
+        "tokens": 20947,
+        "sha256": "ea39ef898d05a73a8a77c33790e39ed2ed81451d1e5f799afe390919ba103fdd"
       },
-      "surfaceTokens": 21041,
+      "surfaceTokens": 21124,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 9259,
+      "deltaTokens": 9342,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2561,7 +2561,7 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 12422,
+      "domainInputSchemaTokens": 12505,
       "responseContractCounterfactual": {
         "projectionTokens": 212,
         "acknowledgementSentenceTokens": 158,
@@ -2732,8 +2732,8 @@
       "name": "apply_implementation_audit_manifest",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 212,
-        "deltaTokens": 212
+        "afterTokens": 295,
+        "deltaTokens": 295
       },
       "fields": {
         "name": {
@@ -2770,12 +2770,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 171,
-            "marginalTokens": 172
+            "serializedTokens": 254,
+            "marginalTokens": 255
           },
           "delta": {
-            "serializedTokens": 171,
-            "marginalTokens": 172
+            "serializedTokens": 254,
+            "marginalTokens": 255
           }
         }
       }

@@ -731,6 +731,15 @@ export class RemoteLedgerClient {
       manifest_digest: input.manifestDigest,
       expected_repository_head: input.expectedRepositoryHead,
       audit_attempt_refs: input.auditAttemptRefs,
+      ...(input.operatorAdjudication === undefined
+        ? {}
+        : {
+          operator_adjudication: {
+            question_ref: input.operatorAdjudication.questionRef,
+            answer: input.operatorAdjudication.answer,
+            record_keys: input.operatorAdjudication.recordKeys,
+          },
+        }),
       operation_id: input.operationId,
       author: input.author,
       ...(input.session === undefined ? {} : { session: input.session }),

@@ -1755,6 +1755,11 @@ export function createLedgerMcpToolSpecifications(
       audit_attempt_refs: z.array(
         z.string().regex(/^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/),
       ),
+      operator_adjudication: z.object({
+        question_ref: z.string().regex(/^questions:Q[0-9]+$/),
+        answer: z.string().min(1),
+        record_keys: z.array(z.string().min(1)).min(1),
+      }).strict().optional(),
       ...implementationOperation,
     } as const,
     async (args) => {
@@ -1766,6 +1771,15 @@ export function createLedgerMcpToolSpecifications(
           manifestDigest: args.manifest_digest,
           expectedRepositoryHead: args.expected_repository_head,
           auditAttemptRefs: args.audit_attempt_refs,
+          ...(args.operator_adjudication === undefined
+            ? {}
+            : {
+              operatorAdjudication: {
+                questionRef: args.operator_adjudication.question_ref,
+                answer: args.operator_adjudication.answer,
+                recordKeys: args.operator_adjudication.record_keys,
+              },
+            }),
           operationId: args.operation_id,
           author: args.author,
           ...(args.session === undefined ? {} : { session: args.session }),

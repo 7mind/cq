@@ -757,6 +757,16 @@ export function createProductionImplementationEvidenceService(
       }));
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
+    auditAdjudication: {
+      verify: async ({ questionRef, answer, taskRefs }) => {
+        const question = store.fetchItem(QUESTIONS_LEDGER, questionRef.slice(`${QUESTIONS_LEDGER}:`.length));
+        if (question.status !== "answered" || question.fields["answer"] !== answer)
+          throw new Error("operator audit adjudication does not match the answered question");
+        const refs = question.fields["ledgerRefs"];
+        if (!Array.isArray(refs) || !taskRefs.every((taskRef) => refs.includes(taskRef)))
+          throw new Error("operator audit adjudication question does not reference every adjudicated task");
+      },
+    },
     operatorAdoption: {
       admit: async (taskRef) => await requireWorksetStore(store).admitLedgerMutation({ kind: "owned-write", targets: [taskRef] }),
       taskRevision: async (taskRef) => {
