@@ -910,6 +910,7 @@ export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS = [
   "wrong-handle",
   "unparseable",
   "live-gate-at-completion",
+  "turn-failed",
 ] as const;
 
 export type CodexRoleBoundaryDiagnosticVerdict =
@@ -923,6 +924,8 @@ export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES = [
   "invalid-shape",
   "invalid-handle-shape",
   "unsettled-full-gate-at-completion",
+  "provider-unauthorized",
+  "provider-failure",
 ] as const;
 
 export type CodexRoleBoundaryDiagnosticDetailCode =
@@ -1307,6 +1310,7 @@ export function createCodexRoleBoundaryPlan(
 interface CodexExecEvent {
   readonly type?: unknown;
   readonly thread_id?: unknown;
+  readonly error?: { readonly message?: unknown };
   readonly item?: {
     readonly type?: unknown;
     readonly text?: unknown;
@@ -1431,7 +1435,28 @@ interface CodexRoleBoundaryStreamObservation {
   readonly storeResultTypedAbort: RecognizedAbortedDispatchAcknowledgement | undefined;
   readonly threadIds: readonly string[];
   readonly turnOutcomes: readonly ("completed" | "transport-failed")[];
+  readonly turnFailure: TurnFailureDetailCode | undefined;
   readonly failureControls: readonly string[];
+}
+
+type TurnFailureDetailCode = Extract<
+  CodexRoleBoundaryDiagnosticDetailCode,
+  "provider-unauthorized" | "provider-failure"
+>;
+
+/**
+ * D577: reduce a `turn.failed` provider error to a closed code. The message
+ * itself is never retained (T1628 keeps diagnostics free of boundary content);
+ * only an authentication refusal is distinguished, because it needs an
+ * operator action rather than a retry.
+ */
+const PROVIDER_UNAUTHORIZED = /\b401\b|\bunauthorized\b/iu;
+
+function turnFailureDetailCode(event: CodexExecEvent): TurnFailureDetailCode {
+  const message = event.error?.message;
+  return typeof message === "string" && PROVIDER_UNAUTHORIZED.test(message)
+    ? "provider-unauthorized"
+    : "provider-failure";
 }
 
 function observeCodexRoleBoundaryStream(
@@ -1446,6 +1471,7 @@ function observeCodexRoleBoundaryStream(
   let observedStoreResultTypedAbort: RecognizedAbortedDispatchAcknowledgement | undefined;
   const threadIds: string[] = [];
   const turnOutcomes: ("completed" | "transport-failed")[] = [];
+  let turnFailure: TurnFailureDetailCode | undefined;
   const failureControls: string[] = [];
   for (const line of jsonl.split("\n")) {
     if (line.trim() === "") continue;
@@ -1469,7 +1495,10 @@ function observeCodexRoleBoundaryStream(
       threadIds.push(event.thread_id);
     }
     if (event.type === "turn.completed") turnOutcomes.push("completed");
-    if (event.type === "turn.failed") turnOutcomes.push("transport-failed");
+    if (event.type === "turn.failed") {
+      turnOutcomes.push("transport-failed");
+      turnFailure = turnFailureDetailCode(event);
+    }
     if (
       event.type === "item.completed" &&
       event.item?.type === "cq_provider_gate_observation" &&
@@ -1510,6 +1539,7 @@ function observeCodexRoleBoundaryStream(
     storeResultTypedAbort: observedStoreResultTypedAbort,
     threadIds: Object.freeze(threadIds),
     turnOutcomes: Object.freeze(turnOutcomes),
+    turnFailure,
     failureControls: Object.freeze(failureControls),
   });
 }
@@ -1771,6 +1801,12 @@ export function interceptCodexRoleBoundaryResult(
   const observation = observeCodexRoleBoundaryStream(jsonl, expectedHandle);
   const finalMessage = observation.finalMessage;
   if (finalMessage === undefined) {
+    if (observation.turnFailure !== undefined) {
+      throw new CodexRoleBoundaryError(
+        `child turn failed before any completed agent message (${observation.turnFailure})`,
+        boundaryDiagnostic(observation, "turn-failed", observation.turnFailure),
+      );
+    }
     throw new CodexRoleBoundaryError(
       "child emitted no completed agent message",
       boundaryDiagnostic(observation, "no-completed-message", "no-completed-agent-message"),

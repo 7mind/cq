@@ -179,6 +179,39 @@ describe("T1628 Codex boundary diagnostics", () => {
     expectNoBoundaryContent(missing);
   });
 
+  test("D577: classifies a failed turn with no final message by closed provider codes", () => {
+    const failedTurn = (message: string): string =>
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "thread-d577" }),
+        JSON.stringify({ type: "turn.started" }),
+        JSON.stringify({ type: "error", message }),
+        JSON.stringify({ type: "turn.failed", error: { message } }),
+      ].join("\n");
+
+    const unauthorized = captureBoundaryError(
+      failedTurn("unexpected status 401 Unauthorized: Incorrect API key provided"),
+    );
+    expect(unauthorized.diagnostic).toEqual({
+      version: 1,
+      verdict: "turn-failed",
+      detailCode: "provider-unauthorized",
+      finalMessageByteLength: 0,
+      finalMessageSha256: createHash("sha256").update("").digest("hex"),
+      completedAgentMessageCount: 0,
+      malformedJsonlCount: 0,
+      matchingResultStoredAcknowledgementPresent: false,
+    });
+    expect(unauthorized.message).not.toContain("Incorrect API key");
+
+    const other = captureBoundaryError(
+      failedTurn("stream disconnected before completion: websocket closed by server"),
+    );
+    expect(other.diagnostic).toMatchObject({
+      verdict: "turn-failed",
+      detailCode: "provider-failure",
+    });
+  });
+
   test("counts syntactically valid non-event JSON without escaping a raw TypeError", () => {
     const observed = captureBoundaryError(
       ["null", completedAgentMessage(FINAL_NARRATIVE_SENTINEL)].join("\n"),
