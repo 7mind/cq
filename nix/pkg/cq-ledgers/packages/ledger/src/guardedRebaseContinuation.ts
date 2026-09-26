@@ -209,6 +209,10 @@ function trustedGitEnvironment(): NodeJS.ProcessEnv {
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
+    // D590: with the global config hidden, a checkout whose identity lives
+    // only there cannot commit a replayed pick. Rebase keeps each author.
+    GIT_COMMITTER_NAME: "cq guarded rebase",
+    GIT_COMMITTER_EMAIL: "cq-guarded-rebase@example.invalid",
     GIT_EDITOR: "true",
     GIT_SEQUENCE_EDITOR: "true",
     LANG: "C",
@@ -417,6 +421,34 @@ async function assertAncestor(
   ]);
   if (result.code !== 0) {
     throw new Error(`guarded rebase ${label} ancestry ${ancestor} -> ${descendant} does not hold`);
+  }
+}
+
+/**
+ * D590: Git writes `stopped-sha` whenever a pick stops on a conflict. A stop
+ * without it and without unmerged paths is not a conflict (a pick that could
+ * not commit), so no conflict resolver can continue it.
+ */
+async function sequencerStoppedWithoutConflict(binding: GitBrokerManagedBinding): Promise<boolean> {
+  const gitDir = (
+    await checkedGit(binding.worktreePath, ["rev-parse", "--path-format=absolute", "--absolute-git-dir"])
+  )
+    .toString()
+    .trim();
+  try {
+    await fs.lstat(join(gitDir, "rebase-merge", "stopped-sha"));
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return (await checkedGit(binding.worktreePath, ["ls-files", "--unmerged"])).toString().trim() === "";
+}
+
+/** D590: undo this operation's own non-conflict stop, restoring the pre-rebase tip. */
+async function abortStoppedRebase(binding: GitBrokerManagedBinding, originalTip: string): Promise<void> {
+  await checkedGit(binding.worktreePath, ["rebase", "--abort"]);
+  if ((await liveTip(binding)) !== originalTip) {
+    throw new Error("guarded rebase abort did not restore the pre-rebase tip");
   }
 }
 
@@ -651,6 +683,9 @@ async function runGuardedRebaseCore(
     }
     // "intent": fresh start, or a restart after the durable intent but before
     // (or during) the effect. Reconcile the live state before deciding.
+    if (journal !== null && (await sequencerActive(binding)) && (await sequencerStoppedWithoutConflict(binding))) {
+      await abortStoppedRebase(binding, journal.oldResultCommit);
+    }
     if (journal !== null && (await sequencerActive(binding))) {
       const conflict = await observeManagedWorktreeConflictState(binding, authorityDeps(options));
       journal = Object.freeze({
@@ -745,6 +780,10 @@ async function runGuardedRebaseCore(
     }
     const effect = await runGuardedEffect(options);
     if (effect.code !== 0) {
+      if ((await sequencerActive(binding)) && (await sequencerStoppedWithoutConflict(binding))) {
+        await abortStoppedRebase(binding, journal.oldResultCommit);
+        throw new Error(`guarded rebase effect stopped (${effect.code}) without a conflict: ${effect.stderr.trim()}`);
+      }
       if (await sequencerActive(binding)) {
         const conflict = await observeManagedWorktreeConflictState(binding, authorityDeps(options));
         journal = Object.freeze({

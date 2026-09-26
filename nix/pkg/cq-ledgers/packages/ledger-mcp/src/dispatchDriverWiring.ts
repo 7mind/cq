@@ -122,11 +122,20 @@ export function createServerDispatchDriver(input: ServerDispatchDriverInput): Di
 }
 
 /**
+ * D589/D590: how long a serving process waits before draining. Sibling
+ * servers of one session start together, and a drain's namespace-wide
+ * attestation transactions can hold the write lock past a starting
+ * sibling's busy timeout.
+ */
+export const STARTUP_DRAIN_DELAY_MS = 60_000;
+
+/**
  * D589: coordinate every implementation-queue partition whose front is
- * qualified but unleased. Such a front's worker finished while the process
- * that launched it — the only one that would coordinate it — was replaced,
- * so without this drain it strands its whole partition. Each outcome is
- * reported; a failed drain never stops the server.
+ * qualified but unleased, or whose staged-rebase source was retired without
+ * a successor. Either way the process that would have coordinated it — the
+ * one that launched its worker — was replaced, so without this drain it
+ * strands its whole partition. Each outcome is reported; a failed drain
+ * never stops the server.
  */
 export async function drainStrandedImplementationPartitions(input: {
   readonly backend: AttestationBackend;
@@ -140,11 +149,14 @@ export async function drainStrandedImplementationPartitions(input: {
     ...new Set(
       store
         .rows()
-        .flatMap((row) =>
-          isAttestationTombstone(row) || row.implementationQueue?.state !== "qualified"
-            ? []
-            : [row.implementationQueue.partition.partitionKey],
-        ),
+        .flatMap((row) => {
+          if (isAttestationTombstone(row) || row.implementationQueue === undefined) return [];
+          const queue = row.implementationQueue;
+          const stranded =
+            queue.state === "qualified" ||
+            (queue.state === "staged-rebase-retired" && queue.stagedRebaseSource?.successor === undefined);
+          return stranded ? [queue.partition.partitionKey] : [];
+        }),
     ),
   ]);
   for (const partitionKey of partitionKeys) {

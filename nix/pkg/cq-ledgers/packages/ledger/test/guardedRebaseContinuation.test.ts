@@ -369,6 +369,75 @@ describe("runGuardedRebase", () => {
     }
   });
 
+  // D590: a rebase that stops without a conflict (in production, a pick that
+  // could not commit) leaves a sequencer no conflict resolver can continue.
+  // It was misread as a conflict and the observer threw ENOENT on the absent
+  // `stopped-sha`, stranding the worktree mid-rebase.
+  async function stopWithoutConflict(fixture: GuardedFixture): Promise<GuardedRebaseEffectResult> {
+    try {
+      await git(fixture.worktreePath, ["rebase", "--exec", "false", fixture.ontoCommit]);
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: (error as { stderr?: string }).stderr ?? "" };
+    }
+    throw new Error("the exec step was expected to stop the rebase");
+  }
+
+  test("a stop without a conflict is aborted, reported with Git's reason, and relaunched cleanly", async () => {
+    const fixture = await seedGuarded({});
+    try {
+      await expect(
+        runGuardedRebase({
+          binding: fixture.binding,
+          operationId: "t2150-non-conflict-stop",
+          ontoCommit: fixture.ontoCommit,
+          runEffect: async () => await stopWithoutConflict(fixture),
+          stateDir: fixture.stateDir,
+        }),
+      ).rejects.toThrow(/guarded rebase effect stopped \(1\) without a conflict: .*false/su);
+      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.oldTip);
+      const relaunched = await runGuardedRebase({
+        binding: fixture.binding,
+        operationId: "t2150-non-conflict-stop",
+        ontoCommit: fixture.ontoCommit,
+        runEffect: fixture.runEffect,
+        stateDir: fixture.stateDir,
+      });
+      expect(relaunched.kind).toBe("finalized");
+    } finally {
+      await fixture.store.dispose();
+    }
+  });
+
+  test("a restart that finds its own stop without a conflict aborts it and relaunches the effect", async () => {
+    const fixture = await seedGuarded({});
+    try {
+      await expect(
+        runGuardedRebase({
+          binding: fixture.binding,
+          operationId: "t2150-non-conflict-restart",
+          ontoCommit: fixture.ontoCommit,
+          runEffect: async () => {
+            await stopWithoutConflict(fixture);
+            throw new Error("process lost after the effect stopped");
+          },
+          stateDir: fixture.stateDir,
+        }),
+      ).rejects.toThrow("process lost after the effect stopped");
+      const resumed = await runGuardedRebase({
+        binding: fixture.binding,
+        operationId: "t2150-non-conflict-restart",
+        ontoCommit: fixture.ontoCommit,
+        runEffect: fixture.runEffect,
+        stateDir: fixture.stateDir,
+      });
+      if (resumed.kind !== "finalized") throw new Error("resume did not finalize");
+      expect(resumed.bridge.oldResultCommit).toBe(fixture.oldTip);
+      expect(resumed.bridge.rebasedStartCommit).toBe(await git(fixture.worktreePath, ["rev-parse", "HEAD"]));
+    } finally {
+      await fixture.store.dispose();
+    }
+  });
+
   test("a conflicted rebase finalizes only after durable continuation receipts reach the terminal tip", async () => {
     const fixture = await seedGuarded({ conflict: true });
     try {

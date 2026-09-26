@@ -47,6 +47,7 @@ import {
 import {
   createServerDispatchDriver,
   drainStrandedImplementationPartitions,
+  STARTUP_DRAIN_DELAY_MS,
   targetPromptArtifactStoresFrom,
 } from "./dispatchDriverWiring.js";
 import type { DispatchDriver } from "./dispatchDriver.js";
@@ -1810,12 +1811,16 @@ export async function main(
   // process drains.
   const serving = !implementationCandidateQualify && !implementationCandidateCoordinate && !parentGateFinalize;
   if (serving && serverDispatchDriver !== undefined && boundDispatchCapability !== undefined && dispatchRuntime.kind === "available") {
-    void drainStrandedImplementationPartitions({
-      backend: dispatchRuntime.backend,
-      capability: boundDispatchCapability,
-      holderId: `cq-server-startup-drain:${String(process.pid)}`,
-      report: (line) => process.stderr.write(`${line}\n`),
-    });
+    const drainBackend = dispatchRuntime.backend;
+    const drainCapability = boundDispatchCapability;
+    setTimeout(() => {
+      void drainStrandedImplementationPartitions({
+        backend: drainBackend,
+        capability: drainCapability,
+        holderId: `cq-server-startup-drain:${String(process.pid)}`,
+        report: (line) => process.stderr.write(`${line}\n`),
+      });
+    }, STARTUP_DRAIN_DELAY_MS).unref();
   }
   const implementationEvidence =
     dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined

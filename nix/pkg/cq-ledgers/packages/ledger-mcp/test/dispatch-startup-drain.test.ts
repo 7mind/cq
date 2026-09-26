@@ -50,6 +50,37 @@ describe("D589 startup drain of stranded implementation-queue fronts", () => {
       });
       partitions.push(qualified.queue.partition.partitionKey);
     }
+    // A staged-rebase source retired without a successor strands its partition
+    // too; one whose successor exists does not.
+    const retiredPartitions: string[] = [];
+    for (const [taskId, repositoryId, successor] of [
+      ["T5", "d".repeat(64), undefined],
+      ["T6", "e".repeat(64), { attestationId: "att_successor", generation: 1 }],
+    ] as const) {
+      const staged = await subject.stage(candidate(taskId, repositoryId));
+      const qualified = await subject.adapter.qualifyNativeCompletion({
+        candidate: staged.candidate,
+        ...staged.qualification,
+      });
+      retiredPartitions.push(qualified.queue.partition.partitionKey);
+      await backend.transact({ kind: "handle", handle: staged.prepared }, (store) => {
+        const row = store.read(staged.prepared);
+        if (row === undefined || row.kind !== "envelope" || row.implementationQueue === undefined) {
+          throw new Error("staged fixture row disappeared");
+        }
+        store.replace(row, {
+          ...row,
+          implementationQueue: {
+            ...row.implementationQueue,
+            state: "staged-rebase-retired",
+            stagedRebaseSource: {
+              ...({} as NonNullable<typeof row.implementationQueue.stagedRebaseSource>),
+              ...(successor === undefined ? {} : { successor }),
+            },
+          },
+        });
+      });
+    }
     const leasedOnly = await subject.stage(candidate("T4", "c".repeat(64)));
     const leasedQualified = await subject.adapter.qualifyNativeCompletion({
       candidate: leasedOnly.candidate,
@@ -81,12 +112,14 @@ describe("D589 startup drain of stranded implementation-queue fronts", () => {
     expect(coordinated).toEqual([
       { partitionKey: partitions[0], holderId: "startup-drain" },
       { partitionKey: partitions[2], holderId: "startup-drain" },
+      { partitionKey: retiredPartitions[0], holderId: "startup-drain" },
     ]);
     expect(reports).toEqual([
       `ledger-mcp: draining implementation queue partition ${partitions[0]} failed: cohort parent execution grant has expired`,
       expect.stringContaining(
         `drained implementation queue partition ${partitions[2]}: {"state":"empty"`,
       ),
+      expect.stringContaining(`drained implementation queue partition ${retiredPartitions[0]}`),
     ]);
   });
 });

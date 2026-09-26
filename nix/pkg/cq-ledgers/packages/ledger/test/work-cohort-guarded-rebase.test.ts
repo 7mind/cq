@@ -26,6 +26,29 @@ async function seed(backend: "memory" | "sqlite", conflict: boolean) {
 
 for (const backend of ["memory", "sqlite"] as const) {
   describe(`${backend} cohort guarded rebase [Behavioral-Active Blackbox-GoodCommunication]`, () => {
+    // D590: the cohort rebase runs with the global Git config hidden. In a
+    // repository whose identity lives only there (the production checkout),
+    // every pick failed at its commit ("empty ident name") and was misread as
+    // a content conflict.
+    test("clean rebase commits without any repository-local Git identity", async () => {
+      const f = await cohortGitBrokerFixture(backend);
+      try {
+        const request = await cohortChangeRequest(f.authorization, "candidate", "a", "base a\n", "candidate a\n");
+        await commitManagedWorktreeChanges(request, { stateDir: f.deps.stateDir, cohortAuthority: f.authority, authorize: () => undefined });
+        await writeFile(join(f.root, "unrelated.txt"), "integration\n");
+        await git(f.root, ["add", "unrelated.txt"]);
+        await git(f.root, ["commit", "-qm", "integration"]);
+        const ontoCommit = await git(f.root, ["rev-parse", "HEAD"]);
+        await git(f.root, ["config", "--unset", "user.name"]);
+        await git(f.root, ["config", "--unset", "user.email"]);
+        const result = await runGuardedRebase({ binding: f.authorization, operationId: "cohort-rebase-no-identity", ontoCommit,
+          cohortAuthority: f.authority, store: f.ledger, stateDir: f.deps.stateDir });
+        expect(result.kind).toBe("finalized");
+        expect(await git(f.authorization.worktreePath, ["log", "-1", "--format=%cn <%ce>"])).toBe(
+          "cq guarded rebase <cq-guarded-rebase@example.invalid>");
+      } finally { await f.close(); }
+    });
+
     test("clean rebase retains full cohort identity and exact replay", async () => {
       const f = await cohortGitBrokerFixture(backend);
       try {
