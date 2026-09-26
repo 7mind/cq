@@ -2937,7 +2937,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toHaveLength(1);
   });
 
-  test("parent validation intent rejects focused/final evidence substitution before the gate [Behavioral-Active Effectual-GoodCommunication]", async () => {
+  test("parent validation intent rejects focused/final evidence substitution at storage [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const scenarios = [
       {
         intent: "final" as const,
@@ -2975,37 +2975,17 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         scenario.intent,
         "refs",
       );
+      // D592: storage refuses the substitution outright. At the gate claim it
+      // surfaced only after the worker had exited and its candidate was queued.
       expect(
         await subject.capability.storeResult({
           resultCapability: subject.prepared.resultCapability,
           output: scenario.output(subject),
         }),
-      ).toMatchObject({ state: "gate-pending" });
-      if (
-        subject.capability.qualifyImplementationCandidate === undefined ||
-        subject.capability.coordinateImplementationCandidate === undefined
-      ) {
-        throw new Error("implementation candidate runtime is unavailable");
-      }
-      const qualified = await subject.capability.qualifyImplementationCandidate({
-        attestationId: subject.prepared.attestationId,
-        generation: subject.prepared.generation,
-        roleId: "implement-worker",
-        correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
-        childThreadId: `${scenario.intent}-substitution-child-thread`,
-        expectedRunId: subject.expectedChild.runId,
-        outcome: "completed",
-        exitStatus: 0,
-        observedAt: "2026-08-12T20:00:02.000Z",
-        promptDigest: subject.prepared.promptProvenance.promptDigest,
+      ).toMatchObject({
+        state: "aborted",
+        result: { reason: "invalid-output", details: { summary: expect.stringContaining(scenario.expected) } },
       });
-      if (qualified.state !== "queued") throw new Error("substitution candidate did not qualify");
-      await expect(
-        subject.capability.coordinateImplementationCandidate({
-          partitionKey: qualified.partitionKey,
-          holderId: `${scenario.intent}-substitution-coordinator`,
-        }),
-      ).rejects.toThrow(scenario.expected);
       expect(runner.requests).toHaveLength(0);
     }
   });

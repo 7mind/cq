@@ -230,7 +230,9 @@ receipt path union.
    dispatch's trusted path. When the
    private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`
    inside the sandbox. Finish the commit and verification in Step 6, then
-   call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.
+   call `store_result` without `gateDurationMs`, `supervisedGateEvidence`, or
+   `focusedChecks`: the trusted boundary refuses child-authored focused evidence
+   on a `final` dispatch, so report any focused runs in `checkSummary` instead.
    A matching `gate-pending` acknowledgement confirms durable handoff to the
    trusted parent and permits the final response. Do not wait for
    `result-stored`: the trusted parent starts the gate only after this child

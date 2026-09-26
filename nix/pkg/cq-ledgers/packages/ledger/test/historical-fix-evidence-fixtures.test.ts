@@ -515,11 +515,12 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       });
     }
 
-    // A remediation bound to any other result commit fails closed.
+    // A remediation bound to any other result commit fails closed. Both records
+    // are packaged concurrently, so either one can be the first to refuse.
     await expect(readPackagedImplementationAuditManifest({
       store,
       manifestId: D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId,
       repository: repositoryWith((taskId) => remediationFor(taskId, "0".repeat(40))),
-    })).rejects.toThrow(/does not bind tasks:T3000/u);
+    })).rejects.toThrow(/does not bind tasks:T300[01]/u);
   });
 });

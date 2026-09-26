@@ -25,7 +25,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "stale", "stale-started", "conflict", "crash", "epoch-recovery"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -108,6 +108,16 @@ for (const kind of ["memory", "sqlite"] as const) {
         expect(commands).toHaveLength(0);
         return;
       }
+      if (mode === "final-with-focused") {
+        // D592: the parent gate refused this at claim time, after the worker had
+        // exited and its candidate was queued; storage now refuses it outright.
+        const refused = await capability.storeResult({ ...resultInput, output: { ...(resultInput.output as Record<string, DispatchJSONValue>),
+          focusedChecks: [{ command: "bun test a.test.ts", exitCode: 0, passCount: 1, failCount: 0 }] } });
+        expect(refused).toMatchObject({ state: "aborted", result: { reason: "invalid-output",
+          details: { summary: expect.stringContaining("final validation cannot substitute child-authored focused-only evidence") } } });
+        expect(commands).toHaveLength(0);
+        return;
+      }
       const stored = await capability.storeResult(resultInput);
       expect(stored.state).toBe("gate-pending");
       if (capability.finalizeParentGate === undefined || prepared.prepared.parentGateCapability === undefined) throw new Error("parent gate capability missing");
@@ -122,6 +132,36 @@ for (const kind of ["memory", "sqlite"] as const) {
       const cohorts = await fixture.store.snapshot();
       expect(cohorts.portable.candidateSeals).toHaveLength(1);
       expect(cohorts.runtime.lease?.semanticSubject).toBe(cohorts.portable.evidenceSubjects[0]!.evidenceSubjectDigest);
+      if (mode === "aborted-after-seal") {
+        // D592: a sealed candidate whose only dispatch aborted can never
+        // complete, so its seal no longer protects anything; abandonment must
+        // release the preparation instead of refusing it forever.
+        // The fixture keeps its cohort state beside, not inside, its ledger.
+        const ledgerWithCohorts = new Proxy(fixture.ledger, { get: (target, key) => {
+          if (key === "workCohortStore") return () => fixture.store;
+          const value: unknown = Reflect.get(target, key, target);
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        } });
+        const advance = await createCohortAdvanceRuntimeV1({ resolved: { backend: "xdg",
+          store: ledgerWithCohorts, configRoot: fixture.root, branch: "cq-ledger" },
+          promptArtifacts: cohortPromptStore(), managedDeps: fixture.deps, dispatch: capability });
+        if (advance === undefined) throw new Error("cohort advance runtime unavailable");
+        const abandon = { definitionDigest: cohorts.portable.definitions[0]!.definitionDigest,
+          intentDigest: cohort.intent.intentDigest, operationId: "abandon-sealed" };
+        await expect(advance.releaseAbandonedPreparation(abandon)).rejects.toThrow("owns live evidence");
+        await capability.abort({ ...prepared.handle, reason: "native-failure", details: { source: "test" } });
+        // A production preparation reserves its members under its candidate
+        // intent; the fixture reserved them under its own id, so re-key it.
+        const fixtureReservation = (await fixture.store.snapshot()).portable.reservationTransitions[0]!;
+        const reservation = { cohortId: fixtureReservation.cohortId, definitionDigest: fixtureReservation.definitionDigest,
+          memberRefs: fixtureReservation.memberRefs };
+        await fixture.store.transitionReservation("rekey-release", { ...reservation, reservationId: fixtureReservation.reservationId, transition: "released" });
+        await fixture.store.transitionReservation("rekey-reserve", { ...reservation, reservationId: abandon.intentDigest, transition: "reserved" });
+        await advance.releaseAbandonedPreparation(abandon);
+        expect((await fixture.store.snapshot()).portable.reservationTransitions.at(-1)).toMatchObject({
+          reservationId: abandon.intentDigest, transition: "released" });
+        return;
+      }
       if (capability.coordinateImplementationCandidate === undefined || prepared.prepared.parentGateCapability === undefined) throw new Error("cohort queue-front capability missing");
       let parentGateCapability = prepared.prepared.parentGateCapability;
       let resumedSuccessor: Awaited<ReturnType<NonNullable<typeof capability.resumeCohortRebaseSuccessor>>> | undefined;

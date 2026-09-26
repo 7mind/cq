@@ -4609,6 +4609,12 @@ export function storeDispatchResult(
   }
   try {
     assertCohortDispatchOutput(row.input, submission.output);
+    // D592: the parent gate enforces the validation intent when it claims the
+    // candidate, after the worker has exited and the candidate was queued.
+    // Refuse the same output here, where the refusal is attributed as invalid
+    // output instead of surfacing later as a native failure.
+    const gateContext = row.parentGateCapabilityHash === undefined ? undefined : supervisedWorkerGateContextOf(row);
+    if (gateContext !== undefined) assertParentValidationIntent(gateContext, submission.output);
   } catch (error) {
     return Object.freeze({ state: "aborted" as const,
       result: writeAbort(row, at, "invalid-output", { summary: error instanceof Error ? error.message : String(error) }, deps) });

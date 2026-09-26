@@ -119,9 +119,10 @@ export async function createCohortAdvanceRuntimeV1(
    * or aborted cohort stranded whichever survived and blocked every later
    * generation over those members. They are surrendered together here.
    *
-   * It refuses unless the preparation demonstrably owns no evidence: a seal, an
-   * evidence subject or a receipt bridge means a worker's output is being
-   * protected and abandonment is not the caller's decision to make.
+   * It refuses while the preparation owns live evidence: a seal, an evidence
+   * subject or a receipt bridge whose producing dispatch can still complete
+   * means a worker's output is being protected and abandonment is not the
+   * caller's decision to make.
    */
   const releaseAbandonedPreparation = async (input: {
     readonly definitionDigest: string;
@@ -135,8 +136,22 @@ export async function createCohortAdvanceRuntimeV1(
     const seals = state.candidateSeals.filter((entry) => entry.definitionDigest === input.definitionDigest);
     const subjects = state.evidenceSubjects.filter((entry) => seals.some((seal) => seal.sealDigest === entry.sealDigest));
     const bridges = state.receiptBridges.filter((entry) => seals.some((seal) => seal.sealDigest === entry.sealDigest));
+    // D592: a seal protects a worker's output only while its producing
+    // dispatch can still complete. Once every sealed attempt's dispatch has
+    // aborted, nothing is left to protect, and refusing would strand the
+    // members forever.
     if (seals.length > 0 || subjects.length > 0 || bridges.length > 0) {
-      throw new Error("a cohort preparation that owns evidence cannot be abandoned; complete or rebase it instead");
+      const observe = options.dispatch?.observeEvidence;
+      if (observe === undefined) {
+        throw new Error("a cohort preparation that owns evidence cannot be abandoned without observing its dispatches");
+      }
+      for (const seal of seals) {
+        const attempt = state.candidateAttempts.find((entry) => entry.candidateAttemptDigest === seal.candidateAttemptDigest);
+        if (attempt === undefined) throw new Error("a cohort seal lost its candidate attempt");
+        if ((await observe(attempt.preparedDispatch)).state !== "aborted") {
+          throw new Error("a cohort preparation that owns live evidence cannot be abandoned; complete or rebase it instead");
+        }
+      }
     }
     const worktree = await releaseAbandonedManagedCohortWorktree(
       { repositoryRoot, candidateIntentDigest: input.intentDigest },
