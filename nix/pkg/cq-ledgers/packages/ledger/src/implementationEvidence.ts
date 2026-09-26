@@ -2144,6 +2144,43 @@ function protectedCompletionReviewObservation(
   );
 }
 
+/**
+ * D582/Q419: a panel that audited a v2 record before its operator gate
+ * remediation was committed matches the current record when the only change is
+ * the added `gateObservations.remediation` (plus the head binding). Any other
+ * difference — diff, acceptance, commits, review, or a replaced WIP source —
+ * does not match, so only remediation can unblock a disapproved requirement.
+ */
+function panelMatchesGateRemediationRepair(
+  panel: ImplementationAuditPanelRecord,
+  record: PackagedImplementationAuditRecord,
+  priorRepositoryHead: string,
+): boolean {
+  if (!object(panel.auditInput) || !object(record.gateObservations)) return false;
+  const { remediation, ...unremediated } = record.gateObservations;
+  if (!object(remediation) || remediation["source"] !== "operator-remediation") return false;
+  const prior = panel.auditInput;
+  const observed = {
+    recordKey: prior["recordKey"],
+    taskRef: prior["taskRef"],
+    ownerGoalRef: prior["ownerGoalRef"],
+    finalizedManifest: prior["finalizedManifest"],
+    historicalReview: prior["historicalReview"],
+    baseCommit: prior["baseCommit"],
+    resultCommit: prior["resultCommit"],
+    repositoryHead: prior["repositoryHead"],
+    diff: prior["diff"],
+    acceptance: prior["acceptance"],
+    gateObservations: prior["gateObservations"],
+    requiredObservations: prior["requiredObservations"],
+  };
+  return canonical(observed) === canonical({
+    ...record,
+    gateObservations: unremediated,
+    repositoryHead: priorRepositoryHead,
+  });
+}
+
 function panelMatchesProtectedReviewRepair(
   panel: ImplementationAuditPanelRecord,
   record: PackagedImplementationAuditRecord,
@@ -3671,6 +3708,40 @@ export class ImplementationEvidenceService {
               )
             );
           });
+        // D582/Q419: a requirement whose audits found the gate evidence missing
+        // may be replaced once every current record carries a committed operator
+        // remediation and each earlier panel differs from its record only by it.
+        // Nothing was applied, so the replacement must be audited from scratch.
+        const gateRemediationRepairCohort =
+          blocking.manifestId === IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 &&
+          blocking.state === "armed" &&
+          blocking.semanticManifestDigest !== semanticManifestDigest &&
+          matchingPanels.length > 0 &&
+          matchingAudits.length === 0 &&
+          matchingApplications.length === 0 &&
+          records.every((record) => {
+            const currentRecord = manifest.records.find(
+              (candidate) =>
+                candidate.recordKey === record.recordKey && candidate.taskRef === record.taskRef,
+            );
+            if (currentRecord === undefined) return false;
+            const panels = panelsFor(record);
+            if (panels.length === 0)
+              return object(currentRecord.gateObservations) &&
+                object(currentRecord.gateObservations["remediation"]);
+            if (panels.length !== 1) return false;
+            const attempts = attemptsFor(panels[0]!);
+            return (
+              attempts.length > 0 &&
+              attempts.every(
+                (attempt) =>
+                  attempt !== undefined &&
+                  attempt.panelRef === panels[0]!.panelRef &&
+                  attempt.terminalState !== null,
+              ) &&
+              panelMatchesGateRemediationRepair(panels[0]!, currentRecord, blocking.boundaryCommit)
+            );
+          });
         const hasPreparedEvidence =
           matchingPanels.length > 0 ||
           matchingAudits.length > 0 ||
@@ -3694,9 +3765,11 @@ export class ImplementationEvidenceService {
         if (
           (blocking.boundaryCommit === repositoryHead &&
             !terminalInconclusiveAuditCohort &&
-            !protectedReviewRepairCohort) ||
+            !protectedReviewRepairCohort &&
+            !gateRemediationRepairCohort) ||
           (blocking.semanticManifestDigest !== semanticManifestDigest &&
-            !protectedReviewRepairCohort) ||
+            !protectedReviewRepairCohort &&
+            !gateRemediationRepairCohort) ||
           blocking.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
           blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
           blocking.auditTaskRef !== cohort.auditTaskRef ||
@@ -3708,7 +3781,8 @@ export class ImplementationEvidenceService {
               blocking.fulfilledAt !== null ||
               (hasPreparedEvidence &&
                 !terminalInconclusiveAuditCohort &&
-                !protectedReviewRepairCohort))) ||
+                !protectedReviewRepairCohort &&
+                !gateRemediationRepairCohort))) ||
           (blocking.state === "fulfilled" &&
             (blocking.activationRef === null ||
               blocking.fulfilledAt === null ||

@@ -1205,6 +1205,105 @@ describe("protected historical implementation evidence [BA]", () => {
     })).toMatchObject({ status: "applied", activation: "activated" });
   });
 
+  test("D582: supersedes a disapproved requirement only when records gain an operator gate remediation", async () => {
+    const f = fixture({
+      ...manifest(),
+      manifestId: "d347-implementation-evidence-activation-v2",
+    });
+    const originalDigest = implementationAuditManifestDigest(f.packaged);
+    const original = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-gate-remediation",
+      author: "parent",
+    });
+    // Mirrors production: only the first record was audited, and disapproved.
+    f.setNativeAuditOutputMode("disapprove");
+    const first = f.packaged.records[0]!;
+    const panel = await f.service.prepareAuditPanel({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: originalDigest,
+      recordKey: first.recordKey,
+      expectedRepositoryHead: HEAD,
+      operationId: "gate-remediation-panel",
+      author: "parent",
+    });
+    for (const attemptRef of panel.attemptRefs) {
+      await f.service.prepareAuditAttempt({
+        panelRef: panel.panelRef,
+        attemptRef,
+        operationId: `gate-remediation-prepare-${attemptRef.slice(-8)}`,
+        author: "parent",
+      });
+      await f.service.finalizeAuditAttempt({
+        attemptRef,
+        operationId: `gate-remediation-finalize-${attemptRef.slice(-8)}`,
+        author: "parent",
+      });
+    }
+
+    const remediate = (record: (typeof f.packaged.records)[number]) => ({
+      ...record,
+      gateObservations: {
+        ...(record.gateObservations as Record<string, never>),
+        remediation: {
+          source: "operator-remediation",
+          path: `evidence/${record.recordKey}.json`,
+          digest: "8".repeat(64),
+          observation: { taskRef: record.taskRef, resultCommit: record.resultCommit },
+        },
+      },
+    });
+
+    // Changing the gate evidence without a remediation stays refused.
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((record) => ({ ...record, gateObservations: { exitCode: 0 } })),
+    });
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-unremediated-change",
+      author: "parent",
+    })).rejects.toThrow("a different implementation evidence activation requirement is pending");
+
+    // A remediation that also changes the audited diff stays refused.
+    const baseline = manifest().records;
+    f.replacePackaged({
+      ...f.packaged,
+      records: baseline.map((record) => ({ ...remediate(record), diff: `${record.diff}\nextra` })),
+    });
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-remediation-with-diff-change",
+      author: "parent",
+    })).rejects.toThrow("a different implementation evidence activation requirement is pending");
+
+    const remediated = { ...f.packaged, records: baseline.map(remediate) };
+    f.replacePackaged(remediated);
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: remediated.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-after-gate-remediation",
+      author: "parent",
+    });
+    expect(replacement).toMatchObject({ supersededRequirementRef: original.requirementRef });
+    // The replacement authorizes nothing by itself: it must be audited afresh.
+    await expect(f.service.applyAuditManifest({
+      manifestId: remediated.manifestId,
+      manifestDigest: implementationAuditManifestDigest(remediated),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-gate-remediation-without-audit",
+      author: "parent",
+    })).rejects.toThrow();
+  });
+
   test("rejects authority changes at protected activation and audit write boundaries", async () => {
     const activationRace = fixture();
     activationRace.setFaultInjector(async (boundary) => {
