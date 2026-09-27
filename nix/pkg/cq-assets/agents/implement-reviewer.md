@@ -95,8 +95,10 @@ require its strict versioned schema and verify that its task-arm `taskId` or
 cohort-arm `evidenceSubject`,
 `resultCommit`, `branch`, and `worktreePath` exactly match this review input.
 Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
-`passCount > 0`, `clean === true`, `roleId === "implement-worker"`, and
-`surface === "codex"`. Reject caller substitutions or incomplete evidence.
+`passCount > 0`, `clean === true`, and `roleId === "implement-worker"`. A
+task arm additionally requires `surface === "codex"`; the runner supervises a
+cohort arm's worker on every surface, so a cohort arm accepts any `surface`.
+Reject caller substitutions or incomplete evidence.
 Do **not** invoke `cq gate run` when this exact evidence is valid. On valid evidence set
 `gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, omit reviewer
 `gateDurationMs`, and cite the runner-owned counts, command, duration, and
