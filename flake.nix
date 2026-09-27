@@ -757,7 +757,7 @@ EOF
             ln -s "$WORKSPACE/packages/process-control" \
               "$WORKSPACE/packages/cq-cli/node_modules/@cq/process-control"
 
-            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
               mkdir -p $out/libexec
               $CC -Wall -Wextra -Werror \
                 packages/process-control/native/darwin-process-identity.c \
@@ -779,7 +779,7 @@ EOF
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
               --set-default CQ_PROMPT_SURFACES_ROOT "$WORKSPACE/prompt-surfaces" \
               --set CQ_PROCESS_IDENTITY_HELPER "$out/libexec/cq-process-identity" \
-              --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}
+              --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps ])}
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-codex-role \
               --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
               --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
@@ -901,7 +901,7 @@ EOF
               exit 1
             fi
 
-            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
               # Behavioral-Active, Effectual-GoodCommunication. Regression D320:
               # exercise the installed wrapper through a real PTY and keep its
               # input open until the role has launched and settled its result.
@@ -1011,7 +1011,7 @@ EOF
             ${pkgs.git}/bin/git init -q "$gateRepo"
             ln -s "$gateRepo" "$gateAlias"
             gateRun() {
-              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} $out/bin/cq gate run "$@"
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.util-linux}/bin/setsid"} $out/bin/cq gate run "$@"
             }
             gateRun \
               --worktree "$gateRepo" \
@@ -1052,7 +1052,7 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
-            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
               export CQ_PROCESS_IDENTITY_HELPER=$out/libexec/cq-process-identity
             ''}
             ${pkgs.bun}/bin/bun test \
@@ -1066,12 +1066,12 @@ EOF
             # sandbox -P <p> -C <dir> -- <cmd>` — runs under seatbelt on
             # aarch64-darwin, so the guard was never a platform limitation.
             export CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex
-            PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
+            PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
               CQ_TEST_GUARDED_REBASE_CANDIDATE=$out \
-              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid "}${pkgs.bun}/bin/bun test \
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.util-linux}/bin/setsid "}${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts" \
                 "$WORKSPACE/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts" \
                 "$WORKSPACE/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts" \
@@ -1617,7 +1617,7 @@ EOF
               test "$(CQ_AGENTS_DIR=/custom/agents PI_CODING_AGENT_DIR=/preset/pi \
                 ${pkgs.bash}/bin/bash -c '. ./cq-agents-dir-export.sh; printf %s "$CQ_AGENTS_DIR"')" \
                 = "/custom/agents"
-              ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                 test -x ${piPromptRootTest.dispatchExtensionDir}/libexec/cq-process-identity
                 ${pkgs.ripgrep}/bin/rg -Fq \
                   ${pkgs.lib.escapeShellArg "${piPromptRootTest.dispatchExtensionDir}/libexec/cq-process-identity"} \
