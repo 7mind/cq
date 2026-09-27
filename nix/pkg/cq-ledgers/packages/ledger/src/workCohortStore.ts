@@ -921,6 +921,18 @@ export interface WorkCohortStore {
   transitionReservation(operationId: string, transition: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest">): Promise<CohortReservationTransitionV1>;
   releaseRefusedPreparation(operationId: string, lease: WorkCohortLeaseV1,
     reservation: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest" | "transition">): Promise<CohortReservationTransitionV1>;
+  /**
+   * D594: surrender a preparation whose every sealed dispatch aborted. Its
+   * evidence subjects become ineligible, its reservation is released, and a
+   * runtime lease bound to one of those subjects is cleared: that lease was
+   * re-bound at sealing under a capability no journal retains. A `null`
+   * reservation means an earlier partial abandonment already released it.
+   */
+  abandonDeadEvidence(operationId: string, input: {
+    readonly definitionDigest: string;
+    readonly reservation: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest" | "transition"> | null;
+    readonly evidenceSubjectDigests: readonly string[];
+  }): Promise<void>;
   transitionMember(operationId: string, transition: Omit<CohortMemberTransitionV1, "kind" | "version" | "transitionDigest">): Promise<CohortMemberTransitionV1>;
   recordSplit(operationId: string, split: Omit<CohortSplitLineageV1, "kind" | "version" | "splitDigest">): Promise<CohortSplitLineageV1>;
   recordProbe(operationId: string, probe: Omit<CohortProbeIdentityV1, "kind" | "version" | "probeDigest">): Promise<CohortProbeIdentityV1>;
@@ -1228,6 +1240,47 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
       const mutation = operationMutation(current, operationId, request,
         (state) => this.#applyReservationTransition(state, request));
       return { ...mutation, next: { ...mutation.next, runtime: { ...mutation.next.runtime, lease: null } } };
+    });
+  }
+
+  abandonDeadEvidence(operationId: string, input: {
+    readonly definitionDigest: string;
+    readonly reservation: Omit<CohortReservationTransitionV1, "kind" | "version" | "transitionDigest" | "transition"> | null;
+    readonly evidenceSubjectDigests: readonly string[];
+  }): Promise<void> {
+    const request = input.reservation === null ? null : { ...input.reservation, transition: "released" as const };
+    if (request !== null && request.definitionDigest !== input.definitionDigest) {
+      throw new WorkCohortOperationConflictError("abandoned evidence and its reservation name different definitions");
+    }
+    const subjects = new Set(input.evidenceSubjectDigests);
+    return this.#persistence.transact((current) => {
+      const identity = { definitionDigest: input.definitionDigest, reservation: request, evidenceSubjectDigests: [...subjects].sort() };
+      const mutation = operationMutation(current, operationId, identity, (state) => {
+        const eligible = new Set<string>();
+        for (const transition of state.acceptanceTransitions) {
+          if (transition.definitionDigest !== input.definitionDigest) continue;
+          if (transition.eligible) eligible.add(transition.evidenceSubjectDigest);
+          else eligible.delete(transition.evidenceSubjectDigest);
+        }
+        for (const subject of [...subjects].sort()) {
+          if (!eligible.has(subject)) continue;
+          const invalidation = {
+            kind: "cq-cohort-candidate-acceptance-transition" as const,
+            version: 1 as const,
+            definitionDigest: input.definitionDigest,
+            evidenceSubjectDigest: subject,
+            eligible: false,
+            replacementEvidenceSubjectDigest: null,
+          };
+          appendExact(state.acceptanceTransitions, (value) => value.transitionDigest,
+            { ...invalidation, transitionDigest: digest(invalidation) }, "candidate acceptance transition");
+        }
+        return request === null ? null : this.#applyReservationTransition(state, request);
+      });
+      const lease = mutation.next.runtime.lease;
+      const abandonedLease = lease !== null && subjects.has(lease.semanticSubject);
+      return { ...mutation, result: undefined,
+        next: abandonedLease ? { ...mutation.next, runtime: { ...mutation.next.runtime, lease: null } } : mutation.next };
     });
   }
 

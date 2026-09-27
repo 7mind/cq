@@ -153,6 +153,7 @@ export async function createCohortAdvanceRuntimeV1(
         }
       }
     }
+    const deadEvidence = seals.length > 0 || subjects.length > 0 || bridges.length > 0;
     const worktree = await releaseAbandonedManagedCohortWorktree(
       { repositoryRoot, candidateIntentDigest: input.intentDigest },
       deps,
@@ -176,7 +177,11 @@ export async function createCohortAdvanceRuntimeV1(
     const lease = input.lease ?? readRetainedPreparationLease(
       managedWorktreeRegistryRoot(repositoryRoot, deps.stateDir), input.intentDigest);
     const live = (await cohorts.snapshot()).runtime.lease;
-    if (live !== null && lease !== null) await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, lease, reservation);
+    if (deadEvidence) {
+      await cohorts.abandonDeadEvidence(`${input.operationId}:abandon-evidence`, {
+        definitionDigest: input.definitionDigest, reservation: active.length === 0 ? null : reservation,
+        evidenceSubjectDigests: subjects.map((subject) => subject.evidenceSubjectDigest) });
+    } else if (live !== null && lease !== null) await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, lease, reservation);
     else await cohorts.transitionReservation(`${input.operationId}:release`, { ...reservation, transition: "released" });
     return worktree;
   };

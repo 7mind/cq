@@ -5,7 +5,8 @@ import { CODEX_CORRELATION_SEPARATOR, InMemoryAttestationBackend, InMemoryAttest
   type AttestationBackend, type DispatchJSONValue, type DispatchPrepared } from "@cq/config";
 import { cohortValueDigestV1, createCohortCommandBoundaryV1, createInMemoryImplementationEvidenceStore, resolveRetainedManagedCohortAuthority,
   createCohortEffectEnvelopeV1, observeManagedWorktreeConflictState } from "@cq/ledger";
-import { prepareManagedCohortRebaseSuccessor, resumeManagedCohortRebaseSuccessor, parseWorkCohortPortableStateV1, createInMemoryWorkCohortStore } from "@cq/ledger";
+import { prepareManagedCohortRebaseSuccessor, resumeManagedCohortRebaseSuccessor, parseWorkCohortPortableStateV1, createInMemoryWorkCohortStore,
+  workCohortHasPendingSealedCandidateV1 } from "@cq/ledger";
 import { createLedgerMcpToolSpecifications, createTrustedWorksetManagementAuthority } from "@cq/ledger";
 import { cohortBrokerGit, cohortChangeRequest, cohortGitBrokerFixture, rawDigest } from "../../ledger/test/workCohortGitBrokerFixture.js";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
@@ -157,8 +158,17 @@ for (const kind of ["memory", "sqlite"] as const) {
         const reservationId = (await fixture.store.snapshot()).portable.reservationTransitions[0]!.reservationId;
         expect(reservationId).not.toBe(abandon.intentDigest);
         await advance.releaseAbandonedPreparation(abandon);
-        expect((await fixture.store.snapshot()).portable.reservationTransitions.at(-1)).toMatchObject({
-          reservationId, transition: "released" });
+        const released = await fixture.store.snapshot();
+        expect(released.portable.reservationTransitions.at(-1)).toMatchObject({ reservationId, transition: "released" });
+        // D594: after sealing, the lease is re-bound to the evidence subject under a
+        // capability no journal retains, and a dead seal still counted as pending.
+        // Either left every later cohort unable to acquire authority.
+        expect(released.runtime.lease).toBeNull();
+        expect(workCohortHasPendingSealedCandidateV1(released.portable)).toBe(false);
+        // A repeat after the reservation is already surrendered (production
+        // reached that state through an earlier partial abandonment) succeeds.
+        await advance.releaseAbandonedPreparation({ ...abandon, operationId: "abandon-sealed-again" });
+        expect((await fixture.store.snapshot()).runtime.lease).toBeNull();
         return;
       }
       if (capability.coordinateImplementationCandidate === undefined || prepared.prepared.parentGateCapability === undefined) throw new Error("cohort queue-front capability missing");
