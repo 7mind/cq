@@ -8,8 +8,10 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  DECISIONS_LEDGER,
   InMemoryLedgerStore,
   MEMORIES_LEDGER,
+  MEMORIES_SCHEMA,
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   UnsupportedMemoryKindError,
@@ -17,7 +19,11 @@ import {
   isMemoryKind,
   resolveMemoryKind,
   type Item,
+  type Ledger,
 } from "../src/index.js";
+import { createGenericMutationTransaction } from "../src/store/genericMutationTransaction.js";
+import { createOwnedWriteTransaction } from "../src/store/ownedWriteTransaction.js";
+import { applyDetachMilestoneGroup } from "../src/store/core.js";
 
 const TS = "2026-03-04T05:06:07.000Z";
 
@@ -90,6 +96,110 @@ describe("resolveMemoryKind", () => {
   it("isMemoryKind admits exactly the closed set", () => {
     expect(["fact", "rule", "environment"].every(isMemoryKind)).toBe(true);
     expect(["", "Fact", "opinion", undefined, 1, ["fact"]].some(isMemoryKind)).toBe(false);
+  });
+});
+
+describe("transaction reads resolve the memory kind like the public read", () => {
+  function legacyLedgers(): Map<string, Ledger> {
+    const legacy = memory({});
+    const ledger: Ledger = {
+      id: MEMORIES_LEDGER,
+      schema: MEMORIES_SCHEMA,
+      counters: { milestone: 0, item: 7 },
+      milestones: [{ id: MILESTONES_AMBIENT_ID, title: "", description: "", items: [legacy] }],
+      archivePointers: [],
+    };
+    return new Map([[MEMORIES_LEDGER, ledger]]);
+  }
+
+  function storedKind(ledgers: Map<string, Ledger>): unknown {
+    return ledgers.get(MEMORIES_LEDGER)?.milestones[0]?.items[0]?.fields.kind;
+  }
+
+  it("generic and owned transactions return semantic fact without writing it", () => {
+    const generic = legacyLedgers();
+    const genericTx = createGenericMutationTransaction({
+      ledgers: generic,
+      archives: new Map(),
+      unloadedArchiveKeys: new Set(),
+      now: () => TS,
+    }).tx;
+    expect(genericTx.fetchItem(MEMORIES_LEDGER, "MEM7").fields.kind).toBe("fact");
+    expect(storedKind(generic)).toBeUndefined();
+
+    const owned = legacyLedgers();
+    const ownedTx = createOwnedWriteTransaction({ ledgers: owned, now: () => TS }).tx;
+    expect(ownedTx.fetchItem(MEMORIES_LEDGER, "MEM7").fields.kind).toBe("fact");
+    expect(storedKind(owned)).toBeUndefined();
+  });
+
+  /**
+   * A completed milestone with a terminal decision (ordered before memories)
+   * and an unsupported terminal memory, plus an unsupported ambient memory.
+   * Returned as a plain map: the shared transaction itself, not a backend
+   * rollback, must leave it untouched on rejection.
+   */
+  async function unsupportedArchiveState(): Promise<{ ledgers: Map<string, Ledger>; milestoneId: string }> {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const milestone = await store.createMilestone({ title: "archive" });
+    const decision = await store.createItem(DECISIONS_LEDGER, milestone.id, {
+      status: "proposed",
+      fields: { headline: "sibling" },
+    });
+    await store.updateItem(DECISIONS_LEDGER, decision.id, { status: "superseded" });
+    await store.updateMilestone(milestone.id, { status: "done" });
+    const ledgers = structuredClone((store as unknown as { ledgers: Map<string, Ledger> }).ledgers);
+    await store.dispose();
+    const memories = ledgers.get(MEMORIES_LEDGER);
+    if (memories === undefined) throw new Error("state lacks memories");
+    const unsupported = (id: string, milestoneId: string): Item => ({
+      ...memory({ kind: "opinion" }),
+      id,
+      milestoneId,
+      status: "superseded",
+    });
+    memories.milestones.push(
+      { id: MILESTONES_AMBIENT_ID, title: "", description: "", items: [unsupported("MEM1", MILESTONES_AMBIENT_ID)] },
+      { id: milestone.id, title: "", description: "", items: [unsupported("MEM2", milestone.id)] },
+    );
+    return { ledgers, milestoneId: milestone.id };
+  }
+
+  it("the shared transaction rejects an unsupported archival kind before any effect", async () => {
+    const { ledgers, milestoneId } = await unsupportedArchiveState();
+    const before = structuredClone(ledgers);
+    const transaction = createGenericMutationTransaction({
+      ledgers,
+      archives: new Map(),
+      unloadedArchiveKeys: new Set(),
+      now: () => TS,
+    });
+    expect(() =>
+      transaction.tx.archiveTerminalItems(
+        [DECISIONS_LEDGER, MEMORIES_LEDGER],
+        "sweep",
+        "retain-active-gates",
+      ),
+    ).toThrow(UnsupportedMemoryKindError);
+    expect(ledgers).toEqual(before);
+    expect(() => transaction.tx.archiveMilestone(milestoneId, "archive")).toThrow(
+      UnsupportedMemoryKindError,
+    );
+    expect(ledgers).toEqual(before);
+    expect(transaction.dirtyLedgers.size).toBe(0);
+    expect(transaction.dirtyArchives.size).toBe(0);
+  });
+
+  it("applyDetachMilestoneGroup rejects an unsupported kind before detaching the group", async () => {
+    const { ledgers, milestoneId } = await unsupportedArchiveState();
+    const memories = ledgers.get(MEMORIES_LEDGER);
+    if (memories === undefined) throw new Error("state lacks memories");
+    const before = structuredClone(memories);
+    expect(() =>
+      applyDetachMilestoneGroup(memories, milestoneId, "archive", "./archive/memories/x.md", "", ""),
+    ).toThrow(UnsupportedMemoryKindError);
+    expect(memories).toEqual(before);
   });
 });
 
