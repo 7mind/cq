@@ -2612,7 +2612,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/projectGate.test.ts",
-      "sha256": "46fff4c7257edb624ccfb9043fdfb030418a24080bb083d965e2bed3c23f9e00",
+      "sha256": "026568cfd88d86ba1734d62d28379d1319772b38a4981d91c8a78868200f2033",
       "targets": []
     },
     {

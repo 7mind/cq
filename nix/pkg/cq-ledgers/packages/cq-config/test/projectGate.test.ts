@@ -19,6 +19,17 @@ import {
 
 const PACKAGES_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..");
 
+/** The main worktree of this checkout: a linked worktree's `.git` file names a gitdir whose `commondir` is the shared `.git`. */
+function mainWorktreeRoot(): string {
+  const checkoutRoot = path.resolve(PACKAGES_ROOT, "..", "..", "..", "..");
+  const dotGit = path.join(checkoutRoot, ".git");
+  if (statSync(dotGit).isDirectory()) return checkoutRoot;
+  const gitDir = /^gitdir: (.+)$/mu.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+  if (gitDir === undefined) throw new Error(`${dotGit} names no gitdir`);
+  const commonDir = path.resolve(gitDir, readFileSync(path.join(gitDir, "commondir"), "utf8").trim());
+  return path.dirname(commonDir);
+}
+
 function productionSources(): string[] {
   const found: string[] = [];
   const walk = (dir: string): void => {
@@ -99,7 +110,10 @@ describe("D403 project gate definition", () => {
   });
 
   test("this repository declares its own gate rather than leaning on the fallback", () => {
-    const toml = readFileSync(path.resolve(PACKAGES_ROOT, "..", "..", "..", "..", "cq.toml"), "utf8");
+    // D595: cq.toml is untracked local configuration, so a managed worktree
+    // never has one. CQ resolves the gate from the checkout that owns the
+    // configuration, the main worktree, so read it from there.
+    const toml = readFileSync(path.join(mainWorktreeRoot(), "cq.toml"), "utf8");
     expect(toml).toContain("[gate]");
     // The configured path is the exercised one, so the fallback is not the
     // thing under test in this repository's own runs.
