@@ -504,6 +504,7 @@ export type {
 export {
   commitManagedWorktreeChanges,
   resolveInheritedGitChangeReceipts,
+  assertFailedCorrectionLinkReceipts,
   validateGitChangeBrokerResultEvidence,
 } from "./gitChangeBroker.js";
 export type { GitChangeReceiptLineageBinding } from "./gitChangeBroker.js";

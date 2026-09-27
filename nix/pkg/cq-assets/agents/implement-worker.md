@@ -210,8 +210,10 @@ receipt path union.
    add or change, deliberately make it fail, capture the expected failure,
    restore the intended bytes, and capture the pass. Hash affected files before
    mutation and after restoration. Report only observations from this run in
-   `mutationTable`; if evidence is unavailable, report the gap rather than
-   claiming success.
+   `mutationTable`, one row per mutation of exactly
+   `{ "mutation", "observed", "restored" }` strings and no other key; put the
+   hashes inside those strings. If evidence is unavailable, report the gap
+   rather than claiming success.
 
 4. **Run targeted checks.** Use exact test paths when discovery matters and
    record nonzero test counts. Check wrapped prose with a multiline-aware

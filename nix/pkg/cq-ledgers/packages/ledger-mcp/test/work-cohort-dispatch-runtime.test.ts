@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -368,7 +368,7 @@ for (const kind of ["memory", "sqlite"] as const) {
       expect(coordinated.state).toBe("completed");
       expect(commands.slice(0, 2).sort()).toEqual(["bun test packages/ledger/test/tasks:T1.test.ts", "bun test packages/ledger/test/tasks:T2.test.ts"]);
       expect(commands.slice(2)).toEqual(["bun test shared.test.ts", "bun run check"]);
-      if (mode === "correction" || mode === "correction-retry") {
+      if (mode === "correction" || mode === "correction-retry" || mode === "correction-fail" || mode === "correction-changed") {
         // D598: a reviewer disapproved the gate-green candidate; its correction
         // round continues in the same managed worktree under a new intent.
         const tool = createLedgerMcpToolSpecifications(fixture.ledger, undefined, undefined, undefined, undefined,
@@ -404,16 +404,56 @@ for (const kind of ["memory", "sqlite"] as const) {
         await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle })).rejects.toThrow("unretired cohort worker");
         let next = successor.prepared;
         await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
-        if (mode === "correction-retry") {
+        let retryStart = receipt.newHead;
+        if (mode === "correction-retry" || mode === "correction-fail" || mode === "correction-changed") {
           // D598: the correction worker failed without a change; a further round
           // continues from the same tip under yet another fresh intent.
-          await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).rejects.toThrow("unchanged aborted pre-seal worker");
-          await capability.abort({ ...next, reason: "native-failure", details: { source: "test" } });
+          await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).rejects.toThrow("or one failed pre-seal worker");
+          if (mode === "correction-retry") {
+            await capability.abort({ ...next, reason: "native-failure", details: { source: "test" } });
+          } else if (mode === "correction-changed") {
+            // D598: the correction committed through its broker, then died; its
+            // proven receipts carry the partial work into the next round.
+            const abortedRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+            const abortedBinding = abortedRow?.kind === "envelope" ? abortedRow.gitEffectBinding : undefined;
+            if (abortedBinding?.cohort === undefined) throw new Error("changed correction lost its binding");
+            const partial = await capability.gitCommit!({ ...next, gitChangeCapability: next.gitChangeCapability!,
+              ...await cohortChangeRequest({ ...fixture.authorization, ...abortedBinding }, "partial", "b", "base b\n", "partial member b\n") });
+            retryStart = partial.newHead;
+            await capability.abort({ ...next, reason: "native-failure", details: { source: "test-changed" } });
+            // An unbrokered commit is not the failed link's own work.
+            await writeFile(join(abortedBinding.worktreePath, "b.txt"), "raw member b\n");
+            await cohortBrokerGit(abortedBinding.worktreePath, ["commit", "-qam", "raw"]);
+            await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).rejects.toThrow("durable broker receipts do not form one complete commit chain");
+            await cohortBrokerGit(abortedBinding.worktreePath, ["reset", "-q", "--hard", partial.newHead]);
+          } else {
+            // D600: a typed refusal whose filesTouched omits the prior round's
+            // work settles as a consumed fail and keeps its blockedReason.
+            const failedRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+            const failedBinding = failedRow?.kind === "envelope" ? failedRow.gitEffectBinding : undefined;
+            if (failedBinding?.cohort === undefined || failedBinding.guardedRebaseBridge === undefined) throw new Error("failed correction lost its bridge");
+            const failedBridge = failedBinding.guardedRebaseBridge;
+            await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
+              cohort: failedBinding.cohort, memberObservations: failedBinding.cohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Refused" })),
+              status: "fail", resultCommit: null, branch: failedBinding.branch, actualWorktreePath: failedBinding.worktreePath,
+              filesTouched: [], gitReceipts: [], checkSummary: "No candidate", summary: "Refused the round",
+              gitLineage: { kind: "guarded-rebase", guardedRebase: failedBridge.guardedRebase, ontoCommit: failedBridge.ontoCommit,
+                rebasedStartCommit: failedBridge.rebasedStartCommit, exactTip: failedBridge.exactTip },
+              baseVerification: { status: "verified", relation: "descendant", baseCommit: fixture.baseCommit, headCommit: receipt.newHead },
+              blockedReason: "contradictory dispatch",
+            } as unknown as DispatchJSONValue });
+            await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId: "correction-child",
+              childThreadId: "correction-thread", expectedRunId: correctionChild.runId,
+              outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
+            const settled = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+            expect(settled?.kind === "envelope" ? [settled.state, (settled.output as Record<string, unknown>)["blockedReason"]] : undefined)
+              .toEqual(["consumed", "contradictory dispatch"]);
+          }
           const retryReady = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: { attestationId: next.attestationId, generation: next.generation } });
           expect(retryReady.reprepareOf).toEqual({ attestationId: next.attestationId, generation: next.generation });
           const retryInput = retryReady.input as Record<string, DispatchJSONValue>;
           expect((retryInput["cohort"] as unknown as typeof cohort).intent.intentDigest).not.toBe(successorCohortOf(ready.input).intent.intentDigest);
-          expect(retryInput).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, round: 2 });
+          expect(retryInput).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: retryStart, priorResultCommit: retryStart, round: 2 });
           expect(await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).toEqual(retryReady);
           correctionChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}retry-child`, runId: "retry-run" };
           correlationId = "retry-child";
@@ -430,7 +470,8 @@ for (const kind of ["memory", "sqlite"] as const) {
         if (successorBinding?.cohort === undefined || successorBinding.guardedRebaseBridge === undefined) throw new Error("correction successor lost its bridge");
         const bridge = successorBinding.guardedRebaseBridge;
         const fix = await capability.gitCommit!({ ...next, gitChangeCapability: next.gitChangeCapability!,
-          ...await cohortChangeRequest({ ...fixture.authorization, ...successorBinding }, "correction", "b", "base b\n", "corrected member b\n") });
+          ...await cohortChangeRequest({ ...fixture.authorization, ...successorBinding }, "correction", "b",
+            mode === "correction-changed" ? "partial member b\n" : "base b\n", "corrected member b\n") });
         await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
           cohort: successorBinding.cohort, memberObservations: successorCohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Criticism addressed" })),
           status: "pass", resultCommit: fix.newHead, branch: successorBinding.branch, actualWorktreePath: successorBinding.worktreePath,

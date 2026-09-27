@@ -137,6 +137,7 @@ import {
   observeManagedWorktreeConflictState,
   observeManagedWorktreeRebaseTip,
   resolveInheritedGitChangeReceipts,
+  assertFailedCorrectionLinkReceipts,
   resolveUniquePendingGuardedRebaseConflict,
   runGuardedRebase,
   runGuardedRebaseUnderManagedLock,
@@ -849,7 +850,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         const sealed = await options.backend.transact(binding.cohortRebaseTransition === undefined ? { kind: "handle", handle } : { kind: "namespace" }, async (attestations) => {
           const authenticator = new G213CandidateAuthenticatorV1({ store: attestations,
-            repository: new GitG213CandidateRepositoryV1({ repositoryRoot, repositoryId: binding.repositoryId }) });
+            repository: new GitG213CandidateRepositoryV1({ repositoryRoot, repositoryId: binding.repositoryId }),
+            failedLinkReceipts: (link, fromCommit, toCommit) => assertFailedCorrectionLinkReceipts(link, fromCommit, toCommit, managerDeps) });
           const row = await authenticator.resolve(handle);
           const attempt = authenticator.stage(pending, { row });
           return store.sealCandidate(`qualified:${handle.attestationId}:${handle.generation}`, {
@@ -4254,17 +4256,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const workerDispatch = { attestationId: request.workerDispatch.attestationId, generation: request.workerDispatch.generation };
       if (cohortStore === undefined || options.ledgerStore === undefined) throw new Error("cohort correction requires its production stores");
       // A correction continues either a consumed, reviewed candidate or a
-      // correction worker that aborted before changing the tree.
+      // correction worker that failed or aborted, with any partial work its own.
       const source = await options.backend.transact({ kind: "handle", handle: workerDispatch }, (store) => {
         const row = store.read(workerDispatch);
         const reviewed = row !== undefined && !isAttestationTombstone(row) && row.state === "consumed" &&
           row.implementationQueue?.state === "leased" && row.implementationQueue.qualification !== undefined &&
           row.stagedRebaseSourceBinding === undefined;
-        const unchangedAbort = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
-          row.implementationQueue === undefined && row.gitEffectBinding?.cohort?.state === "pre-seal";
+        const failed = row !== undefined && !isAttestationTombstone(row) && (row.state === "aborted" ||
+          (row.state === "consumed" && dispatchObject(row.output) && row.output["status"] === "fail"));
+        const failedPreSeal = failed && row.implementationQueue === undefined && row.gitEffectBinding?.cohort?.state === "pre-seal";
         if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
-            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || unchangedAbort) || !dispatchObject(row.input)) {
-          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker or one unchanged aborted pre-seal worker");
+            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || failedPreSeal) || !dispatchObject(row.input)) {
+          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker or one failed pre-seal worker");
         }
         return row;
       });
@@ -4274,19 +4277,27 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const round = sourceInput["round"];
       if (!Number.isSafeInteger(round) || (round as number) < 0) throw new Error("cohort correction source round is malformed");
       const attempt = source.implementationQueue?.attempt;
-      const priorResultCommit = attempt?.resultCommit ?? sourceInput["startingCommit"];
+      const startingCommit = sourceInput["startingCommit"];
       // The correction keeps the candidate's own base: a rebase onto it is an
       // exact-tip no-op whose bridge moves the cohort to a fresh pre-seal intent.
       const ontoCommit = attempt?.observedBaseCommit ?? sourceInput["baseCommit"];
-      if (typeof priorResultCommit !== "string" || typeof ontoCommit !== "string") throw new Error("cohort correction source coordinates are malformed");
+      if (typeof startingCommit !== "string" || typeof ontoCommit !== "string") throw new Error("cohort correction source coordinates are malformed");
       await assertCohortParentExecution(workerDispatch);
-      let guardedRebase = (await readManagedCohortRebaseSuccessor(prior, managerDeps))?.bridge.guardedRebase;
-      if (guardedRebase === undefined) {
+      const recorded = await readManagedCohortRebaseSuccessor(prior, managerDeps);
+      let guardedRebase = recorded?.bridge.guardedRebase;
+      let priorResultCommit = recorded?.bridge.oldResultCommit;
+      if (guardedRebase === undefined || priorResultCommit === undefined) {
         const retained = attempt === undefined ? await resolveCohortAuthority(prior.cohort, false)
           : await resolveSealedCohortAuthority(prior, workerDispatch, false);
         const liveTip = await readOnlyGit(prior.worktreePath, ["rev-parse", "HEAD"]);
         const clean = (await readOnlyGitAllowEmpty(prior.worktreePath, ["status", "--porcelain", "--untracked-files=all"])) === "";
-        if (!clean || liveTip !== priorResultCommit) throw new Error("cohort correction source is no longer its clean terminal tip");
+        if (!clean || (attempt !== undefined && liveTip !== attempt.resultCommit)) throw new Error("cohort correction source is no longer its clean terminal tip");
+        // A failed correction carries forward only its own journaled broker commits.
+        if (attempt === undefined) {
+          await assertFailedCorrectionLinkReceipts({ ...prior, attestationId: workerDispatch.attestationId, generation: workerDispatch.generation },
+            startingCommit, liveTip, managerDeps);
+        }
+        priorResultCommit = liveTip;
         const rebase = await runGuardedRebase({ binding: retained.binding, cohortAuthority: retained.authority, store: options.ledgerStore,
           operationId: `cohort-correction-${dispatchPayloadDigest({ source: workerDispatch }).slice(0, 32)}`, ontoCommit,
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }) });
@@ -6004,6 +6015,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 ? {}
                 : { stateDir: options.worktreeStateDir }),
               diffBaseCommit: dispatchBaseCommit,
+              deriveFilesTouched: true,
               ...(receiptChainTransition === undefined ? {} : { receiptChainTransition }),
               ...(receiptChainTransitions === undefined ? {} : { receiptChainTransitions }),
             },
