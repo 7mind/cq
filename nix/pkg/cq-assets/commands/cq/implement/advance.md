@@ -858,7 +858,7 @@ rebased worktree tip, and `priorResultCommit` to the exact pre-rebase worker
 rejects any substitution. Never claim the rewritten pre-rebase commit is an
 ancestor of the rebased tip — the exact-equality binding is the only ancestry
 exemption. The server-resolved lineage selects the mode: under `exactTip` the
-worker reports the exact rebased tip with an empty fresh receipt suffix and no
+worker may report the exact rebased tip with an empty fresh receipt suffix and no
 early WIP commit; any guarded correction that advances the tip keeps early
 persistence and a non-empty contiguous suffix beginning at the rebased head,
 and any later criticism round follows the ordinary persistence procedure.

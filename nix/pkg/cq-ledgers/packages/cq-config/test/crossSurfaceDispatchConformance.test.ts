@@ -250,7 +250,7 @@ function guardedRebaseContractViolations(body: string): readonly GuardedRebaseVi
     ],
     [
       "missing-exact-tip-mode",
-      "the worker reports the exact rebased tip with an empty fresh receipt suffix and no early WIP commit",
+      "the worker may report the exact rebased tip with an empty fresh receipt suffix and no early WIP commit",
     ],
     [
       "missing-correction-persistence",

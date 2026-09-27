@@ -4249,43 +4249,52 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const successor = await prepareRetiredStagedRebaseSuccessor(context, resumed.bridge.guardedRebase, resumed.bridge.rebasedStartCommit);
       return { state: "successor-queued", source: input.source, successor };
     },
-    prepareCohortCorrectionSuccessor: async ({ workerDispatch }) => {
+    prepareCohortCorrectionSuccessor: async (request) => {
       assertImplementationExecutor("acquire");
+      const workerDispatch = { attestationId: request.workerDispatch.attestationId, generation: request.workerDispatch.generation };
       if (cohortStore === undefined || options.ledgerStore === undefined) throw new Error("cohort correction requires its production stores");
+      // A correction continues either a consumed, reviewed candidate or a
+      // correction worker that aborted before changing the tree.
       const source = await options.backend.transact({ kind: "handle", handle: workerDispatch }, (store) => {
         const row = store.read(workerDispatch);
+        const reviewed = row !== undefined && !isAttestationTombstone(row) && row.state === "consumed" &&
+          row.implementationQueue?.state === "leased" && row.implementationQueue.qualification !== undefined &&
+          row.stagedRebaseSourceBinding === undefined;
+        const unchangedAbort = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
+          row.implementationQueue === undefined && row.gitEffectBinding?.cohort?.state === "pre-seal";
         if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
-            row.promptProvenance.roleId !== "implement-worker" || row.state !== "consumed" ||
-            row.implementationQueue?.state !== "leased" || row.implementationQueue.qualification === undefined ||
-            row.stagedRebaseSourceBinding !== undefined || !dispatchObject(row.input)) {
-          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker");
+            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || unchangedAbort) || !dispatchObject(row.input)) {
+          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker or one unchanged aborted pre-seal worker");
         }
         return row;
       });
       const prior = source.gitEffectBinding!;
       if (prior.cohort === undefined) throw new Error("cohort correction source lost its cohort binding");
-      const attempt = source.implementationQueue!.attempt;
       const sourceInput = source.input as Readonly<Record<string, DispatchJSONValue>>;
       const round = sourceInput["round"];
       if (!Number.isSafeInteger(round) || (round as number) < 0) throw new Error("cohort correction source round is malformed");
-      await assertCohortParentExecution(workerDispatch);
+      const attempt = source.implementationQueue?.attempt;
+      const priorResultCommit = attempt?.resultCommit ?? sourceInput["startingCommit"];
       // The correction keeps the candidate's own base: a rebase onto it is an
       // exact-tip no-op whose bridge moves the cohort to a fresh pre-seal intent.
-      const ontoCommit = attempt.observedBaseCommit;
+      const ontoCommit = attempt?.observedBaseCommit ?? sourceInput["baseCommit"];
+      if (typeof priorResultCommit !== "string" || typeof ontoCommit !== "string") throw new Error("cohort correction source coordinates are malformed");
+      await assertCohortParentExecution(workerDispatch);
       let guardedRebase = (await readManagedCohortRebaseSuccessor(prior, managerDeps))?.bridge.guardedRebase;
       if (guardedRebase === undefined) {
-        const retained = await resolveSealedCohortAuthority(prior, workerDispatch, false);
+        const retained = attempt === undefined ? await resolveCohortAuthority(prior.cohort, false)
+          : await resolveSealedCohortAuthority(prior, workerDispatch, false);
         const liveTip = await readOnlyGit(prior.worktreePath, ["rev-parse", "HEAD"]);
         const clean = (await readOnlyGitAllowEmpty(prior.worktreePath, ["status", "--porcelain", "--untracked-files=all"])) === "";
-        if (!clean || liveTip !== attempt.resultCommit) throw new Error("cohort correction source is no longer the clean consumed result");
+        if (!clean || liveTip !== priorResultCommit) throw new Error("cohort correction source is no longer its clean terminal tip");
         const rebase = await runGuardedRebase({ binding: retained.binding, cohortAuthority: retained.authority, store: options.ledgerStore,
-          operationId: `cohort-correction-${dispatchPayloadDigest({ attemptId: attempt.attemptId }).slice(0, 32)}`, ontoCommit,
+          operationId: `cohort-correction-${dispatchPayloadDigest({ source: workerDispatch }).slice(0, 32)}`, ontoCommit,
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }) });
         if (rebase.kind !== "finalized") throw new Error("cohort correction rebase onto its own base did not finalize");
         guardedRebase = rebase.reference;
       }
       const successor = await prepareManagedCohortRebaseSuccessor({ source: workerDispatch, prior, guardedRebase, ontoCommit,
-        priorResultCommit: attempt.resultCommit }, cohortStore, options.ledgerStore, managerDeps);
+        priorResultCommit }, cohortStore, options.ledgerStore, managerDeps);
       const { guardedRebaseLineage: _lineage, priorCriticism: _criticism, ...retainedInput } = sourceInput;
       return {
         state: "correction-ready",
@@ -4293,7 +4302,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         guardedRebase,
         input: { ...retainedInput, cohort: successor.binding.cohort as unknown as DispatchJSONValue, branch: successor.binding.branch,
           worktreePath: successor.binding.worktreePath, baseCommit: ontoCommit, startingCommit: successor.bridge.rebasedStartCommit,
-          priorResultCommit: attempt.resultCommit, round: (round as number) + 1 },
+          priorResultCommit, round: (round as number) + 1 },
       };
     },
     renewCohortParentExecution: async ({ workerDispatch, cohort }) => {

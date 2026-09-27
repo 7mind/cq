@@ -2363,7 +2363,7 @@ export function assertCohortGuardedCandidateBridgeV1(value: CohortGuardedCandida
   prepared: CohortPreparedDispatchIdentityV1, baseCommit: string): void {
   assertDispatchGuardedRebaseBridge(value.bridge);
   const { transition, bridge } = value;
-  if (Object.keys(value).sort().join(",") !== "bridge,transition" || bridge.version !== 2 || bridge.cohort.state !== "sealed" ||
+  if (Object.keys(value).sort().join(",") !== "bridge,transition" || bridge.version !== 2 ||
       !cohortRebaseTransitionMatches(transition.sourceBinding, { ...transition.successorBinding,
         guardedRebaseBridge: bridge, cohortRebaseTransition: transition }, transition.source) ||
       !implementationQueueSubjectsMatch(prepared, transition.successorBinding, true) ||
@@ -2704,15 +2704,36 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   if (binding.cohortRebaseTransition !== undefined) {
     const transition = binding.cohortRebaseTransition;
     const bridge = binding.guardedRebaseBridge;
-    const source = input.store.read(transition.source);
-    const sourceCheckpoint = source?.kind === "envelope" ? source.implementationQueue?.stagedRebaseSource : undefined;
-    if (bridge?.version !== 2 || source?.kind !== "envelope" || source.gitEffectBinding === undefined ||
-        !cohortRebaseTransitionMatches(source.gitEffectBinding, binding, source) ||
-        source.implementationQueue?.state !== "staged-rebase-retired" ||
-        sourceCheckpoint?.sourceResultCommit !== bridge.oldResultCommit || sourceCheckpoint.guardedRebaseJournalDigest !== bridge.requestDigest ||
-        sourceCheckpoint.successor?.attestationId !== row.attestationId || sourceCheckpoint.successor.generation !== row.generation) {
-      throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
+    // D598: a correction that aborted before changing the tree hands over to
+    // a further correction; walk such links back to the retired sealed root.
+    let link: { readonly attestationId: string; readonly generation: number; readonly gitEffectBinding: typeof binding } =
+      { attestationId: row.attestationId, generation: row.generation, gitEffectBinding: binding };
+    for (;;) {
+      const linkTransition = link.gitEffectBinding.cohortRebaseTransition;
+      const linkBridge = link.gitEffectBinding.guardedRebaseBridge;
+      const source = linkTransition === undefined ? undefined : input.store.read(linkTransition.source);
+      if (linkTransition === undefined || linkBridge?.version !== 2 || source?.kind !== "envelope" || source.gitEffectBinding === undefined ||
+          !cohortRebaseTransitionMatches(source.gitEffectBinding, link.gitEffectBinding, source)) {
+        throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
+      }
+      const sourceCheckpoint = source.implementationQueue?.stagedRebaseSource;
+      if (source.implementationQueue?.state === "staged-rebase-retired") {
+        if (sourceCheckpoint?.sourceResultCommit !== linkBridge.oldResultCommit || sourceCheckpoint.guardedRebaseJournalDigest !== linkBridge.requestDigest ||
+            sourceCheckpoint.successor?.attestationId !== link.attestationId || sourceCheckpoint.successor.generation !== link.generation) {
+          throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
+        }
+        break;
+      }
+      const sourceInput = source.input !== null && typeof source.input === "object" && !Array.isArray(source.input)
+        ? source.input as Readonly<Record<string, unknown>> : undefined;
+      if (source.state !== "aborted" || source.implementationQueue !== undefined || source.gitEffectBinding.cohort?.state !== "pre-seal" ||
+          sourceInput?.["startingCommit"] !== linkBridge.oldResultCommit ||
+          source.gitEffectBinding.guardedRebaseBridge?.rebasedStartCommit !== linkBridge.oldResultCommit) {
+        throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
+      }
+      link = { attestationId: source.attestationId, generation: source.generation, gitEffectBinding: source.gitEffectBinding };
     }
+    if (bridge?.version !== 2) throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
     guardedRebase = Object.freeze({ transition, bridge });
     assertCohortGuardedCandidateBridgeV1(guardedRebase, { attestationId: row.attestationId, generation: row.generation,
       cohort: binding.cohort!, branch: binding.branch, startingCommit }, baseCommit);

@@ -181,7 +181,7 @@ function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBind
   }
   if (binding.kind === "branch-create" && binding.mode === "cohort-rebase-successor") {
     assertCohortEffectEnvelopeV1(binding.successor);
-    if (binding.cohort.state !== "sealed" || binding.successor.state !== "pre-seal" ||
+    if (binding.successor.state !== "pre-seal" ||
         binding.cohort.intent.intentDigest === binding.successor.intent.intentDigest ||
         cohortValueDigestV1(binding.cohort.definition) !== cohortValueDigestV1(binding.successor.definition) ||
         cohortValueDigestV1(binding.cohort.memberAuthorities) !== cohortValueDigestV1(binding.successor.memberAuthorities) ||

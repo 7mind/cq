@@ -51,7 +51,7 @@ if (
     "For a later guarded correction, the server-owned inherited receipt suffix begins at `rebasedStartCommit` and `startingCommit` is that suffix's current tip",
   ) ||
   !normalizedRoleInstructions.includes(
-    "an empty fresh suffix, and performs no `git_commit` call",
+    "permits, but never requires, reporting `resultCommit === rebasedStartCommit` with an empty fresh suffix and no `git_commit` call",
   )
 ) {
   throw new Error("installed worker instructions lack the guarded-rebase continuation contract");
