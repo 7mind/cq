@@ -111,6 +111,11 @@ export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir
 export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir"> & {
   /** Dispatch-round base used to prove every surviving result path was reported. */
   readonly diffBaseCommit?: string;
+  /**
+   * D600: a failed result's `filesTouched` is informational; derive it from the
+   * net diff instead of refusing the typed failure.
+   */
+  readonly deriveFilesTouched?: true;
   /** Absolute staging deadline propagated to each checked Git subprocess. */
   readonly deadlineMs?: number;
   /** Authenticated recovery-journal bridge between two durable receipt components. */
@@ -549,6 +554,22 @@ export async function resolveInheritedGitChangeReceipts(
     throw new Error("inherited receipt chain is stale relative to startingCommit");
   }
   return Object.freeze(combined.map((receipt) => Object.freeze({ ...receipt })));
+}
+
+/**
+ * D598: prove that every commit a failed cohort correction left between its
+ * starting tip and its live tip is one of its own journaled broker effects.
+ */
+export async function assertFailedCorrectionLinkReceipts(
+  authorization: GitChangeReceiptLineageBinding,
+  fromCommit: string,
+  toCommit: string,
+  deps: GitChangeBrokerEvidenceDeps = {},
+): Promise<void> {
+  const receipts = await resolveInheritedGitChangeReceipts(authorization, toCommit, deps);
+  if (fromCommit === toCommit ? receipts.length !== 0 : receipts[0]?.oldHead !== fromCommit) {
+    throw new Error("failed correction left commits outside its own broker receipt chain");
+  }
 }
 
 async function writeJournal(file: string, journal: BrokerJournal): Promise<void> {
@@ -1546,7 +1567,7 @@ export async function validateGitChangeBrokerResultEvidence(
     .split("\0")
     .filter(Boolean)
     .sort();
-  if (canonical(reportedFilesTouched) !== canonical(actualResultPaths)) {
+  if (deps.deriveFilesTouched !== true && canonical(reportedFilesTouched) !== canonical(actualResultPaths)) {
     throw new Error("broker result filesTouched does not equal the actual net diff");
   }
   if ((await currentHead(authorization, deps.deadlineMs)) !== evidence.resultCommit) {

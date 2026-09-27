@@ -444,7 +444,9 @@ fallback exists.
    never the task-only continuation. Accept only `correction-ready`, then call
    `start_dispatch` with its `input` plus the reviewers' `priorCriticism`, and
    with its exact `reprepareOf` and `guardedRebase`. Replays return the same
-   coordinates until the successor claims them.
+   coordinates until the successor claims them. When that correction worker
+   fails or aborts, call the same operation with its own dispatch. Any partial
+   work it left must be its own broker commits.
    If either capability is unavailable, stop effects and report it rather than
    inventing an operation. Every effect requires the current execution epoch.
    Durable evidence is not a live capability;

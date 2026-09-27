@@ -23,6 +23,7 @@ import {
   type DispatchBaseGitRunner,
 } from "./dispatchBase.js";
 import { DEFECTS_LEDGER, GOALS_LEDGER, HYPOTHESIS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import type { GitChangeReceiptLineageBinding } from "./gitChangeBroker.js";
 import type { LedgerStore } from "./store/LedgerStore.js";
 import type { Item } from "./types.js";
 import {
@@ -2526,6 +2527,9 @@ function normalizeWholeDiff(
   return Object.freeze(wholeDiff);
 }
 
+/** Throws unless every commit from `fromCommit` to `toCommit` is the failed link's own broker receipt. */
+export type G213FailedLinkReceiptsV1 = (link: GitChangeReceiptLineageBinding, fromCommit: string, toCommit: string) => Promise<void>;
+
 export interface G213CandidateRepositoryV1 {
   resolveWholeDiff(input: {
     readonly repositoryId: string;
@@ -2623,6 +2627,7 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   };
   readonly repository: G213CandidateRepositoryV1;
   readonly store: Pick<AttestationStore, "read">;
+  readonly failedLinkReceipts: G213FailedLinkReceiptsV1 | undefined;
 }): Promise<G213QualifiedCandidateRowV1> {
   const row = immutableSnapshot(input.row);
   const queue = row.implementationQueue;
@@ -2704,8 +2709,8 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
   if (binding.cohortRebaseTransition !== undefined) {
     const transition = binding.cohortRebaseTransition;
     const bridge = binding.guardedRebaseBridge;
-    // D598: a correction that aborted before changing the tree hands over to
-    // a further correction; walk such links back to the retired sealed root.
+    // D598: a correction that failed or aborted before changing the tree hands
+    // over to a further correction; walk such links back to the retired sealed root.
     let link: { readonly attestationId: string; readonly generation: number; readonly gitEffectBinding: typeof binding } =
       { attestationId: row.attestationId, generation: row.generation, gitEffectBinding: binding };
     for (;;) {
@@ -2726,11 +2731,17 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
       }
       const sourceInput = source.input !== null && typeof source.input === "object" && !Array.isArray(source.input)
         ? source.input as Readonly<Record<string, unknown>> : undefined;
-      if (source.state !== "aborted" || source.implementationQueue !== undefined || source.gitEffectBinding.cohort?.state !== "pre-seal" ||
-          sourceInput?.["startingCommit"] !== linkBridge.oldResultCommit ||
-          source.gitEffectBinding.guardedRebaseBridge?.rebasedStartCommit !== linkBridge.oldResultCommit) {
+      const sourceOutput = source.output !== null && typeof source.output === "object" && !Array.isArray(source.output)
+        ? source.output as Readonly<Record<string, unknown>> : undefined;
+      const sourceFailed = source.state === "aborted" || (source.state === "consumed" && sourceOutput?.["status"] === "fail");
+      const sourceStart = sourceInput?.["startingCommit"];
+      if (!sourceFailed || source.implementationQueue !== undefined || source.gitEffectBinding.cohort?.state !== "pre-seal" ||
+          typeof sourceStart !== "string" || source.gitEffectBinding.guardedRebaseBridge?.rebasedStartCommit !== sourceStart ||
+          (sourceStart !== linkBridge.oldResultCommit && input.failedLinkReceipts === undefined)) {
         throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
       }
+      await input.failedLinkReceipts?.({ ...source.gitEffectBinding, attestationId: source.attestationId, generation: source.generation },
+        sourceStart, linkBridge.oldResultCommit);
       link = { attestationId: source.attestationId, generation: source.generation, gitEffectBinding: source.gitEffectBinding };
     }
     if (bridge?.version !== 2) throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
@@ -2765,13 +2776,17 @@ export class G213CandidateAuthenticatorV1 {
   readonly #authenticatedAttempts = new WeakSet<StagedCohortCandidateAttemptV1>();
   readonly #store: Pick<AttestationStore, "namespace" | "read">;
   readonly #repository: G213CandidateRepositoryV1;
+  readonly #failedLinkReceipts: G213FailedLinkReceiptsV1 | undefined;
 
   constructor(input: {
     readonly store: Pick<AttestationStore, "namespace" | "read">;
     readonly repository: G213CandidateRepositoryV1;
+    /** D598: proves a changed failed correction link; without it only unchanged links pass. */
+    readonly failedLinkReceipts?: G213FailedLinkReceiptsV1;
   }) {
     this.#store = input.store;
     this.#repository = input.repository;
+    this.#failedLinkReceipts = input.failedLinkReceipts;
   }
 
   async resolve(input: {
@@ -2797,6 +2812,7 @@ export class G213CandidateAuthenticatorV1 {
       requestedHandle: input,
       repository: this.#repository,
       store: this.#store,
+      failedLinkReceipts: this.#failedLinkReceipts,
     });
     this.#authenticatedRows.add(row);
     return row;
