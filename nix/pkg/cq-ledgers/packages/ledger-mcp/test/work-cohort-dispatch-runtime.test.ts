@@ -150,16 +150,15 @@ for (const kind of ["memory", "sqlite"] as const) {
           intentDigest: cohort.intent.intentDigest, operationId: "abandon-sealed" };
         await expect(advance.releaseAbandonedPreparation(abandon)).rejects.toThrow("owns live evidence");
         await capability.abort({ ...prepared.handle, reason: "native-failure", details: { source: "test" } });
-        // A production preparation reserves its members under its candidate
-        // intent; the fixture reserved them under its own id, so re-key it.
-        const fixtureReservation = (await fixture.store.snapshot()).portable.reservationTransitions[0]!;
-        const reservation = { cohortId: fixtureReservation.cohortId, definitionDigest: fixtureReservation.definitionDigest,
-          memberRefs: fixtureReservation.memberRefs };
-        await fixture.store.transitionReservation("rekey-release", { ...reservation, reservationId: fixtureReservation.reservationId, transition: "released" });
-        await fixture.store.transitionReservation("rekey-reserve", { ...reservation, reservationId: abandon.intentDigest, transition: "reserved" });
+        // D593: the members stay reserved under the id that first reserved them
+        // (here the fixture's; in production the original candidate intent),
+        // while rebase successors mint new intents. Abandonment releases the
+        // definition's active reservation, whichever intent names the attempt.
+        const reservationId = (await fixture.store.snapshot()).portable.reservationTransitions[0]!.reservationId;
+        expect(reservationId).not.toBe(abandon.intentDigest);
         await advance.releaseAbandonedPreparation(abandon);
         expect((await fixture.store.snapshot()).portable.reservationTransitions.at(-1)).toMatchObject({
-          reservationId: abandon.intentDigest, transition: "released" });
+          reservationId, transition: "released" });
         return;
       }
       if (capability.coordinateImplementationCandidate === undefined || prepared.prepared.parentGateCapability === undefined) throw new Error("cohort queue-front capability missing");

@@ -2564,7 +2564,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/work-cohort-dispatch-runtime.test.ts",
-      "sha256": "1fc71e602dee52f5537336e08c961d7df77cd035435eb2d2b6144bb4529f1af3",
+      "sha256": "7bc9f7c82698366e628b2b474d9a675c7582184e11f137f98601157fd01cc4cb",
       "targets": []
     },
     {

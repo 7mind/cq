@@ -157,8 +157,16 @@ export async function createCohortAdvanceRuntimeV1(
       { repositoryRoot, candidateIntentDigest: input.intentDigest },
       deps,
     );
+    // D593: the members stay reserved under the id that first reserved them,
+    // while each guarded-rebase successor mints a new candidate intent, so the
+    // reservation to surrender is the definition's active one, not the intent.
+    const latestByReservation = new Map(state.reservationTransitions
+      .filter((entry) => entry.definitionDigest === input.definitionDigest)
+      .map((entry) => [entry.reservationId, entry] as const));
+    const active = [...latestByReservation.values()].filter((entry) => entry.transition === "reserved");
+    if (active.length > 1) throw new Error("abandoned cohort definition holds more than one active reservation");
     const reservation = {
-      reservationId: input.intentDigest,
+      reservationId: active[0]?.reservationId ?? input.intentDigest,
       cohortId: definition.cohortId,
       definitionDigest: input.definitionDigest,
       memberRefs: definition.members.map(({ memberRef }) => memberRef),
