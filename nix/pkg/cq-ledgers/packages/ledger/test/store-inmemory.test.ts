@@ -2,8 +2,11 @@
  * Runs the abstract LedgerStore suite against InMemoryLedgerStore (dummy).
  */
 
+import { describe, expect, it } from "bun:test";
 import {
   InMemoryLedgerStore,
+  UnsupportedMemoryKindError,
+  createWorksetManagementLedger,
   parseBackupDump,
   type FieldValue,
   type Item,
@@ -16,6 +19,7 @@ import { runStoreAbstractSuite } from "./store-abstract.js";
 import type { MemoryKindPhysicalFixture, StoredItemTarget } from "./memoryKindStoreContract.js";
 
 const MEMORIES = "memories";
+const UNSUPPORTED_KIND = "opinion";
 
 /** The dummy's native representation: its private ledger and archive maps. */
 interface InMemoryNativeState {
@@ -75,4 +79,48 @@ runStoreAbstractSuite({
     await store.dispose();
   },
   memoryKind: memoryKindFixture,
+});
+
+describe("InMemoryLedgerStore memory-kind archival notifications (G192/T6627)", () => {
+  it("fires no mutation notification when an unsupported memory kind rejects an archive", async () => {
+    const events: string[] = [];
+    const store = new InMemoryLedgerStore({
+      onMutation: (ledgerId, op) => events.push(`${ledgerId}/${op}`),
+    });
+    await store.init();
+    try {
+      const milestone = await store.createMilestone({ title: "memory milestone" });
+      await store.updateMilestone(milestone.id, { status: "done" });
+      const memories = (store as unknown as InMemoryNativeState).ledgers.get(MEMORIES);
+      if (memories === undefined) throw new Error("in-memory store lacks memories");
+      memories.milestones.push({
+        id: milestone.id,
+        title: "",
+        description: "",
+        items: [
+          {
+            id: "MEM91",
+            milestoneId: milestone.id,
+            status: "superseded",
+            fields: { title: "milestone memory", content: "body", kind: UNSUPPORTED_KIND },
+            createdAt: milestone.createdAt,
+            updatedAt: milestone.createdAt,
+          },
+        ],
+      });
+      events.length = 0;
+
+      await expect(store.archiveMilestone(milestone.id, "archive")).rejects.toThrow(
+        UnsupportedMemoryKindError,
+      );
+      await expect(
+        createWorksetManagementLedger({ rawStore: store, worksetStore: store.worksetStore() })
+          .mutations.archiveTerminalItems([MEMORIES], "sweep", "fail-on-active-gate"),
+      ).rejects.toThrow(UnsupportedMemoryKindError);
+      expect(events).toEqual([]);
+      expect(nativeItem(store, { itemId: "MEM91", archived: false }).fields.kind).toBe(UNSUPPORTED_KIND);
+    } finally {
+      await store.dispose();
+    }
+  });
 });

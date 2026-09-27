@@ -11,7 +11,14 @@ import type {
   Item,
   Ledger,
   LedgerSchema,
+  Milestone,
 } from "../types.js";
+import {
+  assertArchivingMemoryKinds,
+  assertMilestoneArchiveMemoryKinds,
+  normalizeMemoryKindForWrite,
+  resolveMemoryKind,
+} from "../memoryKind.js";
 import {
   BootstrapViolationError,
   DuplicateIdError,
@@ -218,7 +225,8 @@ export function createGenericMutationTransaction(
         })),
         refsFor(state).registry,
       ),
-    fetchItem: (ledgerId, itemId) => cloneItem(findItem(getLedger(ledgerId), itemId).item),
+    fetchItem: (ledgerId, itemId) =>
+      resolveMemoryKind(ledgerId, cloneItem(findItem(getLedger(ledgerId), itemId).item)),
     updateMilestone: (milestoneId, patch) => {
       const item = applyUpdateMilestoneItem(
         getLedger(MILESTONES_LEDGER),
@@ -501,6 +509,19 @@ export function createGenericMutationTransaction(
       if (selectedRefs !== null && [...selectedRefs].some((ref) => retained.has(ref))) {
         throw new LedgerError("exact terminal archive cannot remove an active gate or owner");
       }
+      const leavingItems = (ledgerId: string, terminal: ReadonlySet<string>, group: Milestone): Item[] =>
+        group.items.filter(
+          (item) =>
+            terminal.has(item.status) && !retained.has(`${ledgerId}:${item.id}`) &&
+            (selectedRefs === null || selectedRefs.has(`${ledgerId}:${item.id}`)),
+        );
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          assertArchivingMemoryKinds(ledgerId, leavingItems(ledgerId, terminal, group));
+        }
+      }
 
       const milestones = getLedger(MILESTONES_LEDGER);
       const byLedger: Record<string, number> = {};
@@ -510,11 +531,7 @@ export function createGenericMutationTransaction(
         const ledger = getLedger(ledgerId);
         const terminal = new Set(ledger.schema.terminalStatuses);
         for (const group of [...ledger.milestones]) {
-          const leaving = group.items.filter(
-            (item) =>
-              terminal.has(item.status) && !retained.has(`${ledgerId}:${item.id}`) &&
-              (selectedRefs === null || selectedRefs.has(`${ledgerId}:${item.id}`)),
-          );
+          const leaving = leavingItems(ledgerId, terminal, group);
           if (leaving.length === 0) continue;
           const leavingIds = new Set(leaving.map((item) => item.id));
           const staying = group.items.filter((item) => !leavingIds.has(item.id));
@@ -551,7 +568,10 @@ export function createGenericMutationTransaction(
             description,
             items: existing?.items ?? [],
           };
-          archived.items.push(...leaving.map(cloneItem));
+          for (const item of leaving.map(cloneItem)) {
+            normalizeMemoryKindForWrite(ledgerId, item.id, item.fields);
+            archived.items.push(item);
+          }
           state.archives.set(key, archived);
 
           const groupIndex = ledger.milestones.indexOf(group);
@@ -603,6 +623,7 @@ export function createGenericMutationTransaction(
         );
       }
       assertArchiveDoesNotDropUnsatisfyingGates(state.ledgers, milestoneId);
+      assertMilestoneArchiveMemoryKinds(state.ledgers, milestoneId);
       const milestones = getLedger(MILESTONES_LEDGER);
       const milestone = findItem(milestones, milestoneId).item;
       const title = typeof milestone.fields.title === "string" ? milestone.fields.title : "";

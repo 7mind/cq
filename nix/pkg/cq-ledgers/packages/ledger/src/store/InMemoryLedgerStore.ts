@@ -112,6 +112,7 @@ import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
 import {
   assertLedgerStateMemoryKinds,
+  assertMilestoneArchiveMemoryKinds,
   resolveArchiveContentMemoryKinds,
   resolveFetchedLedgerMemoryKinds,
   resolveLedgerMemoryKinds,
@@ -907,7 +908,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
               ),
             ),
           fetchItem: (ledgerId, itemId) =>
-            cloneItem(findItem(this.getLedger(ledgerId), itemId).item),
+            resolveMemoryKind(ledgerId, cloneItem(findItem(this.getLedger(ledgerId), itemId).item)),
           createItemWithSealedOwnership: (ledgerId, milestoneId, init, sealedOwnership) => {
             if (ledgerId === MILESTONES_LEDGER) {
               throw new BootstrapViolationError(
@@ -1511,6 +1512,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       );
     }
     assertArchiveDoesNotDropUnsatisfyingGates(this.ledgers, milestoneId);
+    assertMilestoneArchiveMemoryKinds(this.ledgers, milestoneId);
     // Phase 1: verify no non-terminal items in ANY ledger.
     for (const [name, ledger] of this.ledgers) {
       if (name === MILESTONES_LEDGER) continue;

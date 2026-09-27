@@ -61,7 +61,11 @@ import {
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
 import { isAuthorizedImplementationEvidenceMutation } from "../implementationEvidence.js";
-import { assertWritableMemoryKind, normalizeMemoryKindForWrite } from "../memoryKind.js";
+import {
+  assertArchivingMemoryKinds,
+  assertWritableMemoryKind,
+  normalizeMemoryKindForWrite,
+} from "../memoryKind.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
   ownershipFieldsFrom,
@@ -949,7 +953,9 @@ export function applyDetachMilestoneGroup(
   if (offending.length > 0) {
     throw new NonTerminalItemsError(milestoneId, offending);
   }
+  assertArchivingMemoryKinds(ledger.id, milestone.items);
   ledger.milestones.splice(idx, 1);
+  for (const item of milestone.items) normalizeMemoryKindForWrite(ledger.id, item.id, item.fields);
   const pointer: ArchivePointer = { id: milestoneId, path: archiveRelPath, summary, title, status };
   ledger.archivePointers.push(pointer);
   return { milestone, pointer };

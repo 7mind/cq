@@ -9,6 +9,7 @@ import { buildPrefixRegistry } from "../refs.js";
 import type { FieldValue, Item, Ledger } from "../types.js";
 import { BootstrapViolationError, LedgerNotFoundError } from "../types.js";
 import { buildWorksetActiveState } from "../worksetGraph.js";
+import { resolveMemoryKind } from "../memoryKind.js";
 import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import {
   applyCreateItem,
@@ -128,7 +129,8 @@ export function createOwnedWriteTransaction(
         })),
         refs.registry,
       ),
-    fetchItem: (ledgerId, itemId) => cloneItem(findItem(getLedger(ledgerId), itemId).item),
+    fetchItem: (ledgerId, itemId) =>
+      resolveMemoryKind(ledgerId, cloneItem(findItem(getLedger(ledgerId), itemId).item)),
     createItemWithSealedOwnership: (ledgerId, milestoneId, init, ownership) => {
       if (ledgerId === MILESTONES_LEDGER) {
         throw new BootstrapViolationError(

@@ -157,6 +157,23 @@ export function assertWritableMemoryKind(
   assertKindValue(itemId, fields);
 }
 
+/** Validate every payload an archival mutation is about to move. */
+export function assertArchivingMemoryKinds(ledgerId: string, items: readonly Item[]): void {
+  for (const item of items) assertMemoryKindPayload(ledgerId, item);
+}
+
+/**
+ * Preflight for a milestone archive: validate the `memories` group under
+ * `milestoneId` before any participating ledger is detached.
+ */
+export function assertMilestoneArchiveMemoryKinds(
+  ledgers: ReadonlyMap<string, Ledger>,
+  milestoneId: string,
+): void {
+  const group = ledgers.get(MEMORIES_LEDGER)?.milestones.find((m) => m.id === milestoneId);
+  if (group !== undefined) assertArchivingMemoryKinds(MEMORIES_LEDGER, group.items);
+}
+
 /**
  * Validate complete active and archived payloads of a replacement state
  * (parsed restore, SQLite/PostgreSQL import, in-memory parsed replacement)
