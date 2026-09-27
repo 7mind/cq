@@ -23,11 +23,18 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { LedgerSchema, LedgerStore } from "../src/index.js";
+import {
+  createTrustedWorksetManagementAuthority,
+  type FieldValue,
+  type LedgerSchema,
+  type LedgerStore,
+} from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema } from "../src/store/postgres/schema.js";
 import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.js";
+import { restoreDumpToPostgres } from "../src/store/postgres/restoreImporter.js";
 import { runStoreAbstractSuite } from "./store-abstract.js";
+import type { MemoryKindPhysicalFixture } from "./memoryKindStoreContract.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
 if ((PG_URL === undefined || PG_URL.length === 0) && process.env.CQ_TEST_REQUIRE_PG === "1") {
@@ -61,6 +68,94 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     return projectKey;
   };
 
+  const MEMORIES = "memories";
+  const projectKeys = new WeakMap<LedgerStore, string>();
+
+  const openTenantStore = async (projectKey: string): Promise<LedgerStore> => {
+    const store = new PostgresLedgerStore({
+      pool: openPgPool(PG_URL),
+      projectKey,
+      displayName: projectKey,
+    });
+    await store.init();
+    projectKeys.set(store, projectKey);
+    return store;
+  };
+
+  const projectKeyOf = (store: LedgerStore): string => {
+    const projectKey = projectKeys.get(store);
+    if (projectKey === undefined) {
+      throw new Error("PostgreSQL memory-kind fixture lost its tenant");
+    }
+    return projectKey;
+  };
+
+  /**
+   * Raw tenant rows through the setup pool: the adapter's native
+   * representation. A raw write bypasses the store's read cache, so the fixture
+   * reopens the store to observe it, as a restarted process would.
+   */
+  const memoryKindFixture: MemoryKindPhysicalFixture = {
+    async readStoredFields(store, target) {
+      const projectKey = projectKeyOf(store);
+      const rows = target.archived
+        ? await setupPool`
+            SELECT fields_json FROM archived_items
+            WHERE project_key = ${projectKey} AND ledger = ${MEMORIES} AND id = ${target.itemId}
+          `
+        : await setupPool`
+            SELECT fields_json FROM items
+            WHERE project_key = ${projectKey} AND ledger = ${MEMORIES} AND id = ${target.itemId}
+          `;
+      const row = (rows as Array<{ fields_json: string }>)[0];
+      if (row === undefined) throw new Error(`PostgreSQL memory ${target.itemId} row not found`);
+      return JSON.parse(row.fields_json) as Record<string, FieldValue>;
+    },
+    async writeStoredFields(store, target, fields) {
+      const projectKey = projectKeyOf(store);
+      const fieldsJson = JSON.stringify(fields);
+      const rows = target.archived
+        ? await setupPool`
+            UPDATE archived_items SET fields_json = ${fieldsJson}
+            WHERE project_key = ${projectKey} AND ledger = ${MEMORIES} AND id = ${target.itemId}
+            RETURNING id
+          `
+        : await setupPool`
+            UPDATE items SET fields_json = ${fieldsJson}
+            WHERE project_key = ${projectKey} AND ledger = ${MEMORIES} AND id = ${target.itemId}
+            RETURNING id
+          `;
+      if ((rows as unknown[]).length !== 1) {
+        throw new Error(`PostgreSQL memory ${target.itemId} row not updated`);
+      }
+      await store.dispose();
+      return openTenantStore(projectKey);
+    },
+    async restart(store) {
+      const projectKey = projectKeyOf(store);
+      await store.dispose();
+      return openTenantStore(projectKey);
+    },
+    async restoreInto(store, dump) {
+      const projectKey = projectKeyOf(store);
+      await store.dispose();
+      let error: unknown = null;
+      try {
+        await restoreDumpToPostgres({
+          pool: setupPool,
+          projectKey,
+          displayName: projectKey,
+          dump,
+          authority: createTrustedWorksetManagementAuthority(),
+          overwriteAuthorized: true,
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      return { store: await openTenantStore(projectKey), error };
+    },
+  };
+
   runStoreAbstractSuite({
     name: "PostgresLedgerStore",
     // Every op is a real network round-trip (write transaction); a
@@ -68,14 +163,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     // deterministic under full-suite parallel load.
     timeoutMs: 20_000,
     async build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore> {
-      const projectKey = await prepareTenant(seed);
-      const store = new PostgresLedgerStore({
-        pool: openPgPool(PG_URL),
-        projectKey,
-        displayName: projectKey,
-      });
-      await store.init();
-      return store;
+      return openTenantStore(await prepareTenant(seed));
     },
     async buildWithHook(
       seed: Array<{ name: string; schema: LedgerSchema }>,
@@ -94,6 +182,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     async teardown(store: LedgerStore): Promise<void> {
       await store.dispose();
     },
+    memoryKind: memoryKindFixture,
   });
 
   // -------------------------------------------------------------------------

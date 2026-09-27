@@ -1704,7 +1704,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.logArtifacts.set(rel, log.content);
     }
     if (parsed.worksetRoots !== null) {
-      this.replaceWorksetRoots(parsed.worksetRoots.roots);
+      await this.replaceWorksetRoots(parsed.worksetRoots.roots);
     }
     this.normalizeStoredRefs();
     for (const ledger of this.ledgers.values()) relocateActiveIdeasToAmbient(ledger);

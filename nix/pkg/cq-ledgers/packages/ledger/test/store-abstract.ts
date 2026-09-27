@@ -28,6 +28,10 @@ import {
   materializeOperatorAction,
   recordOperatorActionEvidence,
 } from "../src/index.js";
+import {
+  registerMemoryKindContract,
+  type MemoryKindPhysicalFixture,
+} from "./memoryKindStoreContract.js";
 
 // All canonical ledgers are bootstrapped on init(); the suite therefore
 // uses NON-canonical custom ledgers (distinct idPrefixes) for the seed and
@@ -54,6 +58,11 @@ export interface AbstractStoreFactory {
    * 5000ms default.
    */
   timeoutMs?: number;
+  /**
+   * G192/T6627 — backend-native physical access for the shared memory-kind
+   * contract; `null` only for arms outside that contract's backend matrix.
+   */
+  memoryKind: MemoryKindPhysicalFixture | null;
 }
 
 // Custom (non-canonical) ledgers, named so their default idPrefix (W, N)
@@ -1567,5 +1576,16 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         }
       }, TIMEOUT);
     });
+
+    if (factory.memoryKind !== null) {
+      registerMemoryKindContract({
+        build: () => factory.build([]),
+        teardown: async (store) => {
+          await factory.teardown?.(store);
+        },
+        fixture: factory.memoryKind,
+        timeoutMs: TIMEOUT,
+      });
+    }
   });
 }

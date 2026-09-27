@@ -13,12 +13,19 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import type { LedgerSchema, LedgerStore } from "../src/index.js";
+import {
+  createTrustedWorksetManagementAuthority,
+  restoreDumpToXdg,
+  type FieldValue,
+  type LedgerSchema,
+  type LedgerStore,
+} from "../src/index.js";
 import { startXdgCoherenceWatcher } from "../src/store/createLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { runStoreAbstractSuite } from "./store-abstract.js";
+import type { MemoryKindPhysicalFixture, StoredItemTarget } from "./memoryKindStoreContract.js";
 
 const dirs: string[] = [];
 
@@ -53,6 +60,78 @@ async function seedDbPath(seed: Array<{ name: string; schema: LedgerSchema }>): 
   return dbPath;
 }
 
+const MEMORIES = "memories";
+const dbPaths = new WeakMap<LedgerStore, string>();
+
+async function openStore(dbPath: string): Promise<LedgerStore> {
+  const store = new SqliteLedgerStore({ dbPath });
+  await store.init();
+  dbPaths.set(store, dbPath);
+  return store;
+}
+
+function dbPathOf(store: LedgerStore): string {
+  const dbPath = dbPaths.get(store);
+  if (dbPath === undefined) throw new Error("SQLite memory-kind fixture lost its database path");
+  return dbPath;
+}
+
+function storedRowTable(target: StoredItemTarget): "items" | "archived_items" {
+  return target.archived ? "archived_items" : "items";
+}
+
+/** Raw `fields_json` rows on a separate connection: the adapter's native representation. */
+const memoryKindFixture: MemoryKindPhysicalFixture = {
+  async readStoredFields(store, target) {
+    const db = openLedgerDb(dbPathOf(store));
+    try {
+      const row = db
+        .query<{ fields_json: string }, [string, string]>(
+          `SELECT fields_json FROM ${storedRowTable(target)} WHERE ledger = ? AND id = ?`,
+        )
+        .get(MEMORIES, target.itemId);
+      if (row === null) throw new Error(`SQLite memory ${target.itemId} row not found`);
+      return JSON.parse(row.fields_json) as Record<string, FieldValue>;
+    } finally {
+      db.close();
+    }
+  },
+  async writeStoredFields(store, target, fields) {
+    const db = openLedgerDb(dbPathOf(store));
+    try {
+      const result = db
+        .query(`UPDATE ${storedRowTable(target)} SET fields_json = ? WHERE ledger = ? AND id = ?`)
+        .run(JSON.stringify(fields), MEMORIES, target.itemId);
+      if (result.changes !== 1) throw new Error(`SQLite memory ${target.itemId} row not updated`);
+    } finally {
+      db.close();
+    }
+    return store;
+  },
+  async restart(store) {
+    const dbPath = dbPathOf(store);
+    await store.dispose();
+    return openStore(dbPath);
+  },
+  async restoreInto(store, dump) {
+    const dbPath = dbPathOf(store);
+    await store.dispose();
+    let error: unknown = null;
+    try {
+      await restoreDumpToXdg({
+        dbPath,
+        logsDir: null,
+        dump,
+        authority: createTrustedWorksetManagementAuthority(),
+        overwriteAuthorized: true,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    return { store: await openStore(dbPath), error };
+  },
+};
+
 runStoreAbstractSuite({
   name: "SqliteLedgerStore",
   // Each op is a real SQLite write transaction (BEGIN IMMEDIATE + COMMIT);
@@ -60,9 +139,7 @@ runStoreAbstractSuite({
   // per-test timeout keeps the shared concurrency-parity tests deterministic.
   timeoutMs: 10_000,
   async build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore> {
-    const store = new SqliteLedgerStore({ dbPath: await seedDbPath(seed) });
-    await store.init();
-    return store;
+    return openStore(await seedDbPath(seed));
   },
   async buildWithHook(
     seed: Array<{ name: string; schema: LedgerSchema }>,
@@ -75,6 +152,7 @@ runStoreAbstractSuite({
   async teardown(store: LedgerStore): Promise<void> {
     await store.dispose();
   },
+  memoryKind: memoryKindFixture,
 });
 
 afterAll(async () => {

@@ -406,6 +406,8 @@ function runtimeStoreFactory(factory: RuntimeContractFactory): AbstractStoreFact
     timeoutMs: factory === realFactory ? 20_000 : 10_000,
     build: (seed) => build(seed),
     buildWithHook: (seed, onMutation) => build(seed, onMutation),
+    // The memory-kind contract's backend matrix is InMemory, SQLite, PostgreSQL.
+    memoryKind: null,
     async teardown(store) {
       const runtime = runtimes.get(store);
       if (runtime === undefined) throw new Error("runtime teardown lost ownership");
