@@ -191,9 +191,11 @@ receipt path union.
    an empty fresh suffix; the server accepts it only when a protected prior
    receipt chain already reaches that exact tip. Second, the server-resolved
    exact-tip mode of a guarded-rebase continuation
-   (`guardedRebaseLineage.exactTip === true`) likewise reports
-   `resultCommit === rebasedStartCommit`, an empty fresh suffix, and performs no
-   `git_commit` call. Never synthesize a commit solely to avoid an empty suffix.
+   (`guardedRebaseLineage.exactTip === true`) permits, but never requires,
+   reporting `resultCommit === rebasedStartCommit` with an empty fresh suffix
+   and no `git_commit` call. When `priorCriticism` or unfinished work needs a
+   repository change, make it through `git_commit` as a non-empty contiguous
+   suffix from `rebasedStartCommit`. Never synthesize a commit solely to avoid an empty suffix.
    Any correction that advances the tip keeps early persistence and a
    non-empty contiguous fresh suffix.
    **Incremental persistence.** Reproduce a defect before correcting it. Match

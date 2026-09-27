@@ -4196,7 +4196,8 @@ async function prepareManagedCohortRebaseSuccessorWithResume(input: ManagedCohor
           priorResultCommitInput: input.priorResultCommit,
           ...(deps.stateDir === undefined ? {} : { stateDir: deps.stateDir }),
         });
-        if (bridge.version !== 2 || sourceAuthority.envelope.state !== "sealed") throw new Error("cohort successor requires a finalized sealed source");
+        // D598: an unchanged aborted pre-seal correction may also hand over.
+        if (bridge.version !== 2) throw new Error("cohort successor requires a finalized cohort bridge");
         const state = (await store.snapshot()).portable;
         const definition = sourceAuthority.envelope.definition;
         const intent = createCohortCandidateIntentV1(definition, `guarded-successor:${input.source.attestationId}:${input.source.generation}:${bridge.requestDigest}`);

@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -368,7 +368,7 @@ for (const kind of ["memory", "sqlite"] as const) {
       expect(coordinated.state).toBe("completed");
       expect(commands.slice(0, 2).sort()).toEqual(["bun test packages/ledger/test/tasks:T1.test.ts", "bun test packages/ledger/test/tasks:T2.test.ts"]);
       expect(commands.slice(2)).toEqual(["bun test shared.test.ts", "bun run check"]);
-      if (mode === "correction") {
+      if (mode === "correction" || mode === "correction-retry") {
         // D598: a reviewer disapproved the gate-green candidate; its correction
         // round continues in the same managed worktree under a new intent.
         const tool = createLedgerMcpToolSpecifications(fixture.ledger, undefined, undefined, undefined, undefined,
@@ -387,11 +387,13 @@ for (const kind of ["memory", "sqlite"] as const) {
         expect(ready.reprepareOf).toEqual(prepared.handle);
         const replayed = await tool.handler({ ...request, operation_id: "correct-r1-replay" }, null);
         expect(replayed.content[0]?.type === "text" ? JSON.parse(replayed.content[0].text) : undefined).toEqual(ready);
-        const successorCohort = ready.input["cohort"] as unknown as typeof cohort;
+        const successorCohortOf = (input: Record<string, DispatchJSONValue>) => input["cohort"] as unknown as typeof cohort;
+        const successorCohort = successorCohortOf(ready.input);
         expect(successorCohort.intent.intentDigest).not.toBe(cohort.intent.intentDigest);
         expect(ready.input).toMatchObject({ worktreePath: fixture.prepared.handle.absolutePath, baseCommit: fixture.baseCommit,
           startingCommit: receipt.newHead, priorResultCommit: receipt.newHead, round: 1, validationIntent: "final" });
-        const correctionChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}correction-child`, runId: "correction-run" };
+        let correctionChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}correction-child`, runId: "correction-run" };
+        let correlationId = "correction-child";
         const correctionInput = { ...ready.input, priorCriticism: ["member b lacks its focused acceptance"] };
         const successor = await capability.prepare({ roleId: "implement-worker", idempotencyKey: "cohort-correction", timeoutMs: 600_000,
           expectedChild: correctionChild, input: correctionInput, reprepareOf: ready.reprepareOf, guardedRebase: ready.guardedRebase });
@@ -400,8 +402,29 @@ for (const kind of ["memory", "sqlite"] as const) {
         const source = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
         expect(source?.kind === "envelope" ? source.implementationQueue?.state : "missing").toBe("staged-rebase-retired");
         await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle })).rejects.toThrow("unretired cohort worker");
-        const next = successor.prepared;
+        let next = successor.prepared;
         await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
+        if (mode === "correction-retry") {
+          // D598: the correction worker failed without a change; a further round
+          // continues from the same tip under yet another fresh intent.
+          await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).rejects.toThrow("unchanged aborted pre-seal worker");
+          await capability.abort({ ...next, reason: "native-failure", details: { source: "test" } });
+          const retryReady = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: { attestationId: next.attestationId, generation: next.generation } });
+          expect(retryReady.reprepareOf).toEqual({ attestationId: next.attestationId, generation: next.generation });
+          const retryInput = retryReady.input as Record<string, DispatchJSONValue>;
+          expect((retryInput["cohort"] as unknown as typeof cohort).intent.intentDigest).not.toBe(successorCohortOf(ready.input).intent.intentDigest);
+          expect(retryInput).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, round: 2 });
+          expect(await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: next })).toEqual(retryReady);
+          correctionChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}retry-child`, runId: "retry-run" };
+          correlationId = "retry-child";
+          const retry = await capability.prepare({ roleId: "implement-worker", idempotencyKey: "cohort-correction-retry", timeoutMs: 600_000,
+            expectedChild: correctionChild, input: { ...retryInput, priorCriticism: ["member b lacks its focused acceptance"] },
+            reprepareOf: retryReady.reprepareOf, guardedRebase: retryReady.guardedRebase });
+          expect(retry).toMatchObject({ accepted: true });
+          if (!retry.accepted) throw new Error(JSON.stringify(retry));
+          next = retry.prepared;
+          await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
+        }
         const successorRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
         const successorBinding = successorRow?.kind === "envelope" ? successorRow.gitEffectBinding : undefined;
         if (successorBinding?.cohort === undefined || successorBinding.guardedRebaseBridge === undefined) throw new Error("correction successor lost its bridge");
@@ -409,14 +432,14 @@ for (const kind of ["memory", "sqlite"] as const) {
         const fix = await capability.gitCommit!({ ...next, gitChangeCapability: next.gitChangeCapability!,
           ...await cohortChangeRequest({ ...fixture.authorization, ...successorBinding }, "correction", "b", "base b\n", "corrected member b\n") });
         await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
-          cohort: successorCohort, memberObservations: successorCohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Criticism addressed" })),
+          cohort: successorBinding.cohort, memberObservations: successorCohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Criticism addressed" })),
           status: "pass", resultCommit: fix.newHead, branch: successorBinding.branch, actualWorktreePath: successorBinding.worktreePath,
           filesTouched: ["a.txt", "b.txt"], gitReceipts: [fix], checkSummary: "Awaiting correction ladder", summary: "Reviewer criticism addressed",
           gitLineage: { kind: "guarded-rebase", guardedRebase: bridge.guardedRebase, ontoCommit: bridge.ontoCommit, rebasedStartCommit: bridge.rebasedStartCommit,
             exactTip: bridge.exactTip },
           baseVerification: { status: "verified", relation: "descendant", baseCommit: fixture.baseCommit, headCommit: fix.newHead },
         } as unknown as DispatchJSONValue });
-        await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId: "correction-child",
+        await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId,
           childThreadId: "correction-thread", expectedRunId: correctionChild.runId,
           outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
         const corrected = await capability.coordinateImplementationCandidate!({ ...next, holderId: "cohort-correction-front",

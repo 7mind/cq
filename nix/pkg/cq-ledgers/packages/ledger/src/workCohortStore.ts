@@ -412,7 +412,17 @@ function validatePortableState(value: unknown): WorkCohortPortableStateV1 {
     if (attempt.state === "staged" && attempt.g213.guardedRebase !== undefined) {
       const guarded = attempt.g213.guardedRebase;
       assertCohortGuardedCandidateBridgeV1(guarded, attempt.preparedDispatch, attempt.g213.observedBaseCommit);
-      if (guarded.bridge.cohort.state !== "sealed") throw new Error("cohort guarded source is not sealed");
+      if (guarded.bridge.cohort.state !== "sealed") {
+        // D598: an unchanged aborted correction; its chain to the sealed root is
+        // authenticated from the attestation rows when the successor is staged.
+        if (!portable.candidateAttempts.some((entry) => entry.state === "pending" && entry.definitionDigest === attempt.definitionDigest &&
+            entry.intent.intentDigest === guarded.bridge.cohort.intent.intentDigest &&
+            entry.preparedDispatch.attestationId === guarded.transition.source.attestationId &&
+            entry.preparedDispatch.generation === guarded.transition.source.generation)) {
+          throw new Error("cohort guarded candidate lost its exact unsealed correction source");
+        }
+        continue;
+      }
       const subject = guarded.bridge.cohort.evidenceSubject;
       const sourceSeal = seals.get(subject.sealDigest);
       const sourceAttempt = portable.candidateAttempts.find((entry) => entry.candidateAttemptDigest === sourceSeal?.candidateAttemptDigest);
@@ -1623,10 +1633,10 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
     successor: CohortEffectEnvelopeV1, publish: (lease: WorkCohortLeaseV1) => undefined): Promise<WorkCohortLeaseV1> {
     assertCohortEffectEnvelopeV1(source);
     assertCohortEffectEnvelopeV1(successor);
-    if (source.state !== "sealed" || successor.state !== "pre-seal" || source.intent.intentDigest === successor.intent.intentDigest ||
+    if (successor.state !== "pre-seal" || source.intent.intentDigest === successor.intent.intentDigest ||
         canonical(source.definition) !== canonical(successor.definition) || canonical(source.memberAuthorities) !== canonical(successor.memberAuthorities) ||
         source.executionEpoch !== successor.executionEpoch || source.executionEpoch !== lease.executionEpoch) {
-      throw new WorkCohortStaleAuthorityError("cohort successor requires one distinct intent over the exact sealed source definition and epoch");
+      throw new WorkCohortStaleAuthorityError("cohort successor requires one distinct intent over the exact source definition and epoch");
     }
     const nextLease = { ...lease, semanticSubject: successor.semanticSubject };
     return this.#persistence.transact((current) => {
