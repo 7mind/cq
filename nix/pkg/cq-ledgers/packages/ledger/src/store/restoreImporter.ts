@@ -264,8 +264,6 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const workCohort =
     workCohortSrc === undefined ? null : parseWorkCohortPortableStateV1(workCohortSrc);
 
-  assertLedgerStateMemoryKinds(ledgers, archives);
-
   return { registry, ledgers, archives, logs, planLifecycle, worksetRoots, workCohort };
 }
 

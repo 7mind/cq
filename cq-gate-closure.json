@@ -183,7 +183,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "7b0f9c0f011ff868f3237a74735853d7e77eebcd78e57f800f3e174a1cb6e484",
+      "sha256": "5fda15a4d332af5fc5be028c6cdc42eadf1495c6ac330a92ffb28c55f749426f",
       "targets": []
     },
     {
@@ -1792,7 +1792,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/backupExporter.ts",
-      "sha256": "60ee3fa326477a36754e1cd80f82c3a36f9b740a7c3cd9985994d7707a1fbf3c",
+      "sha256": "6046b34791d1e6e56998f0e61addc7b3e74ca017c98f58be3de90853b101edd2",
       "targets": []
     },
     {
@@ -1828,13 +1828,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/restoreImporter.ts",
-      "sha256": "a60ccab1f9b822dedca01d54e2aac4e6d31ada8890818c527207bfbe61c7623e",
+      "sha256": "5ccb07e0a93c5776b6e6ff961e692b9efa17e91345ee2b9854c54a916ca0cbf7",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
-      "sha256": "b497e7c24206f9f637a7ad2005018a60fd61d75218ed3976aacc61a064b304d7",
+      "sha256": "c12a4eb35f5c5aa037d88c9068e85a15340fae9587f85ac54507a9bb8f642f7c",
       "targets": []
     },
     {
@@ -2272,7 +2272,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-project-runtime.test.ts",
-      "sha256": "be32f45ca8607c17695fd737d00714cbe7ed7e6f080ecb37479656d36f754560",
+      "sha256": "1f7ca7e5457fc6b1df6cdadaea16c897def7e9309f00efd23557c36b5766b9b0",
       "targets": []
     },
     {
@@ -2711,6 +2711,22 @@
       "sha256": "21e9d872f9f5a7d798e618998d55b8b75b3c9565cc90c3d1cdaa034b2599249f",
       "targets": [
         "nix/pkg/cq-ledgers/packages/ledger-mcp/src/piChildLedgerExtension.ts"
+      ]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/memory-kind-schema-contract.test.ts",
+      "sha256": "d3b6a32c6914c525a03513db2b841d86f6a72a82a3269d6cf6b271703a35ebf9",
+      "targets": [
+        "nix/pkg/cq-ledgers/docs/ledgers.yaml"
+      ]
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-runner.test.ts",
+      "sha256": "c82491c3ffe33d9c04ce3a7e93c7877f39720073c8fc212e736637a05687969c",
+      "targets": [
+        "nix/pkg/cq-ledgers/scripts/lib/postgres-required-bun-test.sh"
       ]
     }
   ]

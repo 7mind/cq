@@ -84,6 +84,7 @@ import type {
   FtsSearchHit,
   FtsSearchOpts,
   LedgerStore,
+  PhysicalLedgerState,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
@@ -362,6 +363,7 @@ export interface WorksetLedgerReadSurface {
   search(ledgerId: string, query: string): Item[];
   ftsSearch(query: string, opts?: FtsSearchOpts): Promise<FtsSearchHit[]>;
   listMilestoneItems(milestoneId: string): Record<string, Item[]>;
+  exportPhysicalLedgerState(): Promise<PhysicalLedgerState>;
   snapshot(): LedgerSnapshot;
   invalidate(ledgerId: string): Promise<void>;
   recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void>;
@@ -1625,6 +1627,7 @@ export function createWorksetGuardedLedger(
     search: (ledgerId, query) => rawStore.search(ledgerId, query),
     ftsSearch: (query, opts) => rawStore.ftsSearch(query, opts),
     listMilestoneItems: (milestoneId) => rawStore.listMilestoneItems(milestoneId),
+    exportPhysicalLedgerState: () => rawStore.exportPhysicalLedgerState(),
     snapshot: () => rawStore.snapshot(),
     invalidate: (ledgerId) => rawStore.invalidate(ledgerId),
     recordMcpUsage: (endpoint, bytesIn, bytesOut) =>

@@ -168,6 +168,7 @@ export async function createPostgresWorksetGuardedLedger(
     search: (ledgerId, query) => surface.search(ledgerId, query),
     ftsSearch: (query, opts) => surface.ftsSearch(query, opts),
     listMilestoneItems: (milestoneId) => surface.listMilestoneItems(milestoneId),
+    exportPhysicalLedgerState: () => surface.exportPhysicalLedgerState(),
     snapshot: () => surface.snapshot(),
     invalidate: (ledgerId) => surface.invalidate(ledgerId),
     recordMcpUsage: (endpoint, bytesIn, bytesOut) =>
