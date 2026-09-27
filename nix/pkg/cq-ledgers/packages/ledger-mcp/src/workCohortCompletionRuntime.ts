@@ -29,6 +29,8 @@ export interface CohortCompletionRuntimeOptionsV1 {
   readonly resolved: ResolvedLedgerStore;
   readonly backend: AttestationBackend;
   readonly promptArtifacts: PromptArtifactStore;
+  /** D597: installed prompt stores per target surface, for reviews run on another harness. */
+  readonly targetPromptArtifacts?: Readonly<Partial<Record<string, PromptArtifactStore>>>;
   readonly cancellationSignal: AbortSignal;
   readonly stateDir?: string;
   readonly trustedSourceWorkspaceBuildCommit?: string;
@@ -49,6 +51,23 @@ function reviewerRole(artifacts: PromptArtifactStore): CohortReviewRoleContractV
   }
   return { version: role.schemaVersion, schemaDigest: role.schemaDigest, promptDigest: role.promptDigest,
     surface: role.promptSurface, catalogHash: manifest.catalogHash };
+}
+
+/**
+ * D597: a review is authenticated against the installed reviewer contract of
+ * the surface it actually ran on. Resolving only the parent's own surface made
+ * every review from another configured harness unrecordable.
+ */
+export function cohortReviewerRoleFor(
+  surface: string,
+  parent: PromptArtifactStore,
+  targets: Readonly<Partial<Record<string, PromptArtifactStore>>> | undefined,
+): CohortReviewRoleContractV1 {
+  const parentRole = reviewerRole(parent);
+  if (parentRole.surface === surface) return parentRole;
+  const target = targets?.[surface];
+  if (target === undefined) throw new Error(`cohort review ran on the ${surface} surface, which has no installed reviewer contract`);
+  return reviewerRole(target);
 }
 
 async function acceptedCandidate(cohorts: WorkCohortStore, backend: AttestationBackend, envelope: CohortEffectEnvelopeV1) {
@@ -109,8 +128,12 @@ export function createCohortCompletionRuntimeV1(options: CohortCompletionRuntime
     handoff: (await cohorts.snapshot()).portable.completionHandoffs.findLast((entry) => entry.operationId === operationId) ?? null });
   const authenticateReview = async (reviewerDispatch: DispatchHandle, envelope: CohortEffectEnvelopeV1, resultCommit: string,
     gateEvidence: ImplementWorkerSupervisedGateEvidence, recording: CohortReviewReceiptV1["recording"]) =>
-    backend.transact({ kind: "namespace" }, (store) => new CohortReviewAuthenticatorV1(store).authenticate({
-      reviewerDispatch, envelope, resultCommit, gateEvidence, recording, role: reviewerRole(options.promptArtifacts) }));
+    backend.transact({ kind: "namespace" }, (store) => {
+      const row = store.read(reviewerDispatch);
+      if (row === undefined || row.kind !== "envelope") throw new Error("cohort review dispatch is missing");
+      return new CohortReviewAuthenticatorV1(store).authenticate({ reviewerDispatch, envelope, resultCommit, gateEvidence, recording,
+        role: cohortReviewerRoleFor(row.promptProvenance.surface, options.promptArtifacts, options.targetPromptArtifacts) });
+    });
 
   function host(authority: ManagedCohortWorktreeAuthority | null): CohortCompletionHostV1 {
     const requireAuthority = () => {

@@ -1839,6 +1839,7 @@ export async function main(
   const cohortCompletion = dispatchRuntime.kind === "available" && resolvedPromptSurface !== undefined
     ? createCohortCompletionRuntimeV1({ resolved, backend: dispatchRuntime.backend,
       promptArtifacts: resolvedPromptSurface.store, cancellationSignal: cohortCancellation.signal,
+      ...(targetPromptArtifactStores === undefined ? {} : { targetPromptArtifacts: targetPromptArtifactStores }),
       ...(trustedSourceWorkspace === undefined ? {} : trustedSourceWorkspace) })
     : undefined;
   const cohortInvestigation = dispatchRuntime.kind === "available" && resolvedPromptSurface !== undefined

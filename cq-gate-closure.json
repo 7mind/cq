@@ -47,7 +47,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-      "sha256": "b2cd9d8fb68c29b18d2c27485e3c0ef492311a843ad5eb3c6aaf71d1269534b9",
+      "sha256": "e199e45599e86e26e8036ceaa51369726589c080b1402128876d0a8be0f611a2",
       "targets": []
     },
     {
@@ -2648,7 +2648,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-      "sha256": "b2cd9d8fb68c29b18d2c27485e3c0ef492311a843ad5eb3c6aaf71d1269534b9",
+      "sha256": "e199e45599e86e26e8036ceaa51369726589c080b1402128876d0a8be0f611a2",
       "targets": []
     },
     {
