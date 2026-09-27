@@ -74,6 +74,7 @@ const memoriesSchema: LedgerSchema = {
   fields: {
     title: { type: "string", required: true },
     content: { type: "string", required: true },
+    kind: { type: "string", required: false },
     tags: { type: "string[]", required: false },
     sourceRefs: { type: "string[]", required: false },
     ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,

@@ -82,6 +82,22 @@ export interface ArchivedItemGeneration {
 }
 
 /**
+ * G192/T6627 — one ledger's PHYSICAL state: the stored payloads exactly as
+ * persisted, without the semantic materialization every public item read
+ * applies (e.g. a legacy memory's absent `kind` stays absent). `archives`
+ * is keyed by archive-pointer id in `ledger.archivePointers` order.
+ */
+export interface PhysicalLedgerExport {
+  readonly ledger: FetchedLedger;
+  readonly archives: ReadonlyMap<string, ArchiveContent>;
+}
+
+/** Every registered ledger's physical state, in `enumerate()` order. */
+export interface PhysicalLedgerState {
+  readonly ledgers: readonly PhysicalLedgerExport[];
+}
+
+/**
  * Operation that triggered a mutation. Used by the `onMutation` hook
  * and by the internal-WS `ledger.changed` envelope. The mirror in
  * `@cq/shared` (`LedgerOp` Zod enum) MUST stay in lockstep — if either
@@ -231,6 +247,15 @@ export interface LedgerStore {
    * arrays. Empty values are omitted.
    */
   listMilestoneItems(milestoneId: string): Record<string, Item[]>;
+
+  /**
+   * G192/T6627 — export every active and archived payload through the
+   * adapter's native representation, WITHOUT read-time materialization, so
+   * backup/export can distinguish a physically absent field from an explicit
+   * value. Validates every complete payload first; an unsupported memory kind
+   * rejects the whole export.
+   */
+  exportPhysicalLedgerState(): Promise<PhysicalLedgerState>;
 
   /**
    * Cross-ledger compact snapshot (T143, Q75): enumerate every ACTIVE

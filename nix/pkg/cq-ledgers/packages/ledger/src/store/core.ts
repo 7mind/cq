@@ -61,6 +61,7 @@ import {
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
 import { isAuthorizedImplementationEvidenceMutation } from "../implementationEvidence.js";
+import { assertWritableMemoryKind, normalizeMemoryKindForWrite } from "../memoryKind.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
   ownershipFieldsFrom,
@@ -508,6 +509,7 @@ export function applyUpdateItem(
     }
     // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
     assertWorksetOwnershipFieldsAbsent(patch.fields, item);
+    assertWritableMemoryKind(ledger.id, item.id, patch.fields);
     if (ledger.id === TASKS_LEDGER && patch.fields["description"] !== undefined) {
       const currentDirective = parseOperatorActionEnvelope(
         String(item.fields["description"] ?? ""),
@@ -557,6 +559,7 @@ export function applyUpdateItem(
       item.fields[k] = v;
     }
   }
+  normalizeMemoryKindForWrite(ledger.id, item.id, item.fields);
   if (patch.author !== undefined) item.author = patch.author;
   if (patch.session !== undefined) item.session = patch.session;
   item.updatedAt = now;
@@ -637,6 +640,7 @@ export function applyCreateItem(
   // T1951/T1962: caller-supplied ownership fields are always rejected; only the
   // library-derived sealedOwnership argument may establish the owner relation.
   assertWorksetOwnershipFieldsAbsent(init.fields);
+  assertWritableMemoryKind(ledger.id, init.id ?? "<new>", init.fields);
   if (ledger.id === TASKS_LEDGER && init.fields["description"] !== undefined) {
     const directive = parseOperatorActionEnvelope(String(init.fields["description"]));
     if (directive !== null && init.status !== "planned") {
@@ -689,6 +693,7 @@ export function applyCreateItem(
   if (sealedOwnership !== undefined) {
     Object.assign(fields, ownershipFieldsFrom(sealedOwnership));
   }
+  normalizeMemoryKindForWrite(ledger.id, id, fields);
   const item: Item = {
     id,
     milestoneId,
@@ -1155,7 +1160,9 @@ export function applyReopenItem(
     );
   }
   assertReopenRetainedGates(item, refCtx);
+  assertWritableMemoryKind(ledger.id, item.id, item.fields);
   item.status = toStatus;
+  normalizeMemoryKindForWrite(ledger.id, item.id, item.fields);
   item.updatedAt = now;
   return item;
 }
@@ -1180,6 +1187,7 @@ export function applyReattachItem(
   if (itemIdExists(ledger, item.id)) {
     throw new DuplicateIdError("item", item.id);
   }
+  assertWritableMemoryKind(ledger.id, item.id, item.fields);
   let group = ledger.milestones.find((m) => m.id === milestoneId);
   if (group === undefined) {
     assertSafeId("milestone", milestoneId);
@@ -1194,6 +1202,7 @@ export function applyReattachItem(
     createdAt: item.createdAt,
     updatedAt: now,
   };
+  normalizeMemoryKindForWrite(ledger.id, reattached.id, reattached.fields);
   if (item.author !== undefined) reattached.author = item.author;
   if (item.session !== undefined) reattached.session = item.session;
   group.items.push(reattached);

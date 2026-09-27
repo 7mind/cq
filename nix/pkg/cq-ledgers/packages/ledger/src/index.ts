@@ -327,9 +327,20 @@ export type {
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
+  PhysicalLedgerExport,
+  PhysicalLedgerState,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
+export {
+  MEMORY_KINDS,
+  MEMORY_KIND_FIELD,
+  DEFAULT_MEMORY_KIND,
+  isMemoryKind,
+  UnsupportedMemoryKindError,
+  resolveMemoryKind,
+} from "./memoryKind.js";
+export type { MemoryKind } from "./memoryKind.js";
 export { schemasEqual, schemaCompatible } from "./store/schemaCompat.js";
 export {
   buildBackupDump,

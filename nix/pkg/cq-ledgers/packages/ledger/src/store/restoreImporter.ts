@@ -68,6 +68,7 @@ import {
   type WorkCohortPortableStateV1,
 } from "../workCohortStore.js";
 import { replaceSqliteWorkCohortPortableState } from "./sqlite/sqliteWorkCohortStore.js";
+import { assertLedgerStateMemoryKinds } from "../memoryKind.js";
 
 export class RestoreTargetChangedError extends LedgerError {
   constructor(target: string) {
@@ -263,6 +264,8 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const workCohort =
     workCohortSrc === undefined ? null : parseWorkCohortPortableStateV1(workCohortSrc);
 
+  assertLedgerStateMemoryKinds(ledgers, archives);
+
   return { registry, ledgers, archives, logs, planLifecycle, worksetRoots, workCohort };
 }
 
@@ -334,6 +337,8 @@ export async function restoreDumpToXdg(opts: {
       ? prepareImportedOwnershipDump(opts.dump, "preserve")
       : opts.preparedOwnership;
   const parsed = prepared.parsed;
+  // G192/T6627: reject an unsupported memory kind before any target access.
+  assertLedgerStateMemoryKinds(parsed.ledgers, parsed.archives);
   const restoredAt = new Date().toISOString();
   const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
   let logCount = 0;

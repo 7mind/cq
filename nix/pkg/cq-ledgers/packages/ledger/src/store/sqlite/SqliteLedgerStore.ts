@@ -94,11 +94,19 @@ import type {
   LedgerMutationOp,
   LedgerStore,
   OnMutation,
+  PhysicalLedgerState,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "../LedgerStore.js";
 import type { LedgerSnapshot } from "../../snapshot.js";
 import { buildSnapshot } from "../../snapshot.js";
+import {
+  resolveArchiveContentMemoryKinds,
+  resolveFetchedLedgerMemoryKinds,
+  resolveLedgerMemoryKinds,
+  resolveMemoryKind,
+} from "../../memoryKind.js";
+import { collectPhysicalLedgerState } from "../physicalLedgerState.js";
 import {
   applyCreateItem,
   applyCreateMilestoneItem,
@@ -1193,7 +1201,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   fetch(ledgerId: string): FetchedLedger {
-    return this.read(() => this.fetchView(ledgerId));
+    return this.read(() => resolveFetchedLedgerMemoryKinds(this.fetchView(ledgerId)));
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
@@ -1205,7 +1213,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         )
         .get(ledgerId, itemId) as ItemRow | null;
       if (row === null) throw new ItemNotFoundError(ledgerId, itemId);
-      return rowToItem(row);
+      return resolveMemoryKind(ledgerId, rowToItem(row));
     });
   }
 
@@ -1236,9 +1244,20 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       .all(milestoneId, MILESTONES_LEDGER) as Array<ItemRow & { ledger: string }>;
     const out: Record<string, Item[]> = {};
     for (const row of rows) {
-      (out[row.ledger] ??= []).push(rowToItem(row));
+      (out[row.ledger] ??= []).push(resolveMemoryKind(row.ledger, rowToItem(row)));
     }
     return out;
+  }
+
+  async exportPhysicalLedgerState(): Promise<PhysicalLedgerState> {
+    this.assertInit();
+    return this.read(() =>
+      collectPhysicalLedgerState({
+        names: this.enumerate(),
+        view: (ledgerId) => this.fetchView(ledgerId),
+        archive: (ledgerId, pointerId) => this.physicalArchive(ledgerId, pointerId),
+      }),
+    );
   }
 
   snapshot(): LedgerSnapshot {
@@ -1246,7 +1265,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   search(ledgerId: string, query: string): Item[] {
-    return this.read(() => searchItems(this.loadLedger(ledgerId), query));
+    return this.read(() =>
+      searchItems(resolveLedgerMemoryKinds(this.loadLedger(ledgerId)), query),
+    );
   }
 
   /**
@@ -1266,7 +1287,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       });
     if (ack.result.kind !== "search")
       throw new LedgerError("Search projection returned a non-search acknowledgement");
-    return ack.result.hits;
+    return ack.result.hits.map((hit) => ({ ...hit, item: resolveMemoryKind(hit.ledgerId, hit.item) }));
   }
 
   searchProjectionHealth(): SearchProjectionHealth {
@@ -1314,31 +1335,36 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * archive `kind` discrimination, reading `archived_items` rows.
    */
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
-    return this.read(() => {
-      this.assertLedgerExists(ledgerId);
-      const ptr = this.db()
-        .query("SELECT id FROM archive_pointers WHERE ledger = ? AND id = ?")
-        .get(ledgerId, archiveId);
-      if (ptr === null) {
-        throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
+    return this.read(() =>
+      resolveArchiveContentMemoryKinds(ledgerId, this.physicalArchive(ledgerId, archiveId)),
+    );
+  }
+
+  /** Stored archive payload without read-time materialization; call inside `read`. */
+  private physicalArchive(ledgerId: string, archiveId: string): ArchiveContent {
+    this.assertLedgerExists(ledgerId);
+    const ptr = this.db()
+      .query("SELECT id FROM archive_pointers WHERE ledger = ? AND id = ?")
+      .get(ledgerId, archiveId);
+    if (ptr === null) {
+      throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
+    }
+    const rows = this.db()
+      .query(
+        "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? AND pointer_id = ? ORDER BY rowid",
+      )
+      .all(ledgerId, archiveId) as ItemRow[];
+    if (ledgerId === MILESTONES_LEDGER) {
+      const row = rows[0];
+      if (row === undefined) {
+        throw new LedgerError(`archive ${archiveId} in ledger ${ledgerId} has no item`);
       }
-      const rows = this.db()
-        .query(
-          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? AND pointer_id = ? ORDER BY rowid",
-        )
-        .all(ledgerId, archiveId) as ItemRow[];
-      if (ledgerId === MILESTONES_LEDGER) {
-        const row = rows[0];
-        if (row === undefined) {
-          throw new LedgerError(`archive ${archiveId} in ledger ${ledgerId} has no item`);
-        }
-        return { kind: "item", item: rowToItem(row) };
-      }
-      return {
-        kind: "group",
-        milestone: { id: archiveId, title: "", description: "", items: rows.map(rowToItem) },
-      };
-    });
+      return { kind: "item", item: rowToItem(row) };
+    }
+    return {
+      kind: "group",
+      milestone: { id: archiveId, title: "", description: "", items: rows.map(rowToItem) },
+    };
   }
 
   /** D400 — exact archived lookup by canonical ledger + item id (indexed). */
@@ -1355,7 +1381,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
            FROM archived_items WHERE ledger = ? AND id = ? ORDER BY rowid`,
         )
         .all(ledgerId, itemId) as (ItemRow & { pointer_id: string })[];
-      return rows.map((row) => ({ pointerId: row.pointer_id, item: rowToItem(row) }));
+      return rows.map((row) => ({
+        pointerId: row.pointer_id,
+        item: resolveMemoryKind(ledgerId, rowToItem(row)),
+      }));
     });
   }
 

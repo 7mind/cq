@@ -80,11 +80,20 @@ import type {
   LedgerMutationOp,
   LedgerStore,
   OnMutation,
+  PhysicalLedgerState,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "../LedgerStore.js";
 import type { LedgerSnapshot } from "../../snapshot.js";
 import { buildSnapshot } from "../../snapshot.js";
+import {
+  resolveArchiveContentMemoryKinds,
+  resolveFetchedLedgerMemoryKinds,
+  resolveLedgerMemoryKinds,
+  resolveMemoryKind,
+  resolveMemoryKinds,
+} from "../../memoryKind.js";
+import { collectPhysicalLedgerState } from "../physicalLedgerState.js";
 import type {
   PlanClaimInput,
   PlanClaimResult,
@@ -1267,16 +1276,20 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   fetch(ledgerId: string): FetchedLedger {
+    return resolveFetchedLedgerMemoryKinds(this.physicalView(ledgerId));
+  }
+
+  private physicalView(ledgerId: string): FetchedLedger {
     return materialiseFetchedLedger(this.getLedger(ledgerId), this.getLedger(MILESTONES_LEDGER));
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
     this.assertCacheReadable();
-    return this.readCache.item(ledgerId, itemId);
+    return resolveMemoryKind(ledgerId, this.readCache.item(ledgerId, itemId));
   }
 
   search(ledgerId: string, query: string): Item[] {
-    return searchItems(this.getLedger(ledgerId), query).map(cloneItem);
+    return searchItems(resolveLedgerMemoryKinds(this.getLedger(ledgerId)), query).map(cloneItem);
   }
 
   async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
@@ -1288,7 +1301,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       throw new ProjectionUnavailableError(`Search projection unavailable: ${String(error)}`);
     });
     if (ack.result.kind !== "search") throw new LedgerError("Search projection returned a non-search acknowledgement");
-    return ack.result.hits.map((hit) => ({ ...hit, item: cloneItem(hit.item) }));
+    return ack.result.hits.map((hit) => ({
+      ...hit,
+      item: resolveMemoryKind(hit.ledgerId, cloneItem(hit.item)),
+    }));
   }
 
   searchProjectionHealth(): SearchProjectionHealth { return this.recovery().health(); }
@@ -1310,7 +1326,22 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   listMilestoneItems(milestoneId: string): Record<string, Item[]> {
     this.assertCacheReadable();
-    return this.readCache.milestoneItems(milestoneId);
+    const physical = this.readCache.milestoneItems(milestoneId);
+    return Object.fromEntries(
+      Object.entries(physical).map(([ledgerId, items]) => [
+        ledgerId,
+        resolveMemoryKinds(ledgerId, items),
+      ]),
+    );
+  }
+
+  async exportPhysicalLedgerState(): Promise<PhysicalLedgerState> {
+    this.assertCacheReadable();
+    return collectPhysicalLedgerState({
+      names: this.enumerate(),
+      view: (ledgerId) => this.physicalView(ledgerId),
+      archive: (ledgerId, pointerId) => this.readCache.archive(ledgerId, pointerId),
+    });
   }
 
   snapshot(): LedgerSnapshot {
@@ -1320,7 +1351,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     this.assertCacheReadable();
-    return this.readCache.archive(ledgerId, archiveId);
+    return resolveArchiveContentMemoryKinds(ledgerId, this.readCache.archive(ledgerId, archiveId));
   }
 
   /** D400 — exact archived lookup by canonical ledger + item id. */
@@ -1329,7 +1360,9 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     itemId: string,
   ): Promise<readonly ArchivedItemGeneration[]> {
     this.assertCacheReadable();
-    return this.readCache.archivedGenerationsById(ledgerId, itemId);
+    return this.readCache
+      .archivedGenerationsById(ledgerId, itemId)
+      .map((generation) => ({ ...generation, item: resolveMemoryKind(ledgerId, generation.item) }));
   }
 
   // ---------------------------------------------------------------------------

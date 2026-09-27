@@ -63,6 +63,7 @@ import type {
   FtsSearchOpts,
   LedgerStore,
   OnMutation,
+  PhysicalLedgerState,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
@@ -108,6 +109,15 @@ import {
 } from "./genericMutationTransaction.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
+import {
+  assertLedgerStateMemoryKinds,
+  resolveArchiveContentMemoryKinds,
+  resolveFetchedLedgerMemoryKinds,
+  resolveLedgerMemoryKinds,
+  resolveMemoryKind,
+  resolveMemoryKinds,
+} from "../memoryKind.js";
+import { collectPhysicalLedgerState } from "./physicalLedgerState.js";
 import type { FetchedLedger, FetchedMilestoneGroup, ResolvedMilestone } from "../types.js";
 import { AsyncMutex } from "./mutex.js";
 import {
@@ -450,22 +460,26 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   fetch(ledgerId: string): FetchedLedger {
+    return resolveFetchedLedgerMemoryKinds(this.physicalView(ledgerId));
+  }
+
+  private physicalView(ledgerId: string): FetchedLedger {
     return materialiseFetchedLedger(this.getLedger(ledgerId), this.getLedger(MILESTONES_LEDGER));
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
-    return cloneItem(findItem(this.getLedger(ledgerId), itemId).item);
+    return resolveMemoryKind(ledgerId, cloneItem(findItem(this.getLedger(ledgerId), itemId).item));
   }
 
   search(ledgerId: string, query: string): Item[] {
-    return searchItems(this.getLedger(ledgerId), query).map(cloneItem);
+    return searchItems(resolveLedgerMemoryKinds(this.getLedger(ledgerId)), query).map(cloneItem);
   }
 
   async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
     this.assertInit();
     return this.searchIndex
       .searchQuery(query, opts)
-      .map((h) => ({ ...h, item: cloneItem(h.item) }));
+      .map((h) => ({ ...h, item: resolveMemoryKind(h.ledgerId, cloneItem(h.item)) }));
   }
 
   fetchMilestone(milestoneId: string): FetchedMilestoneItem {
@@ -487,9 +501,18 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       const group = ledger.milestones.find((m) => m.id === milestoneId);
       if (group === undefined) continue;
       if (group.items.length === 0) continue;
-      out[name] = group.items.map(cloneItem);
+      out[name] = resolveMemoryKinds(name, group.items.map(cloneItem));
     }
     return out;
+  }
+
+  async exportPhysicalLedgerState(): Promise<PhysicalLedgerState> {
+    this.assertInit();
+    return collectPhysicalLedgerState({
+      names: this.enumerate(),
+      view: (ledgerId) => this.physicalView(ledgerId),
+      archive: (ledgerId, pointerId) => this.physicalArchive(ledgerId, pointerId),
+    });
   }
 
   snapshot(): LedgerSnapshot {
@@ -499,6 +522,10 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     this.assertInit();
+    return resolveArchiveContentMemoryKinds(ledgerId, this.physicalArchive(ledgerId, archiveId));
+  }
+
+  private physicalArchive(ledgerId: string, archiveId: string): ArchiveContent {
     if (ledgerId === MILESTONES_LEDGER) {
       const key = `${ledgerId}/${archiveId}`;
       const item = this.itemArchives.get(key);
@@ -530,7 +557,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     for (const [key, group] of this.archives) {
       if (!key.startsWith(`${ledgerId}/`)) continue;
       for (const item of group.items) {
-        if (item.id === itemId) found.push({ pointerId: group.id, item: cloneItem(item) });
+        if (item.id === itemId) {
+          found.push({ pointerId: group.id, item: resolveMemoryKind(ledgerId, cloneItem(item)) });
+        }
       }
     }
     return found;
@@ -1640,6 +1669,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     readonly worksetRoots: { readonly roots: readonly string[] } | null;
   }): Promise<void> {
     this.assertInit();
+    // G192/T6627: reject an unsupported memory kind before any clear.
+    assertLedgerStateMemoryKinds(parsed.ledgers, parsed.archives);
     this.ledgers.clear();
     this.archives.clear();
     this.itemArchives.clear();

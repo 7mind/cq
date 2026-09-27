@@ -46,6 +46,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { FetchedLedger, Ledger, LedgerRegistry } from "../types.js";
+import { LedgerError } from "../types.js";
 import type { LedgerStore } from "./LedgerStore.js";
 import {
   serializeArchive,
@@ -172,27 +173,31 @@ export const DEFAULT_BACKUP_DEBOUNCE_MS = 500;
  *                                     (the Q247 log coverage; `null` logsDir or
  *                                     a missing dir contributes no entries).
  *
- * Reads go through the PUBLIC store surface only (`enumerate` / `fetch` /
- * `fetchArchive`), so any `LedgerStore` backend can be dumped.
+ * Reads go through the PUBLIC store surface only
+ * (`exportPhysicalLedgerState`), so any `LedgerStore` backend can be dumped.
  */
 export async function buildBackupDump(
   store: LedgerStore,
   logsDir: string | null,
 ): Promise<BackupDumpFile[]> {
   const files: BackupDumpFile[] = [];
-  const names = store.enumerate();
-  const fetched = names.map((name) => store.fetch(name));
+  // G192/T6627: the physical export keeps stored payloads unmaterialized, so a
+  // legacy memory's absent `kind` survives backup/restore as an absence.
+  const physical = await store.exportPhysicalLedgerState();
 
   const registry: LedgerRegistry = {
     version: 1,
-    ledgers: fetched.map((f) => ({ name: f.id, schema: f.schema })),
+    ledgers: physical.ledgers.map(({ ledger }) => ({ name: ledger.id, schema: ledger.schema })),
   };
   files.push({ path: "ledgers.yaml", content: serializeRegistry(registry) });
 
-  for (const f of fetched) {
+  for (const { ledger: f, archives } of physical.ledgers) {
     files.push({ path: `${f.id}.md`, content: serializeLedger(fetchedToLedger(f)) });
     for (const pointer of f.archivePointers) {
-      const archive = await store.fetchArchive(f.id, pointer.id);
+      const archive = archives.get(pointer.id);
+      if (archive === undefined) {
+        throw new LedgerError(`backup export: archive ${pointer.id} of ledger ${f.id} is missing`);
+      }
       const content =
         archive.kind === "group"
           ? serializeArchive(archive.milestone)

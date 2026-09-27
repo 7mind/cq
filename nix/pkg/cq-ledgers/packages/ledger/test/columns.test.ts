@@ -70,8 +70,9 @@ describe("eligibleColumnFields", () => {
     expect(eligibleColumnFields(HYPOTHESIS_SCHEMA)).toContain("parentHypothesis");
   });
 
-  it("excludes memory content from table-column choices", () => {
-    expect(eligibleColumnFields(MEMORIES_SCHEMA)).toEqual(["tags", "sourceRefs"]);
+  it("excludes memory content from table-column choices and offers kind as opt-in", () => {
+    expect(eligibleColumnFields(MEMORIES_SCHEMA)).toEqual(["kind", "tags", "sourceRefs"]);
+    expect(defaultColumns("memories")).toEqual([]);
   });
 
   it("keeps compact upstream fields eligible and excludes narrative, evidence, and log fields", () => {
@@ -213,7 +214,7 @@ describe("eligibleColumnFields", () => {
         "ledgerRefs",
       ],
       ideas: ["ledgerRefs"],
-      memories: ["tags", "sourceRefs"],
+      memories: ["kind", "tags", "sourceRefs"],
       researches: [
         "scope",
         "findings",

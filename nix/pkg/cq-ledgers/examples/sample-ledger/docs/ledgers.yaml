@@ -411,6 +411,9 @@ ledgers:
         content:
           type: string
           required: true
+        kind:
+          type: string
+          required: false
         tags:
           type: string[]
           required: false

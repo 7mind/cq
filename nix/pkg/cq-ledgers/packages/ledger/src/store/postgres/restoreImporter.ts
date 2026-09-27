@@ -69,6 +69,7 @@ import {
 import { createPostgresWorksetStore } from "./worksetStore.js";
 import { emptyWorkCohortPortableStateV1, parseWorkCohortPortableStateV1 } from "../../workCohortStore.js";
 import { replacePostgresWorkCohortPortableState } from "./postgresWorkCohortStore.js";
+import { assertLedgerStateMemoryKinds } from "../../memoryKind.js";
 
 /**
  * True iff `pool`'s tenant `projectKey` currently holds nothing but the
@@ -191,6 +192,8 @@ export async function restoreDumpToPostgres(opts: {
       ? prepareImportedOwnershipDump(opts.dump, "preserve")
       : opts.preparedOwnership;
   const parsed = prepared.parsed;
+  // G192/T6627: reject an unsupported memory kind before any target access.
+  assertLedgerStateMemoryKinds(parsed.ledgers, parsed.archives);
   const restoredAt = new Date().toISOString();
   const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
 
