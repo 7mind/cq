@@ -35,7 +35,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "9786c2d3793bba9fdd058d760f3496a87f5ba986954ce2705a9eee0c8cfae215",
+      "sha256": "8010e15e0f867a97b54ad26a19d30536081f11855ace7f238f0547429d6cf5dd",
       "targets": []
     },
     {
@@ -2564,7 +2564,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/work-cohort-dispatch-runtime.test.ts",
-      "sha256": "94847a455dd51e49ddc2a4c2024768e9372c1b8f61945f4a7dfbe02cb14342f9",
+      "sha256": "3fedb3f89e8d5c3ed1900f294dadcfb372e3362402c5d2699eb41fc149973afd",
       "targets": []
     },
     {

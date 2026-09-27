@@ -4249,6 +4249,53 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const successor = await prepareRetiredStagedRebaseSuccessor(context, resumed.bridge.guardedRebase, resumed.bridge.rebasedStartCommit);
       return { state: "successor-queued", source: input.source, successor };
     },
+    prepareCohortCorrectionSuccessor: async ({ workerDispatch }) => {
+      assertImplementationExecutor("acquire");
+      if (cohortStore === undefined || options.ledgerStore === undefined) throw new Error("cohort correction requires its production stores");
+      const source = await options.backend.transact({ kind: "handle", handle: workerDispatch }, (store) => {
+        const row = store.read(workerDispatch);
+        if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
+            row.promptProvenance.roleId !== "implement-worker" || row.state !== "consumed" ||
+            row.implementationQueue?.state !== "leased" || row.implementationQueue.qualification === undefined ||
+            row.stagedRebaseSourceBinding !== undefined || !dispatchObject(row.input)) {
+          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker");
+        }
+        return row;
+      });
+      const prior = source.gitEffectBinding!;
+      if (prior.cohort === undefined) throw new Error("cohort correction source lost its cohort binding");
+      const attempt = source.implementationQueue!.attempt;
+      const sourceInput = source.input as Readonly<Record<string, DispatchJSONValue>>;
+      const round = sourceInput["round"];
+      if (!Number.isSafeInteger(round) || (round as number) < 0) throw new Error("cohort correction source round is malformed");
+      await assertCohortParentExecution(workerDispatch);
+      // The correction keeps the candidate's own base: a rebase onto it is an
+      // exact-tip no-op whose bridge moves the cohort to a fresh pre-seal intent.
+      const ontoCommit = attempt.observedBaseCommit;
+      let guardedRebase = (await readManagedCohortRebaseSuccessor(prior, managerDeps))?.bridge.guardedRebase;
+      if (guardedRebase === undefined) {
+        const retained = await resolveSealedCohortAuthority(prior, workerDispatch, false);
+        const liveTip = await readOnlyGit(prior.worktreePath, ["rev-parse", "HEAD"]);
+        const clean = (await readOnlyGitAllowEmpty(prior.worktreePath, ["status", "--porcelain", "--untracked-files=all"])) === "";
+        if (!clean || liveTip !== attempt.resultCommit) throw new Error("cohort correction source is no longer the clean consumed result");
+        const rebase = await runGuardedRebase({ binding: retained.binding, cohortAuthority: retained.authority, store: options.ledgerStore,
+          operationId: `cohort-correction-${dispatchPayloadDigest({ attemptId: attempt.attemptId }).slice(0, 32)}`, ontoCommit,
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }) });
+        if (rebase.kind !== "finalized") throw new Error("cohort correction rebase onto its own base did not finalize");
+        guardedRebase = rebase.reference;
+      }
+      const successor = await prepareManagedCohortRebaseSuccessor({ source: workerDispatch, prior, guardedRebase, ontoCommit,
+        priorResultCommit: attempt.resultCommit }, cohortStore, options.ledgerStore, managerDeps);
+      const { guardedRebaseLineage: _lineage, priorCriticism: _criticism, ...retainedInput } = sourceInput;
+      return {
+        state: "correction-ready",
+        reprepareOf: { attestationId: workerDispatch.attestationId, generation: workerDispatch.generation },
+        guardedRebase,
+        input: { ...retainedInput, cohort: successor.binding.cohort as unknown as DispatchJSONValue, branch: successor.binding.branch,
+          worktreePath: successor.binding.worktreePath, baseCommit: ontoCommit, startingCommit: successor.bridge.rebasedStartCommit,
+          priorResultCommit: attempt.resultCommit, round: (round as number) + 1 },
+      };
+    },
     renewCohortParentExecution: async ({ workerDispatch, cohort }) => {
       assertImplementationExecutor("acquire");
       if (cohort.state !== "sealed" || options.repositoryRoot === undefined) throw new Error("cohort parent renewal requires the sealed local candidate");

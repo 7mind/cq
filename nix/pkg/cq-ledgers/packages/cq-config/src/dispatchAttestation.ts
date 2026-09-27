@@ -3165,7 +3165,10 @@ function claimStagedRebaseSuccessor(
     gitEffectBinding !== undefined &&
     retainedQueueBindingsMatch &&
     retainedContinuation!.liveTip === bridge.oldResultCommit &&
-    implementationQueueSubjectsMatch(queue!.attempt, gitEffectBinding, true) &&
+    // D598: a cohort correction successor carries a new intent; its proven
+    // transition from the consumed source replaces the subject identity.
+    (implementationQueueSubjectsMatch(queue!.attempt, gitEffectBinding, true) ||
+      cohortRebaseTransitionMatches(priorManagerBinding!, gitEffectBinding, reprepareOf)) &&
     queue!.attempt.repositoryId === gitEffectBinding.repositoryId &&
     queue!.attempt.worktreePath === gitEffectBinding.worktreePath &&
     input?.["baseCommit"] === bridge.ontoCommit &&

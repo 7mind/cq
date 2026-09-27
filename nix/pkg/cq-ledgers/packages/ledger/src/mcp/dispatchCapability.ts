@@ -267,6 +267,21 @@ export interface DispatchCapability {
     readonly source: { readonly attestationId: string; readonly generation: number };
     readonly successor: { readonly attestationId: string; readonly generation: number };
   }>;
+  /**
+   * D598: open correction round N+1 for a consumed, reviewed cohort candidate
+   * in its own managed worktree. The candidate is re-based onto its own base
+   * (an exact-tip guarded rebase) and bound to a new pre-seal intent; the
+   * returned coordinates feed an ordinary `reprepareOf` + `guardedRebase`
+   * start. Replays return the same coordinates.
+   */
+  prepareCohortCorrectionSuccessor?(input: {
+    readonly workerDispatch: { readonly attestationId: string; readonly generation: number };
+  }): Promise<{
+    readonly state: "correction-ready";
+    readonly reprepareOf: { readonly attestationId: string; readonly generation: number };
+    readonly guardedRebase: string;
+    readonly input: DispatchJSONValue;
+  }>;
   renewCohortParentExecution?(input: {
     readonly workerDispatch: DispatchHandle;
     readonly cohort: CohortEffectEnvelopeV1;
