@@ -75,7 +75,16 @@ export function assertMemoryKindPayload(ledgerId: string, item: Item): void {
 export function resolveMemoryKind(ledgerId: string, item: Item): Item {
   if (ledgerId !== MEMORIES_LEDGER) return item;
   assertKindValue(item.id, item.fields);
-  if (item.fields[MEMORY_KIND_FIELD] !== undefined) return item;
+  return materializeMemoryKind(ledgerId, item);
+}
+
+/**
+ * Materialize an absent `kind` WITHOUT validating a present one. Only for the
+ * derived search projection, which must mount over any stored state; every
+ * public read re-validates its hits through {@link resolveMemoryKind}.
+ */
+export function materializeMemoryKind(ledgerId: string, item: Item): Item {
+  if (ledgerId !== MEMORIES_LEDGER || item.fields[MEMORY_KIND_FIELD] !== undefined) return item;
   return { ...item, fields: { ...item.fields, [MEMORY_KIND_FIELD]: DEFAULT_MEMORY_KIND } };
 }
 

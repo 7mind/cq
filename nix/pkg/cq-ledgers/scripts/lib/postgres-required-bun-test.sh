@@ -150,8 +150,9 @@ fi
 export CQ_TEST_PG_URL="postgresql://cq@127.0.0.1:$postgres_port/postgres?sslmode=disable"
 export CQ_TEST_REQUIRE_PG=1
 
+# Bun omits passing test names when CLAUDECODE is set; the transcript must list them.
 set +e
-bun test "$@" 2>&1 | tee "$transcript"
+env -u CLAUDECODE bun test "$@" 2>&1 | tee "$transcript"
 bun_exit="${PIPESTATUS[0]}"
 set -e
 if [[ "$bun_exit" -ne 0 ]]; then

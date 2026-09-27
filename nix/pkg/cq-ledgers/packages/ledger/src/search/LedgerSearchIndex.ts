@@ -67,7 +67,7 @@ import {
   type EvalContext,
 } from "./query.js";
 import { CANONICAL_LEDGERS } from "../constants.js";
-import { resolveMemoryKind } from "../memoryKind.js";
+import { materializeMemoryKind } from "../memoryKind.js";
 import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
 
 // Static prefix→ledger registry (G80/M245) — built once, no store I/O — used
@@ -461,8 +461,7 @@ export class LedgerSearchIndex {
     items: Item[],
     archived: boolean,
   ): void {
-    // Resolve (and validate) the whole bucket before discarding the previous one.
-    const resolved = items.map((item) => resolveMemoryKind(ledgerId, item));
+    const resolved = items.map((item) => materializeMemoryKind(ledgerId, item));
     const prev = tracker.get(ledgerId);
     if (prev !== undefined) {
       this.discardSet(prev);
@@ -498,7 +497,7 @@ export class LedgerSearchIndex {
     physical: Item,
     archived: boolean,
   ): void {
-    const item = resolveMemoryKind(ledgerId, physical);
+    const item = materializeMemoryKind(ledgerId, physical);
     const doc = toDoc(ledgerId, item, archived);
     if (this.backing.has(doc.docId)) {
       this.mini.replace(doc);
