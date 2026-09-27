@@ -30,6 +30,9 @@ import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.j
 import { runStoreAbstractSuite } from "./store-abstract.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
+if ((PG_URL === undefined || PG_URL.length === 0) && process.env.CQ_TEST_REQUIRE_PG === "1") {
+  throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+}
 
 if (PG_URL === undefined || PG_URL.length === 0) {
   // No live Postgres here — skip cleanly so the offline suite stays green.
