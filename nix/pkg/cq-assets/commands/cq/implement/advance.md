@@ -439,6 +439,12 @@ fallback exists.
    `cohort_advance({operation:"rebase-successor",operation_id,rebase:{source_dispatch,guarded_rebase,onto_commit,prior_result_commit}})`
    with its retained checkpoint, not a plan, task anchor, or caller-minted lease.
    This authorizes only the recorded successor transition, never the old worker.
+   A disapproved consumed cohort candidate gets its correction round through
+   `cohort_advance({operation:"correction-successor",operation_id,worker_dispatch})`,
+   never the task-only continuation. Accept only `correction-ready`, then call
+   `start_dispatch` with its `input` plus the reviewers' `priorCriticism`, and
+   with its exact `reprepareOf` and `guardedRebase`. Replays return the same
+   coordinates until the successor claims them.
    If either capability is unavailable, stop effects and report it rather than
    inventing an operation. Every effect requires the current execution epoch.
    Durable evidence is not a live capability;

@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -368,6 +368,63 @@ for (const kind of ["memory", "sqlite"] as const) {
       expect(coordinated.state).toBe("completed");
       expect(commands.slice(0, 2).sort()).toEqual(["bun test packages/ledger/test/tasks:T1.test.ts", "bun test packages/ledger/test/tasks:T2.test.ts"]);
       expect(commands.slice(2)).toEqual(["bun test shared.test.ts", "bun run check"]);
+      if (mode === "correction") {
+        // D598: a reviewer disapproved the gate-green candidate; its correction
+        // round continues in the same managed worktree under a new intent.
+        const tool = createLedgerMcpToolSpecifications(fixture.ledger, undefined, undefined, undefined, undefined,
+          capability, undefined, createTrustedWorksetManagementAuthority(), undefined, true, undefined, undefined,
+          await createCohortAdvanceRuntimeV1({ resolved: { backend: "xdg", store: fixture.ledger, configRoot: fixture.root, branch: "cq-ledger" },
+            promptArtifacts: cohortPromptStore(), managedDeps: fixture.deps, dispatch: capability }))
+          .find(({ name }) => name === "cohort_advance");
+        if (tool === undefined) throw new Error("public cohort correction tool unavailable");
+        const request = { operation: "correction-successor", operation_id: "correct-r1", worker_dispatch: prepared.handle };
+        const response = await tool.handler(request, null);
+        const content = response.content[0];
+        if (response.isError || content?.type !== "text") throw new Error(JSON.stringify(response));
+        const ready = JSON.parse(content.text) as { state: string; reprepareOf: typeof prepared.handle; guardedRebase: string;
+          input: Record<string, DispatchJSONValue> };
+        expect(ready.state).toBe("correction-ready");
+        expect(ready.reprepareOf).toEqual(prepared.handle);
+        const replayed = await tool.handler({ ...request, operation_id: "correct-r1-replay" }, null);
+        expect(replayed.content[0]?.type === "text" ? JSON.parse(replayed.content[0].text) : undefined).toEqual(ready);
+        const successorCohort = ready.input["cohort"] as unknown as typeof cohort;
+        expect(successorCohort.intent.intentDigest).not.toBe(cohort.intent.intentDigest);
+        expect(ready.input).toMatchObject({ worktreePath: fixture.prepared.handle.absolutePath, baseCommit: fixture.baseCommit,
+          startingCommit: receipt.newHead, priorResultCommit: receipt.newHead, round: 1, validationIntent: "final" });
+        const correctionChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}correction-child`, runId: "correction-run" };
+        const correctionInput = { ...ready.input, priorCriticism: ["member b lacks its focused acceptance"] };
+        const successor = await capability.prepare({ roleId: "implement-worker", idempotencyKey: "cohort-correction", timeoutMs: 600_000,
+          expectedChild: correctionChild, input: correctionInput, reprepareOf: ready.reprepareOf, guardedRebase: ready.guardedRebase });
+        expect(successor).toMatchObject({ accepted: true });
+        if (!successor.accepted) throw new Error(JSON.stringify(successor));
+        const source = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
+        expect(source?.kind === "envelope" ? source.implementationQueue?.state : "missing").toBe("staged-rebase-retired");
+        await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle })).rejects.toThrow("unretired cohort worker");
+        const next = successor.prepared;
+        await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
+        const successorRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+        const successorBinding = successorRow?.kind === "envelope" ? successorRow.gitEffectBinding : undefined;
+        if (successorBinding?.cohort === undefined || successorBinding.guardedRebaseBridge === undefined) throw new Error("correction successor lost its bridge");
+        const bridge = successorBinding.guardedRebaseBridge;
+        const fix = await capability.gitCommit!({ ...next, gitChangeCapability: next.gitChangeCapability!,
+          ...await cohortChangeRequest({ ...fixture.authorization, ...successorBinding }, "correction", "b", "base b\n", "corrected member b\n") });
+        await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
+          cohort: successorCohort, memberObservations: successorCohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Criticism addressed" })),
+          status: "pass", resultCommit: fix.newHead, branch: successorBinding.branch, actualWorktreePath: successorBinding.worktreePath,
+          filesTouched: ["a.txt", "b.txt"], gitReceipts: [fix], checkSummary: "Awaiting correction ladder", summary: "Reviewer criticism addressed",
+          gitLineage: { kind: "guarded-rebase", guardedRebase: bridge.guardedRebase, ontoCommit: bridge.ontoCommit, rebasedStartCommit: bridge.rebasedStartCommit,
+            exactTip: bridge.exactTip },
+          baseVerification: { status: "verified", relation: "descendant", baseCommit: fixture.baseCommit, headCommit: fix.newHead },
+        } as unknown as DispatchJSONValue });
+        await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId: "correction-child",
+          childThreadId: "correction-thread", expectedRunId: correctionChild.runId,
+          outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
+        const corrected = await capability.coordinateImplementationCandidate!({ ...next, holderId: "cohort-correction-front",
+          parentGateCapability: next.parentGateCapability! });
+        expect(corrected.state).toBe("completed");
+        expect((await fixture.store.snapshot()).portable.candidateSeals).toHaveLength(2);
+        return;
+      }
       const replay = await capability.coordinateImplementationCandidate({ ...prepared.prepared,
         holderId: "cohort-front", parentGateCapability });
       expect(replay.state).toBe("empty");
