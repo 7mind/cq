@@ -1261,7 +1261,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   snapshot(): LedgerSnapshot {
-    return this.read(() => buildSnapshot(this.enumerate().map((name) => this.fetchView(name))));
+    return this.read(() =>
+      buildSnapshot(
+        this.enumerate().map((name) => resolveFetchedLedgerMemoryKinds(this.fetchView(name))),
+      ),
+    );
   }
 
   search(ledgerId: string, query: string): Item[] {

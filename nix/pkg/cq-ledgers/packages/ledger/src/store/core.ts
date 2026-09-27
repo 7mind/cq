@@ -509,7 +509,6 @@ export function applyUpdateItem(
     }
     // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
     assertWorksetOwnershipFieldsAbsent(patch.fields, item);
-    assertWritableMemoryKind(ledger.id, item.id, patch.fields);
     if (ledger.id === TASKS_LEDGER && patch.fields["description"] !== undefined) {
       const currentDirective = parseOperatorActionEnvelope(
         String(item.fields["description"] ?? ""),
@@ -541,6 +540,13 @@ export function applyUpdateItem(
       patch.fields !== undefined ? { ...item.fields, ...patch.fields } : item.fields;
     assertHandoffInvariants(item.id, effectiveStatus, effectiveFields);
   }
+  // G192/T6627: validate the EFFECTIVE kind (patch over stored) before the
+  // commit loop, so an already-unsupported stored kind rejects with no effect.
+  assertWritableMemoryKind(
+    ledger.id,
+    item.id,
+    patch.fields !== undefined ? { ...item.fields, ...patch.fields } : item.fields,
+  );
   // G80/M245 write-side: canonicalize dependsOn/blockedBy and reject any
   // NEWLY-added dangling ref. Runs on `patch.fields` BEFORE the commit loop
   // (previous = the item's current values) so a DanglingRefError leaves the
@@ -613,6 +619,9 @@ export function applyCreateItem(
     );
   }
   assertAmbientAttachment(ledger.id, milestoneId);
+  // G192/T6627: before the lazy group insertion below, so a rejected kind
+  // leaves the ledger's milestones untouched.
+  assertWritableMemoryKind(ledger.id, init.id ?? "<new>", init.fields);
   let milestone: Milestone;
   const existing = ledger.milestones.find((m) => m.id === milestoneId);
   if (existing !== undefined) {
@@ -640,7 +649,6 @@ export function applyCreateItem(
   // T1951/T1962: caller-supplied ownership fields are always rejected; only the
   // library-derived sealedOwnership argument may establish the owner relation.
   assertWorksetOwnershipFieldsAbsent(init.fields);
-  assertWritableMemoryKind(ledger.id, init.id ?? "<new>", init.fields);
   if (ledger.id === TASKS_LEDGER && init.fields["description"] !== undefined) {
     const directive = parseOperatorActionEnvelope(String(init.fields["description"]));
     if (directive !== null && init.status !== "planned") {

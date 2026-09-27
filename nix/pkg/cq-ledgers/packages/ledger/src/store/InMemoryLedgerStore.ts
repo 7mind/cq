@@ -12,6 +12,7 @@ import {
   assertLifetimeIdNamespace,
   type LifetimeIdCollision,
 } from "./lifetimeIdNamespace.js";
+import { schemaCompatible, schemasEqual } from "./schemaCompat.js";
 import type { ArchivePointer, Item, Ledger, LedgerSchema, Milestone } from "../types.js";
 import { runAuthorizedPlanLifecycleMutation, type AdmittedPlanMutation } from "../worksetPlanLifecycle.js";
 import {
@@ -1682,8 +1683,17 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.ledgers.set(name, cloneLedger(ledger));
     }
     for (const canonical of CANONICAL_LEDGERS) {
-      if (!this.ledgers.has(canonical.name)) {
+      const restored = this.ledgers.get(canonical.name);
+      if (restored === undefined) {
         this.ledgers.set(canonical.name, freshLedger(canonical.name, canonical.schema));
+      } else if (
+        !schemasEqual(restored.schema, canonical.schema) &&
+        schemaCompatible(restored.schema, canonical.schema)
+      ) {
+        // G192/T6627: widen a restored pre-change schema (e.g. memories
+        // without `kind`) to canon, as the durable adapters do on reopen.
+        // Item payloads stay physically as restored.
+        restored.schema = canonical.schema;
       }
     }
     for (const [ledgerName, archiveMap] of parsed.archives) {

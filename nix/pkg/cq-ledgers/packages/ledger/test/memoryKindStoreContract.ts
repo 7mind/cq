@@ -17,8 +17,10 @@ import {
   UnsupportedMemoryKindError,
   buildBackupDump,
   parseBackupDump,
+  parseRegistry,
   serializeArchive,
   serializeLedger,
+  serializeRegistry,
   type BackupDumpFile,
   type FieldValue,
   type Item,
@@ -33,6 +35,7 @@ const ARCHIVED_GROUP_ID = "M90";
 const ARCHIVED_ITEM_ID = "MEM90";
 const LEGACY_TS = "2026-01-02T03:04:05.000Z";
 const UNSUPPORTED_KIND = "opinion";
+const REGISTRY_PATH = "ledgers.yaml";
 
 export interface StoredItemTarget {
   readonly itemId: string;
@@ -131,6 +134,21 @@ async function rewriteMemoriesDump(
   }
   files.push({ path: `${MEMORIES}.md`, content: serializeLedger(memories) });
   return files;
+}
+
+/** Rewrite the dump's registry so the memories schema predates the `kind` field. */
+function withPreKindMemoriesSchema(dump: readonly BackupDumpFile[]): BackupDumpFile[] {
+  return dump.map((file) => {
+    if (file.path !== REGISTRY_PATH) return file;
+    const registry = parseRegistry(file.content);
+    for (const entry of registry.ledgers) {
+      if (entry.name !== MEMORIES) continue;
+      const fields = { ...entry.schema.fields };
+      delete fields[KIND];
+      entry.schema = { ...entry.schema, fields };
+    }
+    return { path: file.path, content: serializeRegistry(registry) };
+  });
 }
 
 function stripKindFromActive(memories: Ledger, itemId: string): void {
@@ -247,6 +265,85 @@ export function registerMemoryKindContract(factory: MemoryKindContractFactory): 
         ).rejects.toThrow(UnsupportedMemoryKindError);
         expect(store.fetch(MEMORIES)).toEqual(before);
         expect(await store.exportPhysicalLedgerState()).toEqual(physicalBefore);
+      } finally {
+        await factory.teardown(store);
+      }
+    }, TIMEOUT);
+
+    it("rejects an unsupported kind on the first create without materializing its group", async () => {
+      const store = await factory.build();
+      try {
+        const before = store.fetch(MEMORIES);
+        expect(before.milestones).toEqual([]);
+        const physicalBefore = await store.exportPhysicalLedgerState();
+        await expect(
+          store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+            status: "active",
+            fields: memoryFields("rejected", UNSUPPORTED_KIND),
+          }),
+        ).rejects.toThrow(UnsupportedMemoryKindError);
+        expect(store.fetch(MEMORIES)).toEqual(before);
+        expect(await store.exportPhysicalLedgerState()).toEqual(physicalBefore);
+      } finally {
+        await factory.teardown(store);
+      }
+    }, TIMEOUT);
+
+    it("rejects an update of an already-unsupported stored kind without any effect", async () => {
+      let store = await factory.build();
+      try {
+        const created = await store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+          status: "active",
+          fields: memoryFields("before", "rule"),
+        });
+        const target: StoredItemTarget = { itemId: created.id, archived: false };
+        const unsupported = { ...created.fields, [KIND]: UNSUPPORTED_KIND };
+        store = await fixture.writeStoredFields(store, target, unsupported);
+        await expect(
+          store.updateItem(MEMORIES, created.id, {
+            status: "superseded",
+            fields: { title: "after" },
+          }),
+        ).rejects.toThrow(UnsupportedMemoryKindError);
+        expect(await fixture.readStoredFields(store, target)).toEqual(unsupported);
+        // Restore the valid kind to observe status and timestamps through the public read.
+        store = await fixture.writeStoredFields(store, target, created.fields);
+        expect(store.fetchItem(MEMORIES, created.id)).toEqual(created);
+      } finally {
+        await factory.teardown(store);
+      }
+    }, TIMEOUT);
+
+    it("restores a pre-kind memories schema to the current canonical schema without writing kind", async () => {
+      let store = await factory.build();
+      try {
+        const canonicalSchema = store.fetch(MEMORIES).schema;
+        expect(canonicalSchema.fields[KIND]).toBeDefined();
+        const legacy = await store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+          status: "active",
+          fields: memoryFields("pre-kind memory", null),
+        });
+        const dump = withPreKindMemoriesSchema(
+          await rewriteMemoriesDump(store, (memories) => stripKindFromActive(memories, legacy.id)),
+        );
+        const parsedLegacy = parseBackupDump(dump).ledgers.get(MEMORIES);
+        expect(parsedLegacy?.schema.fields[KIND]).toBeUndefined();
+
+        store = requireStore(await fixture.restoreInto(store, dump));
+        const target: StoredItemTarget = { itemId: legacy.id, archived: false };
+        expect((await fixture.readStoredFields(store, target))[KIND]).toBeUndefined();
+        expect(store.fetch(MEMORIES).schema).toEqual(canonicalSchema);
+        expect(store.fetchItem(MEMORIES, legacy.id).fields[KIND]).toBe("fact");
+
+        const updated = await store.updateItem(MEMORIES, legacy.id, { fields: { [KIND]: "rule" } });
+        expect(updated.fields[KIND]).toBe("rule");
+        const created = await store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+          status: "active",
+          fields: memoryFields("post-restore memory", "environment"),
+        });
+        expect((await fixture.readStoredFields(store, { itemId: created.id, archived: false }))[KIND]).toBe(
+          "environment",
+        );
       } finally {
         await factory.teardown(store);
       }
@@ -382,6 +479,7 @@ export function registerMemoryKindContract(factory: MemoryKindContractFactory): 
         expect(() => store.fetch(MEMORIES)).toThrow(UnsupportedMemoryKindError);
         expect(() => store.fetchItem(MEMORIES, legacy.id)).toThrow(UnsupportedMemoryKindError);
         expect(() => store.search(MEMORIES, "legacy")).toThrow(UnsupportedMemoryKindError);
+        expect(() => store.snapshot()).toThrow(UnsupportedMemoryKindError);
         expect(() => store.listMilestoneItems(MILESTONES_AMBIENT_ID)).toThrow(
           UnsupportedMemoryKindError,
         );
