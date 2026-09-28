@@ -370,6 +370,34 @@ describe("bun:sqlite attestation backend specifics", () => {
     expect(registry.holderCount(dbPath)).toBe(0);
   });
 
+  // D591: a connection keeps parsed rows between transactions, keyed by the
+  // authoritative row_digest column, so it must still observe every change
+  // another connection (here: another registry, as in another process) commits.
+  test("a connection's cached rows observe another connection's committed change (D591)", async () => {
+    const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
+    const namespace = { backend: NAMESPACE_BACKEND, projectKey: "d591" } as const;
+    const clock = new FakeDispatchClock("2026-07-28T09:00:00.000Z");
+    const a = new SqliteAttestationBackend({ namespace, dbPath, registry: new SqliteAttestationConnectionRegistry() });
+    const b = new SqliteAttestationBackend({ namespace, dbPath, registry: new SqliteAttestationConnectionRegistry() });
+    try {
+      const prepared = await new AttestationDriver(a, clock).prepare({ idempotencyKey: "d591" });
+      const stateOf = async () => await a.transact({ kind: "namespace" }, (store) => {
+        const row = store.read(handleOf(prepared));
+        return row?.kind === "envelope" ? row.state : row?.kind;
+      });
+      expect(await stateOf()).toBe("prepared");
+      await new AttestationDriver(b, clock).abort(prepared);
+      expect(await stateOf()).toBe("aborted");
+      expect(await a.transact({ kind: "handle", handle: handleOf(prepared) }, (store) => {
+        const row = store.read(handleOf(prepared));
+        return row?.kind === "envelope" ? row.state : row?.kind;
+      })).toBe("aborted");
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
   test("the xdg location is derived from an explicit environment, never the real one", () => {
     // D170's guard note: this repo's live store must never be resolved from a
     // worktree, so the layout is asserted against a synthetic env record only.

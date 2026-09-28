@@ -126,7 +126,10 @@ Non-sandboxed reviewers take the same trusted-evidence path and rerun only when
 the evidence is absent or invalid.
 
 Check acceptance, correctness, boundary handling, type safety, surgical scope,
-and defect reproduction.
+and defect reproduction. Verify that every test target the acceptance names
+exists in the candidate and appears as run in the runner's own report; a named
+target that no longer exists, or that the runner silently skipped, leaves that
+acceptance clause unmet even when the command exits zero.
 
 For a task that declares an expected failure, apply §6a of the implementation
 orchestrator. Forms (a) and (b) require the annotation, live marker, and

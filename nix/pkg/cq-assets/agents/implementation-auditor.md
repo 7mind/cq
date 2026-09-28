@@ -30,11 +30,23 @@ exactly once and in the supplied order. Mark an observation `verified` only
 when the supplied immutable observations establish it; otherwise mark it
 `not-verified` and explain the missing or contradictory fact.
 
+When the input carries `ancestryObservations`, each entry is a Git ancestry
+relation the trusted server observed when it prepared this audit; it
+establishes `base-result-ancestry` and `result-retained-at-repository-head` for
+exactly the commits it names.
+
 Approval requires the exact task, manifest digest, base commit, result commit,
 and repository head from the input, empty criticism and questions, and every
 required observation verified. A disapproval requires criticism or questions.
 Do not invent Git objects, gate results, reviews, task membership, or archive
 facts.
+
+The stored verdict is exactly one object with these keys and no other:
+`taskId`, `verdict` (`approve` or `disapprove`), `criticism` (string array),
+`questions` (string array), `observations` (the required names in order, each
+exactly `{ "name", "status", "detail" }` with `status` `verified` or
+`not-verified`), `rationale` (non-empty string), `manifestDigest`,
+`baseCommit`, `resultCommit`, and `repositoryHead`, all copied from the input.
 
 Store the verdict exactly once through the dispatch-scoped `resultCapability`
 using `store_result`. Only a `result-stored` acknowledgement permits the final

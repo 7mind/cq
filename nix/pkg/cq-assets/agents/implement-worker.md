@@ -217,7 +217,10 @@ receipt path union.
 
 4. **Run targeted checks.** Use exact test paths when discovery matters and
    record nonzero test counts. Check wrapped prose with a multiline-aware
-   operation.
+   operation. Confirm every test target an acceptance or focused command names
+   exists in the candidate and appears as run in the runner's own report; a
+   runner may silently skip a named target that matches nothing, so an exit
+   status alone never proves it ran.
 
    **Expected-failure tasks.** A task that declares an expected failure follows
    §6a of the implementation orchestrator. Forms (a) and (b) carry the required

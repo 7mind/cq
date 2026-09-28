@@ -573,7 +573,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogStore.test.ts",
-      "sha256": "ba3f066a770d3d3eb97b5707dabbf4065250bc69bbee61fbbbb312ced7275c9f",
+      "sha256": "b1e605edb3aa4ea5c66bbb32159e45333f67029bbf67fef5afddf45542fcda0a",
       "targets": []
     },
     {
@@ -1762,7 +1762,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "e57e14be970974d42b70f4955c1fca07893bffa1729c865464f84373a33a04c7",
+      "sha256": "95ea9c35cd9f69a76b6c0a34b563a5218263750c95cbcb84a9e0842b190b3a56",
       "targets": []
     },
     {
@@ -2416,13 +2416,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "8a11cf239973f6fee8a3bb16b7e29b6e4b21592e063f2a866c9426c1990bee91",
+      "sha256": "0872c9594c3dca4abf03bd6052484967dc937a58a9d3e7d319383348bacdaa8a",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "8a11cf239973f6fee8a3bb16b7e29b6e4b21592e063f2a866c9426c1990bee91",
+      "sha256": "0872c9594c3dca4abf03bd6052484967dc937a58a9d3e7d319383348bacdaa8a",
       "targets": []
     },
     {
@@ -2757,6 +2757,12 @@
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/unadmittable-predicates.test.ts",
       "sha256": "3aa55d2ec59b4f6d2d5c4813b6c013a2ed841256615725b51f9dff8efaad4872",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/auditorOutputPrompt.test.ts",
+      "sha256": "062670556c121e558fb0ebcc5c53856d26d92e7179dae73d54b13dcf632d14f8",
       "targets": []
     }
   ]

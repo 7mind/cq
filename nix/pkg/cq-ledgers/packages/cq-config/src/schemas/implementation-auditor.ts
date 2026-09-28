@@ -53,6 +53,20 @@ const inputSchema = {
         additionalProperties: false,
       },
     },
+    ancestryObservations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          relation: { type: "string", enum: ["base-ancestor-of-result", "result-ancestor-of-repository-head"] },
+          ancestor: { type: "string", pattern: fullSha },
+          descendant: { type: "string", pattern: fullSha },
+          holds: { const: true },
+        },
+        required: ["relation", "ancestor", "descendant", "holds"],
+        additionalProperties: false,
+      },
+    },
     requiredObservations: {
       type: "array",
       minItems: 1,
@@ -153,7 +167,8 @@ const outputSchema = {
 
 export const implementationAuditorSidecar: RoleSchemaSidecar = {
   id: "implementation-auditor",
-  version: 1,
+  // D584: the input gained server-observed ancestryObservations.
+  version: 2,
   inputSchema,
   outputSchema,
 };

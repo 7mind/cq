@@ -69,6 +69,21 @@ interface StoredRow {
   readonly row_digest: string;
 }
 
+interface StoredRowKey {
+  readonly attestation_id: string;
+  readonly generation: number;
+  readonly row_digest: string;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) Object.freeze(value);
+  if (value !== null && typeof value === "object") for (const child of Object.values(value)) deepFreeze(child);
+  return value;
+}
+
+/** Above this many cache misses one scoped body scan beats per-row lookups. */
+const ROW_CACHE_BULK_MISS_THRESHOLD = 32;
+
 /**
  * Apply the DDL. Idempotent, so every open may call it.
  *
@@ -109,6 +124,13 @@ export function ensureAttestationSchema(db: Database): void {
 export interface SqliteAttestationConnection {
   readonly db: Database;
   readonly mutex: AsyncMutex;
+  /**
+   * D591: rows already parsed and digest-verified on this connection, keyed by
+   * namespace and handle and validated by the authoritative `row_digest`
+   * column. A namespace unit of work otherwise re-read, parsed and re-digested
+   * every body (~70 MB) under the write lock.
+   */
+  readonly rowCache: Map<string, { readonly rowDigest: string; readonly row: AttestationRow }>;
   /** Canonical absolute path the registry keys on. */
   readonly resolvedPath: string;
 }
@@ -148,6 +170,7 @@ export class SqliteAttestationConnectionRegistry {
     const connection: SqliteAttestationConnection = {
       db,
       mutex: new AsyncMutex(),
+      rowCache: new Map(),
       resolvedPath,
     };
     const entry: RegistryEntry = { connection, refCount: 1 };
@@ -309,52 +332,80 @@ export class SqliteAttestationBackend implements AttestationBackend {
 
   private loadScoped(scope: AttestationLoadScope): readonly LoadedAttestationRow[] {
     const { backend, projectKey } = this.namespace;
-    const where = `backend = ? AND project_key = ?`;
-    const rows = ((): readonly StoredRow[] => {
+    const scoped = ((): { readonly where: string; readonly params: readonly (string | number)[] } | null => {
+      const where = `backend = ? AND project_key = ?`;
       switch (scope.kind) {
         case "none":
-          return [];
+          return null;
         case "namespace":
-          return this.query(
-            `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${where} ORDER BY attestation_id, generation`,
-            [backend, projectKey],
-          );
+          return { where, params: [backend, projectKey] };
         case "handle":
-          return this.query(
-            `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${where} AND attestation_id = ? AND generation = ?`,
-            [backend, projectKey, scope.handle.attestationId, scope.handle.generation],
-          );
+          return { where: `${where} AND attestation_id = ? AND generation = ?`,
+            params: [backend, projectKey, scope.handle.attestationId, scope.handle.generation] };
         case "capability":
-          return this.query(
-            `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${where} AND capability_hash = ?`,
-            [backend, projectKey, scope.capabilityHash],
-          );
-        case "prepare": {
-          if (scope.reprepareOf === undefined) {
-            return this.query(
-              `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${where} AND idempotency_key = ?`,
-              [backend, projectKey, scope.idempotencyKey],
-            );
-          }
-          return this.query(
-            `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${where} AND (idempotency_key = ? OR (attestation_id = ? AND generation = ?))`,
-            [
-              backend,
-              projectKey,
-              scope.idempotencyKey,
-              scope.reprepareOf.attestationId,
-              scope.reprepareOf.generation,
-            ],
-          );
-        }
+          return { where: `${where} AND capability_hash = ?`, params: [backend, projectKey, scope.capabilityHash] };
+        case "prepare":
+          return scope.reprepareOf === undefined
+            ? { where: `${where} AND idempotency_key = ?`, params: [backend, projectKey, scope.idempotencyKey] }
+            : { where: `${where} AND (idempotency_key = ? OR (attestation_id = ? AND generation = ?))`,
+                params: [backend, projectKey, scope.idempotencyKey, scope.reprepareOf.attestationId, scope.reprepareOf.generation] };
       }
     })();
-    return Object.freeze(
-      rows.map((stored) => ({
-        row: rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest),
-        rowDigest: stored.row_digest,
-      })),
+    if (scoped === null) return Object.freeze([]);
+    // D591: read only keys and digests under the lock; parse just the rows the
+    // connection has not verified at their current digest.
+    const keys = this.queryKeys(
+      `SELECT attestation_id, generation, row_digest FROM ${ATTESTATION_TABLE} WHERE ${scoped.where} ORDER BY attestation_id, generation`,
+      scoped.params,
     );
+    const cacheKey = (key: StoredRowKey) => `${backend}\0${projectKey}\0${key.attestation_id}\0${key.generation}`;
+    const cache = this.connection.rowCache;
+    const misses = keys.filter((key) => cache.get(cacheKey(key))?.rowDigest !== key.row_digest);
+    const remember = (stored: StoredRow) => {
+      // Shared across transactions, so it must be immutable all the way down.
+      const row = deepFreeze(rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest));
+      cache.set(cacheKey({ attestation_id: row.attestationId, generation: row.generation, row_digest: stored.row_digest }),
+        { rowDigest: stored.row_digest, row });
+    };
+    if (misses.length > ROW_CACHE_BULK_MISS_THRESHOLD) {
+      const missed = new Set(misses.map(cacheKey));
+      for (const stored of this.query(
+        `SELECT attestation_id, generation, body, row_digest FROM ${ATTESTATION_TABLE} WHERE ${scoped.where}`,
+        scoped.params,
+      ) as readonly (StoredRow & StoredRowKey)[]) {
+        if (missed.has(cacheKey(stored))) remember(stored);
+      }
+    } else {
+      for (const key of misses) {
+        const [stored] = this.query(
+          `SELECT body, row_digest FROM ${ATTESTATION_TABLE} WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
+          [backend, projectKey, key.attestation_id, key.generation],
+        );
+        if (stored === undefined) throw new AttestationStorageError(`attestation "${key.attestation_id}" vanished inside its own transaction`);
+        remember(stored);
+      }
+    }
+    if (scope.kind === "namespace") {
+      // Every row of the namespace is listed, so anything else is gone.
+      const live = new Set(keys.map(cacheKey));
+      const prefix = `${backend}\0${projectKey}\0`;
+      for (const key of cache.keys()) if (key.startsWith(prefix) && !live.has(key)) cache.delete(key);
+    }
+    return Object.freeze(keys.map((key) => {
+      const entry = cache.get(cacheKey(key));
+      if (entry === undefined || entry.rowDigest !== key.row_digest) {
+        throw new AttestationStorageError(`attestation "${key.attestation_id}" changed inside its own transaction`);
+      }
+      return { row: entry.row, rowDigest: entry.rowDigest };
+    }));
+  }
+
+  private queryKeys(sql: string, params: readonly (string | number)[]): readonly StoredRowKey[] {
+    try {
+      return this.db.query(sql).all(...(params as (string | number)[])) as readonly StoredRowKey[];
+    } catch (error) {
+      throw asSqliteBackendError(error);
+    }
   }
 
   private applyJournal(journal: readonly AttestationJournalEntry[]): void {

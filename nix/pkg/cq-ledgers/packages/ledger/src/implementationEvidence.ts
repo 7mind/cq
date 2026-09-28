@@ -1644,11 +1644,20 @@ function assertPackagedAuditManifest(
   }
 }
 
+/** D584: an ancestry relation the server observed in Git at panel preparation. */
+interface ImplementationAuditAncestryObservation {
+  readonly relation: "base-ancestor-of-result" | "result-ancestor-of-repository-head";
+  readonly ancestor: string;
+  readonly descendant: string;
+  readonly holds: true;
+}
+
 function implementationAuditInput(
   manifest: PackagedImplementationAuditManifest,
   manifestDigest: string,
   record: PackagedImplementationAuditRecord,
   roster: readonly ImplementationReviewerIdentity[],
+  ancestry: readonly ImplementationAuditAncestryObservation[] | null,
 ): DispatchJSONValue {
   return {
     manifestId: manifest.manifestId,
@@ -1667,6 +1676,7 @@ function implementationAuditInput(
     gateObservations: record.gateObservations,
     auditRoster: structuredClone(roster) as unknown as DispatchJSONValue,
     requiredObservations: [...record.requiredObservations],
+    ...(ancestry === null ? {} : { ancestryObservations: structuredClone(ancestry) as unknown as DispatchJSONValue }),
   };
 }
 
@@ -2810,6 +2820,17 @@ export class ImplementationEvidenceService {
       }))
     )
       throw new Error("historical implementation result commit is not retained");
+    // D584: the packager enforces both relations but used to discard them, so
+    // auditors could not verify them from the package.
+    let ancestry: readonly ImplementationAuditAncestryObservation[] | null = null;
+    if (this.deps.isCommitRetained !== undefined) {
+      if (!(await this.deps.isCommitRetained({ repositoryHead: record.resultCommit, resultCommit: record.baseCommit })))
+        throw new Error("historical implementation base commit is not an ancestor of its result");
+      ancestry = [
+        { relation: "base-ancestor-of-result", ancestor: record.baseCommit, descendant: record.resultCommit, holds: true },
+        { relation: "result-ancestor-of-repository-head", ancestor: record.resultCommit, descendant: repositoryHead, holds: true },
+      ];
+    }
     const roster = this.auditRoster();
     const rosterDigest = digest(roster);
     const request = { ...input, manifestDigest, record, roster };
@@ -2818,7 +2839,7 @@ export class ImplementationEvidenceService {
     const attemptRefs = roster.map((identity, position) =>
       opaqueRef("cq-implementation-audit-attempt", { panelRef, position, identity }),
     );
-    const auditInput = implementationAuditInput(manifest, manifestDigest, record, roster);
+    const auditInput = implementationAuditInput(manifest, manifestDigest, record, roster, ancestry);
     return await this.deps.store[mutateEvidence](async (state) => {
       await this.assertAuditAuthorityCurrent(manifest.manifestId, manifestDigest, repositoryHead, [
         record,

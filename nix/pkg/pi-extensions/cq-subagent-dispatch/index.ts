@@ -2011,7 +2011,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implementation-auditor": {
-    version: 1,
+    version: 2,
     input: [
       {
         required: [
@@ -2034,6 +2034,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
         ],
         kinds: {
           acceptance: [],
+          ancestryObservations: ["array"],
           auditRoster: ["array"],
           baseCommit: ["string"],
           diff: ["string"],

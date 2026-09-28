@@ -1018,6 +1018,31 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("the auditor input carries the ancestry the packager enforces (D584)", async () => {
+    const f = fixture();
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-ancestry",
+      author: "parent",
+    });
+    const record = f.packaged.records[0]!;
+    const panel = await f.service.prepareAuditPanel({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: implementationAuditManifestDigest(f.packaged),
+      recordKey: record.recordKey,
+      expectedRepositoryHead: HEAD,
+      operationId: "prepare-ancestry",
+      author: "parent",
+    });
+    const input = (await f.store.snapshot()).auditPanels[panel.panelRef]!.auditInput as Record<string, unknown>;
+    expect(input["ancestryObservations"]).toEqual([
+      { relation: "base-ancestor-of-result", ancestor: record.baseCommit, descendant: record.resultCommit, holds: true },
+      { relation: "result-ancestor-of-repository-head", ancestor: record.resultCommit, descendant: HEAD, holds: true },
+    ]);
+  });
+
   test("names the unretained boundary when rewritten history blocks re-arming (D603)", async () => {
     const f = fixture();
     await f.service.armEvidenceActivation({

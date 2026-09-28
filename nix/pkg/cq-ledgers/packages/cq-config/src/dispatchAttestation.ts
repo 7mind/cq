@@ -4004,9 +4004,16 @@ export interface InvalidOutputAbortDetails {
   readonly errors: readonly { readonly path: string; readonly message: string }[];
   /** One-line rendering of `errors`, for a caller that only logs the abort. */
   readonly summary: string;
+  /**
+   * D581: the rejected output's top-level key names (never values), bounded,
+   * so a recurring malformed shape can be classified after the fact.
+   */
+  readonly outputKeys?: readonly string[];
 }
 
 const STORE_RESULT: DispatchProtocolOperation = "store_result";
+const INVALID_OUTPUT_KEY_LIMIT = 64;
+const INVALID_OUTPUT_KEY_LENGTH_LIMIT = 64;
 
 /** Trusted pre-lock lookup used to put store_result under the same handle lock as Git effects. */
 export function gitEffectBindingForResultCapability(
@@ -4622,6 +4629,10 @@ export function storeDispatchResult(
       version: row.promptProvenance.version,
       errors: result.errors.map((error) => ({ path: error.path, message: error.message })),
       summary: describeErrors(result.errors),
+      ...(submission.output !== null && typeof submission.output === "object" && !Array.isArray(submission.output)
+        ? { outputKeys: Object.keys(submission.output).slice(0, INVALID_OUTPUT_KEY_LIMIT)
+            .map((key) => key.slice(0, INVALID_OUTPUT_KEY_LENGTH_LIMIT)).sort() }
+        : {}),
     };
     return Object.freeze({
       state: "aborted" as const,
