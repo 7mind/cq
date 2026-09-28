@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected", "initial-aborted", "branch-switched", "integration-rewritten"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -98,6 +98,40 @@ for (const kind of ["memory", "sqlite"] as const) {
         operationId: change.operationId, expectedHead: change.expectedHead, message: change.message, changes: change.changes });
       expect(receipt.version).toBe(2);
       expect(receipt).not.toHaveProperty("taskId");
+      if (mode === "initial-aborted") {
+        // D587: the first cohort worker committed through its broker and then
+        // died; a correction round continues its exact broker-proven work.
+        await capability.abort({ ...prepared.handle, reason: "parent-lost", details: { source: "test" } });
+        const ready = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle });
+        expect(ready.input).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, priorResultCommit: receipt.newHead, round: 1 });
+        const retryChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}resume-child`, runId: "resume-run" };
+        const retry = await capability.prepare({ roleId: "implement-worker", idempotencyKey: "cohort-resume", timeoutMs: 600_000,
+          expectedChild: retryChild, input: ready.input as unknown as DispatchJSONValue, reprepareOf: ready.reprepareOf, guardedRebase: ready.guardedRebase });
+        expect(retry).toMatchObject({ accepted: true });
+        if (!retry.accepted) throw new Error(JSON.stringify(retry));
+        const next = retry.prepared;
+        await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
+        const nextRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+        const nextBinding = nextRow?.kind === "envelope" ? nextRow.gitEffectBinding : undefined;
+        if (nextBinding?.cohort === undefined || nextBinding.guardedRebaseBridge === undefined) throw new Error("resumed worker lost its bridge");
+        const bridge = nextBinding.guardedRebaseBridge;
+        const finish = await capability.gitCommit!({ ...next, gitChangeCapability: next.gitChangeCapability!,
+          ...await cohortChangeRequest({ ...fixture.authorization, ...nextBinding }, "finish", "b", "base b\n", "finished member b\n") });
+        await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
+          cohort: nextBinding.cohort, memberObservations: nextBinding.cohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Resumed" })),
+          status: "pass", resultCommit: finish.newHead, branch: nextBinding.branch, actualWorktreePath: nextBinding.worktreePath,
+          filesTouched: ["a.txt", "b.txt"], gitReceipts: [finish], checkSummary: "Awaiting resumed ladder", summary: "Resumed after an abort",
+          gitLineage: { kind: "guarded-rebase", guardedRebase: bridge.guardedRebase, ontoCommit: bridge.ontoCommit, rebasedStartCommit: bridge.rebasedStartCommit, exactTip: bridge.exactTip },
+          baseVerification: { status: "verified", relation: "descendant", baseCommit: fixture.baseCommit, headCommit: finish.newHead },
+        } as unknown as DispatchJSONValue });
+        await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId: "resume-child",
+          childThreadId: "resume-thread", expectedRunId: retryChild.runId,
+          outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
+        const resumed = await capability.coordinateImplementationCandidate!({ ...next, holderId: "cohort-resume-front", parentGateCapability: next.parentGateCapability! });
+        expect(resumed.state).toBe("completed");
+        expect((await fixture.store.snapshot()).portable.candidateSeals).toHaveLength(1);
+        return;
+      }
       const resultInput = { ...prepared.prepared, resultCapability: prepared.prepared.resultCapability,
         output: { cohort, memberObservations: cohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Shared correction" })),
           status: "pass", resultCommit: receipt.newHead, branch: fixture.prepared.handle.branch, actualWorktreePath: fixture.prepared.handle.absolutePath,
@@ -128,6 +162,32 @@ for (const kind of ["memory", "sqlite"] as const) {
       await expect(capability.finalizeParentGate({ ...prepared.prepared,
         parentGateCapability: prepared.prepared.parentGateCapability })).rejects.toThrow("cohort acceptance requires the qualified queue-front ladder");
       if (capability.qualifyImplementationCandidate === undefined) throw new Error("cohort qualification missing");
+      if (mode === "integration-rewritten") {
+        // D602: a recorded integration branch rewritten to unrelated history no
+        // longer contains the candidate's base; refuse instead of retargeting.
+        await cohortBrokerGit(fixture.root, ["checkout", "-q", "--orphan", "unrelated"]);
+        await cohortBrokerGit(fixture.root, ["commit", "-q", "--allow-empty", "-m", "unrelated history"]);
+        await cohortBrokerGit(fixture.root, ["branch", "-f", "main", "HEAD"]);
+        await expect(capability.qualifyImplementationCandidate({ ...prepared.prepared,
+          roleId: "implement-worker", correlationId: "cohort-child", childThreadId: "cohort-thread", expectedRunId: "cohort-run",
+          outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) }))
+          .rejects.toThrow("integration ref refs/heads/main does not contain the candidate base");
+        return;
+      }
+      if (mode === "branch-switched") {
+        // D602: the primary checkout's live branch is not the integration
+        // branch once an operator switches to unrelated history.
+        await cohortBrokerGit(fixture.root, ["checkout", "-q", "--orphan", "unrelated"]);
+        await cohortBrokerGit(fixture.root, ["commit", "-q", "--allow-empty", "-m", "unrelated history"]);
+        const queued = await capability.qualifyImplementationCandidate({ ...prepared.prepared,
+          roleId: "implement-worker", correlationId: "cohort-child", childThreadId: "cohort-thread", expectedRunId: "cohort-run",
+          outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
+        expect(queued.state).toBe("queued");
+        const queuedRow = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
+        // The ref recorded at preparation, not the checkout's live branch.
+        expect(queuedRow?.kind === "envelope" ? queuedRow.implementationQueue?.partition.integrationRef : undefined).toBe("refs/heads/main");
+        return;
+      }
       const qualified = await capability.qualifyImplementationCandidate({ ...prepared.prepared,
         roleId: "implement-worker", correlationId: "cohort-child", childThreadId: "cohort-thread", expectedRunId: "cohort-run",
         outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
@@ -152,6 +212,8 @@ for (const kind of ["memory", "sqlite"] as const) {
         if (advance === undefined) throw new Error("cohort advance runtime unavailable");
         const abandon = { definitionDigest: cohorts.portable.definitions[0]!.definitionDigest,
           intentDigest: cohort.intent.intentDigest, operationId: "abandon-sealed" };
+        // D576: production observation requires the members in `wip`.
+        for (const taskId of ["T1", "T2"]) await fixture.ledger.updateItem("tasks", taskId, { status: "wip" });
         await expect(advance.releaseAbandonedPreparation(abandon)).rejects.toThrow("owns live evidence");
         await capability.abort({ ...prepared.handle, reason: "native-failure", details: { source: "test" } });
         // D593: the members stay reserved under the id that first reserved them
@@ -168,6 +230,8 @@ for (const kind of ["memory", "sqlite"] as const) {
         // Either left every later cohort unable to acquire authority.
         expect(released.runtime.lease).toBeNull();
         expect(workCohortHasPendingSealedCandidateV1(released.portable)).toBe(false);
+        // D576: the release also returns every member it held to the queue.
+        expect(["T1", "T2"].map((taskId) => fixture.ledger.fetchItem("tasks", taskId).status)).toEqual(["planned", "planned"]);
         // A repeat after the reservation is already surrendered (production
         // reached that state through an earlier partial abandonment) succeeds.
         await advance.releaseAbandonedPreparation({ ...abandon, operationId: "abandon-sealed-again" });

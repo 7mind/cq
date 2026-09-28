@@ -1860,6 +1860,7 @@ function assertRepresentativeContracts(
       "pResearch",
       "pSeed",
       "planBusy",
+      "unadmittable",
       "unreachable",
       "upstreamBlocked",
     ].sort(),

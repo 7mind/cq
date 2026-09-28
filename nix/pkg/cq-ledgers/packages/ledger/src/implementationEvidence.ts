@@ -3837,6 +3837,14 @@ export class ImplementationEvidenceService {
             repositoryHead,
             resultCommit: blocking.boundaryCommit,
           });
+        // D603: rewritten history is otherwise reported as a generic pending conflict.
+        if (this.deps.isCommitRetained !== undefined && !retainedBoundary) {
+          throw new Error(
+            `activation boundary ${blocking.boundaryCommit} is not an ancestor of ${repositoryHead}; ` +
+              `rewritten history dropped it. Make it an ancestor again (for example a tree-neutral ` +
+              `\`git merge -s ours ${blocking.boundaryCommit}\`) and re-arm`,
+          );
+        }
         if (
           (blocking.boundaryCommit === repositoryHead &&
             !terminalInconclusiveAuditCohort &&

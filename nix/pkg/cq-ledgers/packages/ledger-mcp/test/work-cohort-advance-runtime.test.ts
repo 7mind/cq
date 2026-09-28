@@ -162,6 +162,12 @@ for (const adapter of ["memory", "sqlite"] as const) {
         definitionDigest: first.definitions[0]!.definitionDigest });
       expect(refused.worktree.status).toBe("refused");
       f.controls.mutateBeforeAllocation = false;
+      // D576: the refusal released its members back to the queue, so the
+      // parent re-enters them into implementation before re-observing.
+      for (const taskId of f.taskIds) {
+        expect(f.store.fetchItem("tasks", taskId).status).toBe("planned");
+        await f.store.updateItem("tasks", taskId, { status: "wip" });
+      }
       const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-after-refusal" });
       expect(second.definitions[0]!.definitionDigest).not.toBe(first.definitions[0]!.definitionDigest);
       const prepared = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-after-refusal",
@@ -193,6 +199,11 @@ for (const adapter of ["memory", "sqlite"] as const) {
 
       // The members are free, so the next generation prepares its own worktree.
       await f.store.updateItem("tasks", f.taskIds[0]!, { fields: { headline: "changed after abandonment" } });
+      // D576: the abandoned members returned to the queue; re-enter them.
+      for (const taskId of f.taskIds) {
+        expect(f.store.fetchItem("tasks", taskId).status).toBe("planned");
+        await f.store.updateItem("tasks", taskId, { status: "wip" });
+      }
       const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-successor" });
       expect(second.definitions[0]!.definitionDigest).not.toBe(first.definitions[0]!.definitionDigest);
       const successor = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-successor",

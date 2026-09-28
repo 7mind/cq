@@ -165,6 +165,7 @@ function emptyPredicates(): DerivedPredicates {
     goalDrift: v(),
     upstreamBlocked: v(),
     unreachable: v(),
+    unadmittable: v(),
   };
 }
 

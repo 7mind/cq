@@ -183,6 +183,19 @@ export async function createCohortAdvanceRuntimeV1(
         evidenceSubjectDigests: subjects.map((subject) => subject.evidenceSubjectDigest) });
     } else if (live !== null && lease !== null) await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, lease, reservation);
     else await cohorts.transitionReservation(`${input.operationId}:release`, { ...reservation, transition: "released" });
+    // D576: observation moved every task member to `wip`; nothing implements
+    // it any more, so it returns to the queue with the other holdings. The
+    // canonical lifecycle has no direct wip -> planned edge, and adding one
+    // would make the persisted tasks schema divergent, so the release takes
+    // the two schema-legal hops, and only for members it finds in `wip`; a
+    // member blocked for another reason stays blocked.
+    for (const { memberRef } of definition.members) {
+      if (!memberRef.startsWith("tasks:")) continue;
+      const taskId = memberRef.slice("tasks:".length);
+      if (resolved.store.fetchItem("tasks", taskId).status !== "wip") continue;
+      await resolved.store.updateItem("tasks", taskId, { status: "blocked" });
+      await resolved.store.updateItem("tasks", taskId, { status: "planned" });
+    }
     return worktree;
   };
 

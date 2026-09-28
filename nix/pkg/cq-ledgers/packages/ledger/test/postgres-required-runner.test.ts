@@ -7,7 +7,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -126,5 +126,17 @@ describe("postgres-required-bun-test.sh run mode", () => {
     expect(outcome.exitCode).not.toBe(0);
     expect(outcome.stderr).toContain(`missing test file: ${MISSING_TEST_FILE}`);
     expect(outcome.stderr).not.toContain("PostgreSQL executable is unavailable");
+  });
+});
+
+// D579: every required-PostgreSQL leg must go through the classifying helper,
+// because a bare `bun test` exits 0 when a listed suite skips.
+describe("required-PostgreSQL legs", () => {
+  it("delegate every listed suite to the classifying helper", () => {
+    for (const script of ["test-attestation-postgres-required.sh", "test-memory-kinds-postgres-required.sh"]) {
+      const body = readFileSync(path.resolve(import.meta.dir, "../../../scripts", script), "utf8");
+      expect(body).toContain('lib/postgres-required-bun-test.sh"');
+      expect(body).not.toMatch(/^\s*bun test\b/mu);
+    }
   });
 });

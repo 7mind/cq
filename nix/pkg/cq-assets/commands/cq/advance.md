@@ -55,7 +55,8 @@ It returns:
   "planBusy": { "value": false, "items": [] },
   "goalDrift": { "value": false, "items": [] },
   "upstreamBlocked": { "value": false, "items": [] },
-  "unreachable": { "value": false, "items": ["<task-id>"] }
+  "unreachable": { "value": false, "items": ["<task-id>"] },
+  "unadmittable": { "value": false, "items": ["<task-id>"] }
 }
 ```
 
@@ -180,7 +181,10 @@ Report them when they explain inactive work. `unreachable` names planned tasks
 that can NEVER become ready because a dependency is terminal in a non-satisfying
 status (`abandoned`, `wontfix`) — report those ids and their blocking
 dependencies instead of reporting the run drained; repointing or abandoning such
-a dependency is the user's decision, not this run's.
+a dependency is the user's decision, not this run's. `unadmittable` names ready
+tasks that cohort admission can never accept, because no repository path is
+reachable from their `sourceRefs`. Do not observe or admit them; route each
+owning goal to plan follow-up so the task cites the files it changes.
 
 ## End-of-run maintenance
 

@@ -51,6 +51,7 @@ function emptyPredicates(): DerivedPredicates {
     goalDrift: emptyVerdict(),
     upstreamBlocked: emptyVerdict(),
     unreachable: emptyVerdict(),
+    unadmittable: emptyVerdict(),
   };
 }
 

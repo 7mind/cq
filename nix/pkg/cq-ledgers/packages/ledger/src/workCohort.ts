@@ -2742,13 +2742,19 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
         ? source.output as Readonly<Record<string, unknown>> : undefined;
       const sourceFailed = source.state === "aborted" || (source.state === "consumed" && sourceOutput?.["status"] === "fail");
       const sourceStart = sourceInput?.["startingCommit"];
+      // D587: the cohort's first worker has no predecessor; it starts at its
+      // own base, so its broker commits are the whole candidate history.
+      const initialSource = source.gitEffectBinding.guardedRebaseBridge === undefined &&
+        source.gitEffectBinding.cohortRebaseTransition === undefined && sourceStart === sourceInput?.["baseCommit"];
       if (!sourceFailed || source.implementationQueue !== undefined || source.gitEffectBinding.cohort?.state !== "pre-seal" ||
-          typeof sourceStart !== "string" || source.gitEffectBinding.guardedRebaseBridge?.rebasedStartCommit !== sourceStart ||
+          typeof sourceStart !== "string" ||
+          (!initialSource && source.gitEffectBinding.guardedRebaseBridge?.rebasedStartCommit !== sourceStart) ||
           (sourceStart !== linkBridge.oldResultCommit && input.failedLinkReceipts === undefined)) {
         throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");
       }
       await input.failedLinkReceipts?.({ ...source.gitEffectBinding, attestationId: source.attestationId, generation: source.generation },
         sourceStart, linkBridge.oldResultCommit);
+      if (initialSource) break;
       link = { attestationId: source.attestationId, generation: source.generation, gitEffectBinding: source.gitEffectBinding };
     }
     if (bridge?.version !== 2) throw new Error("actual G213 successor lost its authenticated retired source and rebase proof");

@@ -780,6 +780,12 @@ interface StoredHandleRecord<H extends AnyManagedWorktreeHandle = ManagedWorktre
   readonly status: "live" | "released";
   readonly headAtPrepare: string;
   readonly bunWorkspaceRoot: string;
+  /**
+   * D602: the primary checkout's branch at preparation, when it contained the
+   * base. The implementation queue integrates into this ref rather than into
+   * whatever branch the checkout has later.
+   */
+  readonly integrationRef?: string;
   readonly trustedGateProjection?: ManagedWorktreeTrustedGateProjection;
   readonly releasedAt?: string;
   readonly retainedCohortAuthority?: {
@@ -897,6 +903,7 @@ function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredH
   if (record.status !== "live" && record.status !== "released") return false;
   if (typeof record.headAtPrepare !== "string") return false;
   if (typeof record.bunWorkspaceRoot !== "string") return false;
+  if (record.integrationRef !== undefined && (typeof record.integrationRef !== "string" || !/^refs\/heads\/./u.test(record.integrationRef))) return false;
   const projectionBinding = { handle, fingerprint: record.fingerprint };
   if (
     record.trustedGateProjection !== undefined &&
@@ -965,6 +972,7 @@ function canonicalStoredHandleRecord(record: StoredHandleRecord<AnyManagedWorktr
     status: record.status,
     headAtPrepare: record.headAtPrepare,
     bunWorkspaceRoot: record.bunWorkspaceRoot,
+    ...(record.integrationRef === undefined ? {} : { integrationRef: record.integrationRef }),
     ...(record.trustedGateProjection === undefined
       ? {}
       : { trustedGateProjection: record.trustedGateProjection }),
@@ -1660,6 +1668,27 @@ async function gitPorcelain(
   return { code: result.code, porcelain: result.stdout };
 }
 
+/** D602: the checkout's current branch, when it contains `baseCommit`. */
+async function integrationRefContaining(git: ManagedWorktreeGitRunner, repositoryRoot: string,
+  baseCommit: string): Promise<string | null> {
+  const symbolic = await git(repositoryRoot, ["symbolic-ref", "--quiet", "HEAD"]);
+  const ref = symbolic.stdout.trim();
+  if (symbolic.code !== 0 || !/^refs\/heads\/./u.test(ref)) return null;
+  const contains = await git(repositoryRoot, ["merge-base", "--is-ancestor", baseCommit, ref]);
+  return contains.code === 0 ? ref : null;
+}
+
+/** D602: the integration ref recorded when this binding's worktree was prepared. */
+export async function readManagedWorktreeIntegrationRef(binding: { readonly repositoryRoot: string;
+  readonly handleToken: string; readonly handleFingerprint: string; readonly taskId?: string;
+  readonly cohort?: CohortEffectEnvelopeV1 }, deps: Pick<ManagedWorktreeDeps, "stateDir">): Promise<string | null> {
+  const key = binding.cohort === undefined ? binding.taskId : `cohort-${binding.cohort.intent.intentDigest}`;
+  if (key === undefined) return null;
+  const records = await readCurrentTaskGeneration(registryRoot(binding.repositoryRoot, deps.stateDir), key);
+  const stored = (records ?? []).find((record) => record.handle.token === binding.handleToken && record.fingerprint === binding.handleFingerprint);
+  return stored?.integrationRef ?? null;
+}
+
 async function revParse(
   git: ManagedWorktreeGitRunner,
   cwd: string,
@@ -2185,8 +2214,10 @@ export async function prepareManagedCohortWorktree(
       audit: { cohortId: cohort.cohortId, candidateIntentDigest: cohort.candidateIntentDigest },
       createHandle: (fields): ManagedWorktreeHandleV3 => ({ ...fields, version: 3, cohort }),
       register: async (handle, headCommit, bunWorkspaceRoot) => {
+        const integrationRef = await integrationRefContaining(git, repositoryRoot, request.baseCommit);
         const record: StoredHandleRecord<ManagedWorktreeHandleV3> = { handle, fingerprint: fingerprintHandle(handle),
           status: "live", headAtPrepare: headCommit, bunWorkspaceRoot,
+          ...(integrationRef === null ? {} : { integrationRef }),
           retainedCohortAuthority: { lease: structuredClone(lease), envelope: structuredClone(envelope) } };
         const staged = await stageTaskGenerationPublication(regRoot, subjectKey, [...records, record], fault);
         try {
@@ -2815,8 +2846,10 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
       audit: { taskId: request.taskId },
       createHandle: (fields) => ({ ...fields, version: FRESH_HANDLE_VERSION, taskId: request.taskId }),
       register: async (handle, headCommit, bunWorkspaceRoot) => {
+        const integrationRef = await integrationRefContaining(git, repositoryRoot, baseCommit);
         await writeStoredHandleExclusive(regRoot, {
           handle, fingerprint: fingerprintHandle(handle), status: "live", headAtPrepare: headCommit, bunWorkspaceRoot,
+          ...(integrationRef === null ? {} : { integrationRef }),
         }, fault);
       },
       emergencyRegister: (handle, headCommit, bunWorkspaceRoot) =>
@@ -4309,6 +4342,7 @@ async function prepareManagedCohortRebaseSuccessorWithResume(input: ManagedCohor
         const targetRecords = await readCurrentTaskGeneration(regRoot, targetKey);
         const target: StoredHandleRecord<ManagedWorktreeHandleV3> = { handle, fingerprint: fingerprintHandle(handle), status: "live",
           headAtPrepare: head, bunWorkspaceRoot: stored.bunWorkspaceRoot,
+          ...(stored.integrationRef === undefined ? {} : { integrationRef: stored.integrationRef }),
           retainedCohortAuthority: { lease: nextLease, envelope: nextEnvelope }, cohortRebasePredecessor: { proof, bridge } };
         if (targetRecords !== null && targetRecords.some((record) => record.fingerprint !== target.fingerprint)) throw new Error("cohort successor registry already belongs to another transition");
         const sourcePublication = await stageTaskGenerationPublication(regRoot, sourceKey, sourceRecords, fault);

@@ -150,6 +150,7 @@ describe("T1268 structural guard — activePlanTaskWaits is the sole production 
       "goalDrift",
       "upstreamBlocked",
       "unreachable",
+      "unadmittable",
     ]);
   });
 });

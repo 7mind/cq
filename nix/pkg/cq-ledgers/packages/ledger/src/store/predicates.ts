@@ -198,6 +198,15 @@ export interface DerivedPredicates {
    * open-question gate.
    */
   unreachable: PredicateVerdict;
+  /**
+   * REPORT-ONLY signal (D585): TRUE with the ids of P-implement tasks that
+   * cohort admission can never accept, because no repository path is
+   * reachable from their `sourceRefs` (directly, or through the primary
+   * ledger items those refs name). Admission anchors every member's
+   * repository witness there. Never participates in any stop condition and
+   * never feeds the open-question gate.
+   */
+  unadmittable: PredicateVerdict;
 }
 
 // --- lifecycle constants (mirror the schemas in constants.ts) --------------
@@ -272,6 +281,42 @@ function activeItems(
 }
 
 /** `item.fields[name]` as a string[] (empty when absent or non-array). */
+/**
+ * D585: mirror cohort admission's source resolution (workCohort.ts
+ * `resolveSourceReferences`). A `<ledger>:<id>` ref to a primary ledger is
+ * followed; an opaque `cq-…:vN:<digest>` authority ref carries no path; any
+ * other ref, with a trailing `:line[:column]` citation dropped, must be a
+ * normalized repository-relative path. Known limitation: only ACTIVE items
+ * are followed, so a path reachable solely through an archived item (which
+ * admission resolves) is reported unadmittable.
+ */
+function reachesRepositoryPath(store: LedgerStore, root: Item): boolean {
+  const ledgers = new Set(store.enumerate());
+  const visited = new Set<string>();
+  const pending: Item[] = [root];
+  while (pending.length > 0) {
+    const item = pending.shift()!;
+    for (const ref of refList(item, "sourceRefs")) {
+      const separator = ref.indexOf(":");
+      if (separator > 0 && ref.indexOf(":", separator + 1) === -1 && ledgers.has(ref.slice(0, separator))) {
+        if (visited.has(ref)) continue;
+        visited.add(ref);
+        try {
+          pending.push(store.fetchItem(ref.slice(0, separator), ref.slice(separator + 1)));
+        } catch {
+          // Admission refuses a member whose primary ref does not resolve.
+          return false;
+        }
+        continue;
+      }
+      if (/^cq-[a-z0-9-]+:v[0-9]+:[0-9a-f]{64}$/u.test(ref)) continue;
+      const path = ref.replace(/:\d+(?::\d+)?$/u, "");
+      if (path !== "" && !path.startsWith("/") && !path.split("/").some((part) => part === "" || part === "..")) return true;
+    }
+  }
+  return false;
+}
+
 function refList(item: Item, name: string): string[] {
   const value = item.fields[name];
   return Array.isArray(value) ? value : [];
@@ -905,6 +950,10 @@ function deriveEligiblePredicates(
     .filter((t) => unreachableIds.has(t.id))
     .map((t) => t.id);
 
+  // --- unadmittable (REPORT-ONLY, D585) -------------------------------------
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const unadmittableItems = implementItems.filter((id) => !reachesRepositoryPath(store, tasksById.get(id)!));
+
   return {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
     pSeed: { value: seedItems.length > 0, items: seedItems },
@@ -927,6 +976,7 @@ function deriveEligiblePredicates(
       items: upstreamBlockedItems,
     },
     unreachable: { value: unreachableItems.length > 0, items: unreachableItems },
+    unadmittable: { value: unadmittableItems.length > 0, items: unadmittableItems },
   };
 }
 

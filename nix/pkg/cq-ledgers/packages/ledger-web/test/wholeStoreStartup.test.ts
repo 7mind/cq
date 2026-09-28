@@ -625,8 +625,11 @@ describe("cq web whole-store startup composition (T838)", () => {
       const repo = await makeHintRepository({ projectId: "proxy-check" });
       const outdir = await makeDirectory("ledger-web-proxy-out-");
       const port = await freePort();
-      const upstreamPort = await freePort(); // nothing listens: proxy must 502
-      const upstream = `http://127.0.0.1:${upstreamPort}/mcp`;
+      // D604: hold the dead upstream for the whole test. A released free port
+      // can be rebound by a parallel test whose silent server hangs the proxy.
+      const deadUpstream = Bun.listen({ hostname: "127.0.0.1", port: 0,
+        socket: { data() {}, open(socket) { socket.end(); } } });
+      const upstream = `http://127.0.0.1:${deadUpstream.port}/mcp`;
       const web = await spawnWeb(
         ["--mcp-url", upstream, "--cwd", repo, "--port", String(port)],
         { LEDGER_WEB_OUTDIR: outdir },
@@ -644,6 +647,7 @@ describe("cq web whole-store startup composition (T838)", () => {
       web.proc.kill();
       await web.proc.exited;
       expect(web.stderrText()).toContain(`→ MCP upstream ${upstream}`);
+      deadUpstream.stop(true);
     },
     PROCESS_TIMEOUT_MS,
   );

@@ -1018,6 +1018,30 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("names the unretained boundary when rewritten history blocks re-arming (D603)", async () => {
+    const f = fixture();
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-history-rewrite",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.setCommitRetained(async (repositoryHead, resultCommit) => repositoryHead === resultCommit);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({ ...candidate, repositoryHead: NEXT_HEAD })),
+    });
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-history-rewrite",
+      author: "parent",
+    })).rejects.toThrow(`activation boundary ${HEAD} is not an ancestor of ${NEXT_HEAD}`);
+  });
+
   test("refuses to supersede a stale arm after audit preparation", async () => {
     const f = fixture();
     const manifestDigest = implementationAuditManifestDigest(f.packaged);

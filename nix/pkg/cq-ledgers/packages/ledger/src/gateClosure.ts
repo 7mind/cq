@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -568,18 +569,44 @@ async function sourceFiles(repositoryRoot: string, root: string): Promise<Source
     return null;
   }
   const escape = await visit(root);
-  return escape === null
-    ? { status: "found", files: [...files].sort((left, right) => left.localeCompare(right)) }
-    : { status: "path-escape", path: escape };
+  if (escape !== null) return { status: "path-escape", path: escape };
+  const ignored = await gitIgnoredFiles(repositoryRoot, [...files]);
+  return {
+    status: "found",
+    files: [...files].filter((file) => !ignored.has(file)).sort((left, right) => left.localeCompare(right)),
+  };
 }
 
-function staticImportSpecifiers(source: string): readonly string[] {
+/**
+ * D580: a gitignored source never reaches a managed worktree, so local scratch
+ * files must not enter the closure. Outside a Git work tree nothing is ignored.
+ */
+async function gitIgnoredFiles(repositoryRoot: string, files: readonly string[]): Promise<ReadonlySet<string>> {
+  if (files.length === 0) return new Set();
+  const byRelative = new Map(files.map((file) => [relative(repositoryRoot, file), file]));
+  const output = await new Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }>((resolveRun, rejectRun) => {
+    const child = spawn("git", ["-C", repositoryRoot, "check-ignore", "-z", "--stdin"], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", rejectRun);
+    child.on("close", (code) => resolveRun({ code, stdout, stderr }));
+    child.stdin.end([...byRelative.keys()].join("\0") + "\0");
+  });
+  // check-ignore exits 1 when nothing is ignored and 128 outside a work tree.
+  if (output.code === 1 || (output.code === 128 && /not a git repository/u.test(output.stderr))) return new Set();
+  if (output.code !== 0) throw new Error(`git check-ignore failed (${String(output.code)}): ${output.stderr.trim()}`);
+  return new Set(output.stdout.split("\0").filter(Boolean).map((path) => byRelative.get(path)).filter((path): path is string => path !== undefined));
+}
+
+function staticImportSpecifiers(source: string, commonJs: CommonJsLoaderAnalysis): readonly string[] {
   const specifiers = new Set<string>();
   for (const pattern of STATIC_IMPORT_RES) {
     pattern.lastIndex = 0;
     for (const match of source.matchAll(pattern)) specifiers.add(match[1]!);
   }
-  for (const specifier of commonJsLiteralLoadSpecifiers(source)) specifiers.add(specifier);
+  for (const specifier of commonJs.literalSpecifiers) specifiers.add(specifier);
   return [...specifiers];
 }
 
@@ -590,8 +617,13 @@ function hasOpaqueDynamicImport(source: string): boolean {
 type FirstCallArgument =
   { readonly kind: "literal"; readonly value: string } | { readonly kind: "nonliteral" };
 
+const SPACE_CODE_UNIT = 0x20;
+const UTF16LE = new TextDecoder("utf-16le");
+
 function sourceCodeMask(source: string): string {
-  const mask = Array.from({ length: source.length }, () => " ");
+  // D569: a code-unit buffer instead of a per-character string array; the
+  // array build and join dominated the closure walk.
+  const mask = new Uint16Array(source.length).fill(SPACE_CODE_UNIT);
   const scanQuoted = (start: number, quote: '"' | "'"): number => {
     let cursor = start + 1;
     while (cursor < source.length) {
@@ -605,8 +637,10 @@ function sourceCodeMask(source: string): string {
     let cursor = index - 1;
     while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
     if (cursor < 0 || /[([{=:;,!?&|+*%^~<>-]/u.test(source[cursor] ?? "")) return true;
-    return /\b(?:await|case|delete|in|instanceof|of|return|throw|typeof|void|yield)\s*$/u.test(
-      source.slice(0, index),
+    // D569: only the word ending at `cursor` matters; one extra leading
+    // character keeps the word boundary exact. The longest keyword has 10.
+    return /\b(?:await|case|delete|in|instanceof|of|return|throw|typeof|void|yield)$/u.test(
+      source.slice(Math.max(0, cursor - 10), cursor + 1),
     );
   };
   const scanRegularExpression = (start: number): number => {
@@ -674,13 +708,13 @@ function sourceCodeMask(source: string): string {
       if (templateExpression && character === "}" && braceDepth === 0) return cursor + 1;
       if (character === "{") braceDepth += 1;
       else if (templateExpression && character === "}") braceDepth -= 1;
-      mask[cursor] = character;
+      mask[cursor] = source.charCodeAt(cursor);
       cursor += 1;
     }
     return cursor;
   };
   scanCode(0, false);
-  return mask.join("");
+  return UTF16LE.decode(mask);
 }
 
 function hasExecutableIdentifierEscape(source: string): boolean {
@@ -755,8 +789,10 @@ function hasOpaqueCodeCall(
   nonLiteralFirstArgument: boolean,
 ): boolean {
   const code = sourceCodeMask(source);
+  // D569: a call can only start at a callee's first character.
+  const initials = new Set(callees.map((callee) => callee[0]));
   for (let index = 0; index < source.length; index += 1) {
-    if (code[index] === " ") continue;
+    if (code[index] === " " || !initials.has(source[index])) continue;
     if (callees.some((callee) => hasCall(source, index, callee, nonLiteralFirstArgument))) {
       return true;
     }
@@ -767,8 +803,9 @@ function hasOpaqueCodeCall(
 function literalCallSpecifiers(source: string, callees: readonly string[]): readonly string[] {
   const specifiers = new Set<string>();
   const code = sourceCodeMask(source);
+  const initials = new Set(callees.map((callee) => callee[0]));
   for (let index = 0; index < source.length; index += 1) {
-    if (code[index] === " ") continue;
+    if (code[index] === " " || !initials.has(source[index])) continue;
     for (const callee of callees) {
       const argument = firstCallArgument(source, index, callee);
       if (argument?.kind === "literal") specifiers.add(argument.value);
@@ -997,11 +1034,12 @@ function commonJsLoaderAliases(
 
 function normalizeParenthesizedReferences(source: string, references: readonly string[]): string {
   const normalized = [...source];
+  // D569: the mask depends only on `normalized`; rebuild it only after an edit.
+  let current = source;
+  let code = sourceCodeMask(current);
   for (const reference of [...references].sort((left, right) => right.length - left.length)) {
     let index = 0;
     while (index < source.length) {
-      const current = normalized.join("");
-      const code = sourceCodeMask(current);
       index = current.indexOf(reference, index);
       if (index === -1) break;
       if (
@@ -1015,6 +1053,8 @@ function normalizeParenthesizedReferences(source: string, references: readonly s
         if (current[left] === "(" && current[right] === ")") {
           normalized[left] = " ";
           normalized[right] = " ";
+          current = normalized.join("");
+          code = sourceCodeMask(current);
           index = left;
           continue;
         }
@@ -1168,8 +1208,9 @@ function hasUnsupportedLoaderReference(
   const resolverSet = new Set(resolvers);
   const code = sourceCodeMask(source);
   const consumed = new Set<number>();
+  const initials = new Set(references.map((reference) => reference[0]));
   for (let index = 0; index < source.length; index += 1) {
-    if (code[index] === " " || consumed.has(index)) continue;
+    if (code[index] === " " || consumed.has(index) || !initials.has(source[index])) continue;
     const reference = references.find(
       (candidate) =>
         source.startsWith(candidate, index) &&
@@ -1215,7 +1256,8 @@ function analyzeCommonJsLoaders(source: string): CommonJsLoaderAnalysis {
   let opaque = hasOpaqueCodeCall(normalized, [...aliases.loaders, ...aliases.resolvers], true);
   const code = sourceCodeMask(normalized);
   for (const loader of aliases.loaders) {
-    for (let index = 0; index < normalized.length; index += 1) {
+    // D569: an indirect `.call`/`.apply` target starts where the loader occurs.
+    for (let index = normalized.indexOf(loader); index !== -1; index = normalized.indexOf(loader, index + 1)) {
       if (code[index] === " ") continue;
       for (const method of ["call", "apply"] as const) {
         const target = indirectLoaderTarget(normalized, index, loader, method);
@@ -1239,10 +1281,6 @@ function analyzeCommonJsLoaders(source: string): CommonJsLoaderAnalysis {
   return { literalSpecifiers: [...literalSpecifiers], opaque };
 }
 
-function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
-  return analyzeCommonJsLoaders(source).literalSpecifiers;
-}
-
 function isRequireBinding(source: string, index: number): boolean {
   const boundary = Math.max(
     source.lastIndexOf(";", index - 1),
@@ -1251,9 +1289,8 @@ function isRequireBinding(source: string, index: number): boolean {
   return /(?:const|let|var|function)\s*$/u.test(source.slice(boundary + 1, index));
 }
 
-function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdgeKind> {
+function opaqueSourceEdgeKinds(source: string, commonJs: CommonJsLoaderAnalysis): ReadonlySet<ManagedGateOpaqueEdgeKind> {
   const kinds = new Set<ManagedGateOpaqueEdgeKind>();
-  const commonJs = analyzeCommonJsLoaders(source);
   if (hasOpaqueDynamicImport(source) || commonJs.opaque) {
     kinds.add("dynamic");
   }
@@ -1589,7 +1626,9 @@ export async function resolveManagedGateClosure(
           " is unsupported",
       );
     }
-    for (const kind of opaqueSourceEdgeKinds(source)) {
+    // D569: one CommonJS loader analysis serves both edge kinds and specifiers.
+    const commonJs = analyzeCommonJsLoaders(source);
+    for (const kind of opaqueSourceEdgeKinds(source, commonJs)) {
       if (!declarations.get(sourcePath)?.has(kind)) {
         return invalid(
           "source-declaration-missing",
@@ -1597,7 +1636,7 @@ export async function resolveManagedGateClosure(
         );
       }
     }
-    for (const specifier of staticImportSpecifiers(source)) {
+    for (const specifier of staticImportSpecifiers(source, commonJs)) {
       if (!specifier.startsWith(".")) continue;
       const target = await resolveImportTarget(sourcePath, specifier);
       if (target === null) {

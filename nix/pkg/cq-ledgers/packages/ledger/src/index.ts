@@ -449,6 +449,7 @@ export {
   prepareManagedCohortRebaseSuccessor,
   resumeManagedCohortRebaseSuccessor,
   readManagedCohortRebaseSuccessor,
+  readManagedWorktreeIntegrationRef,
   resolveManagedCohortRebaseTransition,
   retainManagedCohortAuthority,
   bindRetainedManagedCohortSeal,

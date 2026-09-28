@@ -444,9 +444,9 @@ fallback exists.
    never the task-only continuation. Accept only `correction-ready`, then call
    `start_dispatch` with its `input` plus the reviewers' `priorCriticism`, and
    with its exact `reprepareOf` and `guardedRebase`. Replays return the same
-   coordinates until the successor claims them. When that correction worker
-   fails or aborts, call the same operation with its own dispatch. Any partial
-   work it left must be its own broker commits. A sealed cohort candidate that
+   coordinates until the successor claims them. When any cohort worker, first
+   or correction, fails or aborts before sealing, call the same operation with
+   its own dispatch. Any partial work it left must be its own broker commits. A sealed cohort candidate that
    its queue-front gate rejected gets its correction round the same way. It is
    re-gated unchanged only when an A/B reproduction on the candidate and on the
    integration head proves the failure unrelated; record that proof in the

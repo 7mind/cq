@@ -241,6 +241,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       goalDrift: empty,
       upstreamBlocked: empty,
       unreachable: empty,
+      unadmittable: empty,
     },
   };
 }

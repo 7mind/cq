@@ -94,6 +94,7 @@ import {
   prepareManagedCohortRebaseSuccessor,
   resumeManagedCohortRebaseSuccessor,
   readManagedCohortRebaseSuccessor,
+  readManagedWorktreeIntegrationRef,
   resolveManagedCohortRebaseTransition,
   assertCohortEffectEnvelopeV1,
   cohortValueDigestV1,
@@ -6062,12 +6063,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           "only a passing broker-verified worker result can enter the runnable queue",
         );
       }
+      // D602: integrate into the ref recorded when the worktree was prepared;
+      // only a record that predates it falls back to the live checkout branch.
       const [resultTree, integrationRef] = await Promise.all([
         readOnlyGit(binding.repositoryRoot, ["rev-parse", "--verify", `${resultCommit}^{tree}`]),
-        readOnlyGit(binding.repositoryRoot, ["symbolic-ref", "--quiet", "HEAD"]),
+        readManagedWorktreeIntegrationRef(binding, managerDeps).then(async (recorded) =>
+          recorded ?? await readOnlyGit(binding.repositoryRoot, ["symbolic-ref", "--quiet", "HEAD"])),
       ]);
       if (!FULL_GIT_SHA.test(resultTree) || !/^refs\/heads\//u.test(integrationRef)) {
         throw new Error("implementation candidate Git identity is malformed");
+      }
+      // D602: a ref that does not contain the candidate's base is not its
+      // integration branch (a live-branch fallback after an operator switch,
+      // or a recorded branch since rewritten), so refuse instead of retargeting.
+      const candidateBase = dispatchObject(row.input) ? row.input["baseCommit"] : undefined;
+      const integrationContainsBase = typeof candidateBase === "string" && await readOnlyGitAllowEmpty(binding.repositoryRoot,
+        ["merge-base", "--is-ancestor", candidateBase, integrationRef]).then(() => true, () => false);
+      if (!integrationContainsBase) {
+        throw new Error(`integration ref ${integrationRef} does not contain the candidate base ` +
+          `${String(candidateBase)}; restore the integration branch before the candidate is queued`);
       }
       const authority = binding.cohort === undefined ? {
         taskId: binding.taskId, goalRef: exactGoalRef(options.ledgerStore, binding.taskId),
