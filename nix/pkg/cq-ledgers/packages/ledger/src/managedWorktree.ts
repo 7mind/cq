@@ -1857,7 +1857,7 @@ async function buildEvidence(
     bunWorkspaceRoot,
     bunWorkspaceRoots,
     bunInstallCacheDir,
-    bunInstallArgs: [...FROZEN_INSTALL_ARGS],
+    bunInstallArgs: bunWorkspaceRoots.length === 0 ? [] : [...FROZEN_INSTALL_ARGS],
     dependencyResultCommits,
     mode,
   };
@@ -1953,11 +1953,13 @@ async function resumeManagedRecord<H extends AnyManagedWorktreeHandle>(
     );
   }
 
+  // D567: a tree prepared without a Bun workspace resumes without claiming one.
+  const bootstrapped = BUN_LOCK_NAMES.some((name) => existsSync(join(stored.bunWorkspaceRoot, name)));
   const evidence = await buildEvidence(
     handle,
     head,
     stored.bunWorkspaceRoot,
-    [stored.bunWorkspaceRoot],
+    bootstrapped ? [stored.bunWorkspaceRoot] : [],
     resolveBunInstallCacheDir(deps.cacheRoot),
     [],
     "resume",
@@ -2491,36 +2493,35 @@ async function prepareAdoptedWorktreeUnderLock(
     );
   }
 
+  // D567: a project without a Bun workspace is adopted without dependency bootstrap.
   const seedBunWorkspaceRoot =
     deps.bunWorkspaceRoot ?? (await discoverBunWorkspaceRoot(repositoryRoot));
-  if (seedBunWorkspaceRoot === null) {
-    return refusedPrepare("bun-workspace-missing", "no Bun workspace found for adoption");
-  }
-  const bunWorkspaceRoot = rebaseBunWorkspaceIntoWorktree(
-    repositoryRoot,
-    seedBunWorkspaceRoot,
-    absolutePath,
-  );
-  if (bunWorkspaceRoot === null) {
+  const rebasedWorkspaceRoot = seedBunWorkspaceRoot === null
+    ? null
+    : rebaseBunWorkspaceIntoWorktree(repositoryRoot, seedBunWorkspaceRoot, absolutePath);
+  if (seedBunWorkspaceRoot !== null && rebasedWorkspaceRoot === null) {
     return refusedPrepare("bun-workspace-missing", "Bun workspace is outside the adopted tree");
   }
-  const installPlan = buildManagedWorktreeInstallPlan({
-    bunWorkspaceRoot,
+  const bunWorkspaceRoot = rebasedWorkspaceRoot ?? absolutePath;
+  const installPlan = rebasedWorkspaceRoot === null ? null : buildManagedWorktreeInstallPlan({
+    bunWorkspaceRoot: rebasedWorkspaceRoot,
     ...(deps.cacheRoot === undefined ? {} : { cacheRoot: deps.cacheRoot }),
   });
-  const planValidation = validateManagedWorktreeInstallPlan(
-    installPlan,
-    deps.cacheRoot === undefined ? {} : { cacheRoot: deps.cacheRoot },
-  );
-  if (planValidation.status === "invalid") {
-    return refusedPrepare(
-      "bun-install-plan-invalid",
-      `${planValidation.reason}: ${planValidation.detail}`,
+  if (installPlan !== null) {
+    const planValidation = validateManagedWorktreeInstallPlan(
+      installPlan,
+      deps.cacheRoot === undefined ? {} : { cacheRoot: deps.cacheRoot },
     );
-  }
-  const preInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
-  if (preInstallSymlink !== null) {
-    return refusedPrepare("bun-install-plan-invalid", preInstallSymlink);
+    if (planValidation.status === "invalid") {
+      return refusedPrepare(
+        "bun-install-plan-invalid",
+        `${planValidation.reason}: ${planValidation.detail}`,
+      );
+    }
+    const preInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
+    if (preInstallSymlink !== null) {
+      return refusedPrepare("bun-install-plan-invalid", preInstallSymlink);
+    }
   }
 
   let transaction: LegacyWorktreeReconciliationTransaction | null = null;
@@ -2551,17 +2552,19 @@ async function prepareAdoptedWorktreeUnderLock(
     transaction = reconciled.transaction;
     await fault("after-adoption-reconciliation", { taskId: request.taskId, transactionId });
 
-    await fs.mkdir(installPlan.bunInstallCacheDir, { recursive: true });
-    const installResult = await install(installPlan);
-    if (installResult.code !== 0) {
-      throw new AdoptionRefusal(
-        "bun-install-failed",
-        `bun install failed (exit ${installResult.code}): ${installResult.stderr.trim()}`,
-      );
-    }
-    const postInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
-    if (postInstallSymlink !== null) {
-      throw new AdoptionRefusal("bun-install-plan-invalid", postInstallSymlink);
+    if (installPlan !== null) {
+      await fs.mkdir(installPlan.bunInstallCacheDir, { recursive: true });
+      const installResult = await install(installPlan);
+      if (installResult.code !== 0) {
+        throw new AdoptionRefusal(
+          "bun-install-failed",
+          `bun install failed (exit ${installResult.code}): ${installResult.stderr.trim()}`,
+        );
+      }
+      const postInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
+      if (postInstallSymlink !== null) {
+        throw new AdoptionRefusal("bun-install-plan-invalid", postInstallSymlink);
+      }
     }
     await fault("after-adoption-install", { taskId: request.taskId, transactionId });
 
@@ -2628,8 +2631,8 @@ async function prepareAdoptedWorktreeUnderLock(
       handle,
       headCommit,
       bunWorkspaceRoot,
-      [bunWorkspaceRoot],
-      installPlan.bunInstallCacheDir,
+      installPlan === null ? [] : [bunWorkspaceRoot],
+      installPlan?.bunInstallCacheDir ?? resolveBunInstallCacheDir(deps.cacheRoot),
       dependencyResultCommits,
       "adopted",
     );
@@ -3037,24 +3040,19 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
       // A cq-ledgers target is closure-aware and never receives this fallback.
       const cqTarget = join(absolutePath, "nix", "pkg", "cq-ledgers", "package.json");
       if (closure.reason === "manifest-missing" && !existsSync(cqTarget)) {
+        // D567: a project without a Bun workspace gets a plain worktree and no
+        // dependency bootstrap, never a refusal for a lockfile it does not use.
         const discovered = await discoverBunWorkspaceRoot(absolutePath);
-        if (discovered !== null) {
-          bunWorkspaceRoots = [discovered];
-        } else {
-          return refuseAfterAdd(
-            "bun-workspace-missing",
-            `no Bun workspace (bun.lock) discovered under managed target ${absolutePath}`,
-          );
-        }
+        bunWorkspaceRoots = discovered === null ? [] : [discovered];
       } else {
         return refuseAfterAdd("gate-closure-invalid", `${closure.reason}: ${closure.detail}`);
       }
     } else {
+      if (closure.installRoots.length === 0) {
+        return refuseAfterAdd("gate-closure-invalid", "resolved gate closure has no install roots");
+      }
       bunWorkspaceRoots = closure.installRoots;
     }
-  }
-  if (bunWorkspaceRoots.length === 0) {
-    return refuseAfterAdd("gate-closure-invalid", "resolved gate closure has no install roots");
   }
 
   const installPlans: ManagedWorktreeInstallPlan[] = [];
@@ -3088,7 +3086,7 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
     installPlans.push(installPlan);
   }
 
-  if (!deps.skipInstall) {
+  if (!deps.skipInstall && installPlans.length > 0) {
     await fs.mkdir(installPlans[0]!.bunInstallCacheDir, { recursive: true });
     for (const installPlan of installPlans) {
       const installResult = await install(installPlan);
@@ -3104,8 +3102,9 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
       }
     }
   }
-  const bunWorkspaceRoot = bunWorkspaceRoots[0]!;
-  const installPlan = installPlans[0]!;
+  // A worktree with no bootstrap records its own root as the (empty) workspace root.
+  const bunWorkspaceRoot = bunWorkspaceRoots[0] ?? absolutePath;
+  const bunInstallCacheDir = installPlans[0]?.bunInstallCacheDir ?? resolveBunInstallCacheDir(deps.cacheRoot);
 
   const headCommit = await revParse(git, absolutePath, "HEAD");
   if (headCommit === null) {
@@ -3159,7 +3158,7 @@ async function allocateManagedWorktreeUnderLock<H extends AnyManagedWorktreeHand
     headCommit,
     bunWorkspaceRoot,
     bunWorkspaceRoots,
-    installPlan.bunInstallCacheDir,
+    bunInstallCacheDir,
     dependencyResultCommits,
     "fresh",
   );

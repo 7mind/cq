@@ -1780,13 +1780,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "05aab53b7c852b2a7c20a464a9177b8c06516c758c51f21cbeeaede2b22c1c04",
+      "sha256": "9628cb936c566834379f4d8e4f2511f51fc4b2cd6c8b6fe92531acbc29afa7f2",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "05aab53b7c852b2a7c20a464a9177b8c06516c758c51f21cbeeaede2b22c1c04",
+      "sha256": "9628cb936c566834379f4d8e4f2511f51fc4b2cd6c8b6fe92531acbc29afa7f2",
       "targets": []
     },
     {
@@ -2769,6 +2769,12 @@
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/gateRun.ts",
       "sha256": "bd3c9732b925c7ac6ee98fa81a1311a9aa4dd01668fe0558f0a6c2eb79b5f52a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeNonBun.test.ts",
+      "sha256": "b93bf14f4e48390a61e4541473c1870ee783be98a83f98f058696ef7fd391957",
       "targets": []
     }
   ]

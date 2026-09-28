@@ -528,8 +528,8 @@ export class GitCohortLocalRepositoryV1 implements CohortLocalRepositoryV1 {
     ) {
       return "package";
     }
-    let related = false;
-    for (const specifier of importedSpecifiers(source)) {
+    let related = !isTypeScriptFamilySource(from) && from !== to && sourceReferencesModule(source, to);
+    for (const specifier of isTypeScriptFamilySource(from) ? importedSpecifiers(source) : []) {
       if (
         relativeImportCandidates(from, specifier).includes(to) ||
         (await this.#workspaceImportResolves(identity, specifier, to))
@@ -547,6 +547,54 @@ function repositoryNodeSymbol(candidate: Extract<CohortWitnessInputV1, { kind: "
   const symbol = candidate.nodeIdentity.split("#").at(-1) ?? "";
   assertNonEmpty(symbol, "repository witness symbol");
   return symbol;
+}
+
+/** Files whose witnesses and imports the TypeScript compiler analyses precisely. */
+const TYPESCRIPT_FAMILY_SOURCE = /\.(?:[cm]?[jt]sx?)$/u;
+
+function isTypeScriptFamilySource(path: string): boolean {
+  return TYPESCRIPT_FAMILY_SOURCE.test(path);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * D571: the language-neutral declaration rule for a non-TS/JS witness. A line
+ * that, after indentation and ordinary modifiers, opens with a declaration
+ * keyword naming `symbol` (optionally after a Go receiver), or assigns it at
+ * line start. A comment line never qualifies because no declaration keyword
+ * follows its comment marker at line start.
+ */
+function sourceDeclaresSymbol(source: string, symbol: string): boolean {
+  const name = escapeRegExp(symbol);
+  const modifiers = "(?:(?:pub(?:\\([^)]*\\))?|export|public|private|protected|internal|static|final|abstract|sealed|open|override|async|inline|data|case|unsafe|extern|implicit|lazy)\\s+)*";
+  const keyword = "(?:def|class|fn|func|struct|enum|trait|interface|type|object|record|module|mod|val|var|let|const|fun|function|protocol|impl|typealias|union|newtype|data)";
+  const declaration = new RegExp(
+    `^[ \\t]*${modifiers}${keyword}[ \\t]+(?:\\([^)\\n]*\\)[ \\t]*)?${name}(?![A-Za-z0-9_$])`, "mu");
+  const assignment = new RegExp(`^${name}[ \\t]*(?::[^=\\n]*)?=(?!=)`, "mu");
+  return declaration.test(source) || assignment.test(source);
+}
+
+/** Whether the repository file at `path` declares the named witness symbol (D571). */
+export function repositoryWitnessDeclaresSymbol(path: string, source: string, symbol: string): boolean {
+  return isTypeScriptFamilySource(path) ? sourceExportsSymbol(source, symbol) : sourceDeclaresSymbol(source, symbol);
+}
+
+/** Basenames that name their directory's module rather than a module of their own. */
+const DIRECTORY_MODULE_STEMS: ReadonlySet<string> = new Set(["mod", "index", "__init__", "lib", "main", "package"]);
+
+/**
+ * D571: the language-neutral relationship rule for a non-TS/JS source. The
+ * source references the target when it names the target's module (its file
+ * stem, or its directory for a directory-module file) as a whole identifier.
+ */
+function sourceReferencesModule(source: string, targetPath: string): boolean {
+  const stem = posix.basename(targetPath).replace(/\.[^.]*$/u, "");
+  const moduleName = DIRECTORY_MODULE_STEMS.has(stem) ? posix.basename(posix.dirname(targetPath)) : stem;
+  if (moduleName.length < 2 || moduleName === ".") return false;
+  return new RegExp(`(?<![A-Za-z0-9_$])${escapeRegExp(moduleName)}(?![A-Za-z0-9_$])`, "u").test(source);
 }
 
 function sourceExportsSymbol(source: string, symbol: string): boolean {
@@ -1159,7 +1207,7 @@ export class LedgerWorksetCohortAdmissionObservationSourceV1
             if (!bytes.includes("@generated") || candidate.witness.nodeIdentity !== expected) {
               throw new Error(`${sourcePath} does not derive the named generated source node`);
             }
-          } else if (!sourceExportsSymbol(bytes, repositoryNodeSymbol(candidate.witness))) {
+          } else if (!repositoryWitnessDeclaresSymbol(sourcePath, bytes, repositoryNodeSymbol(candidate.witness))) {
             throw new Error(`${sourcePath} does not export the named repository witness`);
           }
         }
