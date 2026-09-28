@@ -2729,6 +2729,13 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
         }
         break;
       }
+      // D598: the sealed candidate its queue-front gate rejected is anchored by
+      // its own seal, which the store's guarded-bridge validation requires.
+      if (source.state === "aborted" && source.abortReason === "gate-rejected" && source.implementationQueue?.state === "terminal" &&
+          source.implementationQueue.terminal?.reason === "gate-rejected" &&
+          source.implementationQueue.attempt.resultCommit === linkBridge.oldResultCommit && linkBridge.cohort.state === "sealed") {
+        break;
+      }
       const sourceInput = source.input !== null && typeof source.input === "object" && !Array.isArray(source.input)
         ? source.input as Readonly<Record<string, unknown>> : undefined;
       const sourceOutput = source.output !== null && typeof source.output === "object" && !Array.isArray(source.output)

@@ -3293,6 +3293,24 @@ function claimStagedRebaseSuccessor(
       !managerBindingChanged &&
       completedQueueBindingMatches;
     if (consumedOrdinaryQueue) return;
+    // D598: a cohort correction of the sealed candidate its queue-front gate
+    // rejected; the terminal queue needs no claim, only the proven transition.
+    const gateRejectedCohortSource =
+      bridge !== undefined &&
+      gitEffectBinding !== undefined &&
+      priorManagerBinding !== undefined &&
+      !isAttestationTombstone(previous) &&
+      previous.state === "aborted" &&
+      previous.abortReason === "gate-rejected" &&
+      queue !== undefined &&
+      "attempt" in queue &&
+      queue.state === "terminal" &&
+      queue.terminal?.reason === "gate-rejected" &&
+      queue.attempt.resultCommit === bridge.oldResultCommit &&
+      cohortRebaseTransitionMatches(priorManagerBinding, gitEffectBinding, reprepareOf) &&
+      input?.["baseCommit"] === bridge.ontoCommit &&
+      input["startingCommit"] === bridge.rebasedStartCommit;
+    if (gateRejectedCohortSource) return;
     if (bridge !== undefined && queue !== undefined) {
       throw new AttestationBindingError(
         "reprepareOf",

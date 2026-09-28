@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -71,6 +71,9 @@ for (const kind of ["memory", "sqlite"] as const) {
         } },
         supervisedWorkerGateRunner: { run: async () => {
           commands.push("bun run check");
+          if (mode === "gate-rejected" && commands.filter((command) => command === "bun run check").length === 1) {
+            return { gateExitCode: 1, passCount: 2, failCount: 1, gateDurationMs: 1, capturedAt: new Date().toISOString(), outputTail: "(fail) contended\n 1 fail" };
+          }
           return { gateExitCode: 0, passCount: 3, failCount: 0, gateDurationMs: 1, capturedAt: new Date().toISOString(), outputTail: "3 pass" };
         } },
       });
@@ -280,6 +283,41 @@ for (const kind of ["memory", "sqlite"] as const) {
         }
         capability = runtime();
         if (capability.coordinateImplementationCandidate === undefined) throw new Error("cohort restored coordinator unavailable");
+      }
+      if (mode === "gate-rejected") {
+        // D598: a red queue-front gate leaves the sealed candidate a correction
+        // round in its own worktree, like a reviewer's disapproval.
+        await capability.coordinateImplementationCandidate({ ...prepared.prepared, holderId: "cohort-front", parentGateCapability }).catch(() => undefined);
+        const rejectedRow = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
+        expect(rejectedRow?.kind === "envelope" ? [rejectedRow.state, rejectedRow.abortReason] : undefined).toEqual(["aborted", "gate-rejected"]);
+        const ready = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle });
+        expect(ready.input).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, round: 1 });
+        const retryChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}regate-child`, runId: "regate-run" };
+        const retry = await capability.prepare({ roleId: "implement-worker", idempotencyKey: "cohort-regate", timeoutMs: 600_000,
+          expectedChild: retryChild, input: { ...(ready.input as Record<string, DispatchJSONValue>), priorCriticism: ["unrelated contended gate failure"] },
+          reprepareOf: ready.reprepareOf, guardedRebase: ready.guardedRebase });
+        expect(retry).toMatchObject({ accepted: true });
+        if (!retry.accepted) throw new Error(JSON.stringify(retry));
+        const next = retry.prepared;
+        await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
+        const nextRow = await backend.transact({ kind: "handle", handle: next }, (store) => store.read(next));
+        const nextBinding = nextRow?.kind === "envelope" ? nextRow.gitEffectBinding : undefined;
+        if (nextBinding?.cohort === undefined || nextBinding.guardedRebaseBridge === undefined) throw new Error("gate correction lost its bridge");
+        const bridge = nextBinding.guardedRebaseBridge;
+        await capability.storeResult({ ...next, resultCapability: next.resultCapability, output: {
+          cohort: nextBinding.cohort, memberObservations: nextBinding.cohort.definition.members.map((member) => ({ memberRef: member.memberRef, observation: "Unchanged" })),
+          status: "pass", resultCommit: bridge.rebasedStartCommit, branch: nextBinding.branch, actualWorktreePath: nextBinding.worktreePath,
+          filesTouched: ["a.txt"], gitReceipts: [], checkSummary: "A/B-proven unrelated gate failure", summary: "Unchanged candidate re-gated",
+          gitLineage: { kind: "guarded-rebase", guardedRebase: bridge.guardedRebase, ontoCommit: bridge.ontoCommit, rebasedStartCommit: bridge.rebasedStartCommit, exactTip: bridge.exactTip },
+          baseVerification: { status: "verified", relation: "descendant", baseCommit: fixture.baseCommit, headCommit: bridge.rebasedStartCommit },
+        } as unknown as DispatchJSONValue });
+        await capability.qualifyImplementationCandidate!({ ...next, roleId: "implement-worker", correlationId: "regate-child",
+          childThreadId: "regate-thread", expectedRunId: retryChild.runId,
+          outcome: "completed", exitStatus: 0, observedAt: new Date().toISOString(), promptDigest: "a".repeat(64) });
+        const regated = await capability.coordinateImplementationCandidate!({ ...next, holderId: "cohort-regate-front", parentGateCapability: next.parentGateCapability! });
+        expect(regated.state).toBe("completed");
+        expect((await fixture.store.snapshot()).portable.candidateSeals).toHaveLength(2);
+        return;
       }
       let coordinated = resumedSuccessor ?? await capability.coordinateImplementationCandidate(crash ? { partitionKey: qualified.partitionKey, holderId: "cohort-resumed-front" } : {
         ...prepared.prepared, holderId: "cohort-front", parentGateCapability });

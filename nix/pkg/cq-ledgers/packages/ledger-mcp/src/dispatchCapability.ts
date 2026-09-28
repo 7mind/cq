@@ -4255,8 +4255,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       assertImplementationExecutor("acquire");
       const workerDispatch = { attestationId: request.workerDispatch.attestationId, generation: request.workerDispatch.generation };
       if (cohortStore === undefined || options.ledgerStore === undefined) throw new Error("cohort correction requires its production stores");
-      // A correction continues either a consumed, reviewed candidate or a
-      // correction worker that failed or aborted, with any partial work its own.
+      // A correction continues a consumed, reviewed candidate, a sealed candidate
+      // the queue-front gate rejected, or a correction worker that failed or
+      // aborted, with any partial work its own.
       const source = await options.backend.transact({ kind: "handle", handle: workerDispatch }, (store) => {
         const row = store.read(workerDispatch);
         const reviewed = row !== undefined && !isAttestationTombstone(row) && row.state === "consumed" &&
@@ -4265,9 +4266,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const failed = row !== undefined && !isAttestationTombstone(row) && (row.state === "aborted" ||
           (row.state === "consumed" && dispatchObject(row.output) && row.output["status"] === "fail"));
         const failedPreSeal = failed && row.implementationQueue === undefined && row.gitEffectBinding?.cohort?.state === "pre-seal";
+        const gateRejected = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
+          row.abortReason === "gate-rejected" && row.implementationQueue?.state === "terminal" &&
+          row.implementationQueue.terminal?.reason === "gate-rejected" && row.stagedRebaseSourceBinding === undefined;
         if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
-            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || failedPreSeal) || !dispatchObject(row.input)) {
-          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker or one failed pre-seal worker");
+            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || failedPreSeal || gateRejected) || !dispatchObject(row.input)) {
+          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker, one gate-rejected sealed candidate, or one failed pre-seal worker");
         }
         return row;
       });
