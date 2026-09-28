@@ -9,7 +9,7 @@ import {
   type MemberAcceptancePlanV1,
   type StagedCohortCandidateAttemptV1,
 } from "./workCohort.js";
-import { projectGateAuthorizationForm } from "@cq/config";
+import { projectGateAuthorizationForm, type ProjectGateSpecification } from "@cq/config";
 import type {
   CohortCommandEvidenceV1,
   WorkCohortLeaseV1,
@@ -90,6 +90,8 @@ export interface CohortAcceptanceCandidateV1 {
 }
 
 export interface CohortAcceptanceHostV1 {
+  /** D570: the project's declared full gate every full-gate command must equal. */
+  readonly projectGate: ProjectGateSpecification;
   withCandidateLock<T>(candidate: CohortAcceptanceCandidateV1, run: () => Promise<T>): Promise<T>;
   revalidateCandidate(candidate: CohortAcceptanceCandidateV1): Promise<void>;
   resolveBoundaryCommand(boundary: CohortBoundaryIdentityV1): Promise<CohortCommandV1>;
@@ -281,8 +283,8 @@ export class CohortAcceptanceRunnerV1 {
       ) => {
         await revalidate();
         const commandDigest = digest(command);
-        if (purpose === "full-gate" && commandDigest !== digest(projectGateAuthorizationForm()))
-          throw new Error("cohort full gate must use the fixed canonical command");
+        if (purpose === "full-gate" && commandDigest !== digest(projectGateAuthorizationForm(this.#host.projectGate)))
+          throw new Error("cohort full gate must use the project's declared [gate] command");
         const memberPlanDigests = memberPlans.map((plan) => plan.planDigest).sort();
         const records = (await this.#store.snapshot()).portable.commandEvidence;
         if (boundaryDigest !== null && records.some((entry) => entry.execution !== null &&

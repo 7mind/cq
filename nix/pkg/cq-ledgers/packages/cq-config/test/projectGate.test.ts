@@ -14,6 +14,7 @@ import {
   CANONICAL_PROJECT_GATE,
   PROJECT_GATE_ROOT_CWD,
   projectGateAuthorizationForm,
+  requireProjectGate,
   resolveProjectGate,
 } from "../src/projectGate.js";
 
@@ -60,7 +61,7 @@ describe("D403 project gate definition", () => {
   });
 
   test("the authorization form preserves the digested shape and key order", () => {
-    const form = projectGateAuthorizationForm();
+    const form = projectGateAuthorizationForm(CANONICAL_PROJECT_GATE);
     expect(form).toEqual({
       argv: ["bun", "run", "check"],
       cwd: "nix/pkg/cq-ledgers",
@@ -87,7 +88,7 @@ describe("D403 project gate definition", () => {
   test("a non-CQ project's declared gate replaces CQ's layout entirely", () => {
     // The consumer shape from GitHub issue #6: no `nix/pkg/cq-ledgers`, a
     // different runner, and the gate at the repository root.
-    const consumer = resolveProjectGate({ argv: ["npm", "test"], cwd: "" });
+    const consumer = requireProjectGate(resolveProjectGate({ argv: ["npm", "test"], cwd: "" }));
     expect(consumer.argv).toEqual(["npm", "test"]);
     // Canonicalized: the supervised runner refuses an empty cwd, so the
     // worktree root is spelled `"."` and a root-level gate is runnable.
@@ -101,14 +102,6 @@ describe("D403 project gate definition", () => {
     });
   });
 
-  test("an undeclared gate falls back, and the fallback is the COMPATIBILITY arm", () => {
-    // Recorded as a deliberate compatibility decision, not a correct default:
-    // a consumer that declares nothing still inherits CQ's layout, and the fix
-    // for that is to declare `[gate]`.
-    expect(resolveProjectGate(null)).toEqual(CANONICAL_PROJECT_GATE);
-    expect(resolveProjectGate(undefined)).toEqual(CANONICAL_PROJECT_GATE);
-  });
-
   test("this repository declares its own gate rather than leaning on the fallback", () => {
     // D595: cq.toml is untracked local configuration, so a managed worktree
     // never has one. CQ resolves the gate from the checkout that owns the
@@ -118,5 +111,13 @@ describe("D403 project gate definition", () => {
     // The configured path is the exercised one, so the fallback is not the
     // thing under test in this repository's own runs.
     expect(toml).toContain('cwd  = "nix/pkg/cq-ledgers"');
+  });
+
+  // D573: an undeclared gate is a named refusal, never CQ's own gate.
+  test("a project that declares no gate resolves to none and refuses by name", () => {
+    expect(resolveProjectGate(null)).toBeNull();
+    expect(resolveProjectGate(undefined)).toBeNull();
+    expect(() => requireProjectGate(null)).toThrow("declare [gate] in cq.toml");
+    expect(requireProjectGate(CANONICAL_PROJECT_GATE)).toBe(CANONICAL_PROJECT_GATE);
   });
 });

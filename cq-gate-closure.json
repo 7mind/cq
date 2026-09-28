@@ -35,7 +35,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "6a511667b2da5c860437d0031e54931fa79fba4e9e7753d976577579396de1de",
+      "sha256": "5fe20b8f5fc0e0696521e868f09d2235fa239ce626dd3a60e2f11e1ab21af879",
       "targets": []
     },
     {
@@ -369,7 +369,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexSandboxPreflight.ts",
-      "sha256": "b8c074fad466d58e9cc296867ae313f8fa5d86fb358e4afd5809e74f06d652e5",
+      "sha256": "5b8e96f94045c57a94c04e53bea5d2cdbbec6927a807c57850a450df689ecb34",
       "targets": []
     },
     {
@@ -459,7 +459,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexSandboxPreflight.test.ts",
-      "sha256": "ca6bcb5143488fa67de86daaec212760924a195f1b5d8d9e031083d64d677cc1",
+      "sha256": "773130a031fde2c6d81d7d46d9ad9be3346210b6de24a691c5409bf99c19e5a2",
       "targets": []
     },
     {
@@ -746,7 +746,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "c20a62ed7f8c1bc54c3817a8841dad92d3aac6d2edb8f05959aa38ff8f2b46f3",
+      "sha256": "c253ff4a4a28dda450e1133f541f886ae06c4c7592da57ce68249808dab6839e",
       "targets": []
     },
     {
@@ -1010,7 +1010,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/cqTomlTemplate.test.ts",
-      "sha256": "994b0ba014bacc712c856fc372269f24b664cff22a5284ab71a180d952a90438",
+      "sha256": "fc5fab769941341e2d49ee11a6083cfbbe3eb501346aa8048bff5b8226e9f56b",
       "targets": []
     },
     {
@@ -1208,7 +1208,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexSandboxPreflight.test.ts",
-      "sha256": "ca6bcb5143488fa67de86daaec212760924a195f1b5d8d9e031083d64d677cc1",
+      "sha256": "773130a031fde2c6d81d7d46d9ad9be3346210b6de24a691c5409bf99c19e5a2",
       "targets": []
     },
     {
@@ -1600,7 +1600,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "c20a62ed7f8c1bc54c3817a8841dad92d3aac6d2edb8f05959aa38ff8f2b46f3",
+      "sha256": "c253ff4a4a28dda450e1133f541f886ae06c4c7592da57ce68249808dab6839e",
       "targets": []
     },
     {
@@ -2470,7 +2470,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/investigation-cohort-provider-control.test.ts",
-      "sha256": "1099b62f2023c01982c1e6e699a1721f81043ce83dbbcac179a86c9bf673de59",
+      "sha256": "8e12078e88297351a20d708da85c22a065762748db340b7aa489ca2fc9748d06",
       "targets": [
         "nix/pkg/cq-ledgers/packages/cq-config/scripts/codex-role-dispatch.ts",
         "nix/pkg/cq-ledgers/packages/cq-cli/src/main.ts"
@@ -2532,7 +2532,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/workCohortInvestigationAdvanceRuntime.ts",
-      "sha256": "dd87a688b203dc635ed8eb8333408ced5af5e589d6ad808d75fa3462c2a7dfa8",
+      "sha256": "8d0c20749b11f9da5805eead6bd385b7e7b668d0cd64ff65448ef23242dcc696",
       "targets": []
     },
     {
@@ -2570,7 +2570,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/work-cohort-investigation-advance-runtime.test.ts",
-      "sha256": "7a632cd1746985cf0f4b07d9c2cf34f25b80ea452aa4ff9adc5d3f10257ef8e8",
+      "sha256": "21037f08c18195c122e942fc736781e6f0fb8e4f9a6bf832a5ec6c7c1c66ad6c",
       "targets": []
     },
     {
@@ -2612,13 +2612,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/projectGate.test.ts",
-      "sha256": "026568cfd88d86ba1734d62d28379d1319772b38a4981d91c8a78868200f2033",
+      "sha256": "d826baf54b91b6d2ff9a98574c5fe0664329061107f576535f82138c0ad09f8e",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/projectGateWiring.test.ts",
-      "sha256": "c6c821ce76ba2fc122488df4554873930cb8c2dd59ef86bdc9a715a63885ad41",
+      "sha256": "48f69d43e93723e9bcd6519fa5731f93cba9ae9203fc7d5adb897fa8a4190f3e",
       "targets": []
     },
     {

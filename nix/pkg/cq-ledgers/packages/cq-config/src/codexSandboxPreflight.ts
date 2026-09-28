@@ -32,7 +32,6 @@ import { realpath } from "node:fs/promises";
  */
 
 export const CODEX_SANDBOX_PIPE_PROBE_VERDICTS = [
-  "node-unavailable",
   "pipe-capture-lost",
   "tmpdir-unwritable",
   "sandbox-probe-failed",
@@ -105,7 +104,12 @@ export interface CodexSandboxPipeProbeRequest {
 }
 
 export interface CodexSandboxPipeProbeReport {
-  readonly nodeExecutable: string;
+  /**
+   * D574: `not-applicable` when no node is on PATH. The pipe hazard needs a
+   * Node child, so such a gate cannot hit it; TMPDIR is verified either way.
+   */
+  readonly pipeProbe: "verified" | "not-applicable";
+  readonly nodeExecutable: string | null;
   readonly sandboxTmpdir: string;
   readonly mkdtemp: string;
   readonly durationMs: number;
@@ -152,21 +156,15 @@ function parseProbeReport(stdout: string): ProbeSandboxReport | undefined {
 /**
  * Run the pipe/TMPDIR probe inside the same read-only codex sandbox the
  * reviewer dispatch will use. Any failure throws {@link SandboxPipeProbeError}
- * with an explicit environmental verdict; the probe never passes vacuously
- * (a missing node binary is itself a failing verdict).
+ * with an explicit environmental verdict. Without node the pipe hazard cannot
+ * arise, so only the TMPDIR half runs (D574).
  */
 export async function runCodexSandboxPipeProbe(
   request: CodexSandboxPipeProbeRequest,
 ): Promise<CodexSandboxPipeProbeReport> {
   const pathEnv = request.env["PATH"];
   const located = pathEnv === undefined ? Bun.which("node") : Bun.which("node", { PATH: pathEnv });
-  if (located === null) {
-    throw new SandboxPipeProbeError(
-      "node-unavailable",
-      "no node binary on PATH; the reviewer gate spawns Node children, so the pipe probe " +
-        "cannot run and must not pass vacuously",
-    );
-  }
+  if (located === null) return await runCodexSandboxTmpdirProbe(request);
   const nodeExecutable = await realpath(located);
   const startedAt = Date.now();
   const child = Bun.spawn(
@@ -246,11 +244,61 @@ export async function runCodexSandboxPipeProbe(
     );
   }
   return Object.freeze({
+    pipeProbe: "verified" as const,
     nodeExecutable,
     sandboxTmpdir: report.tmpdir,
     mkdtemp: report.mkdtemp,
     durationMs: Date.now() - startedAt,
   });
+}
+
+/** POSIX sh probe: prints the sandboxed TMPDIR and a mktemp -d under it. */
+const TMPDIR_PROBE_SCRIPT =
+  'd=$(mktemp -d "$TMPDIR/cq-sandbox-preflight.XXXXXX" 2>/dev/null) || d=; ' +
+  'if [ -n "$d" ]; then rmdir "$d"; printf \'{"tmpdir":"%s","mkdtemp":"%s"}\\n\' "$TMPDIR" "$d"; ' +
+  'else printf \'{"tmpdir":"%s","mkdtemp":null}\\n\' "$TMPDIR"; fi';
+
+/**
+ * D574: a devshell without node still gets its sandbox TMPDIR verified with a
+ * POSIX shell, and records that the Node pipe hazard does not apply.
+ */
+async function runCodexSandboxTmpdirProbe(request: CodexSandboxPipeProbeRequest): Promise<CodexSandboxPipeProbeReport> {
+  const pathEnv = request.env["PATH"];
+  const located = pathEnv === undefined ? Bun.which("sh") : Bun.which("sh", { PATH: pathEnv });
+  if (located === null) {
+    throw new SandboxPipeProbeError("sandbox-probe-failed", "neither node nor sh is on PATH, so the sandbox TMPDIR cannot be verified");
+  }
+  const startedAt = Date.now();
+  const child = Bun.spawn(
+    [request.codexExecutable, "sandbox", "-c", 'sandbox_mode="read-only"', "-c",
+      renderSandboxTmpdirOverride(CODEX_READ_ONLY_SANDBOX_TMPDIR), "--", await realpath(located), "-c", TMPDIR_PROBE_SCRIPT],
+    { cwd: request.cwd, env: { ...request.env, TMPDIR: CODEX_READ_ONLY_SANDBOX_TMPDIR }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+  );
+  const stdout = new Response(child.stdout).text();
+  const stderr = new Response(child.stderr).text();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, request.timeoutMs);
+  let exitCode: number;
+  try { exitCode = await child.exited; } finally { clearTimeout(timer); }
+  const [capturedStdout, capturedStderr] = await Promise.all([stdout, stderr]);
+  let report: { readonly tmpdir?: unknown; readonly mkdtemp?: unknown } | undefined;
+  try { report = JSON.parse(capturedStdout.trim().split("\n").at(-1) ?? "") as typeof report; } catch { report = undefined; }
+  if (report === undefined || typeof report.tmpdir !== "string" || (report.mkdtemp !== null && typeof report.mkdtemp !== "string")) {
+    throw new SandboxPipeProbeError("sandbox-probe-failed",
+      `the sandboxed shell probe produced no parseable report (exit ${String(exitCode)}` +
+        `${timedOut ? `, killed after ${String(request.timeoutMs)} ms` : ""}): ${capturedStderr.trim().slice(0, 500)}`);
+  }
+  if (report.tmpdir !== CODEX_READ_ONLY_SANDBOX_TMPDIR) {
+    throw new SandboxPipeProbeError("tmpdir-unwritable",
+      `the TMPDIR override did not reach the sandboxed process ($TMPDIR was ${JSON.stringify(report.tmpdir)}, expected ${JSON.stringify(CODEX_READ_ONLY_SANDBOX_TMPDIR)})`);
+  }
+  if (report.mkdtemp === null) {
+    throw new SandboxPipeProbeError("tmpdir-unwritable",
+      `mkdtemp under the injected TMPDIR ${JSON.stringify(CODEX_READ_ONLY_SANDBOX_TMPDIR)} failed inside the sandbox`);
+  }
+  if (exitCode !== 0) throw new SandboxPipeProbeError("sandbox-probe-failed", `the sandboxed shell probe reported success but exited ${String(exitCode)}`);
+  return Object.freeze({ pipeProbe: "not-applicable" as const, nodeExecutable: null, sandboxTmpdir: report.tmpdir,
+    mkdtemp: report.mkdtemp as string, durationMs: Date.now() - startedAt });
 }
 
 export function renderSandboxTmpdirOverride(tmpdir: string): string {

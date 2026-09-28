@@ -97,6 +97,13 @@ ${LOCAL_SECTION_START} "xdg" keeps the ledger out of tree, keyed by the git root
 #   backup    = "none"
 #   projectId = "my-project"
 
+# The project's full gate, run from cwd (relative to the worktree root). CQ
+# refuses to admit, run or accept implementation work until you declare [gate]
+# with this project's own check command.
+# [gate]
+#   argv = ["make", "check"]
+#   cwd  = "."
+
 # [project]
 #   name = "my-project"
 `;

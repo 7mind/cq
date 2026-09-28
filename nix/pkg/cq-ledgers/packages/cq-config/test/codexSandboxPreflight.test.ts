@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, symlink, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -202,23 +202,32 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
     );
   });
 
-  test("fails with an explicit node-unavailable verdict when node is absent", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cq-codex-sandbox-no-node-"));
-    try {
-      const error = await expectProbeFailure(
-        runCodexSandboxPipeProbe({
-          codexExecutable: "codex-not-invoked",
-          cwd: root,
-          env: { ...process.env, PATH: root },
+  // D574: the pipe hazard exists only for a Node child, so a devshell without
+  // node is not a vacuous pass. The probe still verifies the sandbox TMPDIR.
+  test.skipIf(!DEV_SHM_AVAILABLE)(
+    "without node the pipe probe is not applicable and TMPDIR is still verified",
+    async () => {
+      const fixture = await createSandboxFixture("healthy");
+      const onlySh = join(fixture.root, "bin-sh-only");
+      await mkdir(onlySh);
+      // A devshell without node still has a shell and coreutils.
+      for (const tool of ["sh", "mktemp", "rmdir"]) await symlink(Bun.which(tool)!, join(onlySh, tool));
+      try {
+        const report = await runCodexSandboxPipeProbe({
+          codexExecutable: fixture.fakeCodex,
+          cwd: fixture.worktree,
+          env: { ...fixture.env, PATH: onlySh },
           timeoutMs: PROBE_TIMEOUT_MS,
-        }),
-        "node-unavailable",
-      );
-      expect(error.message).toContain("must not pass vacuously");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+        });
+        expect(report.pipeProbe).toBe("not-applicable");
+        expect(report.nodeExecutable).toBeNull();
+        expect(report.sandboxTmpdir).toBe(CODEX_READ_ONLY_SANDBOX_TMPDIR);
+        expect(report.mkdtemp.startsWith(`${CODEX_READ_ONLY_SANDBOX_TMPDIR}/`)).toBe(true);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
 
   test.skipIf(!DEV_SHM_AVAILABLE)(
     "passes against a healthy boundary and reports the writable sandbox tmpfs",

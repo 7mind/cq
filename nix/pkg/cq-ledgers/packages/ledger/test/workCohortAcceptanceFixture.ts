@@ -8,10 +8,12 @@ import {
 import type { CohortBoundaryIdentityV1 } from "../src/workCohort.js";
 import type { WorkCohortStore } from "../src/workCohortStore.js";
 import { cohortStagedOutputFixture, qualifiedQueue, sha256 } from "./workCohortFixture.js";
-import { InMemoryAttestationStore, type AttestationEnvelope, type ImplementWorkerSupervisedGateEvidence } from "@cq/config";
+import { CANONICAL_PROJECT_GATE, InMemoryAttestationStore, type AttestationEnvelope, type ImplementWorkerSupervisedGateEvidence } from "@cq/config";
 import { CohortG213GateAuthenticatorV1, type CohortG213GateReceiptV1 } from "../src/workCohortGate.js";
 
 export class ManualCohortAcceptanceHost implements CohortAcceptanceHostV1 {
+  // The fixture's cohorts name CQ's own gate, declared explicitly (D570/D573).
+  readonly projectGate = CANONICAL_PROJECT_GATE;
   readonly gateStore: InMemoryAttestationStore;
   readonly commands: CohortCommandV1[] = [];
   readonly gates: CohortCommandV1[] = [];

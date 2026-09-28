@@ -11,7 +11,16 @@ import { cohortBrokerGit as git } from "../../ledger/test/workCohortGitBrokerFix
 import { createCohortAdvanceRuntimeV1 } from "../src/workCohortAdvanceRuntime.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
-export async function advanceRuntimeFixture(adapter: "memory" | "sqlite") {
+const CQ_GATE = { argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers" } as const;
+
+export async function advanceRuntimeFixture(adapter: "memory" | "sqlite", options: {
+  /** The project's declared `[gate]`; null declares none (D573). */
+  readonly declaredGate?: { readonly argv: readonly string[]; readonly cwd: string } | null;
+  /** The full gate the admission plan names. */
+  readonly planGate?: { readonly argv: readonly string[]; readonly cwd: string };
+} = {}) {
+  const declaredGate = options.declaredGate === undefined ? CQ_GATE : options.declaredGate;
+  const planGate = options.planGate ?? CQ_GATE;
   const root = await mkdtemp(join(tmpdir(), "cq-advance-production-"));
   await mkdir(join(root, ".state"));
   const store = adapter === "memory" ? new InMemoryLedgerStore()
@@ -29,7 +38,10 @@ export async function advanceRuntimeFixture(adapter: "memory" | "sqlite") {
     const source = "export interface SharedContract { readonly value: string }\n";
     await writeFile(join(root, "shared.ts"), source);
     await writeFile(join(root, "bun.lock"), "{}\n");
-    await writeFile(join(root, ".gitignore"), ".claude/\n.state/\n.cache/\nnode_modules/\n");
+    await writeFile(join(root, ".gitignore"), ".claude/\n.state/\n.cache/\nnode_modules/\ncq.toml\n");
+    if (declaredGate !== null) {
+      await writeFile(join(root, "cq.toml"), `[gate]\n  argv = ${JSON.stringify(declaredGate.argv)}\n  cwd = ${JSON.stringify(declaredGate.cwd)}\n`);
+    }
     await git(root, ["add", "."]); await git(root, ["commit", "-q", "-m", "seed"]);
     const { taskIds } = await prepareCohortPrimaryFixture(store);
     for (const id of taskIds) await store.updateItem("tasks", id, { fields: { sourceRefs: ["shared.ts"] } });
@@ -40,7 +52,7 @@ export async function advanceRuntimeFixture(adapter: "memory" | "sqlite") {
         witness: { kind: "repository-node", nodeKind: "versioned-contract", nodeIdentity: "shared.ts#SharedContract",
           sourcePath: "shared.ts", memberPath: ["shared.ts"] },
         sharedRegression: createCohortCommandBoundaryV1({ argv: ["bun", "test", "shared.test.ts"], cwd: "nix/pkg/cq-ledgers", environment: [] }),
-        canonicalFullGate: createCohortCommandBoundaryV1({ argv: ["bun", "run", "check"], cwd: "nix/pkg/cq-ledgers", environment: [] }),
+        canonicalFullGate: createCohortCommandBoundaryV1({ argv: [...planGate.argv], cwd: planGate.cwd, environment: [] }),
         reviewerClass: boundary("whole-candidate"), deploymentClass: boundary("none"), finalizationClass: boundary("atomic"),
         splitConditions: [], focusedCommand: { argv: ["bun", "test", `${id}.test.ts`], cwd: "nix/pkg/cq-ledgers", environment: {},
           provenance: { sourceRef: "shared.ts", sourceRevision: digest(source) } },
@@ -63,6 +75,29 @@ export async function advanceRuntimeFixture(adapter: "memory" | "sqlite") {
 }
 
 for (const adapter of ["memory", "sqlite"] as const) {
+  // D570: admission authorizes the full gate against the project's declared
+  // [gate], not CQ's own.
+  test(`${adapter} admission accepts the project's declared gate and refuses CQ's own [Behavioral-Active Blackbox-Atomic]`, async () => {
+    const makeTest = { argv: ["make", "test"], cwd: "." };
+    const own = await advanceRuntimeFixture(adapter, { declaredGate: makeTest, planGate: makeTest });
+    try {
+      const observed = await own.runtime.observe({ plan: own.plan, operationId: "observe-declared-gate" });
+      expect(observed.definitions).toHaveLength(1);
+    } finally { await own.close(); }
+    const cq = await advanceRuntimeFixture(adapter, { declaredGate: makeTest });
+    try {
+      await expect(cq.runtime.observe({ plan: cq.plan, operationId: "observe-cq-gate" })).rejects.toThrow("cohort admission cannot substitute");
+    } finally { await cq.close(); }
+  });
+
+  // D573: without a declared [gate] nothing may silently run CQ's own gate.
+  test(`${adapter} admission refuses a project that declares no gate [Behavioral-Active Blackbox-Atomic]`, async () => {
+    const f = await advanceRuntimeFixture(adapter, { declaredGate: null });
+    try {
+      await expect(f.runtime.observe({ plan: f.plan, operationId: "observe-undeclared" })).rejects.toThrow("declare [gate] in cq.toml");
+    } finally { await f.close(); }
+  });
+
   test(`${adapter} changed acceptance boundaries create a new generation without losing witness applicability [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
     const f = await advanceRuntimeFixture(adapter);
     try {

@@ -13,10 +13,10 @@ import { resolveProjectGate, type ProjectGateSpecification } from "./projectGate
  * Resolve the gate declared by the cq.toml at `configRoot`.
  *
  * The ONE place a project's configuration becomes a gate specification. A root
- * with no cq.toml, or one declaring no `[gate]`, takes the compatibility
- * fallback documented on {@link resolveProjectGate} rather than failing
- * construction — dispatch runtimes are built for fixture roots too.
+ * with no cq.toml, or one declaring no `[gate]`, resolves to null: runtimes
+ * still construct, and each gate-running flow refuses with
+ * {@link ProjectGateUndeclaredError} (D573).
  */
-export function resolveProjectGateForRoot(configRoot: string): ProjectGateSpecification {
+export function resolveProjectGateForRoot(configRoot: string): ProjectGateSpecification | null {
   return resolveProjectGate(loadConfig(configRoot)?.gate ?? null);
 }

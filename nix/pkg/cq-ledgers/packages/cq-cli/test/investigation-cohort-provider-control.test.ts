@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, writeFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,8 @@ const sha256 = (text: string) => createHash("sha256").update(text).digest("hex")
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "cq-investigation-native-"));
   await writeXdgConfig(root);
+  // The fixture's proposals name CQ's gate, so it declares that gate (D573).
+  await appendFile(join(root, "cq.toml"), '[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
   await writeFile(join(root, "contract.ts"), "export interface CommonCause { value: string }\n");
   await writeFile(join(root, ".gitignore"), ".cache/\n");
   await cohortBrokerGit(root, ["init", "-q", "-b", "main"]);

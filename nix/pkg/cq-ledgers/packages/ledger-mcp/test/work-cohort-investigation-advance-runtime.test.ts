@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { InMemoryAttestationBackend, InMemoryAttestationStore, SqliteAttestationBackend,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
-  sequentialDispatchRandomBytes, type AttestationBackend, type DispatchJSONValue } from "@cq/config";
+  CANONICAL_PROJECT_GATE, sequentialDispatchRandomBytes, type AttestationBackend, type DispatchJSONValue } from "@cq/config";
 import { COHORT_ADMISSION_PLAN_SCHEMA, COHORT_INVESTIGATION_ADVANCE_SCHEMA, cohortValueDigestV1 as digest,
   createInMemoryWorkCohortStore, createInMemoryWorksetStore, createNodeSupervisedWorkerCommandRunner,
   InMemoryLedgerStore, SqliteLedgerStore, createWorksetOwnedGuardedLedger, createTrustedWorksetManagementAuthority, createCohortCommandBoundaryV1,
@@ -74,7 +74,7 @@ async function fixture(adapter: "memory" | "SQLite") {
   await workset.setRoots(["defects:D1", "defects:D2"]);
   const manual = new ManualProbeRunner();
   const commands = adapter === "memory" ? manual : createNodeSupervisedWorkerCommandRunner({ settleProcessGroups, settleWorktreeGateCommands });
-  const options = { cohorts, backend, dispatch, promptArtifacts: artifacts(), repositoryRoot: directory,
+  const options = { cohorts, backend, dispatch, promptArtifacts: artifacts(), repositoryRoot: directory, projectGate: CANONICAL_PROJECT_GATE,
     journalRoot: join(directory, "private"), cancellationSignal: new AbortController().signal, commands, workset,
     source: (proposed: CohortAdmissionPlanV1) => ({ resolveExactSnapshot: async () => ({ ...snapshot,
       members: snapshot.members.map((member) => ({ ...member, boundaryCandidates: proposed.members.find((entry) => entry.memberRef === member.memberRef)!.boundaryCandidates })) }) }),
@@ -152,7 +152,9 @@ for (const adapter of ["memory", "SQLite"] as const) describe(`parent investigat
         const run = Bun.spawnSync(["git", ...args]); if (run.exitCode !== 0) throw new Error(run.stderr.toString());
       }
       await writeFile(join(directory, "contract.ts"), "export interface CohortContract { value: string }\n");
-      await writeFile(join(directory, ".gitignore"), ".state/\n");
+      await writeFile(join(directory, ".gitignore"), ".state/\ncq.toml\n");
+      // The fixture's proposals name CQ's gate, so it declares that gate (D573).
+      await writeFile(join(directory, "cq.toml"), '[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
       Bun.spawnSync(["git", "-C", directory, "add", "."]);
       const committed = Bun.spawnSync(["git", "-C", directory, "commit", "-m", "fixture"]);
       if (committed.exitCode !== 0) throw new Error(committed.stderr.toString());

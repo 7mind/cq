@@ -919,7 +919,8 @@ describe("packaged cq-codex-role Git broker", () => {
       await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock", "nix"]);
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+      // The fixture mirrors CQ's layout, so it declares CQ's gate (D573).
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
       const ledgerStore = await createLedgerStore(repositoryRoot);
       const taskId = await seedFinalizedImplementationTask({
         ledgerStore: ledgerStore.store,
@@ -1800,7 +1801,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
       await writeFile(path.join(repositoryRoot, "other.txt"), "other base\n");
       await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+      // The fixture mirrors CQ's layout, so it declares CQ's gate (D573).
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
       await writeFile(path.join(repositoryRoot, ".gitignore"), ".cq/\n.claude/\n");
       const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
       await mkdir(workspaceRoot, { recursive: true });

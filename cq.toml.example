@@ -349,6 +349,25 @@ planners = ["opus"]
 # fast     = "codex-luna"
 
 # ---------------------------------------------------------------------------
+# [gate] — THE PROJECT'S FULL GATE (D403, D573)
+# ---------------------------------------------------------------------------
+#
+# The command CQ runs before accepting implementation work. CQ assumes nothing
+# about the project's stack, so without [gate] it refuses to admit, run or
+# accept implementation work: declare [gate] with this project's own check.
+#
+# Keys:
+#   argv — the command as a non-empty array of non-empty strings.
+#   cwd  — the directory to run it from, relative to the worktree root
+#          (optional, default: the worktree root); it must not escape it.
+#
+# Example (COMMENTED OUT — uncomment and replace with your own check):
+#
+# [gate]
+#   argv = ["make", "check"]
+#   cwd  = "."
+
+# ---------------------------------------------------------------------------
 # [project] — OPTIONAL PROJECT-LEVEL METADATA (Q270, T570)
 # ---------------------------------------------------------------------------
 #

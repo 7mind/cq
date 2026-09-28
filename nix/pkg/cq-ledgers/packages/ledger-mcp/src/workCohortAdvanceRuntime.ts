@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { managedWorktreeRegistryRoot, projectGateAuthorizationForm } from "@cq/config";
+import { managedWorktreeRegistryRoot, projectGateAuthorizationForm, requireProjectGate, resolveProjectGateForRoot } from "@cq/config";
 import { realpath } from "node:fs/promises";
 import {
   GitCohortLocalRepositoryV1, LedgerWorksetCohortAdmissionObservationSourceV1,
@@ -32,6 +32,8 @@ export async function createCohortAdvanceRuntimeV1(
   const { resolved } = options;
   if (resolved.backend !== "xdg" || resolved.store.workCohortStore === undefined) return undefined;
   const repositoryRoot = await realpath(resolved.configRoot);
+  // D570/D573: admission authorizes against the project's own declared gate.
+  const projectGate = resolveProjectGateForRoot(resolved.configRoot);
   const common = await nodeManagedWorktreeGitRunner(repositoryRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (common.code !== 0 && common.stderr.includes("not a git repository")) return undefined;
   if (common.code !== 0) throw new Error(`cohort repository identity failed: ${common.stderr}`);
@@ -63,7 +65,7 @@ export async function createCohortAdvanceRuntimeV1(
       for (const candidate of member.boundaryCandidates) {
         resolveCohortCommandBoundaryV1(candidate.sharedRegression);
         const fullGate = resolveCohortCommandBoundaryV1(candidate.canonicalFullGate);
-        if (digest(fullGate) !== digest(projectGateAuthorizationForm())) {
+        if (digest(fullGate) !== digest(projectGateAuthorizationForm(requireProjectGate(projectGate)))) {
           throw new Error("cohort admission cannot substitute the canonical full gate");
         }
       }

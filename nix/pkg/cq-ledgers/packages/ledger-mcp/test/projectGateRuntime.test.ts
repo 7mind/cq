@@ -98,12 +98,13 @@ describe("D403 single-project dispatch runtime gate", () => {
       "cq-gate-runtime-declared-",
       '\n[gate]\n  argv = ["npm", "test"]\n  cwd = ""\n',
     );
-    expect(gate.argv).toEqual(["npm", "test"]);
-    expect(gate.cwd).toBe(PROJECT_GATE_ROOT_CWD);
-    expect(gate.cwd).not.toBe(CANONICAL_PROJECT_GATE.cwd);
+    expect(gate?.argv).toEqual(["npm", "test"]);
+    expect(gate?.cwd).toBe(PROJECT_GATE_ROOT_CWD);
+    expect(gate?.cwd).not.toBe(CANONICAL_PROJECT_GATE.cwd);
   }, 60_000);
 
-  test("falls back to CQ's gate when the project declares none", async () => {
-    expect(await runtimeGateFor("cq-gate-runtime-undeclared-", "")).toEqual(CANONICAL_PROJECT_GATE);
+  // D573: an undeclared gate is none; gate-running flows refuse by name.
+  test("carries no gate when the project declares none", async () => {
+    expect(await runtimeGateFor("cq-gate-runtime-undeclared-", "")).toBeNull();
   }, 60_000);
 });

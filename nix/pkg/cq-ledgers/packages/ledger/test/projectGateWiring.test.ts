@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import {
   CANONICAL_PROJECT_GATE,
   PROJECT_GATE_ROOT_CWD,
+  requireProjectGate,
   resolveProjectGateForRoot,
 } from "@cq/config";
 import { createNodeSupervisedWorkerGateRunner } from "../src/supervisedWorkerGate.js";
@@ -63,24 +64,24 @@ describe("D403 declared project gate reaches store resolution", () => {
   test("a consumer's declared gate replaces CQ's layout", async () => {
     // GitHub issue #6's shape: no `nix/pkg/cq-ledgers`, gate at the root.
     const root = await project("cq-gate-declared-", '\n[gate]\n  argv = ["npm", "test"]\n  cwd = ""\n');
-    const gate = resolveProjectGateForRoot(root);
+    const gate = requireProjectGate(resolveProjectGateForRoot(root));
     expect(gate.argv).toEqual(["npm", "test"]);
     expect(gate.cwd).toBe(PROJECT_GATE_ROOT_CWD);
     // The whole point: the supervised runner must not be handed CQ's layout.
     expect(gate.cwd).not.toBe(CANONICAL_PROJECT_GATE.cwd);
   }, 30_000);
 
-  test("a project declaring no gate keeps the documented compatibility fallback", async () => {
+  // D573: no declared gate is no gate; flows refuse by name instead of running CQ's.
+  test("a project declaring no gate resolves to none", async () => {
     const root = await project("cq-gate-undeclared-", "");
-    expect(resolveProjectGateForRoot(root)).toEqual(CANONICAL_PROJECT_GATE);
+    expect(resolveProjectGateForRoot(root)).toBeNull();
   }, 30_000);
 
-  test("a root with no cq.toml at all resolves rather than throwing", () => {
-    // The dispatch runtime resolves from `configRoot`; a fixture root without
-    // a cq.toml must not turn gate resolution into a construction failure.
-    expect(resolveProjectGateForRoot(path.join(tmpdir(), "cq-gate-absent-root"))).toEqual(
-      CANONICAL_PROJECT_GATE,
-    );
+  test("a root with no cq.toml at all resolves to no gate rather than throwing", () => {
+    // The dispatch runtime resolves from `configRoot`; a root without a
+    // cq.toml must not turn gate resolution into a construction failure, and
+    // it must not inherit CQ's gate either (D573).
+    expect(resolveProjectGateForRoot(path.join(tmpdir(), "cq-gate-absent-root"))).toBeNull();
   });
 });
 
@@ -124,7 +125,7 @@ describe("D403 a root-level gate must be runnable, not just parseable", () => {
     // declares `[gate]` without a `cwd` — meaning "the worktree root", the
     // natural consumer shape — parsed cleanly and then failed at launch.
     const root = await project("cq-gate-rootlevel-", '\n[gate]\n  argv = ["npm", "test"]\n');
-    const gate = resolveProjectGateForRoot(root);
+    const gate = requireProjectGate(resolveProjectGateForRoot(root));
     const argv = await runGateIn(root, gate);
     expect(argv.slice(-2)).toEqual(["npm", "test"]);
     // `--command-cwd` lands ON the worktree, not below it.

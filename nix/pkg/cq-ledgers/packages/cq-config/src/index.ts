@@ -1361,6 +1361,8 @@ export {
   CANONICAL_PROJECT_GATE,
   PROJECT_GATE_ROOT_CWD,
   projectGateAuthorizationForm,
+  ProjectGateUndeclaredError,
+  requireProjectGate,
   resolveProjectGate,
   type ProjectGateSpecification,
 } from "./projectGate.js";

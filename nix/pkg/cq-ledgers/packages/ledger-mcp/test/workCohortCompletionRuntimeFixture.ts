@@ -45,7 +45,9 @@ export async function completionRuntimeFixture(adapter: "memory" | "sqlite", dep
     await writeFile(join(root, "shared.ts"), contract);
     await writeFile(join(root, "bun.lock"), "{}\n");
     if (inheritedWip !== undefined) await writeFile(join(root, "WIP-T9999.md"), inheritedWip);
-    await writeFile(join(root, ".gitignore"), ".claude/\n.state/\n.cache/\nnode_modules/\n");
+    await writeFile(join(root, ".gitignore"), ".claude/\n.state/\n.cache/\nnode_modules/\ncq.toml\n");
+    // The fixture's proposals name CQ's gate, so it declares that gate (D573).
+    await writeFile(join(root, "cq.toml"), '[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
     await git(root, ["add", "."]); await git(root, ["commit", "-q", "-m", "seed"]);
     const baseCommit = await git(root, ["rev-parse", "HEAD"]);
     const { taskIds, provenance } = await prepareCohortPrimaryFixture(ledger);

@@ -56,7 +56,7 @@ export const CANONICAL_PROJECT_GATE: ProjectGateSpecification = Object.freeze({
  * it replaces, so the digests are unchanged.
  */
 export function projectGateAuthorizationForm(
-  gate: ProjectGateSpecification = CANONICAL_PROJECT_GATE,
+  gate: ProjectGateSpecification,
 ): { readonly argv: readonly string[]; readonly cwd: string; readonly environment: readonly [] } {
   return { argv: gate.argv, cwd: gate.cwd, environment: [] };
 }
@@ -64,17 +64,15 @@ export function projectGateAuthorizationForm(
 /**
  * Resolve the gate a dispatch must run, from the project's declared `[gate]`.
  *
- * A project that declares no gate falls back to {@link CANONICAL_PROJECT_GATE}
- * so existing stores, receipts and fixtures are unchanged. That fallback is a
- * COMPATIBILITY decision, not a correct default for a generic worker: a
- * consumer project has no `nix/pkg/cq-ledgers`, and the fix for it is to
- * declare `[gate]`. CQ's own cq.toml declares it explicitly rather than
- * leaning on the fallback, so the configured path is the exercised one.
+ * D573: a project that declares no gate has NO gate. Falling back to
+ * {@link CANONICAL_PROJECT_GATE} ran CQ's own `bun run check` in a directory a
+ * consumer does not have, and surfaced as a red gate instead of a missing
+ * configuration. CQ's own cq.toml declares its gate explicitly.
  */
 export function resolveProjectGate(
   declared: { readonly argv: readonly string[]; readonly cwd: string } | null | undefined,
-): ProjectGateSpecification {
-  if (declared === null || declared === undefined) return CANONICAL_PROJECT_GATE;
+): ProjectGateSpecification | null {
+  if (declared === null || declared === undefined) return null;
   // A project that declares no `cwd` means the worktree root, which the
   // supervised runner spells `"."` — it refuses an empty one outright, so
   // canonicalizing here is what makes the natural consumer shape runnable.
@@ -82,4 +80,17 @@ export function resolveProjectGate(
     argv: Object.freeze([...declared.argv]),
     cwd: declared.cwd === "" ? PROJECT_GATE_ROOT_CWD : declared.cwd,
   });
+}
+
+/** The refusal every gate-running flow gives a project that declares no `[gate]` (D573). */
+export class ProjectGateUndeclaredError extends Error {
+  constructor() {
+    super("this project declares no full gate: declare [gate] in cq.toml (argv, and cwd relative to the repository root) before CQ admits, runs or accepts implementation work");
+    this.name = "ProjectGateUndeclaredError";
+  }
+}
+
+export function requireProjectGate(gate: ProjectGateSpecification | null): ProjectGateSpecification {
+  if (gate === null) throw new ProjectGateUndeclaredError();
+  return gate;
 }

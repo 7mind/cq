@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { projectGateAuthorizationForm } from "@cq/config";
+import { projectGateAuthorizationForm, requireProjectGate, resolveProjectGateForRoot, type ProjectGateSpecification } from "@cq/config";
 import { existsSync, readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -58,6 +58,8 @@ export interface CohortInvestigationAdvanceRuntimeOptionsV1 {
 }
 
 export interface InvestigationAdvanceDependenciesV1 {
+  /** D570: the project's declared full gate; null when it declares none (D573). */
+  readonly projectGate: ProjectGateSpecification | null;
   readonly cohorts: WorkCohortStore;
   readonly backend: AttestationBackend;
   readonly dispatch: DispatchCapability;
@@ -138,7 +140,7 @@ export function createInvestigationAdvanceCapabilityV1(options: InvestigationAdv
       if (boundary.witness.kind !== "repository-node") throw new Error("correction proposal requires current repository witness applicability for each member");
       resolveCohortCommandBoundaryV1(boundary.sharedRegression);
       const fullGate = resolveCohortCommandBoundaryV1(boundary.canonicalFullGate);
-      if (digest(fullGate) !== digest(projectGateAuthorizationForm())) {
+      if (digest(fullGate) !== digest(projectGateAuthorizationForm(requireProjectGate(options.projectGate)))) {
         throw new Error("correction proposal cannot substitute the canonical implementation full gate");
       }
     }
@@ -395,6 +397,7 @@ export async function createCohortInvestigationAdvanceRuntimeV1(options: CohortI
   const repository = new GitCohortLocalRepositoryV1({ repositoryRoot, repositoryId });
   const workset = requireWorksetStore(resolved.store);
   return createInvestigationAdvanceCapabilityV1({ cohorts: resolved.store.workCohortStore(), backend: options.backend,
+    projectGate: resolveProjectGateForRoot(resolved.configRoot),
     dispatch: options.dispatch, promptArtifacts: options.promptArtifacts, repositoryRoot,
     journalRoot: options.stateDir ?? dirname(resolved.dbPath), cancellationSignal: options.cancellationSignal,
     commands: options.trustedCommandRunner ?? createNodeSupervisedWorkerCommandRunner({ settleProcessGroups, settleWorktreeGateCommands }), workset,

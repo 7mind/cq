@@ -88,6 +88,14 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(parseRemoteExample(CQ_TOML_TEMPLATE)).toEqual(parseRemoteExample(readFileSync(EXAMPLE_PATH, "utf8")));
   });
 
+  // D573: an undeclared gate refuses implementation work, so the starter must
+  // say so instead of leaving the operator to discover it from a refusal.
+  it("carries a [gate] stub the operator must fill for implementation work", () => {
+    expect(CQ_TOML_TEMPLATE).toContain("# [gate]");
+    expect(CQ_TOML_TEMPLATE).toMatch(/#\s+argv = \[/u);
+    expect(CQ_TOML_TEMPLATE).toContain("declare [gate]");
+  });
+
   it("parses without throwing (schema-valid)", () => {
     expect(() => parseConfig(CQ_TOML_TEMPLATE)).not.toThrow();
   });
