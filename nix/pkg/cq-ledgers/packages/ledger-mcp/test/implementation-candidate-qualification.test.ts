@@ -1,3 +1,4 @@
+import { CANONICAL_PROJECT_GATE } from "@cq/config";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -360,6 +361,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       backend,
       actor: "trusted-extension",
       now: clock.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
     const acquired = await queueAdapter.acquire({
       partitionKey: qualified.partitionKey,
@@ -550,6 +552,7 @@ describe("implementation candidate qualification [Behavioral-Active, Effectual-G
       backend,
       actor: "trusted-extension",
       now: clock.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
     const sourceQualified = await queue.qualifyNativeCompletion({
       candidate: {

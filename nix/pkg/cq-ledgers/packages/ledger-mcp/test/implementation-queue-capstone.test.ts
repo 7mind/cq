@@ -385,7 +385,8 @@ describe("canonical implementation queue capstone [Behavioral-Active Blackbox-Gr
       const projectId = `capstone-${crypto.randomUUID()}`;
       await writeFile(
         path.join(repositoryRoot, "cq.toml"),
-        `[ledger]\nbackend = "xdg"\nprojectId = "${projectId}"\n`,
+        // The capstone runs the project's declared gate end to end (D566/D573).
+        `[ledger]\nbackend = "xdg"\nprojectId = "${projectId}"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n`,
       );
       git(repositoryRoot, "init", "-q", "-b", "main");
       git(repositoryRoot, "config", "user.name", "T6521");

@@ -113,15 +113,23 @@ describe("T2081 implement-worker supervised-gate evidence schema [BA]", () => {
     expect(
       validateAgainstSchema(
         implementWorkerSidecar.outputSchema,
-        workerPass({ supervisedGateEvidence: supervisedGateEvidence({ passCount: 0 }) }),
+        workerPass({ supervisedGateEvidence: supervisedGateEvidence({ passCount: -1 }) }),
       ).ok,
     ).toBe(false);
+    // D568: zero counted passes is the shape of a green gate whose project declares no count rule.
+    expect(
+      validateAgainstSchema(
+        implementWorkerSidecar.outputSchema,
+        workerPass({ supervisedGateEvidence: supervisedGateEvidence({ passCount: 0 }) }),
+      ).ok,
+    ).toBe(true);
   });
 
-  test("rejects role, command, and dirty-tree substitutions at the shape boundary", () => {
+  // D566: the command is the project's declared gate; the queue binds its value, the shape only its presence.
+  test("rejects role, empty-command, and dirty-tree substitutions at the shape boundary", () => {
     for (const substitution of [
       { roleId: "implement-reviewer" },
-      { command: "bun run check" },
+      { command: "" },
       { clean: false },
     ]) {
       expect(

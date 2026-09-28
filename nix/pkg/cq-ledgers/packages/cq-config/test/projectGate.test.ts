@@ -10,8 +10,10 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseConfig } from "../src/config.js";
 import {
   CANONICAL_PROJECT_GATE,
+  GATE_COUNT_PATTERN_FLAGS,
   PROJECT_GATE_ROOT_CWD,
   projectGateAuthorizationForm,
   requireProjectGate,
@@ -88,7 +90,7 @@ describe("D403 project gate definition", () => {
   test("a non-CQ project's declared gate replaces CQ's layout entirely", () => {
     // The consumer shape from GitHub issue #6: no `nix/pkg/cq-ledgers`, a
     // different runner, and the gate at the repository root.
-    const consumer = requireProjectGate(resolveProjectGate({ argv: ["npm", "test"], cwd: "" }));
+    const consumer = requireProjectGate(resolveProjectGate({ argv: ["npm", "test"], cwd: "", passCountPattern: null, failCountPattern: null }));
     expect(consumer.argv).toEqual(["npm", "test"]);
     // Canonicalized: the supervised runner refuses an empty cwd, so the
     // worktree root is spelled `"."` and a root-level gate is runnable.
@@ -119,5 +121,26 @@ describe("D403 project gate definition", () => {
     expect(resolveProjectGate(undefined)).toBeNull();
     expect(() => requireProjectGate(null)).toThrow("declare [gate] in cq.toml");
     expect(requireProjectGate(CANONICAL_PROJECT_GATE)).toBe(CANONICAL_PROJECT_GATE);
+  });
+});
+
+// D568: the "tests really ran" rule is project-declared, validated at load.
+describe("D568 [gate] count patterns", () => {
+  const gateOf = (body: string) => parseConfig(`[gate]\n  argv = ["pytest"]\n${body}`).gate;
+
+  test("parses declared count patterns and leaves undeclared ones null", () => {
+    expect(gateOf(`  passCountPattern = '([0-9]+) passed'\n`)).toEqual({
+      argv: ["pytest"], cwd: "", passCountPattern: "([0-9]+) passed", failCountPattern: null,
+    });
+  });
+
+  test("rejects a pattern without a count group and an invalid regex", () => {
+    expect(() => gateOf(`  passCountPattern = 'passed'\n`)).toThrow("must capture the count in its first group");
+    expect(() => gateOf(`  failCountPattern = '([0-9]+'\n`)).toThrow("is not a valid regular expression");
+  });
+
+  test("CQ's own patterns read Bun's summary lines", () => {
+    const pass = new RegExp(CANONICAL_PROJECT_GATE.passCountPattern!, GATE_COUNT_PATTERN_FLAGS);
+    expect([..." 42 pass\n 0 fail\n".matchAll(pass)].map((match) => match[1])).toEqual(["42"]);
   });
 });

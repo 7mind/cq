@@ -172,6 +172,47 @@ describe("cq gate run [BG]", () => {
   }, 15_000);
 });
 
+// D566/D575: prompts name the project's gate, never CQ's own command line.
+describe("cq gate run --project-gate [Behavioral-Active Effectual-GoodCommunication]", () => {
+  async function linkedWorktree(cqToml: string | null) {
+    const root = await repositoryFixture();
+    await writeFile(join(root, ".gitignore"), "cq.toml\n");
+    await mkdir(join(root, "suite"));
+    await writeFile(join(root, "suite", "keep.txt"), "keep\n");
+    git(root, ["add", "."]);
+    git(root, ["commit", "-q", "-m", "base"]);
+    if (cqToml !== null) await writeFile(join(root, "cq.toml"), cqToml);
+    const worktree = join(root, ".claude", "worktrees", "project-gate");
+    git(root, ["worktree", "add", "-q", "-b", "project-gate", worktree]);
+    return { root, worktree };
+  }
+
+  test("runs the gate the primary checkout declares, from its cwd inside the linked worktree", async () => {
+    const markerRoot = await mkdtemp(join(tmpdir(), "cq-project-gate-marker-"));
+    roots.push(markerRoot);
+    const marker = join(markerRoot, "cwd.txt");
+    const script = `await Bun.write(${JSON.stringify(marker)}, process.cwd())`;
+    const { worktree } = await linkedWorktree(
+      `[gate]\n  argv = ${JSON.stringify([process.execPath, "-e", script])}\n  cwd = "suite"\n`,
+    );
+    const result = await dispatch(["gate", "run", "--worktree", worktree, "--project-gate"], io());
+    expect(result).toEqual({ exitCode: 0, longRunning: false });
+    expect(await readFile(marker, "utf8")).toBe(join(worktree, "suite"));
+  });
+
+  test("refuses by name when the project declares no gate", async () => {
+    const { worktree } = await linkedWorktree(null);
+    await expect(runGateRun(["run", "--worktree", worktree, "--project-gate"], { err: () => {} }))
+      .rejects.toThrow("declare [gate] in cq.toml");
+  });
+
+  test("rejects an explicit command alongside --project-gate", async () => {
+    const { worktree } = await linkedWorktree(null);
+    await expect(runGateRun(["run", "--worktree", worktree, "--project-gate", "--", "true"], { err: () => {} }))
+      .rejects.toThrow("--project-gate takes no command");
+  });
+});
+
 describe("cq gate run absolute phase deadline [BA]", () => {
   const lease = {
     worktree: "/test/worktree",

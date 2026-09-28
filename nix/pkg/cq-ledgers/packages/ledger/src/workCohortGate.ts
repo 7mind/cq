@@ -1,6 +1,5 @@
 import {
   implementWorkerSupervisedGateEvidenceSchema,
-  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   validateAgainstSchema,
   validateSupervisedWorkerGateEvidenceForReview,
   implementationQueueSubjectsMatch,
@@ -61,7 +60,7 @@ export function validateCohortG213GateReceiptV1(
       receipt.enrollmentId !== attempt.g213.enrollmentId || receipt.attemptId !== attempt.g213.attemptId ||
       receipt.qualificationDigest !== attempt.g213.qualificationDigest ||
       !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, receipt.gate).ok ||
-      receipt.gate.command !== IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND || !Number.isInteger(receipt.gate.passCount) ||
+      !Number.isInteger(receipt.gate.passCount) ||
       !gateSubjectMatches(receipt.gate, attempt, seal) ||
       receipt.gate.attestationId !== attempt.preparedDispatch.attestationId ||
       receipt.gate.generation !== attempt.preparedDispatch.generation ||

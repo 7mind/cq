@@ -170,10 +170,11 @@ declares its owning `goals:<G>` reference in `ledgerRefs`. Defect-fix tasks
 carry their defect ownership in `ledgerRefs`; `sourceRefs` records provenance only.
 
 When a task declares an expected failure, follow §6a of the implementation
-orchestrator. Forms (a) and (b) use the annotation, live marker, and inventory
-entry; form (c) needs no marker. Plan the fix to replace a marker with a
-same-titled plain test and remove the annotation and inventory entry. Never
-plan triple co-deletion without that plain test or require a red full gate.
+orchestrator. Forms (a) and (b) use whatever marker the project's own
+expected-failure convention requires; form (c) needs no marker. Plan the fix to
+replace the expected-failure test with a same-titled plain test and remove every
+marker that convention required. Never plan removing the expected-failure test
+without that plain test, and never require a red full gate.
 
 ### Choosing the action
 

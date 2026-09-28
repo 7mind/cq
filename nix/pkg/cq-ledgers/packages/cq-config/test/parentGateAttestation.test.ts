@@ -243,7 +243,7 @@ describe("T2081 supervised worker evidence reviewer handoff [BA]", () => {
       { resultCommit: "d".repeat(40) },
       { branch: "implement/T2008" },
       { worktreePath: "/tmp/foreign" },
-      { passCount: 0 },
+      { passCount: -1 },
       { failCount: 1 },
     ]) {
       expect(
@@ -272,7 +272,7 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
     expect(body).toContain("supervisedGateEvidence");
     expect(body).toContain("Do **not** invoke `cq gate run` inside the sandbox");
     expect(body).toContain(
-      "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
+      "`cq gate run --worktree <worktree> --project-gate --deadline <gateCompleteBy>`",
     );
     expect(body).toContain(
       "Non-sandboxed reviewers take the same trusted-evidence path and rerun only when",

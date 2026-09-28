@@ -39,7 +39,6 @@ import type {
   NativeCompletionProof,
 } from "./compactDispatchProtocol.js";
 import {
-  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   isImplementWorkerSupervisedGateRejectionDetails,
 } from "./schemas/implement-worker.js";
 import { CODEX_STAGED_TIMING_BASIS } from "./codexStagedTiming.js";
@@ -138,7 +137,7 @@ export type ImplementationQueueAttempt = VersionedImplementationQueueAuthority &
   readonly observedBaseCommit: string;
   readonly resultCommit: string;
   readonly resultTree: string;
-  readonly gateCommand: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly gateCommand: string;
   readonly packagedEnvironmentDigest: string;
   readonly managedWorktreeBindingDigest: string;
   readonly gitReceiptLineageDigest: string;
@@ -347,7 +346,7 @@ export interface EnqueueImplementationCandidateRequest extends DispatchHandle {
   readonly observedBaseCommit: string;
   readonly resultCommit: string;
   readonly resultTree: string;
-  readonly gateCommand: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly gateCommand: string;
   readonly packagedEnvironmentDigest: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
   readonly gitEffectBinding: DispatchGitEffectBinding;
@@ -2518,10 +2517,11 @@ export function enqueueImplementationCandidate(
       throw new AttestationContractError(field, "expected a full authenticated digest");
     }
   }
-  if (request.gateCommand !== IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND) {
+  // D566: the project's declared gate; the runner-minted evidence must later name the same command.
+  if (typeof request.gateCommand !== "string" || request.gateCommand.length === 0) {
     throw new AttestationBindingError(
       "gateCommand",
-      "implementation queue requires the canonical gate command",
+      "implementation queue requires the project's gate command",
     );
   }
   const output = outputRecord(row);

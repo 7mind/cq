@@ -83,7 +83,7 @@ export const IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND =
 
 interface ImplementWorkerSupervisedGateRejectionBase {
   readonly kind: "cq-supervised-gate-rejection";
-  readonly command: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly command: string;
   readonly gateExitCode: number;
   readonly passCount: number;
   readonly failCount: number;
@@ -261,7 +261,7 @@ export function isImplementWorkerSupervisedGateRejectionDetails(
         keys.join(",") === [...commonKeys, "diagnosticArtifact", "version"].sort().join(",") &&
         isDiagnosticArtifact(record["diagnosticArtifact"])) &&
     record["kind"] === IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND &&
-    record["command"] === IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND &&
+    typeof record["command"] === "string" && record["command"].length > 0 &&
     countFields.every(
       (field) => Number.isSafeInteger(record[field]) && (record[field] as number) >= 0,
     ) &&
@@ -299,31 +299,53 @@ export type ImplementWorkerBaseUnresolvableReason =
 /**
  * The glob classification rule (T894) pinning when a worker result MUST carry
  * a `mutationTable`: a `filesTouched` entry matches one of these globs iff it
- * is a test file (`**\/test/**`, `**\/*.test.ts`) or names a guard/invariant
- * (`**\/*guard*`, `**\/*invariant*`) — the paths whose self-reported pass
- * claim needs a mutation-observed-restored record to be trustworthy. Kept as
- * a named export so a consumer (e.g. a future non-schema classifier) can
- * reuse the exact same list the JSON-Schema `if`/`then` below compiles from.
+ * is a test file or names a guard/invariant — the paths whose self-reported
+ * pass claim needs a mutation-observed-restored record to be trustworthy.
+ *
+ * D572: the list covers the common test layouts of many stacks (test/tests/
+ * __tests__/spec directories; `.test.`/`.spec.`, `_test.`/`_spec.`, `test_`,
+ * and `Test`/`Tests`/`Spec` file names), not only TypeScript's. Over-matching
+ * only demands more evidence; under-matching let a worker weaken a test
+ * silently. The schema below and the supervised gate share this one rule.
  */
 export const TEST_GUARD_GLOBS = [
   "**/test/**",
-  "**/*.test.ts",
+  "**/tests/**",
+  "**/__tests__/**",
+  "**/spec/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*_spec.*",
+  "**/test_*",
+  "**/*Test.*",
+  "**/*Tests.*",
+  "**/*Spec.*",
   "**/*guard*",
   "**/*invariant*",
 ] as const;
 
 /**
  * {@link TEST_GUARD_GLOBS}, translated to a single alternation regex usable as
- * an Ajv `pattern` inside a `contains` check over `filesTouched`. Each glob
- * segment maps literally: a leading `**` path segment becomes an optional
- * "any directory prefix" group, and a bare name segment becomes "matches
- * anywhere in the basename"; the `.test.ts` glob keeps that literal suffix.
+ * an Ajv `pattern` inside a `contains` check over `filesTouched`. A leading
+ * `**` path segment becomes an optional "any directory prefix" group, a
+ * directory glob matches that exact segment, and a file-name glob is anchored
+ * to the basename.
  */
 const TEST_GUARD_PATTERN =
-  "(?:^(.*/)?test/.*$)" +
-  "|(?:^(.*/)?[^/]*\\.test\\.ts$)" +
+  "(?:^(.*/)?(?:test|tests|__tests__|spec)/.*$)" +
+  "|(?:^(.*/)?[^/]*[._](?:test|spec)\\.[^/]+$)" +
+  "|(?:^(.*/)?test_[^/]*$)" +
+  "|(?:^(.*/)?[^/]*(?:Test|Tests|Spec)\\.[^/]+$)" +
   "|(?:^(.*/)?[^/]*guard[^/]*$)" +
   "|(?:^(.*/)?[^/]*invariant[^/]*$)";
+
+const TEST_GUARD_REGEXP = new RegExp(TEST_GUARD_PATTERN, "u");
+
+/** The one test/guard classifier: the output schema and the supervised gate both apply it (D572). */
+export function isTestOrGuardPath(entryPath: string): boolean {
+  return TEST_GUARD_REGEXP.test(entryPath);
+}
 
 const fullShaString = {
   type: "string",
@@ -406,9 +428,11 @@ const taskSupervisedGateEvidenceSchema = {
     startingCommit: fullShaString,
     resultCommit: fullShaString,
     clean: { type: "boolean", const: true },
-    command: { type: "string", const: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND },
+    // D566: the command line of the project's declared gate that actually ran.
+    command: { type: "string", minLength: 1 },
     gateExitCode: { type: "integer", const: 0 },
-    passCount: { type: "integer", minimum: 1 },
+    // D568: zero when the project declares no pass-count rule; the runner enforces a declared one.
+    passCount: { type: "integer", minimum: 0 },
     failCount: { type: "integer", const: 0 },
     gateDurationMs: { type: "integer", minimum: 0 },
     capturedAt: {
@@ -474,7 +498,7 @@ interface ImplementWorkerSupervisedGateEvidenceBase {
   readonly startingCommit: string;
   readonly resultCommit: string;
   readonly clean: true;
-  readonly command: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly command: string;
   readonly gateExitCode: 0;
   readonly passCount: number;
   readonly failCount: 0;
@@ -812,7 +836,7 @@ const outputSchema = {
     gateDurationMs: {
       type: "integer",
       minimum: 0,
-      description: 'Wall-clock milliseconds `bun run check` took. Required when status is "pass".',
+      description: 'Wall-clock milliseconds the project\'s declared gate took. Required when status is "pass".',
     },
     supervisedGateEvidence: {
       ...implementWorkerSupervisedGateEvidenceSchema,
@@ -824,8 +848,8 @@ const outputSchema = {
       description:
         "Evidence rows for a claimed mutation/guard change: one {mutation, observed, restored} " +
         "triple per test/guard mutated. REQUIRED iff filesTouched intersects TEST_GUARD_GLOBS = " +
-        "['**/test/**', '**/*.test.ts', '**/*guard*', '**/*invariant*'] — i.e. at least one " +
-        "filesTouched entry is under a test/ directory, ends in .test.ts, or names a guard or " +
+        `[${TEST_GUARD_GLOBS.map((glob) => `'${glob}'`).join(", ")}] — i.e. at least one ` +
+        "filesTouched entry is a test file of any common layout or names a guard or " +
         "invariant. Omit entirely when no touched file matches (do not send an empty array).",
       items: {
         type: "object",
@@ -927,11 +951,14 @@ const taskStagedOutputSchema = {
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
  * Version 13 adds a closed full-member cohort arm without an anchor task.
+ * Version 15 records the project's declared gate command, allows a zero pass
+ * count where the project declares no count rule, and widens the test/guard
+ * classifier beyond TypeScript (D566, D568, D572).
  * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 14,
+  version: 15,
   inputSchema: singleTaskOrCohortSchema(inputSchema, cohortRoleArm(inputSchema, cohortPreSealEnvelopeSchema, "input")),
   outputSchema: singleTaskOrCohortSchema(outputSchema, {
     ...cohortRoleArm(outputSchema, cohortPreSealEnvelopeSchema, "output"),

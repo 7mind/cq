@@ -863,7 +863,7 @@ describe("implementation candidate gate reuse [Behavioral-Active, Blackbox-Group
             } as unknown as typeof fresh.candidate,
             ...fresh.qualification,
           }),
-        ).rejects.toThrow("implementation queue requires the canonical gate command");
+        ).rejects.toThrow("implementation queue requires the project's gate command");
         expect(gateRuns, replacement.name).toBe(1);
       }
       const freshQualified = await fixture.adapter.qualifyNativeCompletion({

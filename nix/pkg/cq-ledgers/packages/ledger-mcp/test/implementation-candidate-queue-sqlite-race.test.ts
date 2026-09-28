@@ -1,3 +1,4 @@
+import { CANONICAL_PROJECT_GATE } from "@cq/config";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,6 +73,7 @@ describe("ledger-MCP SQLite implementation queue races", () => {
       backend: restarted,
       actor: "trusted-parent",
       now: fixture.clock.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
     try {
       const retained = await restartedAdapter.inspectLease(acquired.lease);
@@ -115,6 +117,7 @@ describe("ledger-MCP SQLite implementation queue races", () => {
       backend: peer,
       actor: "trusted-parent",
       now: fixture.clock.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
     try {
       const staged = await fixture.stage({
@@ -153,11 +156,13 @@ describe("ledger-MCP SQLite implementation queue races", () => {
         backend: restarted,
         actor: "trusted-parent",
         now: fixture.clock.now,
+        projectGate: CANONICAL_PROJECT_GATE,
       });
       const restartedPeerAdapter = new ImplementationCandidateQueueAdapter({
         backend: restartedPeer,
         actor: "trusted-parent",
         now: fixture.clock.now,
+        projectGate: CANONICAL_PROJECT_GATE,
       });
       try {
         expect(

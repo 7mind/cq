@@ -11,7 +11,7 @@ describe("full-cohort role prompt contract [Blackbox-Atomic]", () => {
   test("worker stages every member without a child full-gate fallback", async () => {
     const prompt = await source("implement-worker");
     for (const token of ["Full-cohort arm (worker v13)", "memberObservations", "stage-only",
-      "Never invoke `cq gate run`, `bun run check`", "single queue-front full gate", "cohort-arm `pass`",
+      "Never invoke `cq gate run` or any other full gate", "single queue-front full gate", "cohort-arm `pass`",
       "omit `taskId`", "version-2"]) expect(prompt).toContain(token);
     expect(prompt).not.toContain("`pass` requires observed gate success,");
   });

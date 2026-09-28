@@ -206,7 +206,7 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
   });
 
   test("sidecar version includes the validation-intent contract", () => {
-    expect(implementWorkerSidecar.version).toBe(14);
+    expect(implementWorkerSidecar.version).toBe(15);
   });
 });
 
@@ -338,7 +338,7 @@ describe("T1308 implement-reviewer resultCommit + baseAncestry [BA]", () => {
   });
 
   test("sidecar version advanced for the T1308 contract mutation", () => {
-    expect(implementReviewerSidecar.version).toBe(9);
+    expect(implementReviewerSidecar.version).toBe(10);
   });
 });
 

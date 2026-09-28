@@ -411,7 +411,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(worker).toContain("baseVerification");
       expect(worker).not.toMatch(/\brun `bun install`/);
       expect(worker).toContain(
-        '`cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`',
+        '`cq gate run --worktree "$PWD" --project-gate`',
       );
       expect(worker).toContain(
         "A yielded command-session handle remains the sole full-gate attempt",
@@ -583,7 +583,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(reviewer).toContain("parentGateAttestation");
       expect(reviewer).toContain("sandbox-denied-primitives");
       expect(reviewer).toContain(
-        "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
+        "`cq gate run --worktree <worktree> --project-gate --deadline <gateCompleteBy>`",
       );
       expect(reviewer).toContain(
         "Non-sandboxed reviewers take the same trusted-evidence path and rerun only when",
@@ -609,7 +609,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
         ),
       );
       expect(advance).toContain(
-        normalize("Re-run `bun run check` in the foreground and use its real exit status."),
+        normalize("Re-run the project's declared gate (`cq gate run --worktree <worktree> --project-gate`) in the foreground and use its real exit status."),
       );
     }
   });
@@ -624,7 +624,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       );
       expect(reviewer).toContain("Never derive a new phase window");
       expect(reviewer).toContain("only `now >= gateCompleteBy` exhausts the phase");
-      expect(reviewer).toContain("--deadline <gateCompleteBy> -- bun run check");
+      expect(reviewer).toContain("--project-gate --deadline <gateCompleteBy>");
       expect(reviewer).toContain(exhaustion);
       expect(reviewer).toContain("`phase-budget-exhausted-before-result-commit-verification`");
       expect(reviewer).toContain("`phase-budget-exhausted-before-gate-start`");

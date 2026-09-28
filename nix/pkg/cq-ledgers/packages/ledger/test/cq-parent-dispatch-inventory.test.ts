@@ -292,7 +292,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
     expect(mergeGate).toContain("`gateDurationMs` below `50`, absent/zero");
     expect(mergeGate).toContain("below one quarter of the median");
-    expect(mergeGate).toContain("Re-run `bun run check` in the foreground");
+    expect(mergeGate).toContain("Re-run the project's declared gate");
     expect(mergeGate).toContain("If that cannot be done, fail closed");
   });
 

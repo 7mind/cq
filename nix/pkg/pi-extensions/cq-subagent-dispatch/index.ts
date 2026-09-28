@@ -1752,7 +1752,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 14,
+    version: 15,
     input: [
       {
         required: [
@@ -1879,7 +1879,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-reviewer": {
-    version: 9,
+    version: 10,
     input: [
       {
         required: [

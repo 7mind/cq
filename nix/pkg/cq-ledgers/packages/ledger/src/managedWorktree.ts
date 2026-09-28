@@ -1010,7 +1010,7 @@ function isManagedWorktreeTrustedGateProjection(
       /^[0-9a-f]{40}$/u.test(projection.integrationBaseCommit)) &&
     projection.gateExitCode === 0 &&
     Number.isSafeInteger(projection.passCount) &&
-    (projection.passCount ?? 0) > 0 &&
+    (projection.passCount ?? -1) >= 0 &&
     projection.failCount === 0 &&
     typeof projection.capturedAt === "string" &&
     Number.isFinite(Date.parse(projection.capturedAt))
@@ -3725,7 +3725,8 @@ function trustedWipProjectionForRecord(
     projection.branch !== stored.handle.branch ||
     projection.gateExitCode !== 0 ||
     projection.failCount !== 0 ||
-    projection.passCount <= 0
+    // D568: the runner already applied the project's declared count rule.
+    projection.passCount < 0
   ) {
     return undefined;
   }
@@ -3754,7 +3755,7 @@ export async function recordManagedWorktreeSupervisedGateEvidence(
     evidence.branch !== binding.branch ||
     evidence.gateExitCode !== 0 ||
     evidence.failCount !== 0 ||
-    evidence.passCount <= 0
+    evidence.passCount < 0
   ) {
     throw new Error("supervised gate evidence does not match the managed worktree binding");
   }

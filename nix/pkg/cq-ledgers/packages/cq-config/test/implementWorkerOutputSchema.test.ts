@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import {
   implementWorkerSidecar,
   implementWorkerStagedOutputSchema,
+  isTestOrGuardPath,
   TEST_GUARD_GLOBS,
   validateAgainstSchema,
 } from "@cq/config";
@@ -51,7 +52,11 @@ function basePassPayload(overrides: Record<string, unknown> = {}): Record<string
 
 describe("T894 implement-worker outputSchema", () => {
   test("TEST_GUARD_GLOBS is the exact classification list the schema description states", () => {
-    expect(TEST_GUARD_GLOBS).toEqual(["**/test/**", "**/*.test.ts", "**/*guard*", "**/*invariant*"]);
+    expect(TEST_GUARD_GLOBS).toEqual([
+      "**/test/**", "**/tests/**", "**/__tests__/**", "**/spec/**",
+      "**/*.test.*", "**/*.spec.*", "**/*_test.*", "**/*_spec.*", "**/test_*",
+      "**/*Test.*", "**/*Tests.*", "**/*Spec.*", "**/*guard*", "**/*invariant*",
+    ]);
   });
 
   test("the mutationTable classification rule is stated in the schema description", () => {
@@ -200,6 +205,28 @@ describe("T894 implement-worker outputSchema", () => {
       expect(result.errors.some((e) => e.params.missingProperty === "mutationTable")).toBe(true);
     }
   });
+
+  // regression: D572 — the classifier is not TS-only; other stacks' tests need mutation evidence too.
+  test.each([
+    ["tests/test_pricing.py"],
+    ["test_pricing.py"],
+    ["pricing/pricing_test.go"],
+    ["tests/pricing.rs"],
+    ["src/test/scala/PricingSpec.scala"],
+    ["src/main/java/PricingTest.java"],
+    ["web/pricing.spec.ts"],
+    ["web/__tests__/pricing.js"],
+  ])("(c) D572 filesTouched=[%s] without mutationTable fails in schema and runner alike", (path) => {
+    expect(isTestOrGuardPath(path)).toBe(true);
+    const result = validateAgainstSchema(implementWorkerSidecar.outputSchema, basePassPayload({ filesTouched: [path] }));
+    expect(result.ok).toBe(false);
+  });
+
+  test.each([["src/pricing.py"], ["src/attestation.ts"], ["src/contest/entry.go"], ["lib/latest.rb"]])(
+    "(d) D572 non-test path %s needs no mutationTable", (path) => {
+      expect(isTestOrGuardPath(path)).toBe(false);
+      expect(validateAgainstSchema(implementWorkerSidecar.outputSchema, basePassPayload({ filesTouched: [path] })).ok).toBe(true);
+    });
 
   // --- (d) NEGATIVE DIRECTION: no test/guard path, no mutationTable => ACCEPTED
 

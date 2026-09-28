@@ -4,9 +4,11 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CANONICAL_PROJECT_GATE,
+  GATE_COUNT_PATTERN_FLAGS,
   CODEX_STAGED_TIMING_BASIS,
   DISPATCH_INVOCATION_ENV_NAMES,
-  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  implementWorkerGateCommandLine,
+  isTestOrGuardPath,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
   IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
@@ -42,8 +44,6 @@ import { validateCohortExecutionBindingV1, type CohortAcceptanceCandidateV1 } fr
 import { redactSecrets } from "./store/logRedaction.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
-const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
 const BUN_FAILURE_IDENTITY_LINE = /^\(fail\)\s+\S/u;
 const FAIL_SUMMARY_LINE = /^\s*[0-9]+\s+fail\b/u;
 const OUTPUT_TAIL_LINE_COUNT = 20;
@@ -57,17 +57,6 @@ const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTIO
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
   CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs;
 export const SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS = 30 * 60 * 1_000;
-
-function requiresMutationEvidence(entryPath: string): boolean {
-  const basename = entryPath.split("/").at(-1) ?? entryPath;
-  return (
-    entryPath.startsWith("test/") ||
-    entryPath.includes("/test/") ||
-    basename.endsWith(".test.ts") ||
-    basename.includes("guard") ||
-    basename.includes("invariant")
-  );
-}
 
 export interface SupervisedWorkerGateRunRequest {
   readonly worktreePath: string;
@@ -147,7 +136,9 @@ export interface SuperviseImplementWorkerGateRequest {
 }
 
 export interface SuperviseImplementWorkerGateDeps {
-  readonly runner?: SupervisedWorkerGateRunner;
+  readonly runner: SupervisedWorkerGateRunner;
+  /** D566: the project gate `runner` executes; the evidence records its command line. */
+  readonly gate: ProjectGateSpecification;
   readonly stateDir?: string;
   readonly now?: () => Date;
   readonly cancellationSignal: AbortSignal;
@@ -222,6 +213,7 @@ function supervisedGateRejectionDetails(
   run: SupervisedWorkerGateRunResult,
   context: AuthorizedSupervisedWorkerGateContext,
   resultCommit: string,
+  command: string,
 ): ImplementWorkerSupervisedGateRejectionDetails {
   const failureIndex = Object.freeze(
     (run.diagnosticArtifact?.failures ?? []).map((failure) =>
@@ -244,7 +236,7 @@ function supervisedGateRejectionDetails(
   const details = {
     kind: IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
     version: 2,
-    command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+    command,
     gateExitCode: run.gateExitCode,
     passCount: run.passCount,
     failCount: run.failCount,
@@ -293,8 +285,9 @@ export class SupervisedWorkerGateRejectedError extends Error {
     run: SupervisedWorkerGateRunResult,
     context: AuthorizedSupervisedWorkerGateContext,
     resultCommit: string,
+    command: string,
   ) {
-    const details = supervisedGateRejectionDetails(run, context, resultCommit);
+    const details = supervisedGateRejectionDetails(run, context, resultCommit, command);
     super(
       `supervised worker gate rejected exit=${String(details.gateExitCode)} ` +
         `pass=${String(details.passCount)} fail=${String(details.failCount)}\n${details.outputTail}`,
@@ -410,7 +403,21 @@ async function checkedGit(cwd: string, args: readonly string[]): Promise<string>
   return result.stdout.trim();
 }
 
-function lastCount(pattern: RegExp, output: string): number | undefined {
+/** D568: the project's declared test-count rule, compiled; a null pattern counts nothing. */
+interface GateCountRule {
+  readonly pass: RegExp | null;
+  readonly fail: RegExp | null;
+}
+
+const NO_COUNT_RULE: GateCountRule = Object.freeze({ pass: null, fail: null });
+
+function gateCountRule(gate: ProjectGateSpecification): GateCountRule {
+  const compile = (source: string | null) => source === null ? null : new RegExp(source, GATE_COUNT_PATTERN_FLAGS);
+  return Object.freeze({ pass: compile(gate.passCountPattern), fail: compile(gate.failCountPattern) });
+}
+
+function lastCount(pattern: RegExp | null, output: string): number | undefined {
+  if (pattern === null) return undefined;
   let observed: number | undefined;
   for (const match of output.matchAll(pattern)) observed = Number(match[1]);
   return observed;
@@ -631,17 +638,18 @@ export function createNodeSupervisedWorkerGateRunner(
   settlement: NodeSupervisedWorkerGateSettlement,
   gate: ProjectGateSpecification = CANONICAL_PROJECT_GATE,
 ): SupervisedWorkerGateRunner {
+  const counts = gateCountRule(gate);
   return createSerializedSupervisedRunner((request: SupervisedWorkerGateRunRequest) =>
     runAdmittedNodeSupervisedWorkerGate({ ...request, command: {
       argv: [...gate.argv], cwd: gate.cwd, environment: {},
-    } }, settlement));
+    } }, settlement, counts));
 }
 
 export function createNodeSupervisedWorkerCommandRunner(
   settlement: NodeSupervisedWorkerGateSettlement,
 ): SupervisedWorkerCommandRunner {
   return createSerializedSupervisedRunner((request: SupervisedWorkerCommandRunRequest) =>
-    runAdmittedNodeSupervisedWorkerGate(request, settlement));
+    runAdmittedNodeSupervisedWorkerGate(request, settlement, NO_COUNT_RULE));
 }
 
 const SETTLEMENT_DIAGNOSTIC_MESSAGE_LIMIT = 200;
@@ -722,6 +730,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
   request: SupervisedWorkerCommandRunRequest,
   settlement: NodeSupervisedWorkerGateSettlement,
   junitPath: string,
+  counts: GateCountRule,
 ): Promise<SupervisedWorkerCommandRunResult> {
   const startedAt = Date.now();
   let registration: ProcessGroupRegistration | undefined;
@@ -865,8 +874,8 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
   }
   const combined = `${raced.stdout}\n${raced.stderr}`;
   const completeOutput = redactSecrets(combined);
-  const passCount = lastCount(PASS_COUNT, combined) ?? 0;
-  const failCount = lastCount(FAIL_COUNT, combined) ?? (raced.gateExitCode === 0 ? 0 : 1);
+  const passCount = lastCount(counts.pass, combined) ?? 0;
+  const failCount = lastCount(counts.fail, combined) ?? (raced.gateExitCode === 0 ? 0 : 1);
   const junitReport = await readFile(junitPath, "utf8").catch((error: unknown) => {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
     throw error;
@@ -891,6 +900,7 @@ async function runAdmittedNodeSupervisedWorkerGateWithReport(
 async function runAdmittedNodeSupervisedWorkerGate(
   request: SupervisedWorkerCommandRunRequest,
   settlement: NodeSupervisedWorkerGateSettlement,
+  counts: GateCountRule,
 ): Promise<SupervisedWorkerCommandRunResult> {
   const diagnosticDirectory = await mkdtemp(join(tmpdir(), "cq-supervised-gate-"));
   try {
@@ -898,6 +908,7 @@ async function runAdmittedNodeSupervisedWorkerGate(
       request,
       settlement,
       join(diagnosticDirectory, "junit.xml"),
+      counts,
     );
   } finally {
     await rm(diagnosticDirectory, { recursive: true, force: true });
@@ -1032,7 +1043,7 @@ export async function superviseImplementWorkerGate(
   }
   if (
     output["filesTouched"].some(
-      (entry) => typeof entry === "string" && requiresMutationEvidence(entry),
+      (entry) => typeof entry === "string" && isTestOrGuardPath(entry),
     ) &&
     (!Array.isArray(output["mutationTable"]) || output["mutationTable"].length === 0)
   ) {
@@ -1044,20 +1055,22 @@ export async function superviseImplementWorkerGate(
     return request.output;
   }
 
-  const run = await (deps.runner ?? nodeSupervisedWorkerGateRunner).run({
+  const command = implementWorkerGateCommandLine(deps.gate);
+  const run = await deps.runner.run({
     worktreePath: context.worktreePath,
     admissionTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
     executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
     cancellationSignal: deps.cancellationSignal,
     ...(deps.effectAdmission === undefined ? {} : { effectAdmission: deps.effectAdmission }),
   });
-  if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
+  // D568: the zero-test guard applies only where the project declares how to count passes.
+  if (run.gateExitCode !== 0 || run.failCount !== 0 || (deps.gate.passCountPattern !== null && run.passCount <= 0)) {
     let diagnosticContext = context;
     if (context.cohort !== undefined) {
       if (authority === undefined) throw new Error("cohort gate lost its sealed authority");
       diagnosticContext = { ...context, cohort: authority.envelope };
     }
-    throw new SupervisedWorkerGateRejectedError(run, diagnosticContext, resultCommit);
+    throw new SupervisedWorkerGateRejectedError(run, diagnosticContext, resultCommit, command);
   }
   if (
     (await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !==
@@ -1097,7 +1110,7 @@ export async function superviseImplementWorkerGate(
     startingCommit: context.startingCommit,
     resultCommit,
     clean: true,
-    command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+    command,
     gateExitCode: 0,
     passCount: run.passCount,
     failCount: 0,

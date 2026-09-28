@@ -9,7 +9,7 @@ import {
   type MemberAcceptancePlanV1,
   type StagedCohortCandidateAttemptV1,
 } from "./workCohort.js";
-import { projectGateAuthorizationForm, type ProjectGateSpecification } from "@cq/config";
+import { implementWorkerGateCommandLine, projectGateAuthorizationForm, type ProjectGateSpecification } from "@cq/config";
 import type {
   CohortCommandEvidenceV1,
   WorkCohortLeaseV1,
@@ -198,6 +198,10 @@ export function validateCohortExecutionBindingV1(
       throw new Error("cohort full gate receipt lacks authenticated candidate completion");
     }
     validateCohortG213GateReceiptV1(gate, candidate.attempt, candidate.seal);
+    // D566: the runner-minted evidence names the command this receipt executed.
+    if (gate.gate.command !== implementWorkerGateCommandLine(receipt.command)) {
+      throw new Error("cohort full gate evidence names a different command than the one executed");
+    }
   } else if (receipt.canonicalGate !== null) {
     throw new Error("only a green canonical full gate may carry G213 completion");
   }
@@ -338,6 +342,10 @@ export class CohortAcceptanceRunnerV1 {
           if (outcome.exitCode === 0) {
             if (completed.gate === null) throw new Error("cohort full gate requires authenticated G213 completion");
             canonicalGate = readAuthorizedCohortG213GateV1(completed.gate);
+            // D568: a zero-test green is rejected only under a declared pass-count rule.
+            if (this.#host.projectGate.passCountPattern !== null && canonicalGate.gate.passCount <= 0) {
+              throw new Error("cohort full gate lacks canonical green supervised evidence: the project's pass-count rule counted no passes");
+            }
             await this.#host.revalidateCanonicalGate(candidate, canonicalGate);
           }
           counters.fullGateExecutions += 1;

@@ -1,3 +1,4 @@
+import { CANONICAL_PROJECT_GATE } from "@cq/config";
 import { SQL } from "bun";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import {
@@ -163,6 +164,7 @@ try {
       backend,
       actor: "trusted-extension",
       now: () => config.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
     try {
       await queue.release({

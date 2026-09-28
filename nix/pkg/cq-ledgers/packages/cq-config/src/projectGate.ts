@@ -35,6 +35,30 @@ export interface ProjectGateSpecification {
    * {@link resolveProjectGate} canonicalizes an omitted or empty `cwd` to.
    */
   readonly cwd: string;
+  /**
+   * D568: the project's rule for "tests really ran". A regex whose first group
+   * is the passed-test count; when declared, a green exit with no counted pass
+   * is a zero-test run and is rejected. Null leaves the exit status authoritative.
+   */
+  readonly passCountPattern: string | null;
+  /** D568: a regex whose first group is the failed-test count; null derives failure from the exit status. */
+  readonly failCountPattern: string | null;
+}
+
+/** The flags every gate count pattern is compiled with: every match, Unicode. */
+export const GATE_COUNT_PATTERN_FLAGS = "gu" as const;
+
+/** Why `source` is not a usable count pattern, or null when it is. */
+export function gateCountPatternError(source: string): string | null {
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(source, GATE_COUNT_PATTERN_FLAGS);
+  } catch (error) {
+    return `is not a valid regular expression: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  // An alternation with the empty pattern always matches, exposing the group count.
+  const groups = new RegExp(`${pattern.source}|`, GATE_COUNT_PATTERN_FLAGS).exec("")!.length - 1;
+  return groups >= 1 ? null : "must capture the count in its first group";
 }
 
 /**
@@ -48,6 +72,9 @@ export interface ProjectGateSpecification {
 export const CANONICAL_PROJECT_GATE: ProjectGateSpecification = Object.freeze({
   argv: Object.freeze(["bun", "run", "check"]),
   cwd: "nix/pkg/cq-ledgers",
+  // Bun's ` 42 pass` / ` 0 fail` summary lines (D564 zero-test guard).
+  passCountPattern: String.raw`(?:^|\n)\s*([0-9]+)\s+pass\b`,
+  failCountPattern: String.raw`(?:^|\n)\s*([0-9]+)\s+fail\b`,
 });
 
 /**
@@ -70,7 +97,12 @@ export function projectGateAuthorizationForm(
  * configuration. CQ's own cq.toml declares its gate explicitly.
  */
 export function resolveProjectGate(
-  declared: { readonly argv: readonly string[]; readonly cwd: string } | null | undefined,
+  declared: {
+    readonly argv: readonly string[];
+    readonly cwd: string;
+    readonly passCountPattern: string | null;
+    readonly failCountPattern: string | null;
+  } | null | undefined,
 ): ProjectGateSpecification | null {
   if (declared === null || declared === undefined) return null;
   // A project that declares no `cwd` means the worktree root, which the
@@ -79,6 +111,8 @@ export function resolveProjectGate(
   return Object.freeze({
     argv: Object.freeze([...declared.argv]),
     cwd: declared.cwd === "" ? PROJECT_GATE_ROOT_CWD : declared.cwd,
+    passCountPattern: declared.passCountPattern,
+    failCountPattern: declared.failCountPattern,
   });
 }
 

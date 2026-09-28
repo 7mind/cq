@@ -25,6 +25,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { gateCountPatternError } from "./projectGate.js";
 import {
   parseToml,
   type RawHarnessOverride,
@@ -484,7 +485,18 @@ function parseGate(raw: import("./toml.js").RawGate | null): GateConfig | null {
   if (cwd.startsWith("/") || cwd.split(/[\\/]/).includes("..")) {
     throw new CqConfigError("[gate] cwd must be relative to the worktree and must not escape it");
   }
-  return { argv: raw.argv as readonly string[], cwd };
+  const countPattern = (key: "passCountPattern" | "failCountPattern"): string | null => {
+    const value = raw[key];
+    if (value === undefined) return null;
+    if (typeof value !== "string") throw new CqConfigError(`[gate] ${key} must be a string`);
+    const invalid = gateCountPatternError(value);
+    if (invalid !== null) throw new CqConfigError(`[gate] ${key} ${invalid}`);
+    return value;
+  };
+  return {
+    argv: raw.argv as readonly string[], cwd,
+    passCountPattern: countPattern("passCountPattern"), failCountPattern: countPattern("failCountPattern"),
+  };
 }
 
 function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchConfig {

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   SqliteAttestationBackend,
   xdgAttestationDbPath,
+  CANONICAL_PROJECT_GATE,
   CODEX_CORRELATION_SEPARATOR,
   CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
@@ -54,6 +55,11 @@ import {
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 import { useIsolatedXdgSuite } from "../../cq-config/test/xdgSuiteFixture.js";
+
+/** CQ's own `[gate]`, count rule included, as a fixture cq.toml (TOML basic strings share JSON's escapes). */
+const CQ_FIXTURE_TOML = `[ledger]\nbackend = "xdg"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n` +
+  `  passCountPattern = ${JSON.stringify(CANONICAL_PROJECT_GATE.passCountPattern)}\n` +
+  `  failCountPattern = ${JSON.stringify(CANONICAL_PROJECT_GATE.failCountPattern)}\n`;
 
 const roots: string[] = [];
 const INSTALLED_ROLE = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
@@ -919,8 +925,8 @@ describe("packaged cq-codex-role Git broker", () => {
       await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock", "nix"]);
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-      // The fixture mirrors CQ's layout, so it declares CQ's gate (D573).
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
+      // The fixture mirrors CQ's layout, so it declares CQ's gate and count rule (D568, D573).
+      await writeFile(path.join(repositoryRoot, "cq.toml"), CQ_FIXTURE_TOML);
       const ledgerStore = await createLedgerStore(repositoryRoot);
       const taskId = await seedFinalizedImplementationTask({
         ledgerStore: ledgerStore.store,
@@ -1801,8 +1807,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
       await writeFile(path.join(repositoryRoot, "other.txt"), "other base\n");
       await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
-      // The fixture mirrors CQ's layout, so it declares CQ's gate (D573).
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "xdg"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n');
+      // The fixture mirrors CQ's layout, so it declares CQ's gate and count rule (D568, D573).
+      await writeFile(path.join(repositoryRoot, "cq.toml"), CQ_FIXTURE_TOML);
       await writeFile(path.join(repositoryRoot, ".gitignore"), ".cq/\n.claude/\n");
       const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
       await mkdir(workspaceRoot, { recursive: true });

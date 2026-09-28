@@ -232,6 +232,7 @@ export const USAGE = [
   "                                                  CQ_LEDGER_REMOTE_ADMIN_TOKEN), then flip",
   "                                                  backend to remote. Source data is retained.",
   "  gate run --worktree <path> --command-cwd <path> [--deadline <ISO-8601>] -- <command...>",
+  "  gate run --worktree <path> --project-gate [--deadline <ISO-8601>]",
   "                                                  run one bounded process group under the",
   "                                                  canonical Git-worktree exclusive gate.",
   "  gate git-effect --operation <rebase|merge> --cwd <repo> --task-id <Tn> --commit <full-sha>",

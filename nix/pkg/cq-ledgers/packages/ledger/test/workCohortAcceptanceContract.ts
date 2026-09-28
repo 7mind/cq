@@ -153,8 +153,9 @@ export function workCohortAcceptanceContract(label: string, create: () => Promis
       expect(await f.runner.run(f.lease, new AbortController().signal)).toMatchObject({
         focusedExecutions: 0, sharedExecutions: 0, fullGateExecutions: 1, persistedReuses: 3,
       });
+      // D568: the zero-test green executes and is then rejected under CQ's declared pass-count rule.
       expect((await readCohortAdvanceStatusV1(f.store)).counters).toMatchObject({
-        focusedExecutions: 2, sharedExecutions: 1, fullGateAttempts: 3, fullGateExecutions: 2,
+        focusedExecutions: 2, sharedExecutions: 1, fullGateAttempts: 3, fullGateExecutions: 3,
         acceptanceFailures: 2, persistedEvidenceReuses: 6,
       });
     } finally { await f.close(); }

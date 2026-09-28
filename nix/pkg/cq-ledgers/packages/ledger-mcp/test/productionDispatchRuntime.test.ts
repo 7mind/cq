@@ -209,7 +209,8 @@ describe("production dispatch runtime construction", () => {
     const projectId = `rollout-runtime-${crypto.randomUUID()}`;
     await writeFile(
       path.join(repositoryRoot, "cq.toml"),
-      `[ledger]\nbackend = "xdg"\nprojectId = "${projectId}"\n`,
+      // Legacy rows are re-bound to the project's declared gate (D566/D573).
+      `[ledger]\nbackend = "xdg"\nprojectId = "${projectId}"\n\n[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n`,
       "utf8",
     );
     git(repositoryRoot, "init", "-q", "-b", "main");

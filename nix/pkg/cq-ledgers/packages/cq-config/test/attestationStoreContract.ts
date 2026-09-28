@@ -1492,7 +1492,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         await expect(
           driver.abort(p, {
             reason: "gate-rejected",
-            details: { ...details, command: "substituted" } as unknown as DispatchJSONValue,
+            details: { ...details, command: "" } as unknown as DispatchJSONValue,
           }),
         ).rejects.toThrow("invalid supervised gate rejection evidence");
         const rejected = await driver.abort(p, {

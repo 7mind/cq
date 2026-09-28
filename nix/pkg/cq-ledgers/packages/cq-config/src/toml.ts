@@ -79,6 +79,8 @@ export interface RawDispatch {
 export interface RawGate {
   readonly argv: unknown;
   readonly cwd: unknown;
+  readonly passCountPattern: unknown;
+  readonly failCountPattern: unknown;
 }
 
 /** The raw `[upstream]` table; cells stay untyped for parseConfig. */
@@ -312,7 +314,7 @@ function parseDispatchRaw(value: unknown): RawDispatch {
   };
 }
 
-const ALLOWED_GATE_KEYS = new Set(["argv", "cwd"]);
+const ALLOWED_GATE_KEYS = new Set(["argv", "cwd", "passCountPattern", "failCountPattern"]);
 
 function parseGateRaw(value: unknown): RawGate {
   if (!isTable(value)) throw new TomlSyntaxError("[gate] must be a table");
@@ -321,7 +323,10 @@ function parseGateRaw(value: unknown): RawGate {
       throw new TomlSyntaxError(`unexpected key "${key}" in [gate]`);
     }
   }
-  return { argv: value.argv, cwd: value.cwd };
+  return {
+    argv: value.argv, cwd: value.cwd,
+    passCountPattern: value.passCountPattern, failCountPattern: value.failCountPattern,
+  };
 }
 
 const ALLOWED_UPSTREAM_KEYS = new Set(["filing", "recheck"]);

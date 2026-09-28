@@ -18,24 +18,24 @@ const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
 const IMPLEMENT_ADVANCE = "commands/cq/implement/advance.md";
 const CLAUDE_POINTER =
   "Tasks that declare an expected failure follow §6a of\n  `nix/pkg/cq-assets/commands/cq/implement/advance.md`; the production scanner\n  and committed inventory enforce its marker convention.";
-const SUCCESS_SECTION_SHA256 = "9387fb73591c4a6c1b25e0e0572832b51133be08d03501ade6af126982f8cffd";
+const SUCCESS_SECTION_SHA256 = "15068e5f1d9209ec4a1f09f73f76aab43a31d040083bbae8a1146c5a54996a06";
 const SINGLETON_SENTENCES = [
   "§6a governs only a task that declares an expected failure.",
-  "Form (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.",
+  "Form (a), inversion marker: use the project's test runner's own inversion for an in-suite assertion (for example `test.failing`, strict `pytest.mark.xfail`, or `#[should_panic]`).",
   "Form (b), subprocess exit-code assertion: spawn the failing tool as a child and assert its non-zero exit code and output.",
   "Form (c), green-on-arrival discriminating control: exercise the same detector with paired inputs or a pure mutation while the task's gate stays green.",
 ] as const;
 const ROLE_BLOCKS = {
   "agents/implement-worker.md":
-    "**Expected-failure tasks.** A task that declares an expected failure follows\n   §6a of the implementation orchestrator. Forms (a) and (b) carry the required\n   annotation, live marker, and inventory entry; form (c) needs no marker. A fix\n   replaces the marker with a same-titled plain test and removes its annotation\n   and inventory entry. Never use a red full gate as expected-failure evidence.",
+    "**Expected-failure tasks.** A task that declares an expected failure follows\n   \u00a76a of the implementation orchestrator. Forms (a) and (b) carry whatever\n   marker the project's own expected-failure convention requires; form (c)\n   needs no marker. A fix replaces the expected-failure test with a same-titled\n   plain test and removes every marker that convention required. Never use a\n   red full gate as expected-failure evidence.",
   "agents/implement-reviewer.md":
-    "For a task that declares an expected failure, apply §6a of the implementation\norchestrator. Forms (a) and (b) require the annotation, live marker, and\ninventory entry; form (c) needs no marker. A completed fix replaces the marker\nwith a same-titled plain test and removes the annotation and inventory entry.\nReject co-deletion of that triple when no same-titled plain test remains, and\nnever approve a red full gate.",
+    "For a task that declares an expected failure, apply \u00a76a of the implementation\norchestrator. Forms (a) and (b) require whatever marker the project's own\nexpected-failure convention requires; form (c) needs no marker. A completed fix\nreplaces the expected-failure test with a same-titled plain test and removes\nevery marker that convention required. Reject removal of the expected-failure\ntest and its markers when no same-titled plain test remains, and never approve\na red full gate.",
   "commands/cq/implement-review.md":
-    "For a task that declares an expected failure, apply §6a of the implementation\norchestrator. Forms (a) and (b) require the annotation, live marker, and\ninventory entry; form (c) needs no marker. A completed fix replaces the marker\nwith a same-titled plain test and removes the annotation and inventory entry.\nReject co-deletion of that triple when no same-titled plain test remains, and\nnever approve a red full gate.",
+    "For a task that declares an expected failure, apply \u00a76a of the implementation\norchestrator. Forms (a) and (b) require whatever marker the project's own\nexpected-failure convention requires; form (c) needs no marker. A completed fix\nreplaces the expected-failure test with a same-titled plain test and removes\nevery marker that convention required. Reject removal of the expected-failure\ntest and its markers when no same-titled plain test remains, and never approve\na red full gate.",
   "commands/cq/plan-review.md":
-    "When a task declares an expected failure, require §6a of the implementation\norchestrator. Forms (a) and (b) use the annotation, live marker, and inventory\nentry; form (c) needs no marker. The planned fix must replace a marker with a\nsame-titled plain test and remove the annotation and inventory entry. Reject a\nplan that permits triple co-deletion without that plain test or requires a red\nfull gate.",
+    "When a task declares an expected failure, require \u00a76a of the implementation\norchestrator. Forms (a) and (b) use whatever marker the project's own\nexpected-failure convention requires; form (c) needs no marker. The planned fix\nmust replace the expected-failure test with a same-titled plain test and remove\nevery marker that convention required. Reject a plan that removes the\nexpected-failure test without that plain test or requires a red full gate.",
   "agents/plan-advance.md":
-    "When a task declares an expected failure, follow §6a of the implementation\norchestrator. Forms (a) and (b) use the annotation, live marker, and inventory\nentry; form (c) needs no marker. Plan the fix to replace a marker with a\nsame-titled plain test and remove the annotation and inventory entry. Never\nplan triple co-deletion without that plain test or require a red full gate.",
+    "When a task declares an expected failure, follow \u00a76a of the implementation\norchestrator. Forms (a) and (b) use whatever marker the project's own\nexpected-failure convention requires; form (c) needs no marker. Plan the fix to\nreplace the expected-failure test with a same-titled plain test and remove every\nmarker that convention required. Never plan removing the expected-failure test\nwithout that plain test, and never require a red full gate.",
 } as const;
 const CONCRETE_PROVENANCE = /\b(?:D|G|H|I|K|M|Q|R|RS|T)\d+(?:[-/][A-Za-z0-9]+)*\b/;
 const roots: string[] = [];

@@ -5,7 +5,8 @@ import {
   releaseWorktreeGate,
   type WorktreeGateLease,
 } from "@cq/process-control";
-import { DISPATCH_UTC_TIMESTAMP_PATTERN } from "@cq/config";
+import { dirname, join } from "node:path";
+import { DISPATCH_UTC_TIMESTAMP_PATTERN, requireProjectGate, resolveProjectGateForRoot } from "@cq/config";
 import {
   runGateGitEffect,
   type GateGitEffectRequest,
@@ -21,10 +22,14 @@ export interface GateRunOutcome {
 
 interface ParsedGateRun {
   readonly worktree: string;
-  readonly commandCwd: string;
   readonly deadlineMs?: number;
-  readonly command: readonly string[];
+  readonly target: GateRunTarget;
 }
+
+/** An explicit command, or (D566/D575) the gate the project declares in cq.toml. */
+type GateRunTarget =
+  | { readonly kind: "explicit"; readonly commandCwd: string; readonly command: readonly string[] }
+  | { readonly kind: "project" };
 
 export interface GateRunDependencies {
   readonly gitEffect?: (request: GateGitEffectRequest) => Promise<GateRunOutcome>;
@@ -44,16 +49,19 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
   if (argv[0] !== "run") {
     throw new Error("cq gate: expected `run`");
   }
-  const separator = argv.indexOf("--");
+  const projectGate = argv.slice(1, argv.includes("--") ? argv.indexOf("--") : argv.length).includes("--project-gate");
+  if (projectGate && argv.includes("--")) throw new Error("cq gate run: --project-gate takes no command");
+  const separator = projectGate ? argv.length : argv.indexOf("--");
   if (separator < 0) throw new Error("cq gate run: expected `--` before the command");
   const command = argv.slice(separator + 1);
-  if (command.length === 0) throw new Error("cq gate run: command after `--` must not be empty");
+  if (!projectGate && command.length === 0) throw new Error("cq gate run: command after `--` must not be empty");
 
   let worktree: string | undefined;
   let commandCwd: string | undefined;
   let deadlineMs: number | undefined;
   for (let index = 1; index < separator; index += 1) {
     const argument = argv[index];
+    if (argument === "--project-gate") continue;
     if (argument === "--worktree" || argument === "--command-cwd" || argument === "--deadline") {
       const value = argv[index + 1];
       if (value === undefined || index + 1 >= separator) {
@@ -76,10 +84,32 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
   if (worktree === undefined || worktree === "") {
     throw new Error("cq gate run: --worktree is required");
   }
+  const deadline = deadlineMs === undefined ? {} : { deadlineMs };
+  if (projectGate) {
+    if (commandCwd !== undefined) throw new Error("cq gate run: --project-gate takes its cwd from [gate]");
+    return { worktree, ...deadline, target: { kind: "project" } };
+  }
   if (commandCwd === undefined || commandCwd === "") {
     throw new Error("cq gate run: --command-cwd is required");
   }
-  return { worktree, commandCwd, ...(deadlineMs === undefined ? {} : { deadlineMs }), command };
+  return { worktree, ...deadline, target: { kind: "explicit", commandCwd, command } };
+}
+
+/**
+ * The declared gate, read from the PRIMARY checkout's cq.toml: a linked
+ * worktree does not carry the untracked, repository-local configuration.
+ */
+function resolveDeclaredGateTarget(worktree: string): { readonly commandCwd: string; readonly command: readonly string[] } {
+  const common = Bun.spawnSync(["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common.exitCode !== 0) {
+    throw new Error(`cq gate run: --project-gate cannot resolve the repository of ${worktree}: ${common.stderr.toString().trim()}`);
+  }
+  const commonDir = common.stdout.toString().trim();
+  if (!commonDir.endsWith("/.git")) {
+    throw new Error(`cq gate run: --project-gate requires a non-bare repository; git common dir is ${commonDir}`);
+  }
+  const gate = requireProjectGate(resolveProjectGateForRoot(dirname(commonDir)));
+  return { commandCwd: join(worktree, gate.cwd), command: gate.argv };
 }
 
 function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
@@ -168,9 +198,10 @@ export async function runGateRun(
     return await (dependencies.gitEffect ?? runGateGitEffect)(request);
   }
   const parsed = parseGateRun(argv);
+  const target = parsed.target.kind === "explicit" ? parsed.target : resolveDeclaredGateTarget(parsed.worktree);
   let lease: WorktreeGateLease | null = await acquireWorktreeGate({
     worktree: parsed.worktree,
-    commandCwd: parsed.commandCwd,
+    commandCwd: target.commandCwd,
   });
   try {
     if (deadlineReached(parsed.deadlineMs)) {
@@ -178,7 +209,7 @@ export async function runGateRun(
       lease = null;
       return { exitCode: GATE_DEADLINE_EXIT_CODE };
     }
-    const launched = await launchRegisteredGateCommand(lease, parsed.command);
+    const launched = await launchRegisteredGateCommand(lease, target.command);
     if (deadlineReached(parsed.deadlineMs)) {
       await closeWorktreeGate(lease);
       lease = null;

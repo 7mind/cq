@@ -17,6 +17,8 @@ import {
   isAttestationTombstone,
   serializeWipArtifact,
   sequentialDispatchRandomBytes,
+  implementWorkerGateCommandLine,
+  type ProjectGateSpecification,
   type AttestationEnvelope,
   type AttestationNamespace,
   type DispatchJSONValue,
@@ -497,6 +499,7 @@ async function fixtureWithDispatchBase(
   validationIntent: "final" | "focused-only" = "final",
   prepareForm: "inline" | "refs" = "inline",
   ledgerStoreOverride?: LedgerStore,
+  projectGate?: ProjectGateSpecification,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -606,6 +609,7 @@ async function fixtureWithDispatchBase(
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
+    ...(projectGate === undefined ? {} : { projectGate }),
     now,
     randomBytes: sequentialDispatchRandomBytes(sequence * 32),
   };
@@ -2746,6 +2750,82 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       }),
     ).resolves.toMatchObject({ state: "output-already-materialized" });
     expect(runner.requests).toHaveLength(1);
+  });
+
+  /** Stage and qualify one candidate under `declared`; return the subject and its queue partition. */
+  async function qualifyUnder(declared: ProjectGateSpecification, runner: SupervisedWorkerGateRunner) {
+    const subject = await fixtureWithDispatchBase(
+      runner, "managed", () => "2026-08-12T20:00:00.000Z", false, true,
+      undefined, artifactStore(), "memory", "final", "inline", undefined, declared,
+    );
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    if (
+      subject.capability.qualifyImplementationCandidate === undefined ||
+      subject.capability.coordinateImplementationCandidate === undefined
+    ) {
+      throw new Error("implementation candidate runtime is unavailable");
+    }
+    const qualified = await subject.capability.qualifyImplementationCandidate({
+      attestationId: subject.prepared.attestationId,
+      generation: subject.prepared.generation,
+      roleId: "implement-worker",
+      correlationId: subject.expectedChild.childId.slice("implement-worker#".length),
+      childThreadId: "managed-child-thread",
+      expectedRunId: subject.expectedChild.runId,
+      outcome: "completed",
+      exitStatus: 0,
+      observedAt: "2026-08-12T20:00:02.000Z",
+      promptDigest: subject.prepared.promptProvenance.promptDigest,
+    });
+    if (qualified.state !== "queued") throw new Error("candidate did not qualify");
+    return { subject, coordinate: subject.capability.coordinateImplementationCandidate, partitionKey: qualified.partitionKey };
+  }
+
+  /** Stage, qualify and coordinate one candidate under `declared`; return its consumed row. */
+  async function coordinateUnder(declared: ProjectGateSpecification, runner: SupervisedWorkerGateRunner) {
+    const { subject, coordinate, partitionKey } = await qualifyUnder(declared, runner);
+    expect(await coordinate({ partitionKey, holderId: "production-coordinator" })).toMatchObject({ state: "completed" });
+    const row = subject.store.rows()[0];
+    if (row === undefined || isAttestationTombstone(row) || row.implementationQueue === undefined ||
+        !("attempt" in row.implementationQueue)) {
+      throw new Error("consumed candidate queue row is unavailable");
+    }
+    return { row, queue: row.implementationQueue };
+  }
+
+  // regression: D566 — the evidence names the gate that ran, not CQ's own `bun run check`.
+  test("a declared non-canonical gate is what the queue and the runner-minted evidence record [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const declared: ProjectGateSpecification = { argv: ["make", "check"], cwd: ".", passCountPattern: null, failCountPattern: null };
+    const { row, queue } = await coordinateUnder(declared, new GateDummy());
+    const expected = implementWorkerGateCommandLine(declared);
+    expect(expected).toBe('cq gate run --worktree "$PWD" --command-cwd "$PWD" -- make check');
+    expect(queue.attempt.gateCommand).toBe(expected);
+    expect(row.output).toMatchObject({ supervisedGateEvidence: { command: expected } });
+  });
+
+  test("a red gate's rejection names the declared gate, as bound by the queue [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const declared: ProjectGateSpecification = { argv: ["make", "check"], cwd: ".", passCountPattern: null, failCountPattern: null };
+    const runner = new GateDummy({
+      gateExitCode: 2, passCount: 0, failCount: 1, gateDurationMs: 50,
+      capturedAt: "2026-08-12T20:00:01.000Z", outputTail: "make: *** [check] Error 2",
+    });
+    const { subject, coordinate, partitionKey } = await qualifyUnder(declared, runner);
+    await expect(coordinate({ partitionKey, holderId: "production-coordinator" })).rejects.toThrow();
+    const row = subject.store.rows()[0];
+    if (row === undefined || isAttestationTombstone(row)) throw new Error("rejected candidate row is unavailable");
+    expect(row).toMatchObject({ state: "aborted", abortReason: "gate-rejected" });
+    expect(row.abortDetails).toMatchObject({ command: implementWorkerGateCommandLine(declared), gateExitCode: 2 });
+  });
+
+  // regression: D568 — without a declared count rule a green exit is not a zero-test rejection.
+  test("a green gate with no declared count rule is accepted with no counted passes [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const declared: ProjectGateSpecification = { argv: ["cargo", "test"], cwd: ".", passCountPattern: null, failCountPattern: null };
+    const runner = new GateDummy({
+      gateExitCode: 0, passCount: 0, failCount: 0, gateDurationMs: 50,
+      capturedAt: "2026-08-12T20:00:01.000Z", outputTail: "test result: ok. 7 passed; 0 failed",
+    });
+    const { row } = await coordinateUnder(declared, runner);
+    expect(row).toMatchObject({ state: "consumed", output: { supervisedGateEvidence: { gateExitCode: 0, passCount: 0, failCount: 0 } } });
   });
 
   // regression: D497 — a child PASS is not parent authority to broaden focused validation.

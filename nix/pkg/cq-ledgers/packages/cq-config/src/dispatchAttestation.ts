@@ -3832,8 +3832,16 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   return consumed;
 }
 
-function assertSupervisedGateRejectionDetails(value: DispatchJSONValue | undefined): void {
+function assertSupervisedGateRejectionDetails(
+  value: DispatchJSONValue | undefined,
+  row: AttestationEnvelope,
+): void {
   if (!isImplementWorkerSupervisedGateRejectionDetails(value)) {
+    throw new AttestationContractError("details", "invalid supervised gate rejection evidence");
+  }
+  // D566: a queued candidate recorded the project's gate command; the rejection must name it.
+  const queue = row.implementationQueue;
+  if (queue !== undefined && "attempt" in queue && value.command !== queue.attempt.gateCommand) {
     throw new AttestationContractError("details", "invalid supervised gate rejection evidence");
   }
 }
@@ -3874,7 +3882,7 @@ function writeAbort(
         "gate-rejected requires a claimed supervised parent gate",
       );
     }
-    assertSupervisedGateRejectionDetails(details);
+    assertSupervisedGateRejectionDetails(details, row);
   }
   const terminalDigest = terminalDigestOf("aborted", {
     reason,
@@ -5190,7 +5198,7 @@ export function requestParentGateCancellation(
   if (row.state !== "gate-running" || row.parentGateCapabilityHash === undefined) {
     return Object.freeze({ state: "not-running" as const });
   }
-  if (reason === "gate-rejected") assertSupervisedGateRejectionDetails(details);
+  if (reason === "gate-rejected") assertSupervisedGateRejectionDetails(details, row);
   const existing = row.parentGateCancellationRequest;
   if (existing !== undefined) {
     const sameReason = existing.reason === reason;

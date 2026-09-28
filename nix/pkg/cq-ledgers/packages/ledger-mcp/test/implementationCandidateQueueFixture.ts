@@ -1,3 +1,4 @@
+import { CANONICAL_PROJECT_GATE } from "@cq/config";
 import {
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
@@ -79,6 +80,7 @@ export class ImplementationCandidateQueueFixture {
       backend,
       actor: "trusted-parent",
       now: this.clock.now,
+      projectGate: CANONICAL_PROJECT_GATE,
     });
   }
 

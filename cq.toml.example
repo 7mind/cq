@@ -360,6 +360,17 @@ planners = ["opus"]
 #   argv — the command as a non-empty array of non-empty strings.
 #   cwd  — the directory to run it from, relative to the worktree root
 #          (optional, default: the worktree root); it must not escape it.
+#   passCountPattern — OPTIONAL regex whose first group is the passed-test
+#          count in the gate's output. When declared, a green exit with no
+#          counted pass is rejected as a zero-test run; when absent, the exit
+#          status alone decides and evidence records passCount = 0 (D568).
+#   failCountPattern — OPTIONAL regex whose first group is the failed-test
+#          count; when absent, failure is derived from the exit status.
+#
+# CQ's own repository (Bun) declares:
+#   passCountPattern = '(?:^|\n)\s*([0-9]+)\s+pass\b'
+#   failCountPattern = '(?:^|\n)\s*([0-9]+)\s+fail\b'
+# pytest would use '([0-9]+) passed' and '([0-9]+) failed'.
 #
 # Example (COMMENTED OUT — uncomment and replace with your own check):
 #

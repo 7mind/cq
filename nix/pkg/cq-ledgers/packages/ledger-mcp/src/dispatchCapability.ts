@@ -9,7 +9,7 @@ import {
   IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
-  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  implementWorkerGateCommandLine,
   implementWorkerSupervisedGateEvidenceSchema,
   isImplementWorkerSupervisedGateRejectionDetails,
   IDEMPOTENCY_HORIZON_MS,
@@ -2946,6 +2946,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         {
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           runner: supervisedWorkerGateRunner,
+          gate: requireProjectGate(projectGate),
           cancellationSignal: cancellation.signal,
           ...(cohortAuthority === undefined ? {} : { cohortAuthority,
             effectAdmission: { provider: createCohortWorksetEffectAdmissionProvider(cohortAuthority, workset!),
@@ -3064,6 +3065,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     backend: options.backend,
     actor: "trusted-extension",
     now,
+    projectGate,
   });
 
   async function isQualifiedImplementationFrontSettled(input: {
@@ -6150,7 +6152,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             binding.baseCommit,
           resultCommit,
           resultTree,
-          gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          gateCommand: implementWorkerGateCommandLine(requireProjectGate(projectGate)),
           packagedEnvironmentDigest: row.promptProvenance.catalogHash,
           gitReceipts: gitReceipts as unknown as readonly GitChangeBrokerReceipt[],
           gitEffectBinding: binding,
@@ -6795,6 +6797,7 @@ function available(
 async function resolveLegacyImplementationQueueRow(
   row: AttestationEnvelope,
   ledgerStore: LedgerStore,
+  projectGate: ProjectGateSpecification | null,
 ): Promise<LegacyImplementationResolution> {
   const incompatible = (reason: string, detail?: string): LegacyImplementationResolution => ({
     state: "incompatible",
@@ -6803,6 +6806,7 @@ async function resolveLegacyImplementationQueueRow(
       ...(detail === undefined ? {} : { detail: detail.slice(0, 512) }),
     },
   });
+  if (projectGate === null) return incompatible("project-gate-undeclared");
   const binding = row.gitEffectBinding;
   if (binding === undefined || row.promptProvenance.roleId !== "implement-worker") {
     return incompatible("managed-worktree-binding-unavailable");
@@ -6916,7 +6920,7 @@ async function resolveLegacyImplementationQueueRow(
           binding.baseCommit,
         resultCommit,
         resultTree,
-        gateCommand: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+        gateCommand: implementWorkerGateCommandLine(projectGate),
         packagedEnvironmentDigest: row.promptProvenance.catalogHash,
         gitReceipts: normalized.gitReceipts,
         gitEffectBinding: binding,
@@ -7056,6 +7060,7 @@ export async function createSingleProjectDispatchRuntime(
     ...(options.environment === undefined ? {} : { env: options.environment }),
   });
 
+  const projectGate = resolveProjectGateForRoot(options.resolved.configRoot);
   let implementationQueueRollout: UpgradeLiveImplementationQueueSummary | null = null;
   if (options.resolved.implementationEvidenceStore !== undefined) {
     try {
@@ -7063,7 +7068,7 @@ export async function createSingleProjectDispatchRuntime(
         backend: attestationBackend,
         now: () => new Date().toISOString(),
         resolve: async (row) =>
-          await resolveLegacyImplementationQueueRow(row, options.resolved.store),
+          await resolveLegacyImplementationQueueRow(row, options.resolved.store, projectGate),
         withProtectedManagedWorktree: async (binding, operation) =>
           await withManagedWorktreeEffectLock(binding, {}, async () => {
             if (binding.cohort !== undefined) return { state: "incompatible" as const,
@@ -7102,7 +7107,7 @@ export async function createSingleProjectDispatchRuntime(
     options.implementationSuccessorLauncher,
     options.implementationSuccessorStarter,
     options.supervisedWorkerGateRunner,
-    resolveProjectGateForRoot(options.resolved.configRoot),
+    projectGate,
     options.targetPromptArtifactStores,
   );
 }

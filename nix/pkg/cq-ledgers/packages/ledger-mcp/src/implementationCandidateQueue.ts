@@ -1,7 +1,9 @@
 import {
+  AttestationBindingError,
   acquireImplementationCandidateOn,
   dispatchPayloadDigest,
   enqueueImplementationCandidateOn,
+  implementWorkerGateCommandLine,
   isAttestationTombstone,
   parkDispatchStagedRebaseConflictOn,
   parkImplementationCandidateOn,
@@ -11,6 +13,7 @@ import {
   releaseImplementationCompletionLeaseOn,
   releaseOrphanedImplementationLeaseOn,
   reserveImplementationCompletionLeaseOn,
+  requireProjectGate,
   resumeImplementationCandidateOn,
   retireDispatchStagedRebaseSourceOn,
   terminalizeImplementationCandidateOn,
@@ -24,6 +27,7 @@ import {
   type ImplementationQueueLeaseBinding,
   type NativeChildIdentity,
   type NativeCompletionProof,
+  type ProjectGateSpecification,
   type QualifyDispatchStagedCompletionOutcome,
   type ReleaseImplementationCompletionLeaseRequest,
   type ReserveImplementationCompletionLeaseRequest,
@@ -74,6 +78,8 @@ export interface ImplementationCandidateQueueAdapterOptions {
   readonly backend: AttestationBackend;
   readonly actor: TrustedQueueActor;
   readonly now: () => string;
+  /** D566: a candidate must name this project gate; null (undeclared) refuses every candidate. */
+  readonly projectGate: ProjectGateSpecification | null;
 }
 
 export const IMPLEMENTATION_CANDIDATE_HEAD_OF_LINE_POLICIES = Object.freeze({
@@ -108,16 +114,21 @@ export class ImplementationCandidateQueueAdapter {
   private readonly backend: AttestationBackend;
   private readonly actor: TrustedQueueActor;
   private readonly now: () => string;
+  private readonly projectGate: ProjectGateSpecification | null;
 
   constructor(options: ImplementationCandidateQueueAdapterOptions) {
     this.backend = options.backend;
     this.actor = options.actor;
     this.now = options.now;
+    this.projectGate = options.projectGate;
   }
 
   async qualifyNativeCompletion(
     request: QualifyNativeImplementationCandidateRequest,
   ): Promise<QualifiedImplementationCandidate> {
+    if (request.candidate.gateCommand !== implementWorkerGateCommandLine(requireProjectGate(this.projectGate))) {
+      throw new AttestationBindingError("gateCommand", "implementation queue requires the project's gate command");
+    }
     const queue = await enqueueImplementationCandidateOn(
       this.backend,
       {

@@ -44,8 +44,8 @@ incompatibility to the parent; do not split or redefine the cohort yourself.
 
 For a cohort, the child is **stage-only**: require the supplied Git broker,
 run focused checks, retain its exact version-2 full-cohort receipts, and hand
-off the clean candidate through `store_result`. Never invoke `cq gate run`,
-`bun run check`, or another full gate, even on a native surface. There is no
+off the clean candidate through `store_result`. Never invoke `cq gate run`
+or any other full gate, even on a native surface. There is no
 legacy in-child gate fallback for a cohort. Omit `gateDurationMs` and
 `supervisedGateEvidence`; neither is child-owned. A final candidate's matching
 `gate-pending` acknowledgement is the durable handoff, not a claim that full
@@ -223,10 +223,11 @@ receipt path union.
    status alone never proves it ran.
 
    **Expected-failure tasks.** A task that declares an expected failure follows
-   §6a of the implementation orchestrator. Forms (a) and (b) carry the required
-   annotation, live marker, and inventory entry; form (c) needs no marker. A fix
-   replaces the marker with a same-titled plain test and removes its annotation
-   and inventory entry. Never use a red full gate as expected-failure evidence.
+   §6a of the implementation orchestrator. Forms (a) and (b) carry whatever
+   marker the project's own expected-failure convention requires; form (c)
+   needs no marker. A fix replaces the expected-failure test with a same-titled
+   plain test and removes every marker that convention required. Never use a
+   red full gate as expected-failure evidence.
 
 5. **Obtain the parent-selected validation.** A `focused-only` dispatch reports
    non-empty `focusedChecks` with exact command, exit code, pass count, and fail
@@ -253,9 +254,9 @@ receipt path union.
    dirty, moved-tip, or replayed attempt fails storage and cannot yield
    `result-stored`.
 
-   On a task dispatch without `gitChangeCapability`, run the full gate in the
-   foreground from the worktree root exactly as
-   `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
+   On a task dispatch without `gitChangeCapability`, run the project's declared
+   full gate in the foreground from the worktree root exactly as
+   `cq gate run --worktree "$PWD" --project-gate`.
    A yielded command-session handle remains the sole full-gate attempt. Continue
    to poll that exact session or explicitly terminate it; after termination,
    continue polling and require terminal settlement before retrying the gate,

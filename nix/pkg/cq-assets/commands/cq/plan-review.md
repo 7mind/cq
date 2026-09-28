@@ -24,11 +24,11 @@ repository. Judge:
 - completeness against the goal.
 
 When a task declares an expected failure, require §6a of the implementation
-orchestrator. Forms (a) and (b) use the annotation, live marker, and inventory
-entry; form (c) needs no marker. The planned fix must replace a marker with a
-same-titled plain test and remove the annotation and inventory entry. Reject a
-plan that permits triple co-deletion without that plain test or requires a red
-full gate.
+orchestrator. Forms (a) and (b) use whatever marker the project's own
+expected-failure convention requires; form (c) needs no marker. The planned fix
+must replace the expected-failure test with a same-titled plain test and remove
+every marker that convention required. Reject a plan that removes the
+expected-failure test without that plain test or requires a red full gate.
 
 Classify each finding once:
 

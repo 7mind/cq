@@ -426,7 +426,7 @@ fallback exists.
    invalidate the earlier seal; never report an earlier artifact as final proof.
 6. The trusted queue-front coordinator runs the frozen ladder: every distinct
    member-focused command, then the selected shared-regression command, then
-   one canonical full gate (`bun run check`). A shared boundary never collapses
+   one full gate (the project's declared `[gate]`). A shared boundary never collapses
    different focused commands. Deduplicate only exact covered executions and
    reuse only matching green sealed-subject receipts. Red focused/shared work
    stops before the full gate; red canonical evidence routes to correction,
@@ -777,8 +777,9 @@ A task may merge only when all of these hold:
 
 Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the
 median for earlier rounds of this same task as implausible. Apply this check
-only to the legacy in-child arm. Re-run `bun run check` in the foreground and
-use its real exit status. If that cannot be done, fail closed. Runner-owned
+only to the legacy in-child arm. Re-run the project's declared gate
+(`cq gate run --worktree <worktree> --project-gate`) in the foreground and use
+its real exit status. If that cannot be done, fail closed. Runner-owned
 `supervisedGateEvidence` carries its measured duration and does not use this
 caller-plausibility heuristic.
 
@@ -809,7 +810,7 @@ merge. Any failure is a contract breach and forbids merge-back.
 
 §6a governs only a task that declares an expected failure.
 
-Form (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.
+Form (a), inversion marker: use the project's test runner's own inversion for an in-suite assertion (for example `test.failing`, strict `pytest.mark.xfail`, or `#[should_panic]`).
 
 Form (b), subprocess exit-code assertion: spawn the failing tool as a child and assert its non-zero exit code and output.
 

@@ -366,6 +366,10 @@ export interface GateConfig {
   readonly argv: readonly string[];
   /** Directory the command runs in, RELATIVE to the managed worktree root. */
   readonly cwd: string;
+  /** D568: regex whose first group is the passed-test count; null lets the exit status decide alone. */
+  readonly passCountPattern: string | null;
+  /** D568: regex whose first group is the failed-test count; null derives failure from the exit status. */
+  readonly failCountPattern: string | null;
 }
 
 /** Kill-switch value for `[upstream]` filing and recheck (Q336). */

@@ -20,6 +20,7 @@ import {
   PROJECT_GATE_ROOT_CWD,
   requireProjectGate,
   resolveProjectGateForRoot,
+  type ProjectGateSpecification,
 } from "@cq/config";
 import { createNodeSupervisedWorkerGateRunner } from "../src/supervisedWorkerGate.js";
 
@@ -92,7 +93,7 @@ describe("D403 a root-level gate must be runnable, not just parseable", () => {
     settleProcessGroups: async () => settled,
   };
 
-  async function runGateIn(root: string, gate: { argv: readonly string[]; cwd: string }) {
+  async function runGateIn(root: string, gate: ProjectGateSpecification) {
     const worktree = await fs.mkdtemp(path.join(tmpdir(), "cq-gate-worktree-"));
     dirs.push(worktree);
     // A shim `cq` that records the argv it was launched with and exits clean.
@@ -132,5 +133,54 @@ describe("D403 a root-level gate must be runnable, not just parseable", () => {
     const commandCwd = argv[argv.indexOf("--command-cwd") + 1];
     const worktree = argv[argv.indexOf("--worktree") + 1];
     expect(await fs.realpath(commandCwd!)).toBe(await fs.realpath(worktree!));
+  }, 60_000);
+
+  /** Run `gate` through a shim `cq` that prints `output` and exits `exitCode`. */
+  async function runGatePrinting(gate: ProjectGateSpecification, output: string, exitCode: number) {
+    const worktree = await fs.mkdtemp(path.join(tmpdir(), "cq-gate-counts-"));
+    dirs.push(worktree);
+    const bin = path.join(worktree, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    const printed = path.join(worktree, "output.txt");
+    await fs.writeFile(printed, output);
+    await fs.writeFile(
+      path.join(bin, "cq"),
+      ['#!/bin/sh', `cat ${JSON.stringify(printed)}`, `exit ${String(exitCode)}`, ''].join("\n"),
+    );
+    await fs.chmod(path.join(bin, "cq"), 0o700);
+    const priorPath = process.env["PATH"];
+    process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+    try {
+      return await createNodeSupervisedWorkerGateRunner(settlement, gate).run({
+        worktreePath: worktree,
+        admissionTimeoutMs: 30_000,
+        executionTimeoutMs: 60_000,
+        cancellationSignal: new AbortController().signal,
+      });
+    } finally {
+      if (priorPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = priorPath;
+    }
+  }
+
+  // regression: D568 — counts come from the project's declared rule, not Bun's summary format.
+  test("a declared pytest count rule reads pytest's summary [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const pytest: ProjectGateSpecification = {
+      argv: ["pytest"], cwd: ".",
+      passCountPattern: String.raw`([0-9]+) passed`, failCountPattern: String.raw`([0-9]+) failed`,
+    };
+    const run = await runGatePrinting(pytest, "===== 42 passed in 0.10s =====\n", 0);
+    expect({ exit: run.gateExitCode, pass: run.passCount, fail: run.failCount }).toEqual({ exit: 0, pass: 42, fail: 0 });
+    const red = await runGatePrinting(pytest, "===== 2 failed, 40 passed in 0.10s =====\n", 1);
+    expect({ pass: red.passCount, fail: red.failCount }).toEqual({ pass: 40, fail: 2 });
+  }, 60_000);
+
+  test("with no declared count rule the exit status alone decides [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const cargo: ProjectGateSpecification = { argv: ["cargo", "test"], cwd: ".", passCountPattern: null, failCountPattern: null };
+    // `0 fail`-shaped text must not be read through a rule nobody declared.
+    const run = await runGatePrinting(cargo, "test result: ok. 7 passed; 0 failed\n 3 fail\n", 0);
+    expect({ exit: run.gateExitCode, pass: run.passCount, fail: run.failCount }).toEqual({ exit: 0, pass: 0, fail: 0 });
+    const red = await runGatePrinting(cargo, "test result: FAILED\n", 101);
+    expect(red.failCount).toBe(1);
   }, 60_000);
 });

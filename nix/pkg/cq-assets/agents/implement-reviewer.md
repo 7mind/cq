@@ -35,7 +35,7 @@ disapprove the cohort with precise member-specific criticism.
 
 A cohort requires runner-owned version-2 `supervisedGateEvidence` whose
 `evidenceSubject` exactly equals `cohort.evidenceSubject`, plus the exact
-candidate commit, branch, worktree, canonical command and positive green
+candidate commit, branch, worktree, the project's gate command and green
 counts. Never substitute a task's evidence or a different seal. Set
 `gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, and omit
 `gateDurationMs`. Never run another full gate for a cohort. Missing or invalid
@@ -94,8 +94,10 @@ practical, and verify or re-run the gate as below.
 require its strict versioned schema and verify that its task-arm `taskId` or
 cohort-arm `evidenceSubject`,
 `resultCommit`, `branch`, and `worktreePath` exactly match this review input.
-Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
-`passCount > 0`, `clean === true`, and `roleId === "implement-worker"`. A
+Also require a non-empty runner-recorded `command` (the project's declared
+gate), `gateExitCode === 0`, `failCount === 0`, `clean === true`, and
+`roleId === "implement-worker"`. The runner already applied the project's
+test-count rule; `passCount` is zero when the project declares none. A
 task arm additionally requires `surface === "codex"`; the runner supervises a
 cohort arm's worker on every surface, so a cohort arm accepts any `surface`.
 Reject caller substitutions or incomplete evidence.
@@ -119,7 +121,7 @@ sandboxed path where gate primitives are denied):
 For a task arm only, when both evidence fields are absent, re-run the gate yourself. Use the
 foreground process's real exit status and measure its duration. Invoke that
 gate as
-`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.
+`cq gate run --worktree <worktree> --project-gate --deadline <gateCompleteBy>`.
 The deadline path terminates and settles the registered command before it
 returns; measure `gateDurationMs` through that termination and settlement.
 Non-sandboxed reviewers take the same trusted-evidence path and rerun only when
@@ -132,11 +134,12 @@ target that no longer exists, or that the runner silently skipped, leaves that
 acceptance clause unmet even when the command exits zero.
 
 For a task that declares an expected failure, apply §6a of the implementation
-orchestrator. Forms (a) and (b) require the annotation, live marker, and
-inventory entry; form (c) needs no marker. A completed fix replaces the marker
-with a same-titled plain test and removes the annotation and inventory entry.
-Reject co-deletion of that triple when no same-titled plain test remains, and
-never approve a red full gate.
+orchestrator. Forms (a) and (b) require whatever marker the project's own
+expected-failure convention requires; form (c) needs no marker. A completed fix
+replaces the expected-failure test with a same-titled plain test and removes
+every marker that convention required. Reject removal of the expected-failure
+test and its markers when no same-titled plain test remains, and never approve
+a red full gate.
 
 If the phase expires before a complete acceptance verdict can be established,
 store a disapproval before `responseStoreNow` whose sole criticism is exactly

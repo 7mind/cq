@@ -476,6 +476,7 @@ export {
   IMPLEMENT_WORKER_VALIDATION_INTENTS,
   IMPLEMENT_WORKER_FULL_SHA_PATTERN,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  implementWorkerGateCommandLine,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
   IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
   IMPLEMENT_WORKER_SUPERVISED_GATE_DIAGNOSTIC_FIELD_BYTE_LIMIT,
@@ -483,6 +484,7 @@ export {
   IMPLEMENT_WORKER_SUPERVISED_GATE_KIND,
   IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS,
   TEST_GUARD_GLOBS,
+  isTestOrGuardPath,
   implementWorkerBaseVerificationSchema,
   implementWorkerVerifiedBaseVerificationSchema,
   implementWorkerUnresolvableBaseVerificationSchema,
@@ -1359,6 +1361,8 @@ export {
 } from "./dispatchAttestationPostgres.js";
 export {
   CANONICAL_PROJECT_GATE,
+  GATE_COUNT_PATTERN_FLAGS,
+  gateCountPatternError,
   PROJECT_GATE_ROOT_CWD,
   projectGateAuthorizationForm,
   ProjectGateUndeclaredError,

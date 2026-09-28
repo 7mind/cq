@@ -35,7 +35,8 @@ authority.
   mergeBase }` with full SHAs. On failure unresolvable evidence with a closed
   reason (`not-ancestor` vs missing/non-commit objects). Approval requires both
   verified arms;
-- gate evidence: either re-run `bun run check` with the foreground process's
+- gate evidence: either re-run the project's declared gate
+  (`cq gate run --worktree <worktree> --project-gate`) with the foreground process's
   real status and measured duration, or — when the dispatch carries
   `parentGateAttestation` on the sandbox-denied path — verify that attestation
   (`resultCommit` match, `gateExitCode === 0`, `failCount === 0`,
@@ -45,11 +46,12 @@ authority.
 - defect-fix reproduction and regression coverage.
 
 For a task that declares an expected failure, apply §6a of the implementation
-orchestrator. Forms (a) and (b) require the annotation, live marker, and
-inventory entry; form (c) needs no marker. A completed fix replaces the marker
-with a same-titled plain test and removes the annotation and inventory entry.
-Reject co-deletion of that triple when no same-titled plain test remains, and
-never approve a red full gate.
+orchestrator. Forms (a) and (b) require whatever marker the project's own
+expected-failure convention requires; form (c) needs no marker. A completed fix
+replaces the expected-failure test with a same-titled plain test and removes
+every marker that convention required. Reject removal of the expected-failure
+test and its markers when no same-titled plain test remains, and never approve
+a red full gate.
 
 Classify each finding once:
 

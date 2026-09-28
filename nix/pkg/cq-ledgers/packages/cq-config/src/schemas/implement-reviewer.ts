@@ -300,7 +300,8 @@ export function validateSupervisedWorkerGateEvidenceForReview(
     evidence.clean === true &&
     evidence.gateExitCode === 0 &&
     evidence.failCount === 0 &&
-    evidence.passCount > 0
+    // D568: runner-minted; the runner already applied the project's declared count rule.
+    evidence.passCount >= 0
   );
 }
 
@@ -415,7 +416,7 @@ const outputSchema = {
     gateReRan: {
       type: "boolean",
       description:
-        "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim.",
+        "Whether the reviewer re-ran the project's declared gate itself rather than trusting the worker's claim.",
     },
     resultCommitVerified: {
       type: "boolean",
@@ -436,7 +437,7 @@ const outputSchema = {
       type: "integer",
       minimum: 0,
       description:
-        "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true.",
+        "Wall-clock milliseconds the reviewer's own re-run of the project's declared gate took. Required when gateReRan is true.",
     },
     gateReRanReason: {
       type: "string",
@@ -519,13 +520,15 @@ const outputSchema = {
  * `version: 7` (bumped from 6, T2081): sandboxed Codex reviewers may consume
  * the exact runner-owned gate evidence stored with a process worker result.
  * Existing parentGateAttestation and non-sandboxed child rerun paths remain.
+ * `version: 10` (D566, D568): the embedded worker evidence names the project's
+ * declared gate and may count zero passes; gate descriptions are stack-neutral.
  * A stale deployed root rendered against the v6 contract must not be mistaken for this
  * one; DISPATCHED_ROLE_VERSIONS derives this automatically, it is not
  * hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 9,
+  version: 10,
   inputSchema: singleTaskOrCohortSchema(inputSchema, {
     ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input"),
     properties: { ...cohortRoleArm(inputSchema, cohortSealedEnvelopeSchema, "input").properties,

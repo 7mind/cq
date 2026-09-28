@@ -12,8 +12,10 @@ const WORKER_PROMPT = path.join(
   "agents",
   "implement-worker.md",
 );
-const EXACT_GATE =
-  'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
+// D566/D575: the worker runs the project's declared gate, never CQ's own command line.
+const EXACT_GATE = 'cq gate run --worktree "$PWD" --project-gate';
+/** The CLI under test, so the rendered command is exercised against this source, not a deployed `cq`. */
+const CQ_CLI_MAIN = path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers", "packages", "cq-cli", "src", "main.ts");
 const YIELDED_GATE_SESSION = "A yielded command-session handle remains the sole full-gate attempt";
 /** Proof the gate ran the package's OWN check script, independent of reporter format. */
 const REAL_PACKAGE_CHECK_SENTINEL = "cq-t1629-real-package-check-ran";
@@ -94,10 +96,21 @@ describe("D244/D243 rendered worker gate and history contract", () => {
         "  expect(process.cwd()).toBe(import.meta.dir);\n" +
         "});\n",
     );
+    writeFileSync(
+      path.join(worktree, "cq.toml"),
+      '[gate]\n  argv = ["bun", "run", "check"]\n  cwd = "nix/pkg/cq-ledgers"\n',
+    );
     run(["git", "add", "."], worktree);
     run(["git", "commit", "--quiet", "-m", "gate fixture"], worktree);
+    const bin = temporaryDirectory("cq-t1629-bin-");
+    writeFileSync(
+      path.join(bin, "cq"),
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(CQ_CLI_MAIN)} "$@"\n`,
+      { mode: 0o700 },
+    );
     const result = Bun.spawnSync(["sh", "-c", EXACT_GATE], {
       cwd: worktree,
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env["PATH"] ?? ""}` },
       stdout: "pipe",
       stderr: "pipe",
     });
