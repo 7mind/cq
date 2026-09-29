@@ -16,8 +16,13 @@ import {
   type CreateInMemoryWorksetOwnedGuardedLedgerOptions,
   type LedgerStore,
   type WorksetOwnedGuardedLedger,
+  type WorksetOwnedWriteHost,
 } from "../src/index.js";
-import type { WorksetOwnedWriteContractFactory } from "./worksetOwnedWriteContract.js";
+import type {
+  OwnedTransactionProbe,
+  WorksetOwnedMemoryAuthorityPair,
+  WorksetOwnedWriteContractFactory,
+} from "./worksetOwnedWriteContract.js";
 
 const tempRoots: string[] = [];
 const openLedgers: WorksetOwnedGuardedLedger[] = [];
@@ -56,21 +61,50 @@ async function freshRoot(prefix: string): Promise<string> {
   return root;
 }
 
+/** G192/T6629 — ordinary (constructor default) and management surfaces over one raw store. */
+function memoryAuthorityPair(
+  rawStore: SqliteLedgerStore | PostgresLedgerStore,
+  probe: OwnedTransactionProbe,
+): WorksetOwnedMemoryAuthorityPair {
+  const host: WorksetOwnedWriteHost = {
+    rawStore,
+    worksetStore: rawStore.worksetStore(),
+    runOwnedTransaction: (mutate, context) =>
+      rawStore.runAtomicOwnedMutation(probe.observe(mutate), context),
+  };
+  return {
+    ordinary: createWorksetOwnedGuardedLedger(host),
+    management: retain(
+      createWorksetOwnedGuardedLedger({
+        ...host,
+        invocationAuthority: createTrustedWorksetManagementAuthority(),
+      }),
+    ),
+  };
+}
+
+
+async function openSqliteRawStore(
+  options: CreateInMemoryWorksetOwnedGuardedLedgerOptions | undefined,
+): Promise<SqliteLedgerStore> {
+  const dbPath = path.join(await freshRoot("owned-write-sqlite-"), "ledger.db");
+  const rawStore: SqliteLedgerStore = new SqliteLedgerStore({
+    dbPath,
+    ...(options?.now !== undefined ? { now: options.now } : {}),
+    workset: {
+      ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
+      isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
+    },
+  });
+  await rawStore.init();
+  return rawStore;
+}
 
 export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
   name: "SqliteLedgerStore",
   classification: "Behavioral-Active Blackbox-GoodCommunication",
   async build(options) {
-    const dbPath = path.join(await freshRoot("owned-write-sqlite-"), "ledger.db");
-    const rawStore: SqliteLedgerStore = new SqliteLedgerStore({
-      dbPath,
-      ...(options?.now !== undefined ? { now: options.now } : {}),
-      workset: {
-        ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
-        isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
-      },
-    });
-    await rawStore.init();
+    const rawStore = await openSqliteRawStore(options);
     return retain(
       createWorksetOwnedGuardedLedger({
         rawStore,
@@ -82,6 +116,9 @@ export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
         runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
       }),
     );
+  },
+  async buildMemoryAuthorityPair(probe) {
+    return memoryAuthorityPair(await openSqliteRawStore(undefined), probe);
   },
 };
 
@@ -112,23 +149,29 @@ export function postgresOwnedWriteFactory(
   afterAll(async () => {
     await ownedPool.close();
   });
+  async function openRawStore(
+    options: CreateInMemoryWorksetOwnedGuardedLedgerOptions | undefined,
+  ): Promise<PostgresLedgerStore> {
+    await schemaReady;
+    const projectKey = `t1966-owned-${randomUUID()}`;
+    const rawStore: PostgresLedgerStore = new PostgresLedgerStore({
+      pool: sharedPool,
+      projectKey,
+      displayName: projectKey,
+      ...(options?.now !== undefined ? { now: options.now } : {}),
+      workset: {
+        ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
+        isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
+      },
+    });
+    await rawStore.init();
+    return rawStore;
+  }
   return {
     name: "PostgresLedgerStore",
     classification: "Behavioral-Active Blackbox-GoodCommunication",
     async build(options?: CreateInMemoryWorksetOwnedGuardedLedgerOptions) {
-      await schemaReady;
-      const projectKey = `t1966-owned-${randomUUID()}`;
-      const rawStore: PostgresLedgerStore = new PostgresLedgerStore({
-        pool: sharedPool,
-        projectKey,
-        displayName: projectKey,
-        ...(options?.now !== undefined ? { now: options.now } : {}),
-        workset: {
-          ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
-          isTargetAdmitted: (target, roots) => targetInGraph(rawStore, target, roots),
-        },
-      });
-      await rawStore.init();
+      const rawStore = await openRawStore(options);
       return retain(
         createWorksetOwnedGuardedLedger({
           rawStore,
@@ -140,6 +183,9 @@ export function postgresOwnedWriteFactory(
           runOwnedTransaction: (mutate, context) => rawStore.runAtomicOwnedMutation(mutate, context),
         }),
       );
+    },
+    async buildMemoryAuthorityPair(probe) {
+      return memoryAuthorityPair(await openRawStore(undefined), probe);
     },
   };
 }

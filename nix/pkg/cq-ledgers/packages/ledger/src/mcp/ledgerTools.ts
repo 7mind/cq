@@ -618,6 +618,7 @@ interface OwnedLifecycleMutations {
 function requireOwnedLifecycleMutations(
   store: LedgerStore,
   toolName: LedgerToolName,
+  invocationAuthority: WorksetInvocationAuthority,
 ): OwnedLifecycleMutations {
   const candidate = store as LedgerStore & {
     worksetStore?: unknown;
@@ -632,6 +633,7 @@ function requireOwnedLifecycleMutations(
   const host = {
     rawStore: store,
     worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
+    invocationAuthority,
     runOwnedTransaction: <T>(mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation): Promise<T> =>
       (
         candidate.runAtomicOwnedMutation as (mutate: (tx: WorksetOwnedWriteTx) => T, context: AdmittedOwnedMutation) => Promise<T>
@@ -678,7 +680,7 @@ export function createLedgerMcpToolSpecifications(
   };
   let ownedLifecycleMutations: OwnedLifecycleMutations | null = null;
   const ownedMutationsFor = (toolName: LedgerToolName): OwnedLifecycleMutations => {
-    ownedLifecycleMutations ??= requireOwnedLifecycleMutations(store, toolName);
+    ownedLifecycleMutations ??= requireOwnedLifecycleMutations(store, toolName, worksetAuthority);
     return ownedLifecycleMutations;
   };
 

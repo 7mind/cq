@@ -57,6 +57,15 @@ import {
   type WorksetLedgerMutationAdmission,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
+import {
+  createObserveOnlyWorksetInvocationAuthority,
+  isTrustedWorksetManagementAuthority,
+} from "./worksetInvocationAuthority.js";
+import {
+  assertMemoryCreateAuthority,
+  normalizeMemoryKindForWrite,
+  type MemoryAuthoringScope,
+} from "./memoryKind.js";
 import { createInMemoryWorksetStore, readWorksetRootsEpoch } from "./worksetStore.js";
 import { InMemoryLedgerStore, type InMemoryOwnedWriteTx } from "./store/InMemoryLedgerStore.js";
 import type {
@@ -348,6 +357,23 @@ function assertChildLedgerAllowed(
   void ownership;
 }
 
+/**
+ * G192/T6629 — the single owned-write memory create check. Callers invoke it
+ * inside the `runOwnedTransaction` callback, before the adapter create, so the
+ * committed payload is exactly the authorized one: an unsupported kind rejects
+ * for every scope, ordinary authority may create only a fact, and an omitted
+ * kind is persisted as the literal `fact`.
+ */
+function authorizeOwnedMemoryCreate(
+  scope: MemoryAuthoringScope,
+  ledgerId: string,
+  init: CreateItemInit,
+): void {
+  const itemId = init.id ?? "<new>";
+  assertMemoryCreateAuthority(scope, ledgerId, itemId, init.fields);
+  normalizeMemoryKindForWrite(ledgerId, itemId, init.fields);
+}
+
 // ---------------------------------------------------------------------------
 // Gateway implementation
 // ---------------------------------------------------------------------------
@@ -356,6 +382,11 @@ export function createWorksetOwnedWriteGateway(
   host: WorksetOwnedWriteHost,
 ): WorksetOwnedWriteGateway {
   const { worksetStore, afterOwnedAdmit } = host;
+  const memoryScope: MemoryAuthoringScope = isTrustedWorksetManagementAuthority(
+    host.invocationAuthority,
+  )
+    ? "management"
+    : "ordinary";
 
   async function withOwnedAdmission<T>(
     targets: readonly string[],
@@ -447,6 +478,7 @@ export function createWorksetOwnedWriteGateway(
           if (input.child.id !== undefined) init.id = input.child.id;
           if (input.child.author !== undefined) init.author = input.child.author;
           if (input.child.session !== undefined) init.session = input.child.session;
+          authorizeOwnedMemoryCreate(memoryScope, input.child.ledgerId, init);
 
           let child: Item;
           if (input.child.ledgerId === MILESTONES_LEDGER) {
@@ -511,6 +543,7 @@ export function createWorksetOwnedWriteGateway(
             if (init.session !== undefined) mInit.session = init.session;
             return tx.createMilestoneOwnerless(mInit);
           }
+          authorizeOwnedMemoryCreate(memoryScope, input.ledgerId, init);
           return tx.createItemOwnerless(input.ledgerId, milestoneId, init);
         }, { admission: adm, operation: { kind: "create-ownerless", input } });
       });
@@ -691,9 +724,13 @@ export function createWorksetCoordinationBundleGateway(
 export function createWorksetOwnedGuardedLedger(
   host: WorksetOwnedWriteHost,
 ): WorksetOwnedGuardedLedger {
-  const base = createWorksetGuardedLedger(host);
-  const owned = createWorksetOwnedWriteGateway(host);
-  const bundles = createWorksetCoordinationBundleGateway(host);
+  const bound: WorksetOwnedWriteHost = {
+    ...host,
+    invocationAuthority: host.invocationAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+  };
+  const base = createWorksetGuardedLedger(bound);
+  const owned = createWorksetOwnedWriteGateway(bound);
+  const bundles = createWorksetCoordinationBundleGateway(bound);
 
   const surface: WorksetOwnedGuardedLedger = {
     ...base,

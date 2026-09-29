@@ -15,7 +15,10 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
-import { runWorksetOwnedWriteContract } from "./worksetOwnedWriteContract.js";
+import {
+  buildInMemoryOwnedMemoryAuthorityPair,
+  runWorksetOwnedWriteContract,
+} from "./worksetOwnedWriteContract.js";
 import { createInMemoryWorksetOwnedGuardedLedger } from "../src/index.js";
 
 runWorksetOwnedWriteContract({
@@ -26,6 +29,7 @@ runWorksetOwnedWriteContract({
       ...options,
       invocationAuthority: createTrustedWorksetManagementAuthority(),
     }),
+  buildMemoryAuthorityPair: buildInMemoryOwnedMemoryAuthorityPair,
 });
 
 describe("workset owned-write contract module [T1962]", () => {

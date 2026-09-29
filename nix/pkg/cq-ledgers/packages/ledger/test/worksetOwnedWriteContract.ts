@@ -44,6 +44,21 @@ import {
   type WorksetOwnedLifecycleErrorCode,
   type CreateInMemoryWorksetOwnedGuardedLedgerOptions,
   type WorksetOwnedWriteCreationKind,
+  InMemoryLedgerStore,
+  MEMORIES_LEDGER,
+  MemoryManagementAuthorityRequiredError,
+  UnsupportedMemoryKindError,
+  WORKSET_OWNED_WRITE_CREATION_KINDS,
+  closedGraphIsTargetAdmitted,
+  createInMemoryWorksetStore,
+  createWorksetOwnedGuardedLedger,
+  type Item,
+  type OwnedOwnerRef,
+  type OwnerlessCreateInput,
+  type PhysicalLedgerState,
+  type WorksetOwnedWriteHost,
+  type WorksetOwnedWriteTx,
+  type WorksetRootsEpoch,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +78,47 @@ export interface WorksetOwnedWriteContractFactory {
   build(
     options?: WorksetOwnedWriteContractBuildOptions,
   ): WorksetOwnedGuardedLedger | Promise<WorksetOwnedGuardedLedger>;
+  /**
+   * G192/T6629 — an ordinary surface (built WITHOUT an invocation authority,
+   * so the constructor's observe-only default applies) and a trusted
+   * management surface over ONE shared persistence. Both route every owned
+   * transaction callback through `probe`.
+   */
+  buildMemoryAuthorityPair(probe: OwnedTransactionProbe): Promise<WorksetOwnedMemoryAuthorityPair>;
+}
+
+export interface WorksetOwnedMemoryAuthorityPair {
+  readonly ordinary: WorksetOwnedGuardedLedger;
+  readonly management: WorksetOwnedGuardedLedger;
+}
+
+/** Wraps the callback an adapter runs inside its owned transaction. */
+export interface OwnedTransactionProbe {
+  observe<T>(mutate: (tx: WorksetOwnedWriteTx) => T): (tx: WorksetOwnedWriteTx) => T;
+}
+
+/** In-memory {@link WorksetOwnedWriteContractFactory.buildMemoryAuthorityPair}. */
+export async function buildInMemoryOwnedMemoryAuthorityPair(
+  probe: OwnedTransactionProbe,
+): Promise<WorksetOwnedMemoryAuthorityPair> {
+  const rawStore = new InMemoryLedgerStore();
+  const host: WorksetOwnedWriteHost = {
+    rawStore,
+    worksetStore: createInMemoryWorksetStore({
+      isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
+    }),
+    runOwnedTransaction: (mutate, context) =>
+      rawStore.runAtomicOwnedMutation(probe.observe(mutate), context),
+  };
+  const pair = {
+    ordinary: createWorksetOwnedGuardedLedger(host),
+    management: createWorksetOwnedGuardedLedger({
+      ...host,
+      invocationAuthority: createTrustedWorksetManagementAuthority(),
+    }),
+  };
+  await pair.management.init();
+  return pair;
 }
 
 // ---------------------------------------------------------------------------
@@ -884,5 +940,225 @@ export function runWorksetOwnedWriteContract(
       expect(error.message).toContain(`${QUESTIONS_LEDGER}:${question.child.id}`);
       expect(ledger.fetchItem(MILESTONES_LEDGER, milestone.id)).toEqual(before);
     });
+
+    // G192/T6629 — owned-write memory authoring authority.
+
+    it("ordinary authority creates ownerless omitted and explicit facts inside the owned transaction", async () => {
+      const probe = createRecordingProbe();
+      const { ordinary, management } = await factory.buildMemoryAuthorityPair(probe);
+      await management.setRoots([]);
+      const omitted = await ordinary.owned.createOwnerless(memoryInput("omitted fact", undefined));
+      const explicit = await ordinary.owned.createOwnerless(memoryInput("explicit fact", "fact"));
+      expect(probe.events).toEqual([...COMMITTED_TRACE, ...COMMITTED_TRACE]);
+      const stored = physicalMemories(await ordinary.exportPhysicalLedgerState());
+      expect(stored.map((item) => [item.id, item.fields.kind])).toEqual([
+        [omitted.id, "fact"],
+        [explicit.id, "fact"],
+      ]);
+    });
+
+    for (const kind of ["rule", "environment"] as const) {
+      it(`ordinary authority cannot create an ownerless ${kind} with forged provenance or admission; management can`, async () => {
+        const probe = createRecordingProbe();
+        const { ordinary, management } = await factory.buildMemoryAuthorityPair(probe);
+        await management.setRoots([]);
+        const forgeries: readonly OwnerlessCreateInput[] = [
+          memoryInput(`plain ${kind}`, kind),
+          {
+            ...memoryInput(`forged ${kind}`, kind),
+            author: "management",
+            session: "trusted-management-host",
+            fields: {
+              title: `forged ${kind}`,
+              content: "authored under trusted management authority",
+              kind,
+              tags: ["management"],
+            },
+          },
+          {
+            ...memoryInput(`admitted ${kind}`, kind),
+            admission: { form: "ledger-mutation", kind: "owned-write", targets: [], roots: [], epoch: 0 },
+            invocationAuthority: { scope: "management" },
+          } as OwnerlessCreateInput,
+        ];
+        for (const input of forgeries) {
+          probe.events.length = 0;
+          const before = await observeOwnedState(management);
+          await expect(ordinary.owned.createOwnerless(input)).rejects.toThrow(
+            MemoryManagementAuthorityRequiredError,
+          );
+          expect(probe.events).toEqual(["transaction", "threw:MemoryManagementAuthorityRequiredError"]);
+          expect(await observeOwnedState(management)).toEqual(before);
+        }
+
+        probe.events.length = 0;
+        const created = await management.owned.createOwnerless(memoryInput(`managed ${kind}`, kind));
+        expect(probe.events).toEqual([...COMMITTED_TRACE]);
+        expect(created.fields.kind).toBe(kind);
+      });
+    }
+
+    it("unsupported memory kinds reject for every authority before the adapter create", async () => {
+      const probe = createRecordingProbe();
+      const pair = await factory.buildMemoryAuthorityPair(probe);
+      for (const surface of [pair.ordinary, pair.management]) {
+        probe.events.length = 0;
+        const before = await observeOwnedState(pair.management);
+        await expect(
+          surface.owned.createOwnerless(memoryInput("unsupported", "note")),
+        ).rejects.toThrow(UnsupportedMemoryKindError);
+        expect(probe.events).toEqual(["transaction", "threw:UnsupportedMemoryKindError"]);
+        expect(await observeOwnedState(pair.management)).toEqual(before);
+      }
+    });
+
+    it("deterministic interleaving: authority and kind validation run inside the owned creation transaction", async () => {
+      const probe = createRecordingProbe();
+      const { ordinary, management } = await factory.buildMemoryAuthorityPair(probe);
+      await expect(ordinary.owned.createOwnerless(memoryInput("r1", "rule"))).rejects.toThrow(
+        MemoryManagementAuthorityRequiredError,
+      );
+      await management.owned.createOwnerless(memoryInput("r2", "rule"));
+      await expect(ordinary.owned.createOwnerless(memoryInput("u1", "note"))).rejects.toThrow(
+        UnsupportedMemoryKindError,
+      );
+      await ordinary.owned.createOwnerless(memoryInput("f1", undefined));
+      expect(probe.events).toEqual([
+        "transaction",
+        "threw:MemoryManagementAuthorityRequiredError",
+        ...COMMITTED_TRACE,
+        "transaction",
+        "threw:UnsupportedMemoryKindError",
+        ...COMMITTED_TRACE,
+      ]);
+      expect(
+        physicalMemories(await management.exportPhysicalLedgerState()).map((item) => [
+          item.fields.title,
+          item.fields.kind,
+        ]),
+      ).toEqual([
+        ["r2", "rule"],
+        ["f1", "fact"],
+      ]);
+    });
+
+    it("every createOwned attempt to target memories rejects before persistence", async () => {
+      const probe = createRecordingProbe();
+      const pair = await factory.buildMemoryAuthorityPair(probe);
+      const owners = new Map<WorksetOwnedWriteCreationKind, OwnedOwnerRef>();
+      for (const cse of SINGLE_CHILD_CASES) {
+        owners.set(cse.creationKind, {
+          ledgerId: cse.ownerLedger,
+          itemId: await cse.seedOwner(pair.management),
+        });
+      }
+      const idea = await pair.management.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "memory-child idea owner" },
+      });
+      owners.set("idea-to-goal", { ledgerId: IDEAS_LEDGER, itemId: idea.id });
+      const defect = await pair.management.owned.createOwnerless({
+        ledgerId: DEFECTS_LEDGER,
+        status: "open",
+        fields: { headline: "memory-child defect owner", severity: "low" },
+      });
+      owners.set("fix-goal", { ledgerId: DEFECTS_LEDGER, itemId: defect.id });
+      expect([...owners.keys()].sort()).toEqual([...WORKSET_OWNED_WRITE_CREATION_KINDS].sort());
+
+      for (const [creationKind, owner] of owners) {
+        for (const surface of [pair.ordinary, pair.management]) {
+          for (const kind of [undefined, "fact", "rule", "environment"] as const) {
+            probe.events.length = 0;
+            const before = await observeOwnedState(pair.management);
+            const input = memoryInput(`owned ${creationKind}`, kind);
+            await expectOwnedRejection(
+              surface.owned.createOwned({
+                owner,
+                creationKind,
+                child: { ledgerId: MEMORIES_LEDGER, status: input.status, fields: input.fields },
+              }),
+              "child-ledger-mismatch",
+            );
+            expect(probe.events).toEqual(["transaction", "threw:WorksetOwnedLifecycleError"]);
+            expect(await observeOwnedState(pair.management)).toEqual(before);
+          }
+        }
+      }
+    });
   });
+}
+
+/** A successful owned create: the callback reached the adapter create and returned. */
+const COMMITTED_TRACE = ["transaction", "createItemOwnerless", "returned"] as const;
+
+interface RecordingProbe extends OwnedTransactionProbe {
+  readonly events: string[];
+}
+
+/**
+ * Records callback entry, every adapter create reached through `tx`, and how
+ * the callback settled — so a trace proves where inside the transaction a
+ * rejection happened.
+ */
+function createRecordingProbe(): RecordingProbe {
+  const events: string[] = [];
+  return {
+    events,
+    observe: (mutate) => (tx) => {
+      events.push("transaction");
+      const observed = new Proxy(tx, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target) as unknown;
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            if (typeof property === "string" && property.startsWith("create")) events.push(property);
+            return Reflect.apply(value as (...values: unknown[]) => unknown, target, args);
+          };
+        },
+      });
+      try {
+        const result = mutate(observed);
+        events.push("returned");
+        return result;
+      } catch (error) {
+        events.push(`threw:${(error as Error).name}`);
+        throw error;
+      }
+    },
+  };
+}
+
+function memoryInput(title: string, kind: string | undefined): OwnerlessCreateInput {
+  return {
+    ledgerId: MEMORIES_LEDGER,
+    status: "active",
+    fields: {
+      title,
+      content: `${title} body`,
+      ...(kind === undefined ? {} : { kind }),
+    },
+  };
+}
+
+function physicalMemories(state: PhysicalLedgerState): readonly Item[] {
+  const memories = state.ledgers.find((entry) => entry.ledger.id === MEMORIES_LEDGER);
+  if (memories === undefined) throw new Error("physical state has no memories ledger");
+  return memories.ledger.milestones.flatMap((group) => group.items);
+}
+
+/**
+ * Every ledger's physical payloads, counters, provenance, timestamps, and
+ * archives, plus workset roots/epoch and held admissions.
+ */
+async function observeOwnedState(ledger: WorksetOwnedGuardedLedger): Promise<{
+  readonly physical: PhysicalLedgerState;
+  readonly roots: WorksetRootsEpoch;
+  readonly admissions: number;
+}> {
+  return {
+    physical: await ledger.exportPhysicalLedgerState(),
+    roots: await ledger.snapshotRoots(),
+    admissions: ledger.activeAdmissionCount(),
+  };
 }
