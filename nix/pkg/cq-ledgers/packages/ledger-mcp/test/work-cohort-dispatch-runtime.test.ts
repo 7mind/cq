@@ -219,6 +219,12 @@ for (const kind of ["memory", "sqlite"] as const) {
         for (const taskId of ["T1", "T2"]) await fixture.ledger.updateItem("tasks", taskId, { status: "wip" });
         await expect(advance.releaseAbandonedPreparation(abandon)).rejects.toThrow("owns live evidence");
         await capability.abort({ ...prepared.handle, reason: "native-failure", details: { source: "test" } });
+        // D608: a resume that revalidated the dead candidate must not outlive its abandonment.
+        const deadState = (await fixture.store.snapshot()).portable;
+        await fixture.store.revalidateForResume({ definitionDigest: deadState.definitions[0]!.definitionDigest,
+          sealDigest: deadState.candidateSeals[0]!.sealDigest, evidenceSubjectDigest: deadState.evidenceSubjects[0]!.evidenceSubjectDigest,
+          acceptanceMatrixDigest: deadState.definitions[0]!.acceptanceMatrixDigest,
+          environmentDigest: deadState.definitions[0]!.environment.environmentDigest, receiptBridgeDigest: deadState.receiptBridges[0]!.bridgeDigest });
         // D593: the members stay reserved under the id that first reserved them
         // (here the fixture's; in production the original candidate intent),
         // while rebase successors mint new intents. Abandonment releases the
@@ -232,6 +238,7 @@ for (const kind of ["memory", "sqlite"] as const) {
         // capability no journal retains, and a dead seal still counted as pending.
         // Either left every later cohort unable to acquire authority.
         expect(released.runtime.lease).toBeNull();
+        expect(released.runtime.resumeValidation).toBeNull();
         expect(workCohortHasPendingSealedCandidateV1(released.portable)).toBe(false);
         // D576: the release also returns every member it held to the queue.
         expect(["T1", "T2"].map((taskId) => fixture.ledger.fetchItem("tasks", taskId).status)).toEqual(["planned", "planned"]);

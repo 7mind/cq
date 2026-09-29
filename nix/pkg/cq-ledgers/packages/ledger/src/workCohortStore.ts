@@ -1289,8 +1289,14 @@ export class PersistentWorkCohortStore implements WorkCohortStore {
       });
       const lease = mutation.next.runtime.lease;
       const abandonedLease = lease !== null && subjects.has(lease.semanticSubject);
+      // D608: a resume revalidation of an abandoned subject would otherwise refuse every later lease.
+      const validation = mutation.next.runtime.resumeValidation;
+      const abandonedValidation = validation !== null && subjects.has(validation.evidenceSubjectDigest);
       return { ...mutation, result: undefined,
-        next: abandonedLease ? { ...mutation.next, runtime: { ...mutation.next.runtime, lease: null } } : mutation.next };
+        next: abandonedLease || abandonedValidation
+          ? { ...mutation.next, runtime: { ...mutation.next.runtime,
+              ...(abandonedLease ? { lease: null } : {}), ...(abandonedValidation ? { resumeValidation: null } : {}) } }
+          : mutation.next };
     });
   }
 
