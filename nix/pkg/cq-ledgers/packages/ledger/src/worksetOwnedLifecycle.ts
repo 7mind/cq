@@ -724,9 +724,20 @@ export function createWorksetCoordinationBundleGateway(
 export function createWorksetOwnedGuardedLedger(
   host: WorksetOwnedWriteHost,
 ): WorksetOwnedGuardedLedger {
+  // Explicit member copy: a spread drops prototype methods of a class host, and
+  // each optional method stays bound to the original receiver.
   const bound: WorksetOwnedWriteHost = {
-    ...host,
+    rawStore: host.rawStore,
+    worksetStore: host.worksetStore,
     invocationAuthority: host.invocationAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+    runOwnedTransaction: (mutate, context) => host.runOwnedTransaction(mutate, context),
+    ...(host.runGenericTransaction !== undefined
+      ? { runGenericTransaction: host.runGenericTransaction.bind(host) }
+      : {}),
+    ...(host.afterGenericAdmit !== undefined
+      ? { afterGenericAdmit: host.afterGenericAdmit.bind(host) }
+      : {}),
+    ...(host.afterOwnedAdmit !== undefined ? { afterOwnedAdmit: host.afterOwnedAdmit.bind(host) } : {}),
   };
   const base = createWorksetGuardedLedger(bound);
   const owned = createWorksetOwnedWriteGateway(bound);

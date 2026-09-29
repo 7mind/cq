@@ -149,6 +149,36 @@ describe("owned-write memory authoring authority [G192/T6629]", () => {
       const rule = await ledger.owned.createOwnerless(memoryInput("bound rule", "rule"));
       expect(rule.fields.kind).toBe("rule");
     });
+
+    it("a class host keeps its prototype methods and receiver", async () => {
+      class ClassHost {
+        readonly rawStore = new InMemoryLedgerStore();
+        readonly worksetStore = createInMemoryWorksetStore({
+          isTargetAdmitted: closedGraphIsTargetAdmitted(this.rawStore),
+        });
+        readonly receivers: unknown[] = [];
+        afterOwnedAdmit(): void {
+          this.receivers.push(this);
+        }
+        runOwnedTransaction<T>(
+          mutate: Parameters<InMemoryLedgerStore["runAtomicOwnedMutation"]>[0],
+          context: Parameters<InMemoryLedgerStore["runAtomicOwnedMutation"]>[1],
+        ): Promise<T> {
+          this.receivers.push(this);
+          return this.rawStore.runAtomicOwnedMutation(mutate, context) as Promise<T>;
+        }
+      }
+      const classHost = new ClassHost();
+      const ledger = createWorksetOwnedGuardedLedger(classHost);
+      await ledger.init();
+      const fact = await ledger.owned.createOwnerless(memoryInput("class host fact", "fact"));
+      expect(fact.fields.kind).toBe("fact");
+      expect(classHost.receivers).toEqual([classHost, classHost]);
+      expect(classHost.receivers.every((receiver) => receiver === classHost)).toBe(true);
+      await expect(
+        ledger.owned.createOwnerless(memoryInput("class host rule", "rule")),
+      ).rejects.toThrow(MemoryManagementAuthorityRequiredError);
+    });
   });
 
   it("the bare owned-write gateway without an authority is ordinary", async () => {
