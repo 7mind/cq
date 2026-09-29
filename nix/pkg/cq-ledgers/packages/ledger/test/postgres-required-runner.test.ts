@@ -133,7 +133,11 @@ describe("postgres-required-bun-test.sh run mode", () => {
 // because a bare `bun test` exits 0 when a listed suite skips.
 describe("required-PostgreSQL legs", () => {
   it("delegate every listed suite to the classifying helper", () => {
-    for (const script of ["test-attestation-postgres-required.sh", "test-memory-kinds-postgres-required.sh"]) {
+    for (const script of [
+      "test-attestation-postgres-required.sh",
+      "test-memory-kinds-postgres-required.sh",
+      "test-memory-authority-postgres-required.sh",
+    ]) {
       const body = readFileSync(path.resolve(import.meta.dir, "../../../scripts", script), "utf8");
       expect(body).toContain('lib/postgres-required-bun-test.sh"');
       expect(body).not.toMatch(/^\s*bun test\b/mu);
