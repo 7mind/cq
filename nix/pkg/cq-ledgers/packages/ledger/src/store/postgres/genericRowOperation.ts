@@ -1,5 +1,5 @@
 import { LedgerError, type ArchivePointer, type Item, type Ledger, type Milestone } from "../../types.js";
-import { MILESTONES_LEDGER } from "../../constants.js";
+import { MEMORIES_LEDGER, MILESTONES_LEDGER } from "../../constants.js";
 import { isLiveWorksetAdmission, WorksetAdmissionError } from "../../worksetEffectAdmission.js";
 import { isBoundAdmittedGenericMutation, type AdmittedGenericMutation, type AdmittedGenericMutationBinding } from "../../worksetGenericMutation.js";
 import { resolveAsyncGenericMutationClosure } from "../genericMutationDataSource.js";
@@ -161,7 +161,16 @@ export async function resolvePostgresGenericRows(queries: PostgresOperationQueri
       const ledger = ledgers.get(ledgerId);
       if (ledger === undefined) throw new LedgerError(`archive pointer has no ledger ${key}`);
       ledger.archivePointers.push({ ...pointer, path: `./archive/${ledgerId}/${pointerId}.md` });
-      const selectedIds = scope.operation === "unarchive-item" ? scope.targetRefs.filter((ref) => ref.startsWith(`${ledgerId}:`)).map((ref) => ref.slice(ledgerId.length + 1)) : [];
+      // A milestone archive merges into this memories archive, so its memory preflight reads every payload there.
+      const archivedMemoryIds = ledgerId === MEMORIES_LEDGER && scope.milestoneIds.includes(pointerId) &&
+        (scope.operation === "archive-milestone" || scope.operation === "execute-finalize")
+        ? (await observed.execute<{ id: string }>({ table: "archived_items", phase: "transaction", mode: "read",
+          predicate: { kind: "keys", keys: [key] }, lockMode: "none" }, {
+          sql: "SELECT id FROM archived_items WHERE project_key = $1 AND ledger = $2 AND pointer_id = $3 ORDER BY id",
+          parameters: [observed.projectKey, ledgerId, pointerId],
+        }, ({ id }) => `${ledgerId}:${pointerId}:${id}`)).map(({ id }) => id)
+        : [];
+      const selectedIds = scope.operation === "unarchive-item" ? scope.targetRefs.filter((ref) => ref.startsWith(`${ledgerId}:`)).map((ref) => ref.slice(ledgerId.length + 1)) : archivedMemoryIds;
       const selectedItems: Item[] = [];
       for (const id of selectedIds) {
         observed.recordReadTarget({ table: "archived_items", ledgerId, pointerId, id });

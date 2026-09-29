@@ -120,6 +120,8 @@ export interface WorksetGenericMutationTx {
     exactRefs?: readonly string[],
   ): ArchiveTerminalItemsResult;
   collectArchiveSweepRefs(milestoneId: string): readonly string[];
+  /** Ids already archived under `ledgerId/milestoneId`; throws when that archive is only partially loaded. */
+  collectArchivedItemIds(ledgerId: string, milestoneId: string): readonly string[];
   archiveMilestone(milestoneId: string, summary: string): ArchivePointer;
 }
 
@@ -622,6 +624,13 @@ export function createGenericMutationTransaction(
         if (group !== undefined) refs.push(...group.items.map((item) => `${ledgerId}:${item.id}`));
       }
       return refs.sort();
+    },
+    collectArchivedItemIds: (ledgerId, milestoneId) => {
+      const key = genericArchiveKey(ledgerId, milestoneId);
+      if (state.unloadedArchiveKeys.has(key)) {
+        throw new LedgerError(`archive ${key} is only partially loaded in this transaction`);
+      }
+      return (state.archives.get(key)?.items ?? []).map((item) => item.id).sort();
     },
     archiveMilestone: (milestoneId, summary) => {
       if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {

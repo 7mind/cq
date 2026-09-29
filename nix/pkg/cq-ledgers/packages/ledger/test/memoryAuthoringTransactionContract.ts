@@ -29,6 +29,7 @@ import {
   type LedgerStore,
   type WorksetGuardedLedger,
 } from "../src/index.js";
+import type { FinalizeBatchOperation } from "../src/finalize.js";
 import {
   exactArchiveOperation,
   memoryFields,
@@ -53,8 +54,12 @@ interface AuthoritySurfaces {
   readonly management: WorksetGuardedLedger;
 }
 
-/** Both surfaces share the store's adapter transaction and workset store. */
-function surfaces(store: LedgerStore): AuthoritySurfaces {
+/**
+ * Both surfaces share the store's adapter transaction and workset store.
+ * `afterGenericAdmit` runs inside each ordinary mutation after its admission
+ * and before its transaction.
+ */
+function surfaces(store: LedgerStore, afterGenericAdmit?: () => Promise<void>): AuthoritySurfaces {
   const worksetStore = store.worksetStore?.();
   if (worksetStore === undefined) {
     throw new Error("memory authoring contract requires a workset store");
@@ -64,9 +69,18 @@ function surfaces(store: LedgerStore): AuthoritySurfaces {
       rawStore: store,
       worksetStore,
       invocationAuthority: createObserveOnlyWorksetInvocationAuthority(),
+      ...(afterGenericAdmit === undefined ? {} : { afterGenericAdmit }),
     }),
     management: createWorksetManagementLedger({ rawStore: store, worksetStore }),
   };
+}
+
+/** A finalize batch whose successful-looking close precedes the sweep. */
+function closeThenArchive(milestoneId: string): FinalizeBatchOperation[] {
+  return [
+    { id: `close-milestone:${milestoneId}`, targetId: milestoneId, action: "close-milestone", targetStatus: "done" },
+    { id: `archive-milestone:${milestoneId}`, targetId: milestoneId, action: "archive-milestone", summary: "finalized" },
+  ];
 }
 
 const active = (itemId: string): StoredItemTarget => ({ itemId, archived: false });
@@ -293,7 +307,75 @@ export function runMemoryAuthoringTransactionContract(factory: MemoryKindContrac
       }
     }, TIMEOUT);
 
+    it("ordinary finalize archive of a legacy memory persists durable literal fact (G192/T6630)", async () => {
+      const built = await milestoneMemoryStore("MEM95", null);
+      let store = built.store;
+      try {
+        expect((await fixture.readStoredFields(store, active(built.item.id)))[KIND]).toBeUndefined();
+        const result = await surfaces(store).ordinary.mutations.executeFinalize(closeThenArchive(built.milestoneId));
+        expect(result).toEqual({ applied: 2 });
+        store = await expectDurableFact(store, archived(built.item.id));
+      } finally {
+        await factory.teardown(store);
+      }
+    }, TIMEOUT);
+
     for (const kind of AUTOMATIC_KINDS) {
+      it(`ordinary finalize with a close before a swept ${kind} rejects atomically; management succeeds (G192/T6630)`, async () => {
+        const built = await milestoneMemoryStore("MEM96", kind);
+        const store = built.store;
+        try {
+          const { ordinary, management } = surfaces(store);
+          await expectRejectedWithoutEffect(
+            store,
+            () => ordinary.mutations.executeFinalize(closeThenArchive(built.milestoneId)),
+            MemoryManagementAuthorityRequiredError,
+          );
+          expect(store.listMilestoneItems(built.milestoneId)[DECISIONS]).toHaveLength(1);
+          expect(await management.mutations.executeFinalize(closeThenArchive(built.milestoneId))).toEqual({
+            applied: 2,
+          });
+          expect((await fixture.readStoredFields(store, archived(built.item.id)))[KIND]).toBe(kind);
+        } finally {
+          await factory.teardown(store);
+        }
+      }, TIMEOUT);
+
+      it(`a swept fact promoted to ${kind} after finalize admission cannot commit the stale batch (G192/T6630)`, async () => {
+        const built = await milestoneMemoryStore("MEM97", FACT);
+        const store = built.store;
+        try {
+          let promote: (() => Promise<void>) | null = null;
+          const { ordinary, management } = surfaces(store, async () => {
+            const pending = promote;
+            promote = null;
+            if (pending !== null) await pending();
+          });
+          // The ordinary caller's decision before admission: the swept memory is a fact.
+          expect(store.fetchItem(MEMORIES, built.item.id).fields[KIND]).toBe(FACT);
+          promote = async () => {
+            await management.mutations.updateItem(MEMORIES, built.item.id, { fields: { [KIND]: kind } });
+          };
+          await expect(ordinary.mutations.executeFinalize(closeThenArchive(built.milestoneId))).rejects.toThrow(
+            MemoryManagementAuthorityRequiredError,
+          );
+          expect(promote).toBeNull();
+          // Only the promotion committed: nothing moved, and the stored kind is the promoted one.
+          expect((await fixture.readStoredFields(store, active(built.item.id)))[KIND]).toBe(kind);
+          expect(store.listMilestoneItems(built.milestoneId)[DECISIONS]).toHaveLength(1);
+          expect((await physicalMemories(store)).archived).toEqual([]);
+
+          // Control: once demoted, the same ordinary batch commits.
+          await management.mutations.updateItem(MEMORIES, built.item.id, { fields: { [KIND]: FACT } });
+          expect(await ordinary.mutations.executeFinalize(closeThenArchive(built.milestoneId))).toEqual({
+            applied: 2,
+          });
+          expect((await fixture.readStoredFields(store, archived(built.item.id)))[KIND]).toBe(FACT);
+        } finally {
+          await factory.teardown(store);
+        }
+      }, TIMEOUT);
+
       it(`ordinary authority rejects creating or promoting to ${kind} atomically; management succeeds`, async () => {
         const store = await factory.build();
         try {

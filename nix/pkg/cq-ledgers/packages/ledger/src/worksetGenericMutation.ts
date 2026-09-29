@@ -876,6 +876,27 @@ function assertMemoryRefsAuthority(
   }
 }
 
+/**
+ * G192/T6630: the memory preflight of one milestone archive, shared by the
+ * direct `archiveMilestone` and every `executeFinalize` `archive-milestone`
+ * operation so their policy cannot diverge. It enumerates the live sweep
+ * through `tx` and authorizes every swept memory before anything moves. The
+ * archive merges into any memories archive the milestone already owns, so
+ * every payload archived there must also resolve to a supported kind.
+ */
+function assertArchiveMilestoneMemoryAuthority(
+  tx: WorksetGenericMutationTx,
+  scope: MemoryAuthoringScope,
+  operation: string,
+  milestoneId: string,
+): void {
+  assertMemoryRefsAuthority(tx, scope, operation, tx.collectArchiveSweepRefs(milestoneId));
+  for (const id of tx.collectArchivedItemIds(MEMORIES_LEDGER, milestoneId)) {
+    // Kind-resolving read: an unsupported archived kind throws here.
+    tx.fetchArchivedItem(MEMORIES_LEDGER, milestoneId, id);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Gateway implementation over a raw LedgerStore + WorksetStore
 // ---------------------------------------------------------------------------
@@ -1514,6 +1535,12 @@ export function createWorksetGenericMutationGateway(
         accessClass,
         measurement,
         (tx, _adm, ctx) => {
+          // Authorize every memory the batch moves before its first ordered
+          // operation applies, so one rejection leaves the batch effect-free.
+          for (const operation of operations) {
+            if (operation.action !== "archive-milestone") continue;
+            assertArchiveMilestoneMemoryAuthority(tx, memoryScope, "execute-finalize", operation.targetId);
+          }
           const ids = new Set<string>();
           for (const operation of operations) {
             if (operation.id.length === 0 || operation.targetId.length === 0) {
@@ -1568,12 +1595,6 @@ export function createWorksetGenericMutationGateway(
                     );
                   }
                 }
-                assertMemoryRefsAuthority(
-                  tx,
-                  memoryScope,
-                  "execute-finalize",
-                  tx.collectArchiveSweepRefs(operation.targetId),
-                );
                 tx.archiveMilestone(operation.targetId, operation.summary);
                 break;
               }
@@ -1642,7 +1663,7 @@ export function createWorksetGenericMutationGateway(
               assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, milestoneId));
             }
           }
-          assertMemoryRefsAuthority(tx, memoryScope, "archive-milestone", sweep);
+          assertArchiveMilestoneMemoryAuthority(tx, memoryScope, "archive-milestone", milestoneId);
           return tx.archiveMilestone(milestoneId, summary);
         },
         {

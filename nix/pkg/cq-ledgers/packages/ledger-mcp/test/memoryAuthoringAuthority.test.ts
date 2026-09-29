@@ -6,6 +6,10 @@
  * one shared store: ordinary fact writes succeed, every rule/environment
  * operation under ordinary authority rejects with no observable effect, and
  * the management equivalents succeed.
+ *
+ * G192/T6630 adds `execute_finalize`: an ordinary batch with a close before a
+ * sweep carrying a rule or environment rejects with nothing applied, and the
+ * management batch archives with its legacy fact normalized.
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,12 +18,19 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { describe, expect, it } from "bun:test";
 import {
+  DECISIONS_LEDGER,
   InMemoryLedgerStore,
   MEMORIES_LEDGER,
   MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
+  buildBackupDump,
   createLedgerMcpTools,
   createManagementLedgerMcpTools,
+  parseBackupDump,
+  readWorksetRootsEpoch,
+  type Item,
 } from "@cq/ledger";
+import { memoryFields, physicalMemories, rewriteMemoriesDump } from "../../ledger/test/memoryKindStoreContract.js";
 import {
   attachMcpHttp,
   createLedgerMcpServer,
@@ -165,6 +176,67 @@ const sweepArgs = {
   gate_policy: "fail-on-active-gate",
 };
 
+const LEGACY_TS = "2026-01-02T03:04:05.000Z";
+
+/**
+ * An open milestone with a terminal decision, a legacy (kind-less) fact, and a
+ * `kind` memory, imported through a dump: the only way a memory leaves M-AMBIENT.
+ */
+async function seedFinalizeMilestone(
+  store: InMemoryLedgerStore,
+  kind: string,
+): Promise<{ milestoneId: string; legacyId: string; automaticId: string }> {
+  const milestone = await store.createMilestone({ title: "finalize authority milestone" });
+  const decision = await store.createItem(DECISIONS_LEDGER, milestone.id, {
+    status: "proposed",
+    fields: { headline: "sibling decision" },
+  });
+  await store.updateItem(DECISIONS_LEDGER, decision.id, { status: "superseded" });
+  const memory = (id: string, memoryKind: string | null): Item => ({
+    id,
+    milestoneId: milestone.id,
+    status: "superseded",
+    fields: memoryFields(`milestone memory ${id}`, memoryKind),
+    createdAt: LEGACY_TS,
+    updatedAt: LEGACY_TS,
+    author: "legacy-author",
+    session: "legacy-session",
+  });
+  const dump = await rewriteMemoriesDump(store, (ledger) => {
+    ledger.milestones.push({
+      id: milestone.id,
+      title: "",
+      description: "",
+      items: [memory("MEM70", null), memory("MEM71", kind)],
+    });
+  });
+  await store.replaceFromParsedDump(parseBackupDump(dump));
+  return { milestoneId: milestone.id, legacyId: "MEM70", automaticId: "MEM71" };
+}
+
+function closeThenArchive(milestoneId: string) {
+  return {
+    operations: [
+      { id: `close-milestone:${milestoneId}`, target_id: milestoneId, action: "close-milestone", target_status: "done" },
+      { id: `archive-milestone:${milestoneId}`, target_id: milestoneId, action: "archive-milestone", summary: "finalized" },
+    ],
+  };
+}
+
+const SEEDED_LOG = { path: "raw/20260929T000000Z-finalize-authority.jsonl", content: '{"turn":1}\n' };
+
+async function storedLogs(store: InMemoryLedgerStore): Promise<Array<{ path: string; content: string }>> {
+  const entries: Array<{ path: string; content: string }> = [];
+  for await (const entry of store.listLogs()) entries.push(entry);
+  return entries;
+}
+
+async function worksetRoots(store: InMemoryLedgerStore) {
+  const worksetStore = store.worksetStore?.();
+  if (worksetStore === undefined) throw new Error("expected a workset store");
+  return readWorksetRootsEpoch(worksetStore);
+}
+
 const SURFACES: ReadonlyArray<readonly [string, () => Promise<SurfacePair>]> = [
   ["direct tools", directPair],
   ["stdio server", stdioPair],
@@ -243,6 +315,40 @@ for (const [surfaceName, buildPair] of SURFACES) {
           await expectOk(management("reopen_item", { ledger_id: MEMORIES_LEDGER, item_id: terminal.id, to_status: "active" }));
           expect(store.fetchItem(MEMORIES_LEDGER, fact.id).fields["kind"]).toBe(kind);
           expect(store.fetchItem(MEMORIES_LEDGER, terminal.id)).toMatchObject({ status: "active", fields: { kind } });
+        } finally {
+          await pair.close();
+        }
+      }, 20_000);
+
+      it(`ordinary execute_finalize with a swept ${kind} rejects the whole batch; management archives`, async () => {
+        const pair = await buildPair();
+        try {
+          const { ordinary, management, store } = pair;
+          const { milestoneId, legacyId, automaticId } = await seedFinalizeMilestone(store, kind);
+          await store.putLog(SEEDED_LOG.path, SEEDED_LOG.content);
+          const before = await store.exportPhysicalLedgerState();
+          const rootsBefore = await worksetRoots(store);
+          const logsBefore = await storedLogs(store);
+          expect(logsBefore).toEqual([SEEDED_LOG]);
+
+          const rejected = await ordinary("execute_finalize", closeThenArchive(milestoneId));
+          expect(rejected.isError).toBe(true);
+          expect(rejected.text).toContain(MANAGEMENT_REQUIRED);
+          expect(rejected.text).toContain(automaticId);
+          expect(await store.exportPhysicalLedgerState()).toEqual(before);
+          expect(await worksetRoots(store)).toEqual(rootsBefore);
+          expect(await storedLogs(store)).toEqual(logsBefore);
+          expect(store.fetchItem(MILESTONES_LEDGER, milestoneId).status).toBe("open");
+
+          await expectOk(management("execute_finalize", closeThenArchive(milestoneId)));
+          const archived = (await physicalMemories(store)).archived;
+          const kinds = Object.fromEntries(archived.map((item) => [item.id, item.fields["kind"]]));
+          expect(kinds).toEqual({ [legacyId]: "fact", [automaticId]: kind });
+          const backup = parseBackupDump(await buildBackupDump(store, null));
+          const backedUp = [...(backup.archives.get(MEMORIES_LEDGER)?.values() ?? [])].flatMap((content) =>
+            content.kind === "group" ? content.milestone.items : [content.item],
+          );
+          expect(Object.fromEntries(backedUp.map((item) => [item.id, item.fields["kind"]]))).toEqual(kinds);
         } finally {
           await pair.close();
         }

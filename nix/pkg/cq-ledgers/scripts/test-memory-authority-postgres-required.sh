@@ -7,4 +7,5 @@ exec bash "$(dirname "${BASH_SOURCE[0]}")/lib/postgres-required-bun-test.sh" \
   packages/ledger/test/store-postgres.test.ts \
   packages/ledger/test/workset-generic-mutation-postgres.test.ts \
   packages/ledger/test/memory-authority-postgres.test.ts \
-  packages/ledger/test/workset-owned-write-postgres.test.ts
+  packages/ledger/test/workset-owned-write-postgres.test.ts \
+  packages/ledger/test/memory-finalize-authority-postgres.test.ts

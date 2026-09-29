@@ -2776,6 +2776,12 @@
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeNonBun.test.ts",
       "sha256": "b93bf14f4e48390a61e4541473c1870ee783be98a83f98f058696ef7fd391957",
       "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/memory-finalize-authority.test.ts",
+      "sha256": "fbc648c3d24e34a267c64da5071c12dfc48adbf1e07d25a3e62bb80250f9cc3f",
+      "targets": []
     }
   ]
 }
