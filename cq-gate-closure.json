@@ -183,7 +183,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "5fda15a4d332af5fc5be028c6cdc42eadf1495c6ac330a92ffb28c55f749426f",
+      "sha256": "2865914b307745eea2eba38346b3590924e2c86bee9c5d70649fb2649f590867",
       "targets": []
     },
     {
@@ -2724,7 +2724,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-runner.test.ts",
-      "sha256": "3a959155245bc453c76b74c3f071ac48870e305cdeb18d48d4a7893bbc924ab6",
+      "sha256": "7c32c078e99c51395d462af9056568d635a9eec829398955ea6a63ab5e4a97ce",
       "targets": [
         "nix/pkg/cq-ledgers/scripts/lib/postgres-required-bun-test.sh"
       ]
@@ -2738,7 +2738,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/postgres-required-runner.test.ts",
-      "sha256": "3a959155245bc453c76b74c3f071ac48870e305cdeb18d48d4a7893bbc924ab6",
+      "sha256": "7c32c078e99c51395d462af9056568d635a9eec829398955ea6a63ab5e4a97ce",
       "targets": []
     },
     {
