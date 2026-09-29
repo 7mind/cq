@@ -10,7 +10,7 @@ import {
   requireWorksetStore, resolveCohortCommandBoundaryV1, resolveCohortDefinitionObservationV1,
   withManagedCohortAuthorityWriterLock,
   assertCohortPrimaryObservationV1,
-  readRetainedManagedCohortHandle, releaseAbandonedManagedCohortWorktree, retainManagedCohortAuthority,
+  readRetainedManagedCohortHandle, readRetainedManagedCohortLease, releaseAbandonedManagedCohortWorktree, retainManagedCohortAuthority,
   withManagedWorktreeEffectLock,
   type CohortAdmissionPlanV1, type CohortAdmissionObservationV1, type CohortAdvanceCapabilityV1, type CohortAdvanceObservationV1,
   type ManagedWorktreeDeps, type ResolvedLedgerStore, type DispatchCapability,
@@ -147,15 +147,25 @@ export async function createCohortAdvanceRuntimeV1(
       if (observe === undefined) {
         throw new Error("a cohort preparation that owns evidence cannot be abandoned without observing its dispatches");
       }
+      // D608: a generation superseded by a later generation of the same attestation (a
+      // correction or rebase successor claimed it) can never complete; only the newest can.
+      const newestGeneration = new Map<string, number>();
+      for (const entry of state.candidateAttempts.filter((attempt) => attempt.definitionDigest === input.definitionDigest)) {
+        const { attestationId, generation } = entry.preparedDispatch;
+        newestGeneration.set(attestationId, Math.max(generation, newestGeneration.get(attestationId) ?? generation));
+      }
       for (const seal of seals) {
         const attempt = state.candidateAttempts.find((entry) => entry.candidateAttemptDigest === seal.candidateAttemptDigest);
         if (attempt === undefined) throw new Error("a cohort seal lost its candidate attempt");
+        if (attempt.preparedDispatch.generation < newestGeneration.get(attempt.preparedDispatch.attestationId)!) continue;
         if ((await observe(attempt.preparedDispatch)).state !== "aborted") {
           throw new Error("a cohort preparation that owns live evidence cannot be abandoned; complete or rebase it instead");
         }
       }
     }
     const deadEvidence = seals.length > 0 || subjects.length > 0 || bridges.length > 0;
+    // D608: a successor's lease lives in its worktree record, which the release below removes.
+    const retainedLease = await readRetainedManagedCohortLease(repositoryRoot, input.intentDigest, deps);
     const worktree = await releaseAbandonedManagedCohortWorktree(
       { repositoryRoot, candidateIntentDigest: input.intentDigest },
       deps,
@@ -183,6 +193,11 @@ export async function createCohortAdvanceRuntimeV1(
       await cohorts.abandonDeadEvidence(`${input.operationId}:abandon-evidence`, {
         definitionDigest: input.definitionDigest, reservation: active.length === 0 ? null : reservation,
         evidenceSubjectDigests: subjects.map((subject) => subject.evidenceSubjectDigest) });
+      // D608: after a correction, the live lease belongs to the dead successor's pre-seal
+      // subject rather than to an abandoned evidence subject; release it through its retained capability.
+      const remaining = (await cohorts.snapshot()).runtime.lease;
+      const held = [retainedLease, lease].find((candidate) => candidate !== null && candidate.semanticSubject === remaining?.semanticSubject);
+      if (remaining !== null && held !== undefined && held !== null) await cohorts.releaseLease(held);
     } else if (live !== null && lease !== null) await cohorts.releaseRefusedPreparation(`${input.operationId}:release`, lease, reservation);
     else await cohorts.transitionReservation(`${input.operationId}:release`, { ...reservation, transition: "released" });
     // D576: observation moved every task member to `wip`; nothing implements

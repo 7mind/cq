@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected", "gate-interrupted", "initial-aborted", "branch-switched", "integration-rewritten"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "correction-abandoned", "gate-rejected", "gate-interrupted", "initial-aborted", "branch-switched", "integration-rewritten"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -497,7 +497,7 @@ for (const kind of ["memory", "sqlite"] as const) {
       expect(coordinated.state).toBe("completed");
       expect(commands.slice(0, 2).sort()).toEqual(["bun test packages/ledger/test/tasks:T1.test.ts", "bun test packages/ledger/test/tasks:T2.test.ts"]);
       expect(commands.slice(2)).toEqual(["bun test shared.test.ts", "bun run check"]);
-      if (mode === "correction" || mode === "correction-retry" || mode === "correction-fail" || mode === "correction-changed") {
+      if (mode === "correction" || mode === "correction-retry" || mode === "correction-fail" || mode === "correction-changed" || mode === "correction-abandoned") {
         // D598: a reviewer disapproved the gate-green candidate; its correction
         // round continues in the same managed worktree under a new intent.
         const tool = createLedgerMcpToolSpecifications(fixture.ledger, undefined, undefined, undefined, undefined,
@@ -534,6 +534,26 @@ for (const kind of ["memory", "sqlite"] as const) {
         let next = successor.prepared;
         await capability.fetchInput({ ...next, inputCapability: next.inputCapability });
         let retryStart = receipt.newHead;
+        if (mode === "correction-abandoned") {
+          // D608: the reviewed generation stays consumed after its correction retired it; once the
+          // correction itself dies, nothing is left to protect and abandonment must release it.
+          await capability.abort({ ...next, reason: "native-failure", details: { source: "test-abandoned" } });
+          const ledgerWithCohorts = new Proxy(fixture.ledger, { get: (target, key) => {
+            if (key === "workCohortStore") return () => fixture.store;
+            const value: unknown = Reflect.get(target, key, target);
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          } });
+          const advance = await createCohortAdvanceRuntimeV1({ resolved: { backend: "xdg",
+            store: ledgerWithCohorts, configRoot: fixture.root, branch: "cq-ledger" },
+            promptArtifacts: cohortPromptStore(), managedDeps: fixture.deps, dispatch: capability });
+          if (advance === undefined) throw new Error("cohort advance runtime unavailable");
+          for (const taskId of ["T1", "T2"]) await fixture.ledger.updateItem("tasks", taskId, { status: "wip" });
+          await advance.releaseAbandonedPreparation({ definitionDigest: (await fixture.store.snapshot()).portable.definitions[0]!.definitionDigest,
+            intentDigest: successorCohort.intent.intentDigest, operationId: "abandon-corrected" });
+          expect((await fixture.store.snapshot()).runtime.lease).toBeNull();
+          expect(["T1", "T2"].map((taskId) => fixture.ledger.fetchItem("tasks", taskId).status)).toEqual(["planned", "planned"]);
+          return;
+        }
         if (mode === "correction-retry" || mode === "correction-fail" || mode === "correction-changed") {
           // D598: the correction worker failed without a change; a further round
           // continues from the same tip under yet another fresh intent.

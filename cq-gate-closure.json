@@ -1780,13 +1780,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "9628cb936c566834379f4d8e4f2511f51fc4b2cd6c8b6fe92531acbc29afa7f2",
+      "sha256": "d3842453cac46f26110228b509dc9b5ca8f2273510171a32ad0ce5136be0c3d9",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "9628cb936c566834379f4d8e4f2511f51fc4b2cd6c8b6fe92531acbc29afa7f2",
+      "sha256": "d3842453cac46f26110228b509dc9b5ca8f2273510171a32ad0ce5136be0c3d9",
       "targets": []
     },
     {
@@ -2564,7 +2564,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/work-cohort-dispatch-runtime.test.ts",
-      "sha256": "2412129163da98c50f3cc32e14b49e310b7c7dc13a21ec02b0c92b57aaf3c9db",
+      "sha256": "5ebe8361a666f0faac866329e5d1c42c6fbe799349fece65b6e67fcac3a6a9ec",
       "targets": []
     },
     {

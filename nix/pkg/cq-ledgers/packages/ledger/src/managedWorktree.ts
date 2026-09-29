@@ -4138,6 +4138,17 @@ export async function resolveManagedCohortWorktreeDispatchBinding(
   });
 }
 
+/** D608: the lease a live cohort worktree record retains for its candidate intent, if any. */
+export async function readRetainedManagedCohortLease(
+  repositoryRoot: string,
+  intentDigest: string,
+  deps: Pick<ManagedWorktreeDeps, "stateDir">,
+): Promise<WorkCohortLeaseV1 | null> {
+  const records = await readCurrentTaskGeneration(registryRoot(repositoryRoot, deps.stateDir), `cohort-${intentDigest}`);
+  const live = (records ?? []).filter((record) => record.status === "live");
+  return live.length === 1 ? live[0]!.retainedCohortAuthority?.lease ?? null : null;
+}
+
 export async function resolveRetainedManagedCohortAuthority(
   repositoryRoot: string,
   store: WorkCohortStore,

@@ -459,6 +459,7 @@ export {
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
   releaseAbandonedManagedCohortWorktree,
+  readRetainedManagedCohortLease,
   releaseCompletedManagedCohortWorktree,
   resolveManagedWorktreeDispatchBinding,
   resolveManagedWorktreeLineageBinding,
