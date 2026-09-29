@@ -4344,10 +4344,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           const token = mintParentGateCapability(randomBytes);
           await options.backend.transact({ kind: "handle", handle: workerDispatch }, async (store) => {
             const row = store.read(workerDispatch);
+            const idleQualified = row !== undefined && !isAttestationTombstone(row) && row.parentGateCapabilityHash !== undefined &&
+              row.state === "gate-pending" && row.implementationQueue?.state === "qualified" && row.implementationQueue.lease === undefined;
+            // D607: a sealed candidate whose gate ended without accepting it has no execution left;
+            // renewal re-grants its parent for the correction round that re-gates it.
+            const gateEnded = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
+              row.implementationQueue?.state === "terminal" && row.implementationQueue.attempt !== undefined &&
+              isRegatableSealedCandidateTermination(row.abortReason, row.implementationQueue.terminal?.reason) &&
+              row.stagedRebaseSourceBinding === undefined;
             if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
-                row.parentGateCapabilityHash === undefined || row.promptProvenance.roleId !== "implement-worker" ||
-                row.state !== "gate-pending" || row.implementationQueue?.state !== "qualified" || row.implementationQueue.lease !== undefined) {
-              throw new Error("cohort parent renewal requires a qualified idle queue candidate with no active execution");
+                row.promptProvenance.roleId !== "implement-worker" || !(idleQualified || gateEnded)) {
+              throw new Error("cohort parent renewal requires a qualified idle queue candidate with no active execution, or a sealed candidate whose gate ended");
             }
             const sealed = await resolveSealedCohortAuthority(row.gitEffectBinding, workerDispatch, false);
             if (cohortValueDigestV1(sealed.authority.envelope) !== cohortValueDigestV1(cohort)) {

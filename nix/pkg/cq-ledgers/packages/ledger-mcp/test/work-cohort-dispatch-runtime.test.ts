@@ -359,6 +359,28 @@ for (const kind of ["memory", "sqlite"] as const) {
         const rejectedRow = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
         expect(rejectedRow?.kind === "envelope" ? [rejectedRow.state, rejectedRow.abortReason] : undefined)
           .toEqual(["aborted", mode === "gate-rejected" ? "gate-rejected" : "parent-lost"]);
+        if (mode === "gate-interrupted") {
+          // D607: the interrupted candidate outlives its execution epoch; an explicit
+          // trusted renewal re-grants its parent before the correction round.
+          const { retainManagedCohortAuthority, withManagedCohortAuthorityWriterLock, withManagedWorktreeEffectLock } = await import("@cq/ledger");
+          const state = (await fixture.store.snapshot()).portable;
+          const definition = state.definitions[0]!;
+          const subject = state.evidenceSubjects[0]!;
+          await fixture.store.beginNewExecutionEpoch();
+          await fixture.store.revalidateForResume({ definitionDigest: definition.definitionDigest,
+            sealDigest: state.candidateSeals[0]!.sealDigest, evidenceSubjectDigest: subject.evidenceSubjectDigest,
+            acceptanceMatrixDigest: definition.acceptanceMatrixDigest,
+            environmentDigest: definition.environment.environmentDigest, receiptBridgeDigest: state.receiptBridges[0]!.bridgeDigest });
+          const renewed = createCohortEffectEnvelopeV1({ definition, observation: fixture.observation,
+            intent: fixture.intent, evidenceSubject: subject, executionEpoch: (await fixture.store.snapshot()).runtime.executionEpoch });
+          await expect(capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle }))
+            .rejects.toThrow("cohort parent execution grant has expired");
+          const lease = await fixture.store.acquireLease({ holderId: "renewed-parent", semanticSubject: renewed.semanticSubject });
+          await withManagedCohortAuthorityWriterLock(fixture.root, fixture.deps, () =>
+            withManagedWorktreeEffectLock(fixture.authorization, fixture.deps, () =>
+              retainManagedCohortAuthority(fixture.prepared.handle, { store: fixture.store, lease, envelope: renewed }, fixture.deps)));
+          await capability.renewCohortParentExecution!({ workerDispatch: prepared.handle, cohort: renewed });
+        }
         const ready = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle });
         expect(ready.input).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, round: 1 });
         const retryChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}regate-child`, runId: "regate-run" };
