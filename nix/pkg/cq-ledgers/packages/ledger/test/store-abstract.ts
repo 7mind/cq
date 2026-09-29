@@ -32,6 +32,7 @@ import {
   registerMemoryKindContract,
   type MemoryKindPhysicalFixture,
 } from "./memoryKindStoreContract.js";
+import { runMemoryAuthoringTransactionContract } from "./memoryAuthoringTransactionContract.js";
 
 // All canonical ledgers are bootstrapped on init(); the suite therefore
 // uses NON-canonical custom ledgers (distinct idPrefixes) for the seed and
@@ -1578,14 +1579,16 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
     });
 
     if (factory.memoryKind !== null) {
-      registerMemoryKindContract({
+      const memoryContract = {
         build: () => factory.build([]),
-        teardown: async (store) => {
+        teardown: async (store: LedgerStore) => {
           await factory.teardown?.(store);
         },
         fixture: factory.memoryKind,
         timeoutMs: TIMEOUT,
-      });
+      };
+      registerMemoryKindContract(memoryContract);
+      runMemoryAuthoringTransactionContract(memoryContract);
     }
   });
 }

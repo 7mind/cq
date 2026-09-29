@@ -12,6 +12,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  createSqliteWorksetGuardedLedger,
   createSqliteWorksetManagementLedger,
   MILESTONES_LEDGER,
   TASKS_LEDGER,
@@ -20,6 +21,7 @@ import {
 } from "../src/index.js";
 import {
   runWorksetGenericMutationContract,
+  type WorksetGenericMutationAuthorityPair,
   type WorksetGenericMutationContractBuildOptions,
 } from "./worksetGenericMutationContract.js";
 
@@ -48,6 +50,18 @@ async function buildSqliteGuarded(
   return ledger;
 }
 
+/** Ordinary and management surfaces over one database file (T6628). */
+async function buildSqliteAuthorityPair(): Promise<WorksetGenericMutationAuthorityPair> {
+  const dbPath = await freshDbPath();
+  const management = createSqliteWorksetManagementLedger({ dbPath });
+  liveLedgers.push(management);
+  await management.init();
+  const ordinary = createSqliteWorksetGuardedLedger({ dbPath });
+  liveLedgers.push(ordinary);
+  await ordinary.init();
+  return { ordinary, management };
+}
+
 afterEach(async () => {
   while (liveLedgers.length > 0) {
     const ledger = liveLedgers.pop();
@@ -60,6 +74,7 @@ runWorksetGenericMutationContract({
   name: "sqlite-durable",
   classification: "Behavioral-Active Blackbox-GoodCommunication",
   build: (options) => buildSqliteGuarded(options),
+  buildAuthorityPair: buildSqliteAuthorityPair,
 });
 
 describe("workset generic-mutation sqlite focused [T1974]", () => {

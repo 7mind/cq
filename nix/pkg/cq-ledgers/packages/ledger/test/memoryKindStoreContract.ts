@@ -78,7 +78,7 @@ export interface MemoryKindContractFactory {
   readonly timeoutMs: number;
 }
 
-function memoryFields(title: string, kind: string | null): Record<string, FieldValue> {
+export function memoryFields(title: string, kind: string | null): Record<string, FieldValue> {
   const fields: Record<string, FieldValue> = {
     title,
     content: `durable memory body for ${title}`,
@@ -87,7 +87,7 @@ function memoryFields(title: string, kind: string | null): Record<string, FieldV
   return fields;
 }
 
-function withoutKind(fields: Readonly<Record<string, FieldValue>>): Record<string, FieldValue> {
+export function withoutKind(fields: Readonly<Record<string, FieldValue>>): Record<string, FieldValue> {
   const out: Record<string, FieldValue> = { ...fields };
   delete out[KIND];
   return out;
@@ -111,7 +111,7 @@ function legacyArchivedItem(kind: string | null): Item {
  * the real serializers, and return the rewritten dump. `mutate` edits the
  * parsed memories ledger and may append archived groups.
  */
-async function rewriteMemoriesDump(
+export async function rewriteMemoriesDump(
   store: LedgerStore,
   mutate: (memories: Ledger, archivedGroups: Milestone[]) => void,
 ): Promise<BackupDumpFile[]> {
@@ -168,7 +168,7 @@ function activeMemories(store: LedgerStore): Item[] {
   return store.fetch(MEMORIES).milestones.flatMap((group) => group.items);
 }
 
-async function physicalMemories(
+export async function physicalMemories(
   store: LedgerStore,
 ): Promise<{ active: Item[]; archived: Item[] }> {
   const state = await store.exportPhysicalLedgerState();
@@ -182,7 +182,7 @@ async function physicalMemories(
   return { active: entry.ledger.milestones.flatMap((group) => group.items), archived };
 }
 
-function requireStore(outcome: RestoreOutcome): LedgerStore {
+export function requireStore(outcome: RestoreOutcome): LedgerStore {
   if (outcome.error !== null) throw outcome.error;
   return outcome.store;
 }
@@ -194,7 +194,7 @@ function managementLedger(store: LedgerStore): WorksetGuardedLedger {
   return createWorksetManagementLedger({ rawStore: store, worksetStore });
 }
 
-function exactArchiveOperation(item: Item, expectedItemDigest: string) {
+export function exactArchiveOperation(item: Item, expectedItemDigest: string) {
   return {
     version: 1 as const,
     id: `archive-${item.id}`,

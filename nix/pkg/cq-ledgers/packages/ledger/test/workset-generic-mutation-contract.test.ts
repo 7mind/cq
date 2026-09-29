@@ -13,6 +13,7 @@ import {
   createInMemoryWorksetManagementLedger,
 } from "../src/index.js";
 import {
+  buildInMemoryAuthorityPair,
   runWorksetGenericMutationContract,
   type WorksetGenericMutationContractFactory,
 } from "./worksetGenericMutationContract.js";
@@ -28,6 +29,7 @@ describe("workset generic-mutation contract module [T1961]", () => {
       name: "in-memory-smoke",
       classification: "Behavioral-Active Blackbox-Atomic",
       build: () => createInMemoryWorksetManagementLedger(),
+      buildAuthorityPair: buildInMemoryAuthorityPair,
     };
     const ledger = await factory.build();
     await ledger.init();
@@ -43,4 +45,5 @@ runWorksetGenericMutationContract({
   name: "in-memory",
   classification: "Behavioral-Active Blackbox-Atomic",
   build: (options) => createInMemoryWorksetManagementLedger(options),
+  buildAuthorityPair: buildInMemoryAuthorityPair,
 });

@@ -14,12 +14,16 @@ import {
   TASKS_LEDGER,
   WORKSET_OWNER_REF_FIELD,
 } from "../src/index.js";
-import { runWorksetGenericMutationContract } from "./worksetGenericMutationContract.js";
+import {
+  buildInMemoryAuthorityPair,
+  runWorksetGenericMutationContract,
+} from "./worksetGenericMutationContract.js";
 
 runWorksetGenericMutationContract({
   name: "in-memory-dummy",
   classification: "Behavioral-Active Blackbox-Atomic",
   build: (options) => createInMemoryWorksetManagementLedger(options),
+  buildAuthorityPair: buildInMemoryAuthorityPair,
 });
 
 describe("workset generic-mutation in-memory focused [T1961]", () => {

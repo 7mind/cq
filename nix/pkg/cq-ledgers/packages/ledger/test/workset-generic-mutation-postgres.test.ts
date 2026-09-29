@@ -13,6 +13,7 @@ import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { SQL } from "bun";
 import {
+  createPostgresWorksetGuardedLedger,
   createPostgresWorksetManagementLedger,
   ensureSchema,
   openPgPool,
@@ -95,6 +96,22 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     return ledger;
   }
 
+  /** Ordinary and management surfaces over one tenant (T6628). */
+  async function buildAuthorityPair(): Promise<{
+    ordinary: WorksetGuardedLedger;
+    management: WorksetGuardedLedger;
+  }> {
+    const projectKey = await prepareTenant();
+    const management = await buildGuarded({ projectKey });
+    const ordinary = await createPostgresWorksetGuardedLedger({
+      pool: openNarrowPool(dsn),
+      projectKey,
+      displayName: projectKey,
+    });
+    openLedgers.push(ordinary);
+    return { ordinary, management };
+  }
+
   runWorksetGenericMutationContract({
     name: "postgres-durable",
     classification: "Behavioral-Active Blackbox-GoodCommunication",
@@ -106,6 +123,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
           : {}),
         ...(options?.now !== undefined ? { now: options.now } : {}),
       }),
+    buildAuthorityPair,
   });
 
   describe("workset generic-mutation postgres focused [T1975]", () => {

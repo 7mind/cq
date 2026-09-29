@@ -37,6 +37,18 @@ import {
   type WorksetGuardedLedger,
   type WorksetGenericMutationErrorCode,
   type CreateInMemoryWorksetGuardedLedgerOptions,
+  InMemoryLedgerStore,
+  MemoryManagementAuthorityRequiredError,
+  closedGraphIsTargetAdmitted,
+  createInMemoryWorksetStore,
+  createObserveOnlyWorksetInvocationAuthority,
+  createWorksetGuardedLedger,
+  createWorksetManagementLedger,
+  readWorksetRootsEpoch,
+  type ArchiveContent,
+  type Item,
+  type UpdateItemPatch,
+  type WorksetGenericMutationGatewayHost,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -61,6 +73,39 @@ export interface WorksetGenericMutationContractFactory {
   build(
     options?: WorksetGenericMutationContractBuildOptions,
   ): WorksetGuardedLedger | Promise<WorksetGuardedLedger>;
+  /**
+   * G192/T6628 — an ordinary-authority and a management-authority surface over
+   * ONE shared persistence, for the memory authoring cases.
+   */
+  buildAuthorityPair(): Promise<WorksetGenericMutationAuthorityPair>;
+}
+
+export interface WorksetGenericMutationAuthorityPair {
+  readonly ordinary: WorksetGuardedLedger;
+  readonly management: WorksetGuardedLedger;
+}
+
+/** In-memory {@link WorksetGenericMutationContractFactory.buildAuthorityPair}. */
+export async function buildInMemoryAuthorityPair(): Promise<WorksetGenericMutationAuthorityPair> {
+  const rawStore = new InMemoryLedgerStore();
+  const worksetStore = createInMemoryWorksetStore({
+    isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
+  });
+  const host: Omit<WorksetGenericMutationGatewayHost, "invocationAuthority"> = {
+    rawStore,
+    worksetStore,
+    runGenericTransaction: (mutate) =>
+      rawStore.runAtomicGenericMutation(mutate, () => readWorksetRootsEpoch(worksetStore)),
+  };
+  const pair = {
+    ordinary: createWorksetGuardedLedger({
+      ...host,
+      invocationAuthority: createObserveOnlyWorksetInvocationAuthority(),
+    }),
+    management: createWorksetManagementLedger(host),
+  };
+  await pair.management.init();
+  return pair;
 }
 
 function caseIt(
@@ -1129,5 +1174,127 @@ export function runWorksetGenericMutationContract(
       });
       expect(m.id.length).toBeGreaterThan(0);
     });
+
+    // G192/T6628 — memory authoring authority at the gateway boundary.
+
+    caseIt(factory, "ordinary authority authors and maintains fact memories", async () => {
+      const { ordinary } = await factory.buildAuthorityPair();
+      const omitted = await ordinary.mutations.createItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "active",
+        fields: { title: "omitted", content: "omitted kind body" },
+      });
+      const explicit = await ordinary.mutations.createItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "active",
+        fields: { title: "explicit", content: "explicit fact body", kind: "fact" },
+      });
+      expect([omitted.fields.kind, explicit.fields.kind]).toEqual(["fact", "fact"]);
+      await ordinary.mutations.updateItem(MEMORIES_LEDGER, omitted.id, { fields: { tags: ["t"] } });
+      await ordinary.mutations.updateItem(MEMORIES_LEDGER, omitted.id, {});
+      await ordinary.mutations.updateItem(MEMORIES_LEDGER, omitted.id, { status: "superseded" });
+      const swept = await ordinary.mutations.archiveTerminalItems(
+        [MEMORIES_LEDGER],
+        "sweep facts",
+        "fail-on-active-gate",
+      );
+      expect(swept.archivedItems).toBe(1);
+      await ordinary.mutations.unarchiveItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, omitted.id);
+      const reopened = await ordinary.mutations.reopenItem(MEMORIES_LEDGER, omitted.id, "active");
+      expect(reopened).toMatchObject({ status: "active", fields: { kind: "fact", tags: ["t"] } });
+    });
+
+    for (const kind of ["rule", "environment"] as const) {
+      caseIt(factory, `ordinary authority rejects every ${kind} operation atomically; management succeeds`, async () => {
+        const { ordinary, management } = await factory.buildAuthorityPair();
+        const create = (surface: WorksetGuardedLedger, title: string, memoryKind: string) =>
+          surface.mutations.createItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, {
+            status: "active",
+            fields: { title, content: `${title} body`, kind: memoryKind },
+            author: "author-a",
+            session: "session-a",
+          });
+        const fact = await create(management, "promotable fact", "fact");
+        const live = await create(management, `live ${kind}`, kind);
+        const terminal = await management.mutations.updateItem(
+          MEMORIES_LEDGER,
+          (await create(management, `terminal ${kind}`, kind)).id,
+          { status: "superseded" },
+        );
+        const terminalFact = await management.mutations.updateItem(MEMORIES_LEDGER, fact.id, {
+          status: "superseded",
+        });
+        await management.mutations.reopenItem(MEMORIES_LEDGER, terminalFact.id, "active");
+
+        const expectRejected = async (attempt: () => Promise<unknown>): Promise<void> => {
+          const before = await observeMemories(management);
+          await expect(attempt()).rejects.toThrow(MemoryManagementAuthorityRequiredError);
+          expect(await observeMemories(management)).toEqual(before);
+        };
+        await expectRejected(() => create(ordinary, `ordinary ${kind}`, kind));
+        const patches: UpdateItemPatch[] = [
+          { fields: { kind } },
+          { fields: { tags: ["edited"] } },
+          {},
+          { author: "author-b", session: "session-b" },
+          { status: "superseded" },
+        ];
+        for (const patch of patches) {
+          const target = patch.fields?.kind === kind ? fact.id : live.id;
+          await expectRejected(() => ordinary.mutations.updateItem(MEMORIES_LEDGER, target, patch));
+        }
+        await expectRejected(() => ordinary.mutations.reopenItem(MEMORIES_LEDGER, terminal.id, "active"));
+        await expectRejected(() =>
+          ordinary.mutations.archiveTerminalItems([MEMORIES_LEDGER], "sweep", "fail-on-active-gate"),
+        );
+        const ref = `${MEMORIES_LEDGER}:${terminal.id}`;
+        await expectRejected(() =>
+          ordinary.mutations.executeFinalize([
+            {
+              version: 1,
+              id: `archive-${terminal.id}`,
+              action: "archive-terminal-item",
+              targetId: ref,
+              expectedMilestoneId: terminal.milestoneId,
+              expectedUpdatedAt: terminal.updatedAt,
+              expectedItemDigest: ledgerItemRevisionV1(ref, terminal),
+              summary: "exact archive",
+            },
+          ]),
+        );
+
+        await management.mutations.updateItem(MEMORIES_LEDGER, live.id, { fields: { tags: ["edited"] } });
+        const promoted = await management.mutations.updateItem(MEMORIES_LEDGER, fact.id, {
+          fields: { kind },
+        });
+        expect(promoted.fields.kind).toBe(kind);
+        const swept = await management.mutations.archiveTerminalItems(
+          [MEMORIES_LEDGER],
+          "sweep",
+          "fail-on-active-gate",
+        );
+        expect(swept.archivedItems).toBe(1);
+        await expectRejected(() =>
+          ordinary.mutations.unarchiveItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, terminal.id),
+        );
+        await management.mutations.unarchiveItem(MEMORIES_LEDGER, MILESTONES_AMBIENT_ID, terminal.id);
+        const reopened = await management.mutations.reopenItem(MEMORIES_LEDGER, terminal.id, "active");
+        expect(reopened).toMatchObject({ status: "active", fields: { kind } });
+      });
+    }
   });
+}
+
+/**
+ * Status, fields, provenance, `updatedAt`, and archive placement of every
+ * memory, read through the public surface.
+ */
+async function observeMemories(ledger: WorksetGuardedLedger): Promise<{
+  readonly active: readonly Item[];
+  readonly archived: readonly ArchiveContent[];
+}> {
+  const fetched = ledger.fetch(MEMORIES_LEDGER);
+  const archived: ArchiveContent[] = [];
+  for (const pointer of fetched.archivePointers) {
+    archived.push(await ledger.fetchArchive(MEMORIES_LEDGER, pointer.id));
+  }
+  return { active: fetched.milestones.flatMap((group) => group.items), archived };
 }
