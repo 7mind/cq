@@ -701,7 +701,7 @@ async function executeCodexParentGateFinalizerAttempt(
     if (killTimer !== undefined) clearTimeout(killTimer);
   });
   if (timedOut) {
-    throw new CodexRoleBoundaryError(`parent gate exceeded its ${String(timeoutMs)} ms window`);
+    throw new CodexParentGateAttemptTimeoutError(`parent gate exceeded its ${String(timeoutMs)} ms window`);
   }
   if (exitStatus !== 0) {
     throw new CodexRoleBoundaryError(`parent gate exited ${String(exitStatus)}: ${stderr.trim()}`);
@@ -772,7 +772,10 @@ export async function executeCodexParentGateFinalizer(
       failures.push(error);
     }
   }
-  if (performance.now() >= deadline) {
+  // D606: every attempt timing out is a window overrun, however early the last one settled.
+  const everyAttemptTimedOut =
+    failures.length > 0 && failures.every((failure) => failure instanceof CodexParentGateAttemptTimeoutError);
+  if (performance.now() >= deadline || everyAttemptTimedOut) {
     throw new CodexRoleBoundaryError(
       `parent gate exceeded its ${String(input.timeoutMs)} ms window`,
     );
@@ -951,6 +954,9 @@ export class CodexRoleBoundaryError extends Error {
     this.diagnostic = diagnostic;
   }
 }
+
+/** One finalizer attempt reached its own timeout (D606: classification must not race the clock). */
+class CodexParentGateAttemptTimeoutError extends CodexRoleBoundaryError {}
 
 function parentGateAbortDiagnostic(details: DispatchJSONValue | undefined): string | undefined {
   if (

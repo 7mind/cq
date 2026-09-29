@@ -82,6 +82,7 @@ import {
   ProjectGateUndeclaredError,
   requireProjectGate,
   resolveProjectGateForRoot,
+  isRegatableSealedCandidateTermination,
   type ProjectGateSpecification,
   type ImplementationQueueControl,
 } from "@cq/config";
@@ -3026,7 +3027,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             reason: "parent-lost",
             details: { phase: "supervised-gate", message: durableParentGateDiagnostic(gateError) },
           },
-          binding,
+          // D607: a sealed cohort's live tip resolves through its retained SEALED authority.
+          cohortAuthority === undefined || binding.cohort === undefined
+            ? binding
+            : ({ ...binding, cohort: cohortAuthority.envelope } as typeof binding),
           true,
         );
       } catch (abortError) {
@@ -4274,12 +4278,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const failed = row !== undefined && !isAttestationTombstone(row) && (row.state === "aborted" ||
           (row.state === "consumed" && dispatchObject(row.output) && row.output["status"] === "fail"));
         const failedPreSeal = failed && row.implementationQueue === undefined && row.gitEffectBinding?.cohort?.state === "pre-seal";
-        const gateRejected = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
-          row.abortReason === "gate-rejected" && row.implementationQueue?.state === "terminal" &&
-          row.implementationQueue.terminal?.reason === "gate-rejected" && row.stagedRebaseSourceBinding === undefined;
+        // D607: a sealed candidate whose queue-front gate was interrupted (not a verdict) is
+        // re-gated like a rejected one; its clean exact tip is verified below.
+        const gateEnded = row !== undefined && !isAttestationTombstone(row) && row.state === "aborted" &&
+          row.implementationQueue?.state === "terminal" && row.implementationQueue.attempt !== undefined &&
+          isRegatableSealedCandidateTermination(row.abortReason, row.implementationQueue.terminal?.reason) &&
+          row.stagedRebaseSourceBinding === undefined;
         if (row === undefined || isAttestationTombstone(row) || row.gitEffectBinding?.cohort === undefined ||
-            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || failedPreSeal || gateRejected) || !dispatchObject(row.input)) {
-          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker, one gate-rejected sealed candidate, or one failed pre-seal worker");
+            row.promptProvenance.roleId !== "implement-worker" || !(reviewed || failedPreSeal || gateEnded) || !dispatchObject(row.input)) {
+          throw new Error("cohort correction requires one consumed, qualified, unretired cohort worker, one gate-rejected or gate-interrupted sealed candidate, or one failed pre-seal worker");
         }
         return row;
       });

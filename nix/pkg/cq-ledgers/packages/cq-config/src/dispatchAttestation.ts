@@ -3301,11 +3301,10 @@ function claimStagedRebaseSuccessor(
       priorManagerBinding !== undefined &&
       !isAttestationTombstone(previous) &&
       previous.state === "aborted" &&
-      previous.abortReason === "gate-rejected" &&
       queue !== undefined &&
       "attempt" in queue &&
       queue.state === "terminal" &&
-      queue.terminal?.reason === "gate-rejected" &&
+      isRegatableSealedCandidateTermination(previous.abortReason, queue.terminal?.reason) &&
       queue.attempt.resultCommit === bridge.oldResultCommit &&
       cohortRebaseTransitionMatches(priorManagerBinding, gitEffectBinding, reprepareOf) &&
       input?.["baseCommit"] === bridge.ontoCommit &&
@@ -3830,6 +3829,20 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   });
   BACKEND_OWNED_CONSUMED_RESULTS.add(consumed);
   return consumed;
+}
+
+/**
+ * D598/D607: a sealed cohort candidate whose queue-front gate ended without accepting it,
+ * either with a verdict (gate-rejected) or interrupted without one (parent-lost / native-failure),
+ * and which is therefore re-gated through an ordinary correction round.
+ */
+export function isRegatableSealedCandidateTermination(
+  abortReason: string | undefined,
+  queueTerminalReason: string | undefined,
+): boolean {
+  const interrupted = (reason: string | undefined) => reason === "parent-lost" || reason === "native-failure";
+  return (abortReason === "gate-rejected" && queueTerminalReason === "gate-rejected") ||
+    (interrupted(abortReason) && interrupted(queueTerminalReason));
 }
 
 function assertSupervisedGateRejectionDetails(

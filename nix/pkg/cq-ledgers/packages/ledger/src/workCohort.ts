@@ -11,7 +11,7 @@ import type {
   CohortCandidateIntentV1, CohortEvidenceSubjectV1, CohortMemberTaskAuthorityV1, CohortEffectEnvelopeV1, CohortWorktreeIdentityV1,
 } from "@cq/config";
 import { implementationQueueSubjectsMatch, implementationQueueAuthoritiesMatch, cohortRebaseTransitionMatches,
-  assertDispatchGuardedRebaseBridge } from "@cq/config";
+  assertDispatchGuardedRebaseBridge, isRegatableSealedCandidateTermination } from "@cq/config";
 export type {
   CohortRepositoryIdentityV1, CohortEnvironmentIdentityV1, CohortDefinitionIdentityV1,
   CohortCandidateIntentV1, CohortEvidenceSubjectV1, CohortMemberTaskAuthorityV1, CohortEffectEnvelopeV1, CohortWorktreeIdentityV1,
@@ -2779,8 +2779,9 @@ async function resolveG213QualifiedCandidateRowSnapshotV1(input: {
       }
       // D598: the sealed candidate its queue-front gate rejected is anchored by
       // its own seal, which the store's guarded-bridge validation requires.
-      if (source.state === "aborted" && source.abortReason === "gate-rejected" && source.implementationQueue?.state === "terminal" &&
-          source.implementationQueue.terminal?.reason === "gate-rejected" &&
+      // D607: so is the sealed candidate whose gate was interrupted without a verdict.
+      if (source.state === "aborted" && source.implementationQueue?.state === "terminal" &&
+          isRegatableSealedCandidateTermination(source.abortReason, source.implementationQueue.terminal?.reason) &&
           source.implementationQueue.attempt.resultCommit === linkBridge.oldResultCommit && linkBridge.cohort.state === "sealed") {
         break;
       }

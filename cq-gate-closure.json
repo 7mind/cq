@@ -35,7 +35,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/dispatchCapability.ts",
-      "sha256": "508debb09de290daad6d7bcbe7866e1b0b17c410152dd5df02e952328581f897",
+      "sha256": "750851d40a5f528beda5851e3ff73d70b4f87075267979b1093a3abf3ab9e92b",
       "targets": []
     },
     {
@@ -363,7 +363,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "9ca077681e8be657ce61d32d951c1cdb96139d1e6c14bbdec95ceb09eaa1a0f6",
+      "sha256": "d517d4c5e52b6b76ec0028e3996085eed7379378ca2fa451f98a42954e9cf045",
       "targets": []
     },
     {
@@ -447,13 +447,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "60e50c47c77042b79704d3cefc18f587f5507885385b429bf21b233f27b49029",
+      "sha256": "f52792ca76d6175848bad8b05eff94a8b356e61a3c818156e7d167c49628ff41",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "60e50c47c77042b79704d3cefc18f587f5507885385b429bf21b233f27b49029",
+      "sha256": "f52792ca76d6175848bad8b05eff94a8b356e61a3c818156e7d167c49628ff41",
       "targets": []
     },
     {
@@ -794,13 +794,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "02385474b4f02b29d36f24f933f913cb2ee61c834fdef18220770b4bda3f0ddb",
+      "sha256": "1f9ddaa8707af17a551016e5d5839251950d16e6a8ab3ca85116b03b9b788ef6",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "02385474b4f02b29d36f24f933f913cb2ee61c834fdef18220770b4bda3f0ddb",
+      "sha256": "1f9ddaa8707af17a551016e5d5839251950d16e6a8ab3ca85116b03b9b788ef6",
       "targets": []
     },
     {
@@ -1112,7 +1112,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "9ca077681e8be657ce61d32d951c1cdb96139d1e6c14bbdec95ceb09eaa1a0f6",
+      "sha256": "d517d4c5e52b6b76ec0028e3996085eed7379378ca2fa451f98a42954e9cf045",
       "targets": []
     },
     {
@@ -2564,7 +2564,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/work-cohort-dispatch-runtime.test.ts",
-      "sha256": "82501eabcc4d85c194dbca888e2ae5cdbbd4fd6838beb585243aba0afacc1bc8",
+      "sha256": "320d776471c1a0e18466cc4784e042d0afc9816717d5e5d3fa499317906a80df",
       "targets": []
     },
     {
@@ -2618,7 +2618,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/projectGateWiring.test.ts",
-      "sha256": "aeeb344d8fe72aef846f2ad84364608340f2006215f45c4ee3f1790c2b036aa7",
+      "sha256": "8a70b28c5bc1658b1e67b823f68d7cf722f8d4b3f91020e39c51f783a2480a63",
       "targets": []
     },
     {

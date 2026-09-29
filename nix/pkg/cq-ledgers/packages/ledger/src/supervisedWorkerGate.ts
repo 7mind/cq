@@ -47,6 +47,8 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const BUN_FAILURE_IDENTITY_LINE = /^\(fail\)\s+\S/u;
 const FAIL_SUMMARY_LINE = /^\s*[0-9]+\s+fail\b/u;
 const OUTPUT_TAIL_LINE_COUNT = 20;
+/** D605: one long line (for example a JSON report) must not consume the whole bounded tail. */
+const OUTPUT_TAIL_LINE_BYTE_LIMIT = 240;
 const FAILURE_IDENTITY_LINE_LIMIT = 4;
 const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
@@ -424,7 +426,12 @@ function lastCount(pattern: RegExp | null, output: string): number | undefined {
 }
 
 function tail(output: string): string {
-  return output.trimEnd().split("\n").slice(-OUTPUT_TAIL_LINE_COUNT).join("\n");
+  return output
+    .trimEnd()
+    .split("\n")
+    .slice(-OUTPUT_TAIL_LINE_COUNT)
+    .map((line) => truncateUtf8(line, OUTPUT_TAIL_LINE_BYTE_LIMIT))
+    .join("\n");
 }
 
 function truncateUtf8(value: string, byteLimit: number): string {
@@ -556,7 +563,7 @@ function outputTail(
       redactSecrets(tail(`${stdout}\n${stderr}`)),
       FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
     );
-  return truncateUtf8(
+  const head = truncateUtf8(
     redactSecrets(
       [
         junitFailureIdentityLines(junitReport),
@@ -564,14 +571,37 @@ function outputTail(
         failureIdentityLines(stderr),
         failureSummaryWindow(stdout),
         failureSummaryWindow(stderr),
-        tail(stdout),
-        tail(stderr),
       ]
         .filter((value) => value.length > 0)
         .join("\n"),
     ),
     FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
   );
+  // D605: the stream tails keep their NEWEST lines within the remaining budget, stderr first,
+  // because a failing later stage reports its cause at the end of stderr.
+  let remaining = FAILURE_OUTPUT_TAIL_BYTE_LIMIT - Buffer.byteLength(head, "utf8");
+  const sections = head.length === 0 ? [] : [head];
+  for (const stream of [stderr, stdout]) {
+    const newest = newestLinesWithin(redactSecrets(tail(stream)), remaining - (sections.length === 0 ? 0 : 1));
+    if (newest.length === 0) continue;
+    sections.push(newest);
+    remaining = FAILURE_OUTPUT_TAIL_BYTE_LIMIT - Buffer.byteLength(sections.join("\n"), "utf8");
+  }
+  return sections.join("\n");
+}
+
+/** The longest suffix of whole lines of `text` that fits in `byteLimit` bytes. */
+function newestLinesWithin(text: string, byteLimit: number): string {
+  if (text.length === 0 || byteLimit <= 0) return "";
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of text.split("\n").reverse()) {
+    const lineBytes = Buffer.byteLength(line, "utf8") + (kept.length === 0 ? 0 : 1);
+    if (bytes + lineBytes > byteLimit) break;
+    kept.unshift(line);
+    bytes += lineBytes;
+  }
+  return kept.join("\n");
 }
 
 function hostGateEnvironment(junitPath: string): NodeJS.ProcessEnv {

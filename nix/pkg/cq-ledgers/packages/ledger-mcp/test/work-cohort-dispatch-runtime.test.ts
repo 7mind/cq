@@ -26,7 +26,7 @@ function cohortPromptStore(): PromptArtifactStore {
 }
 
 for (const kind of ["memory", "sqlite"] as const) {
-  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected", "initial-aborted", "branch-switched", "integration-rewritten"] as const) {
+  for (const mode of ["initial", "renewed", "revoked-before-result", "final-with-focused", "aborted-after-seal", "stale", "stale-started", "conflict", "crash", "epoch-recovery", "correction", "correction-retry", "correction-fail", "correction-changed", "gate-rejected", "gate-interrupted", "initial-aborted", "branch-switched", "integration-rewritten"] as const) {
   const renewed = mode === "renewed";
   const conflict = mode === "conflict";
   const epochRecovery = mode === "epoch-recovery";
@@ -73,6 +73,9 @@ for (const kind of ["memory", "sqlite"] as const) {
           commands.push("bun run check");
           if (mode === "gate-rejected" && commands.filter((command) => command === "bun run check").length === 1) {
             return { gateExitCode: 1, passCount: 2, failCount: 1, gateDurationMs: 1, capturedAt: new Date().toISOString(), outputTail: "(fail) contended\n 1 fail" };
+          }
+          if (mode === "gate-interrupted" && commands.filter((command) => command === "bun run check").length === 1) {
+            throw new Error("supervised worker gate exceeded its host execution deadline");
           }
           return { gateExitCode: 0, passCount: 3, failCount: 0, gateDurationMs: 1, capturedAt: new Date().toISOString(), outputTail: "3 pass" };
         } },
@@ -348,12 +351,14 @@ for (const kind of ["memory", "sqlite"] as const) {
         capability = runtime();
         if (capability.coordinateImplementationCandidate === undefined) throw new Error("cohort restored coordinator unavailable");
       }
-      if (mode === "gate-rejected") {
+      if (mode === "gate-rejected" || mode === "gate-interrupted") {
         // D598: a red queue-front gate leaves the sealed candidate a correction
-        // round in its own worktree, like a reviewer's disapproval.
+        // round in its own worktree, like a reviewer's disapproval. D607: so does
+        // an interrupted gate, which must terminalize durably as parent-lost.
         await capability.coordinateImplementationCandidate({ ...prepared.prepared, holderId: "cohort-front", parentGateCapability }).catch(() => undefined);
         const rejectedRow = await backend.transact({ kind: "handle", handle: prepared.handle }, (store) => store.read(prepared.handle));
-        expect(rejectedRow?.kind === "envelope" ? [rejectedRow.state, rejectedRow.abortReason] : undefined).toEqual(["aborted", "gate-rejected"]);
+        expect(rejectedRow?.kind === "envelope" ? [rejectedRow.state, rejectedRow.abortReason] : undefined)
+          .toEqual(["aborted", mode === "gate-rejected" ? "gate-rejected" : "parent-lost"]);
         const ready = await capability.prepareCohortCorrectionSuccessor!({ workerDispatch: prepared.handle });
         expect(ready.input).toMatchObject({ baseCommit: fixture.baseCommit, startingCommit: receipt.newHead, round: 1 });
         const retryChild = { childId: `implement-worker${CODEX_CORRELATION_SEPARATOR}regate-child`, runId: "regate-run" };

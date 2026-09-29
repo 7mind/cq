@@ -815,7 +815,7 @@ if (attempt === 1) {
         "#!/usr/bin/env node",
         "const fs=require('node:fs');",
         `fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));`,
-        "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),3000));",
+        "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),10000));",
         "process.stdin.resume();",
         "setInterval(()=>{},1000);",
       ].join("\n"),
@@ -830,13 +830,38 @@ if (attempt === 1) {
     } as const;
     try {
       await executeCodexParentGateFinalizer({ ...request, command: success, timeoutMs: 2_000 });
+      // D606: a window long enough for node to install its SIGTERM handler before the first
+      // attempt's SIGTERM; only a force-kill ends the run before the fixture's 10 s exit.
       const startedAt = Date.now();
       await expect(
-        executeCodexParentGateFinalizer({ ...request, command: hanging, timeoutMs: 250 }),
-      ).rejects.toThrow("parent gate exceeded its 250 ms window");
-      expect(Date.now() - startedAt).toBeLessThan(2_500);
+        executeCodexParentGateFinalizer({ ...request, command: hanging, timeoutMs: 2_000 }),
+      ).rejects.toThrow("parent gate exceeded its 2000 ms window");
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
       const pid = Number.parseInt(await Bun.file(pidFile).text(), 10);
       expect(await readProcessIdentity(pid)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // regression: D606 — an all-timeout run is a window overrun even when its last attempt ends early.
+  test("parent finalization classifies every-attempt timeouts as a window overrun when SIGTERM ends each attempt promptly [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-parent-gate-prompt-term-"));
+    const hanging = join(root, "hanging");
+    writeFileSync(
+      hanging,
+      ["#!/usr/bin/env bun", "process.on('SIGTERM', () => process.exit(0));", "await new Promise(() => {});"].join("\n"),
+    );
+    chmodSync(hanging, 0o700);
+    try {
+      // Each attempt ends at its own timeout, leaving its termination grace unused, so the
+      // run finishes before the 2 s deadline: the classification must not depend on that.
+      await expect(
+        executeCodexParentGateFinalizer({
+          ledgerCwd: root, promptRoot: root, handle: HANDLE, parentGateCapability: PARENT_GATE_CAPABILITY,
+          command: hanging, timeoutMs: 2_000,
+        }),
+      ).rejects.toThrow("parent gate exceeded its 2000 ms window");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

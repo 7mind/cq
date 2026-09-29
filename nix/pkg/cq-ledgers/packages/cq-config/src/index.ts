@@ -6,7 +6,7 @@
  * No MCP/transport concerns (that lands in T171).
  */
 
-export { assertTaskGitEffectBinding, requireTaskGitEffectBinding, dispatchGitEffectSubject, dispatchGitEffectSubjectsEqual } from "./dispatchAttestation.js";
+export { assertTaskGitEffectBinding, requireTaskGitEffectBinding, dispatchGitEffectSubject, dispatchGitEffectSubjectsEqual, isRegatableSealedCandidateTermination } from "./dispatchAttestation.js";
 export { assertDispatchGuardedRebaseBridge } from "./guardedRebaseBridge.js";
 export { assertDispatchCohortRebaseTransition, cohortRebaseTransitionMatches, cohortRebaseManagerBinding } from "./cohortRebaseTransition.js";
 export type { DispatchCohortRebaseTransition, CohortRebaseManagerBinding } from "./cohortRebaseTransition.js";

@@ -163,6 +163,39 @@ describe("D403 a root-level gate must be runnable, not just parseable", () => {
     }
   }
 
+  // regression: D605 — a later stage's stderr error survives long stdout lines in the bounded tail.
+  test("a red gate's bounded output keeps the failing stage's stderr despite long stdout lines [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const worktree = await fs.mkdtemp(path.join(tmpdir(), "cq-gate-tail-"));
+    dirs.push(worktree);
+    const bin = path.join(worktree, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    const stdoutFile = path.join(worktree, "stdout.txt");
+    const longLine = `JOURNAL_SCALING ${JSON.stringify(Array.from({ length: 400 }, (_, index) => ({ index, payloadBytes: 2257 })))}`;
+    await fs.writeFile(stdoutFile, `${Array.from({ length: 30 }, () => longLine).join("\n")}\n 209 pass\n 0 fail\n`);
+    await fs.writeFile(
+      path.join(bin, "cq"),
+      ['#!/bin/sh', `cat ${JSON.stringify(stdoutFile)}`,
+        // A realistic stage failure: many progress lines on stderr before the final cause.
+        "i=0; while [ $i -lt 40 ]; do echo \"building /nix/store/$(printf %032d $i)-cq-0.0.1.drv... ($i)\" >&2; i=$((i+1)); done",
+        "echo 'error: script \"check:codex-installed-gate\" exited with code 1' >&2", 'exit 1', ''].join("\n"),
+    );
+    await fs.chmod(path.join(bin, "cq"), 0o700);
+    const gate: ProjectGateSpecification = { argv: ["bun", "run", "check"], cwd: ".", passCountPattern: null, failCountPattern: null };
+    const priorPath = process.env["PATH"];
+    process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+    try {
+      const run = await createNodeSupervisedWorkerGateRunner(settlement, gate).run({
+        worktreePath: worktree, admissionTimeoutMs: 30_000, executionTimeoutMs: 60_000,
+        cancellationSignal: new AbortController().signal,
+      });
+      expect(run.gateExitCode).toBe(1);
+      expect(run.outputTail).toContain('error: script "check:codex-installed-gate" exited with code 1');
+    } finally {
+      if (priorPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = priorPath;
+    }
+  }, 60_000);
+
   // regression: D568 — counts come from the project's declared rule, not Bun's summary format.
   test("a declared pytest count rule reads pytest's summary [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const pytest: ProjectGateSpecification = {
