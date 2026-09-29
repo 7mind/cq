@@ -591,6 +591,7 @@ function assertOnlyToolArguments(
 function requireGenericMutations(
   store: LedgerStore,
   toolName: LedgerToolName,
+  invocationAuthority: WorksetInvocationAuthority,
 ): WorksetGenericMutationGateway {
   const candidate = store as LedgerStore & {
     worksetStore?: unknown;
@@ -605,6 +606,7 @@ function requireGenericMutations(
   return createWorksetGenericMutationGateway({
     rawStore: store,
     worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
+    invocationAuthority,
   });
 }
 
@@ -671,7 +673,7 @@ export function createLedgerMcpToolSpecifications(
 ): LedgerToolSpecification[] {
   let genericMutations: WorksetGenericMutationGateway | null = null;
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
-    genericMutations ??= requireGenericMutations(store, toolName);
+    genericMutations ??= requireGenericMutations(store, toolName, worksetAuthority);
     return genericMutations;
   };
   let ownedLifecycleMutations: OwnedLifecycleMutations | null = null;

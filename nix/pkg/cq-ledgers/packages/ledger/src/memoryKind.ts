@@ -17,12 +17,18 @@
  *
  * Any present value outside the closed set is an invariant violation: reads,
  * physical export, and every import path reject it before any effect.
+ *
+ * Authority (T6628): the generic-mutation gateway authorizes every memory
+ * write through {@link assertMemoryCreateAuthority} and
+ * {@link assertMemoryMutationAuthority}. Raw `LedgerStore` writes carry no
+ * authority check; they are an explicit trusted-host boundary.
  */
 
 import { MEMORIES_LEDGER } from "./constants.js";
 import type { FetchedLedger, FieldValue, Item, Ledger } from "./types.js";
 import { SchemaValidationError } from "./types.js";
 import type { ArchiveContent } from "./store/LedgerStore.js";
+import { WorksetInvocationAuthorityError } from "./worksetInvocationAuthority.js";
 
 export const MEMORY_KINDS = ["fact", "rule", "environment"] as const;
 
@@ -155,6 +161,82 @@ export function assertWritableMemoryKind(
 ): void {
   if (ledgerId !== MEMORIES_LEDGER) return;
   assertKindValue(itemId, fields);
+}
+
+/**
+ * G192/T6628 — the authority a generic memory mutation runs under, derived by
+ * the gateway from its runtime-issued `WorksetInvocationAuthority`, never from
+ * caller-supplied author, session, provenance, or content.
+ */
+export type MemoryAuthoringScope = "ordinary" | "management";
+
+export class MemoryManagementAuthorityRequiredError extends WorksetInvocationAuthorityError {
+  readonly itemId: string;
+  readonly operation: string;
+
+  constructor(operation: string, itemId: string, reason: string) {
+    super(
+      "management-authority-required",
+      `${operation} of memory ${itemId} requires management authority: ${reason}`,
+    );
+    this.name = "MemoryManagementAuthorityRequiredError";
+    this.itemId = itemId;
+    this.operation = operation;
+  }
+}
+
+/**
+ * Authorize a memory create. Ordinary authority may create only a fact (an
+ * omitted kind is a fact); `rule` and `environment` require management.
+ */
+export function assertMemoryCreateAuthority(
+  scope: MemoryAuthoringScope,
+  ledgerId: string,
+  itemId: string,
+  fields: Readonly<Record<string, FieldValue>>,
+): void {
+  if (ledgerId !== MEMORIES_LEDGER) return;
+  assertKindValue(itemId, fields);
+  if (scope === "management") return;
+  const kind = fields[MEMORY_KIND_FIELD] ?? DEFAULT_MEMORY_KIND;
+  if (kind !== DEFAULT_MEMORY_KIND) {
+    throw new MemoryManagementAuthorityRequiredError("create", itemId, `kind is ${String(kind)}`);
+  }
+}
+
+/**
+ * Authorize any mutation of an existing memory — update, reopen, unarchive, or
+ * archive — from its CURRENT stored payload, which the caller must read inside
+ * the same transaction as the write. Ordinary authority may mutate only a
+ * fact and never promote it; any mutation of a rule or environment requires
+ * management. Unsupported current or requested kinds reject for every scope.
+ */
+export function assertMemoryMutationAuthority(
+  scope: MemoryAuthoringScope,
+  operation: string,
+  ledgerId: string,
+  current: Item,
+  requestedFields?: Readonly<Record<string, FieldValue>>,
+): void {
+  if (ledgerId !== MEMORIES_LEDGER) return;
+  const currentKind = resolveMemoryKind(ledgerId, current).fields[MEMORY_KIND_FIELD];
+  if (requestedFields !== undefined) assertKindValue(current.id, requestedFields);
+  if (scope === "management") return;
+  if (currentKind !== DEFAULT_MEMORY_KIND) {
+    throw new MemoryManagementAuthorityRequiredError(
+      operation,
+      current.id,
+      `current kind is ${String(currentKind)}`,
+    );
+  }
+  const requestedKind = requestedFields?.[MEMORY_KIND_FIELD] ?? currentKind;
+  if (requestedKind !== DEFAULT_MEMORY_KIND) {
+    throw new MemoryManagementAuthorityRequiredError(
+      operation,
+      current.id,
+      `promotes fact to ${String(requestedKind)}`,
+    );
+  }
 }
 
 /** Validate every payload an archival mutation is about to move. */

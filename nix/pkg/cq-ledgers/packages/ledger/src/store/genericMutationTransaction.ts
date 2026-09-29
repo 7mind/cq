@@ -100,6 +100,8 @@ export type ArchiveTerminalItemsGatePolicy =
 export interface WorksetGenericMutationTx {
   activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
+  /** The archived generation {@link unarchiveItem} would reattach, kind-resolved. */
+  fetchArchivedItem(ledgerId: string, milestoneId: string, itemId: string): Item;
   updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
   createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Item;
@@ -215,6 +217,23 @@ export function createGenericMutationTransaction(
   const dirtyArchives = new Set<string>();
   let changedRegistry = false;
   const getLedger = (ledgerId: string): Ledger => requireLedger(state.ledgers, ledgerId);
+  const archivedItem = (
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
+  ): { readonly key: string; readonly entry: GenericArchiveEntry; readonly index: number; readonly item: Item } => {
+    const key = genericArchiveKey(ledgerId, milestoneId);
+    const entry = state.archives.get(key);
+    if (entry === undefined) {
+      throw new LedgerError(`no archived item ${itemId} under ${ledgerId}:${milestoneId}`);
+    }
+    const index = entry.items.findIndex((item) => item.id === itemId);
+    const item = entry.items[index];
+    if (item === undefined) {
+      throw new LedgerError(`archive ${ledgerId}:${milestoneId} has no item ${itemId}`);
+    }
+    return { key, entry, index, item };
+  };
 
   const tx: WorksetGenericMutationTx = {
     activeState: () =>
@@ -227,6 +246,8 @@ export function createGenericMutationTransaction(
       ),
     fetchItem: (ledgerId, itemId) =>
       resolveMemoryKind(ledgerId, cloneItem(findItem(getLedger(ledgerId), itemId).item)),
+    fetchArchivedItem: (ledgerId, milestoneId, itemId) =>
+      resolveMemoryKind(ledgerId, cloneItem(archivedItem(ledgerId, milestoneId, itemId).item)),
     updateMilestone: (milestoneId, patch) => {
       const item = applyUpdateMilestoneItem(
         getLedger(MILESTONES_LEDGER),
@@ -331,16 +352,7 @@ export function createGenericMutationTransaction(
     },
     unarchiveItem: (ledgerId, milestoneId, itemId) => {
       const ledger = getLedger(ledgerId);
-      const key = genericArchiveKey(ledgerId, milestoneId);
-      const entry = state.archives.get(key);
-      if (entry === undefined) {
-        throw new LedgerError(`no archived item ${itemId} under ${ledgerId}:${milestoneId}`);
-      }
-      const index = entry.items.findIndex((item) => item.id === itemId);
-      const archived = entry.items[index];
-      if (archived === undefined) {
-        throw new LedgerError(`archive ${ledgerId}:${milestoneId} has no item ${itemId}`);
-      }
+      const { key, entry, index, item: archived } = archivedItem(ledgerId, milestoneId, itemId);
       if (!new Set(ledger.schema.terminalStatuses).has(archived.status)) {
         assertMilestoneActive(getLedger(MILESTONES_LEDGER), archived.milestoneId);
       }

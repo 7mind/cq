@@ -338,9 +338,10 @@ export {
   DEFAULT_MEMORY_KIND,
   isMemoryKind,
   UnsupportedMemoryKindError,
+  MemoryManagementAuthorityRequiredError,
   resolveMemoryKind,
 } from "./memoryKind.js";
-export type { MemoryKind } from "./memoryKind.js";
+export type { MemoryAuthoringScope, MemoryKind } from "./memoryKind.js";
 export { schemasEqual, schemaCompatible } from "./store/schemaCompat.js";
 export {
   buildBackupDump,

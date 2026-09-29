@@ -15,7 +15,7 @@ import {
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   UnsupportedMemoryKindError,
-  createLedgerMcpTools,
+  createManagementLedgerMcpTools,
   isMemoryKind,
   resolveMemoryKind,
   type Item,
@@ -38,7 +38,7 @@ function memory(fields: Item["fields"]): Item {
   };
 }
 
-type Tools = ReturnType<typeof createLedgerMcpTools>;
+type Tools = ReturnType<typeof createManagementLedgerMcpTools>;
 
 async function callTool<T>(tools: Tools, name: string, args: Record<string, unknown>): Promise<T> {
   const tool = tools.find((candidate) => candidate.name === name);
@@ -207,7 +207,8 @@ describe("memory kinds through the MCP tool surface", () => {
   async function tools(): Promise<{ store: InMemoryLedgerStore; tools: Tools }> {
     const store = new InMemoryLedgerStore();
     await store.init();
-    return { store, tools: createLedgerMcpTools(store) };
+    // Authoring rule/environment kinds requires management authority (T6628).
+    return { store, tools: createManagementLedgerMcpTools(store) };
   }
 
   it("create_item without kind stores fact; explicit kinds round-trip; kind is FTS-filterable", async () => {

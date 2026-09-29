@@ -69,8 +69,14 @@ import {
 import {
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "./worksetInvocationAuthority.js";
+import {
+  assertMemoryCreateAuthority,
+  assertMemoryMutationAuthority,
+  type MemoryAuthoringScope,
+} from "./memoryKind.js";
 import { DEPENDENCY_REF_FIELDS, canonicalizeRef } from "./refs.js";
 import { closedGraphIsTargetAdmitted } from "./worksetAccess.js";
 export { buildActiveStateFromLedgerStore, closedGraphIsTargetAdmitted } from "./worksetAccess.js";
@@ -851,6 +857,25 @@ function assertSealedOwnershipAbsent(
   }
 }
 
+/**
+ * G192/T6628: authorize every memory an operation is about to touch, from its
+ * payload read through `tx` — i.e. inside the same transaction as the write —
+ * before any of them moves, so one unauthorized or unsupported record rejects
+ * the whole operation.
+ */
+function assertMemoryRefsAuthority(
+  tx: WorksetGenericMutationTx,
+  scope: MemoryAuthoringScope,
+  operation: string,
+  refs: readonly string[],
+): void {
+  for (const ref of refs) {
+    const { ledger: ledgerId, id } = splitRefParts(ref);
+    if (ledgerId !== MEMORIES_LEDGER) continue;
+    assertMemoryMutationAuthority(scope, operation, ledgerId, tx.fetchItem(ledgerId, id));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Gateway implementation over a raw LedgerStore + WorksetStore
 // ---------------------------------------------------------------------------
@@ -960,7 +985,11 @@ export interface WorksetGenericMutationGatewayHost {
   readonly rawStore: LedgerStore;
   /** Workset roots + t3 admission coordinator. */
   readonly worksetStore: WorksetStore;
-  /** Runtime authority carried outside invocation arguments. */
+  /**
+   * Runtime authority carried outside invocation arguments. Only a
+   * runtime-issued management authority may author or mutate `rule` and
+   * `environment` memories; absence is ordinary authority.
+   */
   readonly invocationAuthority?: WorksetInvocationAuthority;
   readonly runGenericTransaction?: <T>(
     mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
@@ -985,6 +1014,11 @@ export function createWorksetGenericMutationGateway(
   host: WorksetGenericMutationGatewayHost,
 ): WorksetGenericMutationGateway {
   const { rawStore, worksetStore, afterGenericAdmit } = host;
+  const memoryScope: MemoryAuthoringScope = isTrustedWorksetManagementAuthority(
+    host.invocationAuthority,
+  )
+    ? "management"
+    : "ordinary";
   const atomicStore = rawStore as LedgerStore & {
     runAtomicGenericMutation<T>(
       mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
@@ -1198,6 +1232,15 @@ export function createWorksetGenericMutationGateway(
         "ordinary",
         measurement,
         (tx, _adm, ctx) => {
+          if (ledgerId === MEMORIES_LEDGER) {
+            assertMemoryMutationAuthority(
+              memoryScope,
+              "update-item",
+              ledgerId,
+              tx.fetchItem(ledgerId, itemId),
+              patch.fields ?? {},
+            );
+          }
           let existing: Item | undefined;
           try {
             existing = tx.fetchItem(ledgerId, itemId);
@@ -1258,6 +1301,7 @@ export function createWorksetGenericMutationGateway(
             );
           }
           assertSealedOwnershipAbsent(init.fields);
+          assertMemoryCreateAuthority(memoryScope, ledgerId, init.id ?? "<new>", init.fields);
           return tx.createItem(ledgerId, milestoneId, init);
         },
         {
@@ -1342,6 +1386,7 @@ export function createWorksetGenericMutationGateway(
         measurement,
         (tx, _adm, ctx) => {
           if (!isAmbientRecordLedger(ledgerId)) assertTargetInGraph(ctx, ref);
+          assertMemoryRefsAuthority(tx, memoryScope, "reopen-item", [ref]);
           return tx.reopenItem(ledgerId, itemId, toStatus);
         },
         {
@@ -1370,6 +1415,14 @@ export function createWorksetGenericMutationGateway(
                 `unarchiveItem is limited to an exact configured inactive root; "${ref}" is not one`,
               );
             }
+          }
+          if (ledgerId === MEMORIES_LEDGER) {
+            assertMemoryMutationAuthority(
+              memoryScope,
+              "unarchive-item",
+              ledgerId,
+              tx.fetchArchivedItem(ledgerId, milestoneId, itemId),
+            );
           }
           return tx.unarchiveItem(ledgerId, milestoneId, itemId);
         },
@@ -1406,6 +1459,7 @@ export function createWorksetGenericMutationGateway(
             affected,
             (ref) => ref.startsWith(`${IDEAS_LEDGER}:`),
           );
+          assertMemoryRefsAuthority(tx, memoryScope, "archive-terminal-items", affected);
           return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
         },
         {
@@ -1481,6 +1535,7 @@ export function createWorksetGenericMutationGateway(
                     ledgerItemRevisionV1(operation.targetId, item) !== operation.expectedItemDigest) {
                   throw new LedgerError(`exact terminal archive item "${operation.targetId}" changed`);
                 }
+                assertMemoryMutationAuthority(memoryScope, "execute-finalize", ledgerId, item);
                 tx.archiveTerminalItems([ledgerId], operation.summary, "fail-on-active-gate", [operation.targetId]);
                 break;
               }
@@ -1513,6 +1568,12 @@ export function createWorksetGenericMutationGateway(
                     );
                   }
                 }
+                assertMemoryRefsAuthority(
+                  tx,
+                  memoryScope,
+                  "execute-finalize",
+                  tx.collectArchiveSweepRefs(operation.targetId),
+                );
                 tx.archiveMilestone(operation.targetId, operation.summary);
                 break;
               }
@@ -1581,6 +1642,7 @@ export function createWorksetGenericMutationGateway(
               assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, milestoneId));
             }
           }
+          assertMemoryRefsAuthority(tx, memoryScope, "archive-milestone", sweep);
           return tx.archiveMilestone(milestoneId, summary);
         },
         {
@@ -1614,7 +1676,7 @@ export function createWorksetGuardedLedger(
   const { rawStore, worksetStore } = host;
   const invocationAuthority =
     host.invocationAuthority ?? createObserveOnlyWorksetInvocationAuthority();
-  const mutations = createWorksetGenericMutationGateway(host);
+  const mutations = createWorksetGenericMutationGateway({ ...host, invocationAuthority });
 
   const surface: WorksetGuardedLedger = {
     init: () => rawStore.init(),
