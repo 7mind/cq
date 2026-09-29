@@ -3177,6 +3177,11 @@ export type ReleaseManagedCohortWorktreeResult =
   | { readonly status: "released"; readonly handle: ManagedWorktreeHandleV3; readonly idempotent: boolean; readonly absolutePath: string }
   | Extract<ReleaseManagedWorktreeResult, { readonly status: "refused" }>;
 
+/** D609: a preparation interrupted before allocation never created a managed worktree to release. */
+export type ReleaseAbandonedManagedCohortWorktreeResult =
+  | ReleaseManagedCohortWorktreeResult
+  | { readonly status: "no-worktree" };
+
 /**
  * D560: release a cohort preparation that will never complete.
  *
@@ -3193,14 +3198,14 @@ export type ReleaseManagedCohortWorktreeResult =
 export async function releaseAbandonedManagedCohortWorktree(input: {
   readonly repositoryRoot: string;
   readonly candidateIntentDigest: string;
-}, deps: ManagedWorktreeDeps): Promise<ReleaseManagedCohortWorktreeResult> {
+}, deps: ManagedWorktreeDeps): Promise<ReleaseAbandonedManagedCohortWorktreeResult> {
   const regRoot = registryRoot(input.repositoryRoot, deps.stateDir);
   const subjectKey = `cohort-${input.candidateIntentDigest}`;
   const fault = deps.faultInjector ?? (async () => undefined);
   const records = await loadOrReconcileSubjectRecords(regRoot, subjectKey, fault);
   const stored = records.find((record) => record.handle.version === 3);
   if (stored === undefined || stored.handle.version !== 3) {
-    return refusedRelease("handle-mismatch", "abandoned cohort release found no managed cohort record");
+    return { status: "no-worktree" };
   }
   const handle = stored.handle;
   const absolutePath = handle.absolutePath;

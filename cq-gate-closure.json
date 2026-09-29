@@ -1780,13 +1780,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "d3842453cac46f26110228b509dc9b5ca8f2273510171a32ad0ce5136be0c3d9",
+      "sha256": "a60666996a4f42762866264577c24691ab2fedccaa13b3a069163f363143781d",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "d3842453cac46f26110228b509dc9b5ca8f2273510171a32ad0ce5136be0c3d9",
+      "sha256": "a60666996a4f42762866264577c24691ab2fedccaa13b3a069163f363143781d",
       "targets": []
     },
     {

@@ -321,6 +321,63 @@ for (const adapter of ["memory", "sqlite"] as const) {
     } finally { await f.close(); }
   });
 
+  test(`${adapter} a preparation whose authority acquisition fails holds no member reservation [Behavioral-Active Blackbox-Atomic]`, async () => {
+    // D609: prepare reserved the members before acquiring its authority, so an
+    // authority failure left them reserved with no worktree and every later
+    // generation over them failed as an overlap.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const cohorts = f.store.workCohortStore();
+      const first = await f.runtime.observe({ plan: f.plan, operationId: "observe-before-authority-failure" });
+      const foreign = await cohorts.acquireLease({ holderId: "foreign", semanticSubject: "foreign-subject" });
+      await expect(f.runtime.prepare({ plan: f.plan, operationId: "prepare-authority-failure",
+        definitionDigest: first.definitions[0]!.definitionDigest })).rejects.toThrow();
+      await cohorts.releaseLease(foreign);
+      await f.store.updateItem("tasks", f.taskIds[0]!, { fields: { headline: "changed after authority failure" } });
+      const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-after-authority-failure" });
+      const prepared = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-after-authority-failure",
+        definitionDigest: second.definitions[0]!.definitionDigest });
+      expect(prepared.worktree.status).toBe("prepared");
+    } finally { await f.close(); }
+  });
+
+  test(`${adapter} a preparation whose reservation conflicts releases the lease it just acquired [Behavioral-Active Blackbox-Atomic]`, async () => {
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const cohorts = f.store.workCohortStore();
+      const observed = await f.runtime.observe({ plan: f.plan, operationId: "observe-conflict" });
+      const definition = observed.definitions[0]!;
+      await cohorts.transitionReservation("foreign-reserve", { reservationId: "foreign", cohortId: definition.cohortId,
+        definitionDigest: definition.definitionDigest, memberRefs: definition.members.map(({ memberRef }) => memberRef), transition: "reserved" });
+      await expect(f.runtime.prepare({ plan: f.plan, operationId: "prepare-conflict",
+        definitionDigest: definition.definitionDigest })).rejects.toThrow("overlaps reservation");
+      expect((await cohorts.snapshot()).runtime.lease).toBeNull();
+    } finally { await f.close(); }
+  });
+
+  test(`${adapter} abandoning a preparation interrupted before allocation reports its release [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
+    // D609: with no managed worktree record, release-abandoned still released the
+    // reservation and lease but reported `refused`.
+    const f = await advanceRuntimeFixture(adapter);
+    try {
+      const first = await f.runtime.observe({ plan: f.plan, operationId: "observe-interrupted" });
+      f.controls.failBeforeAllocation = true;
+      await expect(f.runtime.prepare({ plan: f.plan, operationId: "prepare-interrupted",
+        definitionDigest: first.definitions[0]!.definitionDigest })).rejects.toThrow("interrupted before allocation");
+      f.controls.failBeforeAllocation = false;
+      const intent = (await f.store.workCohortStore().snapshot()).portable.candidateIntents.at(-1)!;
+      const released = await f.runtime.releaseAbandonedPreparation({ definitionDigest: first.definitions[0]!.definitionDigest,
+        intentDigest: intent.intentDigest, operationId: "release-interrupted" });
+      expect(released.status).toBe("released-without-worktree");
+      for (const taskId of f.taskIds) await f.store.updateItem("tasks", taskId, { status: "wip" });
+      await f.store.updateItem("tasks", f.taskIds[0]!, { fields: { headline: "changed after interruption" } });
+      const second = await f.runtime.observe({ plan: f.plan, operationId: "observe-after-interruption" });
+      const prepared = await f.runtime.prepare({ plan: f.plan, operationId: "prepare-after-interruption",
+        definitionDigest: second.definitions[0]!.definitionDigest });
+      expect(prepared.worktree.status).toBe("prepared");
+    } finally { await f.close(); }
+  });
+
   test(`${adapter} changed primary revisions cannot publish old preparation authority [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
     const f = await advanceRuntimeFixture(adapter);
     try {

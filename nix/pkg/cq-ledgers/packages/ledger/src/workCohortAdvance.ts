@@ -1,6 +1,11 @@
 import type { CohortAdmissionPlanV1, CohortDecisionV1, CohortDefinitionIdentityV1,
   CohortEffectEnvelopeV1 } from "./workCohort.js";
 import type { PrepareManagedCohortWorktreeResult, ReleaseManagedCohortWorktreeResult } from "./managedWorktree.js";
+
+/** D609: a preparation with no managed worktree still surrendered its reservation and lease. */
+export type AbandonedCohortPreparationReleaseV1 =
+  | ReleaseManagedCohortWorktreeResult
+  | { readonly status: "released-without-worktree" };
 import { z } from "zod";
 import type { WorkCohortStore } from "./workCohortStore.js";
 import { cohortActivityCountersV1 } from "./workCohortActivity.js";
@@ -112,7 +117,7 @@ export interface CohortAdvanceCapabilityV1 {
    * receipt bridge, because that is a worker's protected output.
    */
   releaseAbandonedPreparation(input: { readonly definitionDigest: string; readonly intentDigest: string;
-    readonly operationId: string }): Promise<ReleaseManagedCohortWorktreeResult>;
+    readonly operationId: string }): Promise<AbandonedCohortPreparationReleaseV1>;
   resume(input: { readonly plan: CohortAdmissionPlanV1; readonly definitionDigest: string;
     readonly intentDigest: string; readonly operationId: string; readonly workerDispatch?: DispatchHandle }): Promise<{
       readonly cohort: CohortEffectEnvelopeV1;

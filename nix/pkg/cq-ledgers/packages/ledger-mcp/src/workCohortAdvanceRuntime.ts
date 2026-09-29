@@ -213,7 +213,7 @@ export async function createCohortAdvanceRuntimeV1(
       await resolved.store.updateItem("tasks", taskId, { status: "blocked" });
       await resolved.store.updateItem("tasks", taskId, { status: "planned" });
     }
-    return worktree;
+    return worktree.status === "no-worktree" ? { status: "released-without-worktree" as const } : worktree;
   };
 
   return {
@@ -233,14 +233,22 @@ export async function createCohortAdvanceRuntimeV1(
         throw new Error("cohort preparation already has an exact candidate intent; use its explicit successor transition");
       }
       await cohorts.recordCandidateIntent(`${input.operationId}:intent`, intent);
-      await cohorts.transitionReservation(`${input.operationId}:reserve`, {
-        reservationId: intent.intentDigest, cohortId: definition.cohortId,
-        definitionDigest: definition.definitionDigest, memberRefs: definition.members.map(({ memberRef }) => memberRef), transition: "reserved",
-      });
       const cohort = createCohortEffectEnvelopeV1({ definition, observation: current, intent,
         evidenceSubject: null, executionEpoch: (await cohorts.snapshot()).runtime.executionEpoch });
+      // D609: the members are reserved only once the authority is held, so a
+      // refused authority leaves no reservation for a later generation to overlap.
+      const leaseHeld = (await cohorts.snapshot()).runtime.lease !== null;
       const authority = await resolvePreparationAuthority({ store: cohorts, envelope: cohort, holderId: input.operationId,
         registryRoot: managedWorktreeRegistryRoot(repositoryRoot, deps.stateDir) });
+      try {
+        await cohorts.transitionReservation(`${input.operationId}:reserve`, {
+          reservationId: intent.intentDigest, cohortId: definition.cohortId,
+          definitionDigest: definition.definitionDigest, memberRefs: definition.members.map(({ memberRef }) => memberRef), transition: "reserved",
+        });
+      } catch (error) {
+        if (!leaseHeld) await cohorts.releaseLease(authority.lease);
+        throw error;
+      }
       const guardedDeps = { ...deps, validateCohortPublication: (envelope: typeof cohort) =>
         assertCohortPrimaryObservationV1(resolved.store, envelope, current) };
       const git = createManagedCohortWorktreeGitEffectRunner({ store: resolved.store,
